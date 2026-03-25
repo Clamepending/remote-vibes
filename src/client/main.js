@@ -7,6 +7,7 @@ const TOUCH_TAP_SLOP_PX = 10;
 const TOUCH_MOMENTUM_MIN_VELOCITY = 0.08;
 const TOUCH_MOMENTUM_DECAY = 0.92;
 const TOUCH_MOMENTUM_MAX_FRAME_MS = 32;
+const MOBILE_KEYBOARD_HEIGHT_PX = 120;
 
 const state = {
   providers: [],
@@ -115,6 +116,38 @@ function fitTerminalSoon() {
 function cleanupTerminalInteractions() {
   state.terminalInteractionCleanup?.();
   state.terminalInteractionCleanup = null;
+}
+
+function isCoarsePointerDevice() {
+  return window.matchMedia?.("(pointer: coarse)").matches ?? false;
+}
+
+function isMobileKeyboardOpen() {
+  const viewport = window.visualViewport;
+  if (!viewport || !isCoarsePointerDevice()) {
+    return false;
+  }
+
+  return window.innerHeight - viewport.height > MOBILE_KEYBOARD_HEIGHT_PX;
+}
+
+function syncViewportMetrics() {
+  const viewport = window.visualViewport;
+  const nextHeight = Math.max(320, Math.round(viewport?.height ?? window.innerHeight));
+  document.documentElement.style.setProperty("--app-height", `${nextHeight}px`);
+}
+
+function keepTerminalPromptVisible() {
+  if (!state.terminal || !isCoarsePointerDevice()) {
+    return;
+  }
+
+  state.terminal.scrollToBottom();
+  fitTerminalSoon();
+  window.setTimeout(() => {
+    state.terminal?.scrollToBottom();
+    fitTerminalSoon();
+  }, 180);
 }
 
 function clearPendingTerminalOutput() {
@@ -500,6 +533,7 @@ function setupTerminalInteractions(mount) {
   cleanupTerminalInteractions();
 
   const viewport = mount.querySelector(".xterm-viewport");
+  const helperTextarea = mount.querySelector(".xterm-helper-textarea");
   if (!viewport) {
     return;
   }
@@ -637,11 +671,20 @@ function setupTerminalInteractions(mount) {
     stopMomentum();
   };
 
+  const handleTerminalFocus = () => {
+    syncViewportMetrics();
+    window.setTimeout(() => {
+      syncViewportMetrics();
+      keepTerminalPromptVisible();
+    }, 120);
+  };
+
   mount.addEventListener("pointerdown", handlePointerDown);
   viewport.addEventListener("touchstart", handleTouchStart, { capture: true, passive: true });
   viewport.addEventListener("touchmove", handleTouchMove, { capture: true, passive: false });
   viewport.addEventListener("touchend", handleTouchEnd, { capture: true, passive: true });
   viewport.addEventListener("touchcancel", handleTouchCancel, { capture: true, passive: true });
+  helperTextarea?.addEventListener("focus", handleTerminalFocus);
 
   state.terminalInteractionCleanup = () => {
     stopMomentum();
@@ -650,6 +693,7 @@ function setupTerminalInteractions(mount) {
     viewport.removeEventListener("touchmove", handleTouchMove, true);
     viewport.removeEventListener("touchend", handleTouchEnd, true);
     viewport.removeEventListener("touchcancel", handleTouchCancel, true);
+    helperTextarea?.removeEventListener("focus", handleTerminalFocus);
   };
 }
 
@@ -727,15 +771,26 @@ function mountTerminal() {
   });
 
   if (!state.resizeBound) {
-    const handleResize = () => fitTerminalSoon();
+    const handleResize = () => {
+      syncViewportMetrics();
+      fitTerminalSoon();
+      if (isMobileKeyboardOpen()) {
+        window.requestAnimationFrame(() => {
+          keepTerminalPromptVisible();
+        });
+      }
+    };
     window.addEventListener("resize", handleResize);
     window.addEventListener("orientationchange", handleResize);
     window.visualViewport?.addEventListener("resize", handleResize);
+    window.visualViewport?.addEventListener("scroll", handleResize);
     document.addEventListener("visibilitychange", () => {
       if (document.visibilityState === "visible") {
+        syncViewportMetrics();
         fitTerminalSoon();
       }
     });
+    syncViewportMetrics();
     state.resizeBound = true;
   }
 
@@ -894,6 +949,15 @@ async function loadPorts() {
 }
 
 async function bootstrapApp() {
+  try {
+    if ("virtualKeyboard" in navigator) {
+      navigator.virtualKeyboard.overlaysContent = false;
+    }
+  } catch (error) {
+    console.warn("[remote-vibes] virtual keyboard API unavailable", error);
+  }
+
+  syncViewportMetrics();
   const payload = await fetchJson("/api/state");
   state.providers = payload.providers;
   state.sessions = payload.sessions;

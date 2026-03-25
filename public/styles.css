@@ -1,5 +1,6 @@
 :root {
   color-scheme: dark;
+  --app-height: 100dvh;
   --bg: #0f1214;
   --panel: rgba(18, 22, 25, 0.92);
   --panel-soft: rgba(24, 29, 33, 0.82);
@@ -39,7 +40,7 @@ html {
 
 body {
   min-height: 100vh;
-  min-height: 100dvh;
+  min-height: var(--app-height);
   min-height: -webkit-fill-available;
   overflow: hidden;
   overscroll-behavior: none;
@@ -49,7 +50,7 @@ body {
 
 #app {
   height: 100vh;
-  height: 100dvh;
+  height: var(--app-height);
   min-height: -webkit-fill-available;
 }
 
@@ -83,7 +84,7 @@ select {
 
 .screen {
   min-height: 100vh;
-  min-height: 100dvh;
+  min-height: var(--app-height);
   min-height: -webkit-fill-available;
 }
 
@@ -91,7 +92,7 @@ select {
   display: grid;
   grid-template-columns: 280px minmax(0, 1fr);
   height: 100vh;
-  height: 100dvh;
+  height: var(--app-height);
   overflow: hidden;
 }
 
@@ -320,7 +321,7 @@ select {
   padding-bottom: max(16px, calc(var(--safe-bottom) + 10px));
   padding-left: max(16px, calc(var(--safe-left) + 12px));
   height: 100vh;
-  height: 100dvh;
+  height: var(--app-height);
   overflow: hidden;
 }
 
