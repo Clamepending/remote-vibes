@@ -17,6 +17,10 @@ Use that gist URL directly. The repo `raw.githubusercontent.com/.../install.sh` 
 
 You can access any localhost ports by clicking on it in the sidebar.
 
+tips:
+- Press the "shift+tab" button on the top right to swap to bypass-permisisons mode to not have to approve things all the time.
+- Use builtin voice to text to just speak and send commands
+
 <p align="center">
   <a href="claude_code.jpg"><img src="claude_code.jpg" alt="Claude Code session" width="220" /></a>
   <a href="shell.jpg"><img src="shell.jpg" alt="Shell session" width="220" /></a>
