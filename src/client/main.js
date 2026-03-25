@@ -197,6 +197,23 @@ function keepTerminalPromptVisible() {
   }, 180);
 }
 
+function buildTerminalLinkHandler() {
+  return {
+    activate(_event, text) {
+      if (isCoarsePointerDevice()) {
+        console.info("[remote-vibes] blocked terminal link activation on touch device", text);
+        return;
+      }
+
+      if (!/^https?:\/\//i.test(text)) {
+        return;
+      }
+
+      window.open(text, "_blank", "noopener,noreferrer");
+    },
+  };
+}
+
 function clearPendingTerminalOutput() {
   if (state.terminalOutputFrame) {
     window.cancelAnimationFrame(state.terminalOutputFrame);
@@ -778,6 +795,7 @@ function mountTerminal() {
     fontFamily: '"IBM Plex Mono", monospace',
     fontSize: getTerminalDisplayProfile(mount).fontSize,
     lineHeight: getTerminalDisplayProfile(mount).lineHeight,
+    linkHandler: buildTerminalLinkHandler(),
     macOptionIsMeta: true,
     scrollSensitivity: getTerminalDisplayProfile(mount).scrollSensitivity,
     scrollback: 5000,
