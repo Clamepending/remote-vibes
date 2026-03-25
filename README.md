@@ -8,15 +8,17 @@ Minimal browser terminal to vibe code on your laptop via your phone on the go.
 4. Run this on the laptop:
 
 ```bash
-bash <(curl -fsSL https://raw.githubusercontent.com/Clamepending/remote-vibes/main/install.sh)
+bash <(curl -fsSL https://gist.githubusercontent.com/Clamepending/b40db6fc8775b843e6fc06a2b5857604/raw/install.sh)
 ```
 
 5. Open the Tailscale URL printed in the terminal on your phone.
 6. Run the same command again any time you want to update.
 
+If the repo stays private, the laptop still needs GitHub access to `Clamepending/remote-vibes`.
+
 You can access any localhost ports by clicking on it in the sidebar.
 
 ![claude_code](claude_code.jpg)
 ![shell](shell.jpg)
-![menu1](claude_cmenu1ode.jpg)
+![menu1](menu1.jpg)
 ![menu2](menu2.jpg)

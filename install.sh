@@ -47,7 +47,7 @@ clone_repo() {
   fi
 
   log "Cloning into $INSTALL_DIR"
-  if git clone --depth 1 --branch "$REPO_REF" "$primary_url" "$INSTALL_DIR"; then
+  if GIT_TERMINAL_PROMPT=0 git clone --depth 1 --branch "$REPO_REF" "$primary_url" "$INSTALL_DIR"; then
     return
   fi
 
@@ -56,6 +56,9 @@ clone_repo() {
 }
 
 update_repo() {
+  local ssh_url
+  ssh_url="git@github.com:${REPO_SLUG}.git"
+
   if [ ! -d "$INSTALL_DIR/.git" ]; then
     fail "$INSTALL_DIR exists but is not a git checkout"
   fi
@@ -68,7 +71,16 @@ update_repo() {
   fi
 
   log "Updating existing checkout"
-  git fetch origin "$REPO_REF" --depth 1
+  if ! GIT_TERMINAL_PROMPT=0 git fetch origin "$REPO_REF" --depth 1; then
+    if [ -n "$REPO_URL" ]; then
+      fail "Failed to update $INSTALL_DIR from $REPO_URL"
+    fi
+
+    log "HTTPS fetch failed, trying SSH"
+    git remote set-url origin "$ssh_url"
+    git fetch origin "$REPO_REF" --depth 1
+  fi
+
   git checkout -B "$REPO_REF" FETCH_HEAD
 }
 
