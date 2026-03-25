@@ -1,6 +1,6 @@
 import qrcode from "qrcode-terminal";
 
-const TERMINAL_QR_SCALE = 2;
+const TERMINAL_QR_ERROR_LEVEL = "M";
 
 export function pickScanUrl(urls) {
   if (!Array.isArray(urls) || urls.length === 0) {
@@ -15,28 +15,15 @@ export function pickScanUrl(urls) {
   );
 }
 
-function scaleQrCode(text, scale = TERMINAL_QR_SCALE) {
-  if (!text || scale <= 1) {
-    return text;
-  }
-
-  return text
-    .split("\n")
-    .flatMap((line) => {
-      const expanded = Array.from(line, (char) => char.repeat(scale)).join("");
-      return Array(scale).fill(expanded);
-    })
-    .join("\n");
-}
-
 export function renderQrCode(url) {
   if (!url) {
     return "";
   }
 
   let output = "";
-  qrcode.generate(url, { small: true }, (rendered) => {
-    output = scaleQrCode(rendered.trimEnd());
+  qrcode.setErrorLevel(TERMINAL_QR_ERROR_LEVEL);
+  qrcode.generate(url, { small: false }, (rendered) => {
+    output = rendered.trimEnd();
   });
   return output;
 }

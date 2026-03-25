@@ -2,6 +2,10 @@ import assert from "node:assert/strict";
 import test from "node:test";
 import { buildStartupOutput, pickScanUrl, renderQrCode } from "../src/startup-output.js";
 
+function stripAnsi(value) {
+  return value.replace(/\u001b\[[0-9;]*m/g, "");
+}
+
 test("pickScanUrl prefers the Tailscale address for phone scanning", () => {
   const url = pickScanUrl([
     { label: "Local", url: "http://localhost:4123" },
@@ -23,16 +27,17 @@ test("buildStartupOutput includes a terminal QR block for the preferred phone UR
   });
 
   assert.match(output, /Scan on phone: http:\/\/100\.106\.229\.117:4123/);
-  assert.match(output, /[█▄▀]/);
+  assert.match(output, /\u001b\[47m/);
 });
 
-test("renderQrCode scales the terminal QR for easier scanning", () => {
+test("renderQrCode uses a square ANSI QR that is easier to scan", () => {
   const output = renderQrCode("http://100.106.229.117:4123");
-  const lines = output.split("\n");
-  const maxWidth = Math.max(...lines.map((line) => line.length));
+  const visibleLines = stripAnsi(output).split("\n");
+  const maxWidth = Math.max(...visibleLines.map((line) => line.length));
 
-  assert.ok(lines.length >= 24);
+  assert.ok(visibleLines.length >= 24);
   assert.ok(maxWidth >= 48);
+  assert.match(output, /\u001b\[40m/);
 });
 
 test("renderQrCode returns an empty string when no URL is available", () => {
