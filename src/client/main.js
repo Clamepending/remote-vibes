@@ -7,7 +7,6 @@ const TOUCH_TAP_SLOP_PX = 10;
 const TOUCH_MOMENTUM_MIN_VELOCITY = 0.08;
 const TOUCH_MOMENTUM_DECAY = 0.92;
 const TOUCH_MOMENTUM_MAX_FRAME_MS = 32;
-const MOBILE_KEYBOARD_HEIGHT_PX = 120;
 
 const state = {
   providers: [],
@@ -122,15 +121,6 @@ function isCoarsePointerDevice() {
   return window.matchMedia?.("(pointer: coarse)").matches ?? false;
 }
 
-function isMobileKeyboardOpen() {
-  const viewport = window.visualViewport;
-  if (!viewport || !isCoarsePointerDevice()) {
-    return false;
-  }
-
-  return window.innerHeight - viewport.height > MOBILE_KEYBOARD_HEIGHT_PX;
-}
-
 function syncViewportMetrics() {
   const viewport = window.visualViewport;
   const nextHeight = Math.max(320, Math.round(viewport?.height ?? window.innerHeight));
@@ -182,19 +172,6 @@ function applyTerminalDisplayProfile(mount) {
   if (currentOptions.scrollSensitivity !== profile.scrollSensitivity) {
     currentOptions.scrollSensitivity = profile.scrollSensitivity;
   }
-}
-
-function keepTerminalPromptVisible() {
-  if (!state.terminal || !isCoarsePointerDevice()) {
-    return;
-  }
-
-  state.terminal.scrollToBottom();
-  fitTerminalSoon();
-  window.setTimeout(() => {
-    state.terminal?.scrollToBottom();
-    fitTerminalSoon();
-  }, 180);
 }
 
 function buildTerminalLinkHandler() {
@@ -751,10 +728,7 @@ function setupTerminalInteractions(mount) {
 
   const handleTerminalFocus = () => {
     syncViewportMetrics();
-    window.setTimeout(() => {
-      syncViewportMetrics();
-      keepTerminalPromptVisible();
-    }, 120);
+    fitTerminalSoon();
   };
 
   mount.addEventListener("pointerdown", handlePointerDown);
@@ -856,16 +830,10 @@ function mountTerminal() {
       syncViewportMetrics();
       applyTerminalDisplayProfile(mount);
       fitTerminalSoon();
-      if (isMobileKeyboardOpen()) {
-        window.requestAnimationFrame(() => {
-          keepTerminalPromptVisible();
-        });
-      }
     };
     window.addEventListener("resize", handleResize);
     window.addEventListener("orientationchange", handleResize);
     window.visualViewport?.addEventListener("resize", handleResize);
-    window.visualViewport?.addEventListener("scroll", handleResize);
     document.addEventListener("visibilitychange", () => {
       if (document.visibilityState === "visible") {
         syncViewportMetrics();
