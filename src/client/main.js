@@ -137,6 +137,53 @@ function syncViewportMetrics() {
   document.documentElement.style.setProperty("--app-height", `${nextHeight}px`);
 }
 
+function getTerminalDisplayProfile(mount) {
+  const width = mount?.clientWidth ?? window.innerWidth;
+
+  if (width <= 420) {
+    return {
+      fontSize: 12,
+      lineHeight: 1.08,
+      scrollSensitivity: 1.2,
+    };
+  }
+
+  if (width <= 820) {
+    return {
+      fontSize: 13,
+      lineHeight: 1.12,
+      scrollSensitivity: 1.28,
+    };
+  }
+
+  return {
+    fontSize: 14,
+    lineHeight: 1.18,
+    scrollSensitivity: 1.35,
+  };
+}
+
+function applyTerminalDisplayProfile(mount) {
+  if (!state.terminal) {
+    return;
+  }
+
+  const profile = getTerminalDisplayProfile(mount);
+  const currentOptions = state.terminal.options;
+
+  if (currentOptions.fontSize !== profile.fontSize) {
+    currentOptions.fontSize = profile.fontSize;
+  }
+
+  if (currentOptions.lineHeight !== profile.lineHeight) {
+    currentOptions.lineHeight = profile.lineHeight;
+  }
+
+  if (currentOptions.scrollSensitivity !== profile.scrollSensitivity) {
+    currentOptions.scrollSensitivity = profile.scrollSensitivity;
+  }
+}
+
 function keepTerminalPromptVisible() {
   if (!state.terminal || !isCoarsePointerDevice()) {
     return;
@@ -715,10 +762,10 @@ function mountTerminal() {
     cursorBlink: true,
     customGlyphs: true,
     fontFamily: '"IBM Plex Mono", monospace',
-    fontSize: 14,
-    lineHeight: 1.18,
+    fontSize: getTerminalDisplayProfile(mount).fontSize,
+    lineHeight: getTerminalDisplayProfile(mount).lineHeight,
     macOptionIsMeta: true,
-    scrollSensitivity: 1.35,
+    scrollSensitivity: getTerminalDisplayProfile(mount).scrollSensitivity,
     scrollback: 5000,
     smoothScrollDuration: 60,
     theme: {
@@ -747,6 +794,7 @@ function mountTerminal() {
   state.fitAddon = new FitAddon();
   state.terminal.loadAddon(state.fitAddon);
   state.terminal.open(mount);
+  applyTerminalDisplayProfile(mount);
   loadCanvasRenderer();
   setupTerminalInteractions(mount);
   fitTerminalSoon();
@@ -772,7 +820,9 @@ function mountTerminal() {
 
   if (!state.resizeBound) {
     const handleResize = () => {
+      const mount = document.querySelector("#terminal-mount");
       syncViewportMetrics();
+      applyTerminalDisplayProfile(mount);
       fitTerminalSoon();
       if (isMobileKeyboardOpen()) {
         window.requestAnimationFrame(() => {

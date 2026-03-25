@@ -555,10 +555,40 @@ select:disabled {
     padding: 8px;
   }
 
+  .terminal-mount {
+    padding: 10px 8px;
+  }
+
   .icon-button,
   .primary-button,
   .ghost-button {
     min-height: 46px;
     padding: 0 14px;
+  }
+}
+
+@media (max-width: 420px) {
+  .terminal-panel {
+    padding-top: max(8px, calc(var(--safe-top) + 6px));
+    padding-right: max(8px, calc(var(--safe-right) + 8px));
+    padding-bottom: max(8px, calc(var(--safe-bottom) + 6px));
+    padding-left: max(8px, calc(var(--safe-left) + 8px));
+    gap: 8px;
+  }
+
+  .terminal-toolbar {
+    min-height: 50px;
+    padding: 6px 8px;
+  }
+
+  .terminal-mount {
+    padding: 8px 6px;
+  }
+
+  .toolbar-actions > .icon-button,
+  .toolbar-actions > .ghost-button {
+    min-height: 36px;
+    min-width: 36px;
+    padding: 0 9px;
   }
 }
