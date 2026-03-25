@@ -183,11 +183,11 @@ function renderShell() {
     <main class="screen app-shell">
       <button class="sidebar-scrim ${state.sidebarOpen ? "is-open" : ""}" type="button" aria-label="Close menu" data-sidebar-scrim></button>
       <aside class="sidebar ${state.sidebarOpen ? "is-open" : ""}" data-sidebar>
-        <div class="sidebar-body">
-          <div class="sidebar-mobile-actions">
-            <button class="icon-button hidden-desktop" type="button" id="close-sidebar">×</button>
-          </div>
+        <div class="sidebar-mobile-actions">
+          <button class="icon-button hidden-desktop" type="button" id="close-sidebar">×</button>
+        </div>
 
+        <div class="sidebar-body">
           <form class="session-form" id="session-form">
             <select name="providerId">${providerOptions}</select>
             <input type="text" name="cwd" value="${escapeHtml(state.defaultCwd || "")}" placeholder="cwd" />
@@ -223,11 +223,13 @@ function renderShell() {
               activeSession ? `${activeSession.providerLabel} · ${activeSession.cwd}` : state.defaultCwd,
             )}</div>
           </div>
-          <button class="icon-button" type="button" id="refresh-sessions">↻</button>
+          <div class="toolbar-actions">
+            <button class="icon-button" type="button" id="refresh-sessions" aria-label="Refresh sessions">↻</button>
+            <button class="ghost-button toolbar-control" type="button" id="ctrl-c-button" aria-label="Send Control C" ${activeSession ? "" : "disabled"}>^C</button>
+          </div>
         </div>
 
         <div class="terminal-stack">
-          <button class="ghost-button terminal-signal" type="button" id="ctrl-c-button" ${activeSession ? "" : "disabled"}>^C</button>
           <div class="terminal-mount" id="terminal-mount"></div>
           <div class="empty-state ${activeSession ? "hidden" : ""}" id="empty-state">new session</div>
         </div>

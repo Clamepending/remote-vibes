@@ -102,6 +102,7 @@ select {
 .sidebar {
   display: grid;
   grid-template-rows: minmax(0, 1fr);
+  position: relative;
   padding: 16px;
   background: linear-gradient(180deg, rgba(16, 19, 22, 0.96), rgba(12, 15, 17, 0.88));
   border-right: 1px solid var(--line);
@@ -322,7 +323,7 @@ select {
 
 .terminal-toolbar {
   display: grid;
-  grid-template-columns: minmax(0, 1fr) 42px;
+  grid-template-columns: minmax(0, 1fr) auto;
   align-items: center;
   gap: 10px;
   min-height: 56px;
@@ -350,6 +351,25 @@ select {
   line-height: 1.2;
 }
 
+.toolbar-actions {
+  display: inline-flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 8px;
+}
+
+.toolbar-actions > .icon-button,
+.toolbar-actions > .ghost-button {
+  min-height: 40px;
+  min-width: 40px;
+  padding: 0 12px;
+}
+
+.toolbar-control {
+  font-family: "IBM Plex Mono", monospace;
+  font-size: 0.9rem;
+}
+
 .terminal-stack {
   display: grid;
   grid-template-columns: minmax(0, 1fr);
@@ -365,25 +385,12 @@ select {
 .terminal-mount {
   grid-area: 1 / 1;
   min-height: 0;
-  padding: 14px 12px 56px;
+  padding: 14px 12px;
 }
 
 .terminal-mount > .terminal,
 .terminal-mount > .xterm {
   height: 100%;
-}
-
-.terminal-signal {
-  position: absolute;
-  left: 10px;
-  bottom: 10px;
-  z-index: 2;
-  min-height: 38px;
-  min-width: 46px;
-  padding: 0 12px;
-  border-radius: 12px;
-  background: rgba(24, 29, 33, 0.88);
-  backdrop-filter: blur(14px);
 }
 
 .empty-state {
@@ -448,7 +455,8 @@ select:disabled {
       max(10px, calc(var(--safe-bottom) + 8px))
       max(10px, calc(var(--safe-left) + 8px));
     z-index: 5;
-    width: min(86vw, 360px);
+    width: min(68vw, 340px);
+    padding-top: 60px;
     border: 1px solid var(--line);
     border-radius: 24px;
     transform: translateX(calc(-100% - 18px));
@@ -457,8 +465,12 @@ select:disabled {
   }
 
   .sidebar-mobile-actions {
+    position: absolute;
+    top: 8px;
+    left: 8px;
+    z-index: 1;
     display: flex;
-    justify-content: flex-end;
+    justify-content: flex-start;
   }
 
   .sidebar.is-open {
@@ -478,7 +490,7 @@ select:disabled {
   }
 
   .terminal-toolbar {
-    grid-template-columns: 42px minmax(0, 1fr) 42px;
+    grid-template-columns: 42px minmax(0, 1fr) auto;
     border-radius: 20px;
   }
 
@@ -486,11 +498,15 @@ select:disabled {
     border-radius: 20px;
   }
 
-  .terminal-signal {
-    left: 8px;
-    bottom: 8px;
-    min-height: 36px;
-    min-width: 44px;
+  .toolbar-actions {
+    gap: 6px;
+  }
+
+  .toolbar-actions > .icon-button,
+  .toolbar-actions > .ghost-button {
+    min-height: 38px;
+    min-width: 38px;
+    padding: 0 10px;
   }
 }
 
@@ -498,10 +514,10 @@ select:disabled {
   .sidebar {
     inset:
       max(8px, calc(var(--safe-top) + 6px))
-      max(8px, calc(var(--safe-right) + 8px))
+      auto
       max(8px, calc(var(--safe-bottom) + 6px))
       max(8px, calc(var(--safe-left) + 8px));
-    width: auto;
+    width: min(72vw, 300px);
   }
 
   .session-card {
@@ -516,7 +532,7 @@ select:disabled {
     grid-column: auto;
   }
   .terminal-toolbar {
-    grid-template-columns: 42px minmax(0, 1fr) 42px;
+    grid-template-columns: 42px minmax(0, 1fr) auto;
     min-height: 54px;
     padding: 8px;
   }
