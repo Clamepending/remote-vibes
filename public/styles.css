@@ -322,7 +322,7 @@ select {
 
 .terminal-toolbar {
   display: grid;
-  grid-template-columns: 42px minmax(0, 1fr) 42px;
+  grid-template-columns: minmax(0, 1fr) 42px;
   align-items: center;
   gap: 10px;
   min-height: 56px;
@@ -478,6 +478,7 @@ select:disabled {
   }
 
   .terminal-toolbar {
+    grid-template-columns: 42px minmax(0, 1fr) 42px;
     border-radius: 20px;
   }
 
