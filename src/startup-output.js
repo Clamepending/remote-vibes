@@ -1,6 +1,8 @@
 import qrcode from "qrcode-terminal";
 
 const TERMINAL_QR_ERROR_LEVEL = "M";
+const ANSI_GREEN = "\u001b[32m";
+const ANSI_RESET = "\u001b[0m";
 
 export function pickScanUrl(urls) {
   if (!Array.isArray(urls) || urls.length === 0) {
@@ -52,6 +54,7 @@ export function buildStartupOutput(config) {
   lines.push("Port proxy:");
   lines.push("- /proxy/<port>/");
   lines.push("");
+  lines.push(`${ANSI_GREEN}running${ANSI_RESET}`);
 
   return lines.join("\n");
 }

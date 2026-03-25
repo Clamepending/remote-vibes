@@ -28,6 +28,7 @@ test("buildStartupOutput includes a terminal QR block for the preferred phone UR
 
   assert.match(output, /Scan on phone: http:\/\/100\.106\.229\.117:4123/);
   assert.match(output, /\u001b\[47m/);
+  assert.match(output, /\u001b\[32mrunning\u001b\[0m$/);
 });
 
 test("renderQrCode uses a square ANSI QR that is easier to scan", () => {

@@ -9,4 +9,4 @@ if [ ! -d node_modules ]; then
   npm install
 fi
 
-npm run start
+exec npm run start
