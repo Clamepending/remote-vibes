@@ -367,7 +367,9 @@ function renderShell() {
 
         <div class="terminal-stack">
           <div class="terminal-mount" id="terminal-mount"></div>
-          <div class="empty-state ${activeSession ? "hidden" : ""}" id="empty-state">new session</div>
+          <div class="empty-state ${activeSession ? "hidden" : ""}" id="empty-state">
+            <p class="empty-state-copy">open the menu by tapping the top left icon, then click + to create a new session</p>
+          </div>
         </div>
       </section>
     </main>

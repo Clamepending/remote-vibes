@@ -438,10 +438,18 @@ select {
   display: grid;
   place-items: center;
   min-height: 0;
+  padding: 28px;
   color: var(--muted);
   font-family: "IBM Plex Mono", monospace;
-  letter-spacing: 0.06em;
-  text-transform: uppercase;
+  text-align: center;
+}
+
+.empty-state-copy {
+  max-width: 30ch;
+  margin: 0;
+  font-size: 0.84rem;
+  line-height: 1.6;
+  letter-spacing: 0.03em;
 }
 
 .empty-state.hidden {
