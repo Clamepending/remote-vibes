@@ -1,14 +1,6 @@
 # Remote Vibes
 
-Remote Vibes is a tiny browser terminal hub for your laptop. Start it with one command, open the link from your phone over Tailscale, unlock it with a short passcode, and spin up live shell windows that can auto-launch `claude`, `codex`, `gemini`, or just a plain shell.
-
-## What it does
-
-- Creates multiple terminal windows backed by real PTYs on the host laptop
-- Streams live output over websockets to a mobile-friendly web UI
-- Lets each new session choose a provider preset and a working directory
-- Adds a quick command bar for phone dictation or one-shot commands
-- Protects the app with a passcode and session cookie
+Remote Vibes is a small browser terminal hub for your laptop. Start it with one command, open it from your phone over Tailscale, create shell windows, and jump into local web previews through a built-in port proxy.
 
 ## Quick start
 
@@ -16,15 +8,21 @@ Remote Vibes is a tiny browser terminal hub for your laptop. Start it with one c
 ./start.sh
 ```
 
-On first run that will install dependencies, build the client bundle, and start the server.
+On first run that installs dependencies, builds the client bundle, and starts the server.
 
 At startup the app prints:
 
-- a passcode
 - `localhost` and LAN/Tailscale URLs
-- which agent CLIs are installed on the host
+- installed CLI providers
+- the proxy pattern for local web ports
 
-Open the printed URL on your phone, enter the passcode once, and create a session.
+## Features
+
+- PTY-backed terminal windows in the browser
+- provider presets for `claude`, `codex`, `gemini`, and a plain shell
+- per-session working directories
+- clickable detected ports that open through `/proxy/<port>/`
+- mobile-friendly quick-send bar for dictation or one-line commands
 
 ## Session presets
 
@@ -41,17 +39,17 @@ Optional environment variables:
 
 - `REMOTE_VIBES_HOST` defaults to `0.0.0.0`
 - `REMOTE_VIBES_PORT` defaults to `4123`
-- `REMOTE_VIBES_PASSCODE` defaults to a random short code generated at startup
 
 Example:
 
 ```bash
-REMOTE_VIBES_PASSCODE=mycode REMOTE_VIBES_PORT=4200 ./start.sh
+REMOTE_VIBES_PORT=4200 ./start.sh
 ```
 
 ## Notes
 
 - Sessions run locally on the host laptop. This is not an outbound SSH multiplexer yet.
+- The built-in port list is backed by `lsof` and the proxy targets `127.0.0.1:<port>`.
 - Some agent CLIs may still show their own trust or permissions prompts the first time they launch in a directory.
 - On macOS, `node-pty` needs its `spawn-helper` marked executable. The repo fixes that automatically during `npm install`.
 

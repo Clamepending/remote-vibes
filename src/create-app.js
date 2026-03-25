@@ -1,12 +1,12 @@
-import cookie from "cookie";
 import { execFile } from "node:child_process";
-import crypto from "node:crypto";
+import httpProxy from "http-proxy";
 import { networkInterfaces } from "node:os";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { promisify } from "node:util";
 import express from "express";
 import { WebSocketServer } from "ws";
+import { listListeningPorts } from "./ports.js";
 import { SessionManager } from "./session-manager.js";
 import { detectProviders, getDefaultProviderId } from "./providers.js";
 
@@ -14,15 +14,24 @@ const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const publicDir = path.resolve(__dirname, "..", "public");
 const execFileAsync = promisify(execFile);
 
-function safeEqual(left, right) {
-  const leftBuffer = Buffer.from(left);
-  const rightBuffer = Buffer.from(right);
+function normalizePort(value) {
+  const port = Number(value);
+  return Number.isInteger(port) && port > 0 && port < 65_536 ? port : null;
+}
 
-  if (leftBuffer.length !== rightBuffer.length) {
-    return false;
+function rewriteProxyPath(originalUrl, port) {
+  const prefix = `/proxy/${port}`;
+  const nextPath = originalUrl.startsWith(prefix) ? originalUrl.slice(prefix.length) : originalUrl;
+  return nextPath || "/";
+}
+
+function sendProxyError(response, proxyPort) {
+  if (response.headersSent) {
+    response.end();
+    return;
   }
 
-  return crypto.timingSafeEqual(leftBuffer, rightBuffer);
+  response.status(502).json({ error: `Port ${proxyPort} is unavailable.` });
 }
 
 async function getAccessUrls(host, port) {
@@ -59,6 +68,10 @@ async function getAccessUrls(host, port) {
       "command -v tailscale >/dev/null 2>&1 && tailscale ip -4",
     ]);
     for (const line of stdout.split("\n").map((entry) => entry.trim()).filter(Boolean)) {
+      if (!/^\d+\.\d+\.\d+\.\d+$/.test(line)) {
+        continue;
+      }
+
       const url = `http://${line}:${port}`;
       if (!urls.some((entry) => entry.url === url)) {
         urls.push({ label: "Tailscale", url });
@@ -75,83 +88,38 @@ export async function createRemoteVibesApp({
   host = process.env.REMOTE_VIBES_HOST || "0.0.0.0",
   port = Number(process.env.REMOTE_VIBES_PORT || 4123),
   cwd = process.cwd(),
-  passcode = process.env.REMOTE_VIBES_PASSCODE || crypto.randomBytes(3).toString("hex"),
 } = {}) {
   const providers = await detectProviders();
   const defaultProviderId = getDefaultProviderId(providers);
-  const authCookieName = "remote_vibes_auth";
-  const authCookieValue = crypto.randomUUID();
   const app = express();
   const sessionManager = new SessionManager({ cwd, providers });
+  let exposedPort = null;
+  const proxyServer = httpProxy.createProxyServer({
+    changeOrigin: true,
+    ws: true,
+    xfwd: true,
+  });
 
   app.use(express.json());
 
-  function isAuthenticated(request) {
-    const parsed = cookie.parse(request.headers.cookie || "");
-    return parsed[authCookieName] === authCookieValue;
-  }
-
-  function requireAuth(request, response, next) {
-    if (!isAuthenticated(request)) {
-      response.status(401).json({ error: "Authentication required." });
-      return;
-    }
-
-    next();
-  }
-
-  app.get("/api/public-config", (_request, response) => {
-    response.json({
-      appName: "Remote Vibes",
-      passcodeHint: passcode.slice(0, 2),
-    });
-  });
-
-  app.post("/api/login", (request, response) => {
-    const submitted = String(request.body?.passcode || "");
-
-    if (!safeEqual(submitted, passcode)) {
-      response.status(401).json({ error: "Wrong passcode." });
-      return;
-    }
-
-    response.setHeader(
-      "Set-Cookie",
-      cookie.serialize(authCookieName, authCookieValue, {
-        httpOnly: true,
-        sameSite: "lax",
-        path: "/",
-        maxAge: 60 * 60 * 24 * 30,
-      }),
-    );
-
-    response.json({ ok: true });
-  });
-
-  app.post("/api/logout", requireAuth, (_request, response) => {
-    response.setHeader(
-      "Set-Cookie",
-      cookie.serialize(authCookieName, "", {
-        httpOnly: true,
-        sameSite: "lax",
-        path: "/",
-        maxAge: 0,
-      }),
-    );
-    response.json({ ok: true });
-  });
-
-  app.get("/api/state", requireAuth, (_request, response) => {
+  app.get("/api/state", async (_request, response) => {
     response.json({
       appName: "Remote Vibes",
       cwd,
       defaultProviderId,
       providers,
       sessions: sessionManager.listSessions(),
+      ports: await listListeningPorts({ excludePorts: exposedPort ? [exposedPort] : [] }),
     });
   });
 
-  app.post("/api/sessions", requireAuth, (request, response) => {
+  app.get("/api/ports", async (_request, response) => {
+    response.json({
+      ports: await listListeningPorts({ excludePorts: exposedPort ? [exposedPort] : [] }),
+    });
+  });
+
+  app.post("/api/sessions", (request, response) => {
     try {
       const session = sessionManager.createSession({
         providerId: String(request.body?.providerId || defaultProviderId),
@@ -165,11 +133,11 @@ export async function createRemoteVibesApp({
     }
   });
 
-  app.get("/api/sessions", requireAuth, (_request, response) => {
+  app.get("/api/sessions", (_request, response) => {
     response.json({ sessions: sessionManager.listSessions() });
   });
 
-  app.delete("/api/sessions/:sessionId", requireAuth, (request, response) => {
+  app.delete("/api/sessions/:sessionId", (request, response) => {
     const deleted = sessionManager.deleteSession(request.params.sessionId);
 
     if (!deleted) {
@@ -178,6 +146,25 @@ export async function createRemoteVibesApp({
     }
 
     response.json({ ok: true });
+  });
+
+  app.use("/proxy/:port", (request, response) => {
+    const proxyPort = normalizePort(request.params.port);
+
+    if (!proxyPort) {
+      response.status(400).json({ error: "Invalid port." });
+      return;
+    }
+
+    request.url = rewriteProxyPath(request.originalUrl, proxyPort);
+    proxyServer.web(
+      request,
+      response,
+      {
+        target: `http://127.0.0.1:${proxyPort}`,
+      },
+      () => sendProxyError(response, proxyPort),
+    );
   });
 
   app.use(express.static(publicDir));
@@ -191,13 +178,36 @@ export async function createRemoteVibesApp({
     typeof server.address() === "object" && server.address()
       ? server.address().port
       : port;
+  exposedPort = resolvedPort;
   const urls = await getAccessUrls(host, resolvedPort);
 
   server.on("upgrade", (request, socket, head) => {
     const url = new URL(request.url || "/", `http://${request.headers.host}`);
 
-    if (url.pathname !== "/ws" || !isAuthenticated(request)) {
-      socket.write("HTTP/1.1 401 Unauthorized\r\n\r\n");
+    if (url.pathname.startsWith("/proxy/")) {
+      const proxyPort = normalizePort(url.pathname.split("/")[2]);
+
+      if (!proxyPort) {
+        socket.write("HTTP/1.1 400 Bad Request\r\n\r\n");
+        socket.destroy();
+        return;
+      }
+
+      request.url = `${rewriteProxyPath(url.pathname, proxyPort)}${url.search}`;
+      proxyServer.ws(
+        request,
+        socket,
+        head,
+        {
+          target: `http://127.0.0.1:${proxyPort}`,
+        },
+        () => socket.destroy(),
+      );
+      return;
+    }
+
+    if (url.pathname !== "/ws") {
+      socket.write("HTTP/1.1 404 Not Found\r\n\r\n");
       socket.destroy();
       return;
     }
@@ -245,6 +255,7 @@ export async function createRemoteVibesApp({
 
   async function close() {
     sessionManager.closeAll();
+    proxyServer.close();
     await new Promise((resolve) => websocketServer.close(resolve));
     await new Promise((resolve, reject) =>
       server.close((error) => {
@@ -263,11 +274,9 @@ export async function createRemoteVibesApp({
     close,
     config: {
       appName: "Remote Vibes",
-      authCookieName,
       cwd,
       defaultProviderId,
       host,
-      passcode,
       port: resolvedPort,
       providers,
       urls,

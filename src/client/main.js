@@ -6,6 +6,7 @@ const app = document.querySelector("#app");
 const state = {
   providers: [],
   sessions: [],
+  ports: [],
   activeSessionId: null,
   connectedSessionId: null,
   defaultCwd: "",
@@ -13,13 +14,13 @@ const state = {
   websocket: null,
   terminal: null,
   fitAddon: null,
-  sessionPollTimer: null,
+  pollTimer: null,
   resizeBound: false,
   sidebarOpen: false,
 };
 
 function escapeHtml(value) {
-  return value
+  return String(value ?? "")
     .replaceAll("&", "&amp;")
     .replaceAll("<", "&lt;")
     .replaceAll(">", "&gt;")
@@ -36,35 +37,35 @@ function isLive(session) {
 
 function relativeTime(timestamp) {
   if (!timestamp) {
-    return "No output yet";
+    return "quiet";
   }
 
   const deltaSeconds = Math.max(0, Math.round((Date.now() - new Date(timestamp).getTime()) / 1000));
   if (deltaSeconds < 5) {
-    return "Just now";
+    return "live";
   }
 
   if (deltaSeconds < 60) {
-    return `${deltaSeconds}s ago`;
+    return `${deltaSeconds}s`;
   }
 
   const minutes = Math.round(deltaSeconds / 60);
   if (minutes < 60) {
-    return `${minutes}m ago`;
+    return `${minutes}m`;
   }
 
   const hours = Math.round(minutes / 60);
-  return `${hours}h ago`;
+  return `${hours}h`;
 }
 
 function getSessionLabel(session) {
   if (session.status === "exited") {
-    return { text: "Exited", className: "exited" };
+    return { text: "x", className: "exited" };
   }
 
   return isLive(session)
-    ? { text: "Live", className: "live" }
-    : { text: "Idle", className: "idle" };
+    ? { text: "live", className: "live" }
+    : { text: "idle", className: "idle" };
 }
 
 function setSidebarOpen(nextValue) {
@@ -88,8 +89,7 @@ async function fetchJson(url, options = {}) {
   const payload = isJson ? await response.json() : null;
 
   if (!response.ok) {
-    const message = payload?.error || `Request failed with status ${response.status}`;
-    const error = new Error(message);
+    const error = new Error(payload?.error || `Request failed with status ${response.status}`);
     error.status = response.status;
     throw error;
   }
@@ -97,42 +97,47 @@ async function fetchJson(url, options = {}) {
   return payload;
 }
 
-function renderLogin({ errorMessage = "", hint = "" } = {}) {
-  app.innerHTML = `
-    <main class="screen login-screen">
-      <section class="login-card">
-        <div class="status-pill">Protected Session Hub</div>
-        <h1>Remote Vibes</h1>
-        <p class="subtle">
-          This host is protected with a short passcode. Enter it once and your browser keeps the session.
-        </p>
-        <form id="login-form" class="field">
-          <label for="passcode">Passcode${hint ? ` (starts with ${escapeHtml(hint)})` : ""}</label>
-          <input id="passcode" name="passcode" autocomplete="one-time-code" inputmode="text" />
-          <button class="primary-button" type="submit">Unlock</button>
-          <div class="error-text">${escapeHtml(errorMessage)}</div>
-        </form>
-      </section>
-    </main>
-  `;
+function renderSessionCards() {
+  if (!state.sessions.length) {
+    return `<div class="blank-state">no sessions</div>`;
+  }
 
-  const loginForm = document.querySelector("#login-form");
-  loginForm?.addEventListener("submit", async (event) => {
-    event.preventDefault();
-    const formData = new FormData(loginForm);
-    const passcode = String(formData.get("passcode") || "");
+  return state.sessions
+    .map((session) => {
+      const status = getSessionLabel(session);
 
-    try {
-      await fetchJson("/api/login", {
-        method: "POST",
-        body: JSON.stringify({ passcode }),
-      });
+      return `
+        <article class="session-card ${session.id === state.activeSessionId ? "is-active" : ""}" data-session-id="${session.id}">
+          <div class="session-main">
+            <div class="session-name">${escapeHtml(session.name)}</div>
+            <div class="session-subtitle">${escapeHtml(session.providerLabel)}</div>
+          </div>
+          <div class="session-side">
+            <span class="session-status ${status.className}">${status.text}</span>
+            <button class="danger-button" type="button" data-delete-session="${session.id}">del</button>
+          </div>
+          <div class="session-time">${relativeTime(session.lastOutputAt)}</div>
+        </article>
+      `;
+    })
+    .join("");
+}
 
-      await bootstrapApp();
-    } catch (error) {
-      renderLogin({ errorMessage: error.message, hint });
-    }
-  });
+function renderPortCards() {
+  if (!state.ports.length) {
+    return `<div class="blank-state">no ports</div>`;
+  }
+
+  return state.ports
+    .map(
+      (port) => `
+        <a class="port-card" href="${escapeHtml(port.proxyPath)}" target="_blank" rel="noreferrer">
+          <span class="port-number">${port.port}</span>
+          <span class="port-meta">${escapeHtml(port.command)} · ${escapeHtml(port.hosts.join(", "))}</span>
+        </a>
+      `,
+    )
+    .join("");
 }
 
 function renderShell() {
@@ -140,86 +145,66 @@ function renderShell() {
     .map(
       (provider) => `
         <option value="${provider.id}" ${provider.id === state.defaultProviderId ? "selected" : ""} ${provider.available ? "" : "disabled"}>
-          ${escapeHtml(provider.label)}${provider.available ? "" : " (missing)"}
+          ${escapeHtml(provider.label)}${provider.available ? "" : " · missing"}
         </option>
       `,
     )
     .join("");
 
   const activeSession = state.sessions.find((session) => session.id === state.activeSessionId) || null;
-  const toolbarTitle = activeSession
-    ? `${activeSession.name} · ${activeSession.providerLabel}`
-    : "Pick or create a session";
-  const toolbarMeta = activeSession
-    ? `${activeSession.cwd} · ${activeSession.status === "exited" ? `exit ${activeSession.exitCode ?? 0}` : "interactive"}`
-    : "Each session is a live PTY on this laptop";
 
   app.innerHTML = `
     <main class="screen app-shell">
       <aside class="sidebar ${state.sidebarOpen ? "is-open" : ""}" data-sidebar>
         <div class="sidebar-header">
-          <div class="sidebar-copy">
-            <div class="status-pill">Host Online</div>
-            <h1 class="app-title">Remote Vibes</h1>
-            <div class="subtle">Browser terminals for Claude, Codex, Gemini, or a plain shell.</div>
-          </div>
-          <button class="menu-button hidden-desktop" type="button" id="close-sidebar">Close</button>
+          <div class="brand">rv</div>
+          <button class="icon-button hidden-desktop" type="button" id="close-sidebar">×</button>
         </div>
 
         <form class="session-form" id="session-form">
-          <div class="section-label">New Window</div>
           <select name="providerId">${providerOptions}</select>
-          <input type="text" name="cwd" placeholder="Working directory" value="${escapeHtml(state.defaultCwd || "")}" />
-          <input type="text" name="name" placeholder="Optional label" />
-          <button class="primary-button" type="submit">Create Session</button>
-          <div class="subtle">Default launches Claude if it is installed.</div>
+          <input type="text" name="cwd" value="${escapeHtml(state.defaultCwd || "")}" placeholder="cwd" />
+          <div class="inline-form">
+            <input type="text" name="name" placeholder="name" />
+            <button class="primary-button" type="submit">+</button>
+          </div>
         </form>
 
-        <section class="sessions-list" id="sessions-list">
-          ${renderSessionCards()}
+        <section class="sidebar-section">
+          <div class="section-head">
+            <span>sessions</span>
+          </div>
+          <div class="list-shell" id="sessions-list">${renderSessionCards()}</div>
         </section>
 
-        <footer class="sidebar-footer">
-          <div>Phone-friendly over Tailscale.</div>
-          <div>Shells run locally on this host.</div>
-        </footer>
+        <section class="sidebar-section">
+          <div class="section-head">
+            <span>ports</span>
+            <button class="icon-button" type="button" id="refresh-ports">↻</button>
+          </div>
+          <div class="list-shell" id="ports-list">${renderPortCards()}</div>
+        </section>
       </aside>
 
       <section class="terminal-panel">
         <div class="terminal-toolbar">
-          <div>
-            <button class="menu-button hidden-desktop" type="button" id="open-sidebar">Sessions</button>
-            <strong id="toolbar-title">${escapeHtml(toolbarTitle)}</strong>
-            <div class="terminal-meta" id="toolbar-meta">${escapeHtml(toolbarMeta)}</div>
+          <button class="icon-button hidden-desktop" type="button" id="open-sidebar">≡</button>
+          <div class="terminal-copy">
+            <strong id="toolbar-title">${escapeHtml(activeSession ? activeSession.name : "new session")}</strong>
+            <div class="terminal-meta" id="toolbar-meta">${escapeHtml(activeSession ? activeSession.cwd : state.defaultCwd)}</div>
           </div>
-          <div>
-            <button class="ghost-button" type="button" id="refresh-sessions">Refresh</button>
-            <button class="ghost-button" type="button" id="logout-button">Lock</button>
-          </div>
+          <button class="icon-button" type="button" id="refresh-sessions">↻</button>
         </div>
 
         <div class="terminal-stack">
           <div class="terminal-mount" id="terminal-mount"></div>
-          <div class="empty-state ${activeSession ? "hidden" : ""}" id="empty-state">
-            <div class="empty-state-card">
-              <h2 class="app-title">Open a shell from the sidebar</h2>
-              <div class="subtle">
-                Choose a provider, create a window, and this browser becomes a live terminal for the host laptop.
-              </div>
-            </div>
-          </div>
+          <div class="empty-state ${activeSession ? "hidden" : ""}" id="empty-state">new session</div>
         </div>
 
         <form class="composer-bar" id="composer-form">
-          <input
-            id="quick-command"
-            type="text"
-            autocomplete="off"
-            placeholder="Quick command or dictation input"
-            ${activeSession ? "" : "disabled"}
-          />
-          <button class="ghost-button" type="button" id="ctrl-c-button" ${activeSession ? "" : "disabled"}>Ctrl+C</button>
-          <button class="primary-button" type="submit" id="send-button" ${activeSession ? "" : "disabled"}>Send</button>
+          <input id="quick-command" type="text" autocomplete="off" placeholder="send line" ${activeSession ? "" : "disabled"} />
+          <button class="ghost-button" type="button" id="ctrl-c-button" ${activeSession ? "" : "disabled"}>^C</button>
+          <button class="primary-button" type="submit" id="send-button" ${activeSession ? "" : "disabled"}>↵</button>
         </form>
       </section>
     </main>
@@ -230,40 +215,7 @@ function renderShell() {
   refreshShellUi();
 }
 
-function renderSessionCards() {
-  if (!state.sessions.length) {
-    return `
-      <div class="session-form">
-        <div class="section-label">No windows yet</div>
-        <div class="subtle">Create your first session above.</div>
-      </div>
-    `;
-  }
-
-  return state.sessions
-    .map((session) => {
-      const status = getSessionLabel(session);
-
-      return `
-        <article class="session-card ${session.id === state.activeSessionId ? "is-active" : ""}" data-session-id="${session.id}">
-          <div class="session-card-top">
-            <div>
-              <h2 class="session-name">${escapeHtml(session.name)}</h2>
-              <div class="session-provider">${escapeHtml(session.providerLabel)}</div>
-            </div>
-            <span class="session-status ${status.className}">${status.text}</span>
-          </div>
-          <div class="session-meta">
-            <span class="session-time">${relativeTime(session.lastOutputAt)}</span>
-            <button class="danger-button" type="button" data-delete-session="${session.id}">Delete</button>
-          </div>
-        </article>
-      `;
-    })
-    .join("");
-}
-
-function bindSessionListEvents() {
+function bindSessionEvents() {
   document.querySelectorAll("[data-session-id]").forEach((element) => {
     element.addEventListener("click", (event) => {
       if (event.target.closest("[data-delete-session]")) {
@@ -336,7 +288,8 @@ function bindShellEvents() {
     }
   });
 
-  bindSessionListEvents();
+  bindSessionEvents();
+
   document.querySelector("#composer-form")?.addEventListener("submit", (event) => {
     event.preventDefault();
 
@@ -363,19 +316,7 @@ function bindShellEvents() {
   });
 
   document.querySelector("#refresh-sessions")?.addEventListener("click", () => loadSessions());
-  document.querySelector("#logout-button")?.addEventListener("click", async () => {
-    try {
-      closeWebsocket();
-      await fetchJson("/api/logout", { method: "POST" });
-      if (state.sessionPollTimer) {
-        window.clearInterval(state.sessionPollTimer);
-      }
-      renderLogin();
-    } catch (error) {
-      window.alert(error.message);
-    }
-  });
-
+  document.querySelector("#refresh-ports")?.addEventListener("click", () => loadPorts());
   document.querySelector("#open-sidebar")?.addEventListener("click", () => setSidebarOpen(true));
   document.querySelector("#close-sidebar")?.addEventListener("click", () => setSidebarOpen(false));
 }
@@ -400,32 +341,31 @@ function mountTerminal() {
 
   state.terminal = new Terminal({
     allowProposedApi: false,
-    convertEol: false,
     cursorBlink: true,
     fontFamily: '"IBM Plex Mono", monospace',
     fontSize: 14,
-    lineHeight: 1.2,
+    lineHeight: 1.18,
     macOptionIsMeta: true,
     scrollback: 5000,
     theme: {
-      background: "#060708",
-      foreground: "#f4f2ed",
+      background: "#090b0d",
+      foreground: "#f3efe8",
       cursor: "#6ae3c6",
       black: "#111315",
       red: "#ff7f79",
       green: "#6ae3c6",
       yellow: "#f0c674",
-      blue: "#87b8ff",
+      blue: "#8fb9ff",
       magenta: "#d3a6ff",
-      cyan: "#5ecac2",
-      white: "#f4f2ed",
+      cyan: "#7fe0d4",
+      white: "#f3efe8",
       brightBlack: "#6a7176",
       brightRed: "#ff9f99",
       brightGreen: "#8ff1d8",
       brightYellow: "#f6d58e",
       brightBlue: "#add0ff",
       brightMagenta: "#e2c2ff",
-      brightCyan: "#9fe7df",
+      brightCyan: "#a6efe6",
       brightWhite: "#ffffff",
     },
   });
@@ -475,8 +415,7 @@ function sendResize() {
 }
 
 function connectToSession(sessionId) {
-  const terminal = state.terminal;
-  if (!terminal || !sessionId) {
+  if (!state.terminal || !sessionId) {
     return;
   }
 
@@ -489,31 +428,33 @@ function connectToSession(sessionId) {
   }
 
   closeWebsocket();
-  terminal.reset();
+  state.terminal.reset();
   state.connectedSessionId = sessionId;
 
   const protocol = window.location.protocol === "https:" ? "wss" : "ws";
-  state.websocket = new WebSocket(`${protocol}://${window.location.host}/ws?sessionId=${encodeURIComponent(sessionId)}`);
+  state.websocket = new WebSocket(
+    `${protocol}://${window.location.host}/ws?sessionId=${encodeURIComponent(sessionId)}`,
+  );
 
   state.websocket.addEventListener("open", () => {
     if (state.fitAddon) {
       state.fitAddon.fit();
     }
     sendResize();
-    terminal.focus();
+    state.terminal.focus();
   });
 
   state.websocket.addEventListener("message", (event) => {
     const payload = JSON.parse(event.data);
 
     if (payload.type === "snapshot") {
-      terminal.write(payload.data || "");
+      state.terminal.write(payload.data || "");
       updateSession(payload.session);
       return;
     }
 
     if (payload.type === "output") {
-      terminal.write(payload.data || "");
+      state.terminal.write(payload.data || "");
       return;
     }
 
@@ -535,7 +476,7 @@ function connectToSession(sessionId) {
     }
 
     if (payload.type === "error") {
-      terminal.writeln(`\r\n[remote-vibes] ${payload.message}`);
+      state.terminal.writeln(`\r\n[remote-vibes] ${payload.message}`);
     }
   });
 }
@@ -552,10 +493,15 @@ function updateSession(session) {
 }
 
 function refreshShellUi() {
-  const list = document.querySelector("#sessions-list");
-  if (list) {
-    list.innerHTML = renderSessionCards();
-    bindSessionListEvents();
+  const sessionsList = document.querySelector("#sessions-list");
+  const portsList = document.querySelector("#ports-list");
+  if (sessionsList) {
+    sessionsList.innerHTML = renderSessionCards();
+    bindSessionEvents();
+  }
+
+  if (portsList) {
+    portsList.innerHTML = renderPortCards();
   }
 
   const activeSession = state.sessions.find((session) => session.id === state.activeSessionId) || null;
@@ -568,15 +514,13 @@ function refreshShellUi() {
   const canSend = Boolean(activeSession && activeSession.status !== "exited");
 
   if (title) {
-    title.textContent = activeSession
-      ? `${activeSession.name} · ${activeSession.providerLabel}`
-      : "Pick or create a session";
+    title.textContent = activeSession ? activeSession.name : "new session";
   }
 
   if (meta) {
     meta.textContent = activeSession
-      ? `${activeSession.cwd} · ${activeSession.status === "exited" ? `exit ${activeSession.exitCode ?? 0}` : "interactive"}`
-      : "Each session is a live PTY on this laptop";
+      ? `${activeSession.providerLabel} · ${activeSession.cwd}`
+      : state.defaultCwd;
   }
 
   if (emptyState) {
@@ -631,49 +575,42 @@ async function loadSessions() {
       connectToSession(state.activeSessionId);
     }
   } catch (error) {
-    if (error.status === 401) {
-      closeWebsocket();
-      if (state.sessionPollTimer) {
-        window.clearInterval(state.sessionPollTimer);
-      }
-      renderLogin();
-      return;
-    }
+    console.error(error);
+  }
+}
 
+async function loadPorts() {
+  try {
+    const payload = await fetchJson("/api/ports");
+    state.ports = payload.ports;
+    refreshShellUi();
+  } catch (error) {
     console.error(error);
   }
 }
 
 async function bootstrapApp() {
-  try {
-    const payload = await fetchJson("/api/state");
-    state.providers = payload.providers;
-    state.sessions = payload.sessions;
-    state.defaultCwd = payload.cwd;
-    state.defaultProviderId = payload.defaultProviderId;
-    state.activeSessionId = payload.sessions[0]?.id ?? null;
-    renderShell();
+  const payload = await fetchJson("/api/state");
+  state.providers = payload.providers;
+  state.sessions = payload.sessions;
+  state.ports = payload.ports ?? [];
+  state.defaultCwd = payload.cwd;
+  state.defaultProviderId = payload.defaultProviderId;
+  state.activeSessionId = payload.sessions[0]?.id ?? null;
+  renderShell();
 
-    if (state.activeSessionId) {
-      connectToSession(state.activeSessionId);
-    }
-
-    if (state.sessionPollTimer) {
-      window.clearInterval(state.sessionPollTimer);
-    }
-
-    state.sessionPollTimer = window.setInterval(() => {
-      loadSessions();
-    }, 2500);
-  } catch (error) {
-    if (error.status === 401) {
-      const publicConfig = await fetchJson("/api/public-config");
-      renderLogin({ hint: publicConfig.passcodeHint });
-      return;
-    }
-
-    renderLogin({ errorMessage: error.message });
+  if (state.activeSessionId) {
+    connectToSession(state.activeSessionId);
   }
+
+  if (state.pollTimer) {
+    window.clearInterval(state.pollTimer);
+  }
+
+  state.pollTimer = window.setInterval(() => {
+    loadSessions();
+    loadPorts();
+  }, 3000);
 }
 
 bootstrapApp();

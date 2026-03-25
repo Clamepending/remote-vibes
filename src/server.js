@@ -11,7 +11,6 @@ for (const signal of ["SIGINT", "SIGTERM"]) {
 
 console.log("");
 console.log("Remote Vibes is live.");
-console.log(`Passcode: ${remoteVibes.config.passcode}`);
 console.log(`Workspace: ${remoteVibes.config.cwd}`);
 console.log("Available URLs:");
 
@@ -23,5 +22,7 @@ console.log("Providers:");
 for (const provider of remoteVibes.config.providers) {
   console.log(`- ${provider.label}: ${provider.available ? "available" : "missing"}`);
 }
+console.log("Port proxy:");
+console.log("- /proxy/<port>/");
 
 console.log("");

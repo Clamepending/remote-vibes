@@ -1,4 +1,5 @@
 import assert from "node:assert/strict";
+import http from "node:http";
 import os from "node:os";
 import path from "node:path";
 import test from "node:test";
@@ -6,27 +7,11 @@ import { once } from "node:events";
 import { WebSocket } from "ws";
 import { createRemoteVibesApp } from "../src/create-app.js";
 
-async function login(baseUrl, passcode) {
-  const response = await fetch(`${baseUrl}/api/login`, {
-    method: "POST",
-    headers: {
-      "Content-Type": "application/json",
-    },
-    body: JSON.stringify({ passcode }),
-  });
-
-  assert.equal(response.status, 200);
-  const cookieHeader = response.headers.get("set-cookie");
-  assert.ok(cookieHeader);
-  return cookieHeader.split(";")[0];
-}
-
 async function startApp() {
   const app = await createRemoteVibesApp({
     host: "127.0.0.1",
     port: 0,
     cwd: process.cwd(),
-    passcode: "test-passcode",
   });
 
   return {
@@ -35,26 +20,30 @@ async function startApp() {
   };
 }
 
-test("requires login before state is visible", async () => {
+async function waitForPort(baseUrl, port) {
+  for (let attempt = 0; attempt < 20; attempt += 1) {
+    const response = await fetch(`${baseUrl}/api/ports`);
+    const payload = await response.json();
+
+    if (payload.ports.some((entry) => entry.port === port)) {
+      return payload.ports;
+    }
+
+    await new Promise((resolve) => setTimeout(resolve, 100));
+  }
+
+  throw new Error(`Port ${port} never appeared in /api/ports.`);
+}
+
+test("state is available without authentication", async () => {
   const { app, baseUrl } = await startApp();
 
   try {
-    const unauthenticated = await fetch(`${baseUrl}/api/state`);
-    assert.equal(unauthenticated.status, 401);
+    const response = await fetch(`${baseUrl}/api/state`);
+    assert.equal(response.status, 200);
 
-    const publicConfig = await fetch(`${baseUrl}/api/public-config`).then((response) => response.json());
-    assert.equal(publicConfig.appName, "Remote Vibes");
-    assert.equal(publicConfig.passcodeHint, "te");
-
-    const cookie = await login(baseUrl, "test-passcode");
-    const stateResponse = await fetch(`${baseUrl}/api/state`, {
-      headers: {
-        Cookie: cookie,
-      },
-    });
-
-    assert.equal(stateResponse.status, 200);
-    const state = await stateResponse.json();
+    const state = await response.json();
+    assert.equal(state.appName, "Remote Vibes");
     assert.equal(state.defaultProviderId, "claude");
     assert.ok(state.providers.some((provider) => provider.id === "shell" && provider.available));
   } finally {
@@ -66,13 +55,11 @@ test("shell session streams websocket output and honors custom cwd", async () =>
   const { app, baseUrl } = await startApp();
 
   try {
-    const cookie = await login(baseUrl, "test-passcode");
     const requestedCwd = path.join(os.tmpdir());
     const createResponse = await fetch(`${baseUrl}/api/sessions`, {
       method: "POST",
       headers: {
         "Content-Type": "application/json",
-        Cookie: cookie,
       },
       body: JSON.stringify({
         providerId: "shell",
@@ -85,12 +72,7 @@ test("shell session streams websocket output and honors custom cwd", async () =>
     const { session } = await createResponse.json();
     assert.equal(session.cwd, requestedCwd);
 
-    const websocket = new WebSocket(`${baseUrl.replace("http", "ws")}/ws?sessionId=${session.id}`, {
-      headers: {
-        Cookie: cookie,
-      },
-    });
-
+    const websocket = new WebSocket(`${baseUrl.replace("http", "ws")}/ws?sessionId=${session.id}`);
     const marker = "REMOTE_VIBES_AUTOMATED_SMOKE";
     const output = await new Promise((resolve, reject) => {
       let combined = "";
@@ -152,9 +134,6 @@ test("shell session streams websocket output and honors custom cwd", async () =>
 
     const deleteResponse = await fetch(`${baseUrl}/api/sessions/${session.id}`, {
       method: "DELETE",
-      headers: {
-        Cookie: cookie,
-      },
     });
 
     assert.equal(deleteResponse.status, 200);
@@ -163,16 +142,38 @@ test("shell session streams websocket output and honors custom cwd", async () =>
   }
 });
 
+test("ports are discoverable and proxy through localhost", async () => {
+  const previewServer = http.createServer((request, response) => {
+    response.writeHead(200, { "Content-Type": "text/plain" });
+    response.end(`preview:${request.url}`);
+  });
+
+  await new Promise((resolve) => previewServer.listen(0, "127.0.0.1", resolve));
+  const previewPort = previewServer.address().port;
+
+  const { app, baseUrl } = await startApp();
+
+  try {
+    const ports = await waitForPort(baseUrl, previewPort);
+    assert.ok(ports.some((entry) => entry.port === previewPort));
+
+    const proxyResponse = await fetch(`${baseUrl}/proxy/${previewPort}/hello`);
+    assert.equal(proxyResponse.status, 200);
+    assert.equal(await proxyResponse.text(), "preview:/hello");
+  } finally {
+    await app.close();
+    await new Promise((resolve) => previewServer.close(resolve));
+  }
+});
+
 test("rejects an invalid working directory", async () => {
   const { app, baseUrl } = await startApp();
 
   try {
-    const cookie = await login(baseUrl, "test-passcode");
     const response = await fetch(`${baseUrl}/api/sessions`, {
       method: "POST",
       headers: {
         "Content-Type": "application/json",
-        Cookie: cookie,
       },
       body: JSON.stringify({
         providerId: "shell",
