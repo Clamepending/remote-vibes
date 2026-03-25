@@ -396,6 +396,20 @@ select {
   height: 100%;
 }
 
+.terminal-mount .xterm {
+  font-variant-ligatures: none;
+}
+
+.terminal-mount .xterm-viewport {
+  overscroll-behavior: contain;
+  touch-action: none;
+  -webkit-overflow-scrolling: touch;
+}
+
+.terminal-mount .xterm-screen {
+  text-rendering: optimizeSpeed;
+}
+
 .empty-state {
   grid-area: 1 / 1;
   display: grid;

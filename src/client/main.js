@@ -1,7 +1,12 @@
 import { Terminal } from "xterm";
 import { FitAddon } from "@xterm/addon-fit";
+import { CanvasAddon } from "xterm-addon-canvas";
 
 const app = document.querySelector("#app");
+const TOUCH_TAP_SLOP_PX = 10;
+const TOUCH_MOMENTUM_MIN_VELOCITY = 0.08;
+const TOUCH_MOMENTUM_DECAY = 0.92;
+const TOUCH_MOMENTUM_MAX_FRAME_MS = 32;
 
 const state = {
   providers: [],
@@ -21,6 +26,8 @@ const state = {
   pendingTerminalOutput: "",
   terminalOutputFrame: null,
   sessionRefreshTimer: null,
+  terminalInteractionCleanup: null,
+  canvasAddon: null,
 };
 
 function escapeHtml(value) {
@@ -103,6 +110,11 @@ function fitTerminalSoon() {
       sendResize();
     });
   });
+}
+
+function cleanupTerminalInteractions() {
+  state.terminalInteractionCleanup?.();
+  state.terminalInteractionCleanup = null;
 }
 
 function clearPendingTerminalOutput() {
@@ -468,24 +480,203 @@ function observeTerminalMount(mount) {
   state.terminalResizeObserver.observe(mount);
 }
 
+function loadCanvasRenderer() {
+  if (!state.terminal) {
+    return;
+  }
+
+  state.canvasAddon = null;
+
+  try {
+    const canvasAddon = new CanvasAddon();
+    state.terminal.loadAddon(canvasAddon);
+    state.canvasAddon = canvasAddon;
+  } catch (error) {
+    console.warn("[remote-vibes] canvas renderer unavailable", error);
+  }
+}
+
+function setupTerminalInteractions(mount) {
+  cleanupTerminalInteractions();
+
+  const viewport = mount.querySelector(".xterm-viewport");
+  if (!viewport) {
+    return;
+  }
+
+  const touchState = {
+    lastTime: 0,
+    lastY: 0,
+    maxDistance: 0,
+    moved: false,
+    startY: 0,
+    velocity: 0,
+  };
+
+  let momentumFrame = null;
+  let momentumVelocity = 0;
+  let momentumLastTs = 0;
+
+  const stopMomentum = () => {
+    if (!momentumFrame) {
+      return;
+    }
+
+    window.cancelAnimationFrame(momentumFrame);
+    momentumFrame = null;
+  };
+
+  const startMomentum = () => {
+    if (Math.abs(momentumVelocity) < TOUCH_MOMENTUM_MIN_VELOCITY) {
+      momentumVelocity = 0;
+      return;
+    }
+
+    stopMomentum();
+
+    const step = (timestamp) => {
+      const deltaMs = Math.min(
+        TOUCH_MOMENTUM_MAX_FRAME_MS,
+        Math.max(1, timestamp - (momentumLastTs || timestamp - 16)),
+      );
+      momentumLastTs = timestamp;
+
+      const previousScrollTop = viewport.scrollTop;
+      viewport.scrollTop += momentumVelocity * deltaMs;
+
+      if (viewport.scrollTop === previousScrollTop) {
+        momentumVelocity = 0;
+      } else {
+        momentumVelocity *= Math.pow(TOUCH_MOMENTUM_DECAY, deltaMs / 16);
+      }
+
+      if (Math.abs(momentumVelocity) < TOUCH_MOMENTUM_MIN_VELOCITY) {
+        momentumFrame = null;
+        momentumVelocity = 0;
+        return;
+      }
+
+      momentumFrame = window.requestAnimationFrame(step);
+    };
+
+    momentumFrame = window.requestAnimationFrame(step);
+  };
+
+  const handlePointerDown = (event) => {
+    if (event.pointerType && event.pointerType !== "mouse") {
+      return;
+    }
+
+    state.terminal?.focus();
+  };
+
+  const handleTouchStart = (event) => {
+    if (event.touches.length !== 1) {
+      return;
+    }
+
+    stopMomentum();
+    momentumVelocity = 0;
+
+    const touch = event.touches[0];
+    touchState.startY = touch.pageY;
+    touchState.lastY = touch.pageY;
+    touchState.lastTime = event.timeStamp || performance.now();
+    touchState.maxDistance = 0;
+    touchState.moved = false;
+    touchState.velocity = 0;
+  };
+
+  const handleTouchMove = (event) => {
+    if (event.touches.length !== 1) {
+      return;
+    }
+
+    const touch = event.touches[0];
+    const timestamp = event.timeStamp || performance.now();
+    const deltaY = touchState.lastY - touch.pageY;
+    const deltaMs = Math.max(1, timestamp - touchState.lastTime);
+    touchState.lastY = touch.pageY;
+    touchState.lastTime = timestamp;
+    touchState.maxDistance = Math.max(touchState.maxDistance, Math.abs(touch.pageY - touchState.startY));
+
+    if (Math.abs(deltaY) < 0.25 && touchState.maxDistance < TOUCH_TAP_SLOP_PX) {
+      return;
+    }
+
+    touchState.moved = true;
+    touchState.velocity = deltaY / deltaMs;
+    viewport.scrollTop += deltaY;
+    event.preventDefault();
+    event.stopPropagation();
+  };
+
+  const finishTouch = () => {
+    if (!touchState.moved && touchState.maxDistance < TOUCH_TAP_SLOP_PX) {
+      state.terminal?.focus();
+      return;
+    }
+
+    momentumVelocity = touchState.velocity;
+    momentumLastTs = 0;
+    startMomentum();
+  };
+
+  const handleTouchEnd = (event) => {
+    if (event.changedTouches.length) {
+      event.stopPropagation();
+    }
+
+    finishTouch();
+  };
+
+  const handleTouchCancel = () => {
+    touchState.moved = false;
+    touchState.maxDistance = 0;
+    touchState.velocity = 0;
+    stopMomentum();
+  };
+
+  mount.addEventListener("pointerdown", handlePointerDown);
+  viewport.addEventListener("touchstart", handleTouchStart, { capture: true, passive: true });
+  viewport.addEventListener("touchmove", handleTouchMove, { capture: true, passive: false });
+  viewport.addEventListener("touchend", handleTouchEnd, { capture: true, passive: true });
+  viewport.addEventListener("touchcancel", handleTouchCancel, { capture: true, passive: true });
+
+  state.terminalInteractionCleanup = () => {
+    stopMomentum();
+    mount.removeEventListener("pointerdown", handlePointerDown);
+    viewport.removeEventListener("touchstart", handleTouchStart, true);
+    viewport.removeEventListener("touchmove", handleTouchMove, true);
+    viewport.removeEventListener("touchend", handleTouchEnd, true);
+    viewport.removeEventListener("touchcancel", handleTouchCancel, true);
+  };
+}
+
 function mountTerminal() {
   const mount = document.querySelector("#terminal-mount");
   if (!mount) {
     return;
   }
 
+  cleanupTerminalInteractions();
   observeTerminalMount(mount);
   state.terminal?.dispose();
+  state.canvasAddon = null;
   closeWebsocket();
 
   state.terminal = new Terminal({
     allowProposedApi: false,
+    allowTransparency: false,
     cursorBlink: true,
+    customGlyphs: true,
     fontFamily: '"IBM Plex Mono", monospace',
     fontSize: 14,
     lineHeight: 1.18,
     macOptionIsMeta: true,
+    scrollSensitivity: 1.35,
     scrollback: 5000,
+    smoothScrollDuration: 60,
     theme: {
       background: "#090b0d",
       foreground: "#f3efe8",
@@ -512,17 +703,20 @@ function mountTerminal() {
   state.fitAddon = new FitAddon();
   state.terminal.loadAddon(state.fitAddon);
   state.terminal.open(mount);
+  loadCanvasRenderer();
+  setupTerminalInteractions(mount);
   fitTerminalSoon();
   window.setTimeout(() => fitTerminalSoon(), 60);
   window.setTimeout(() => fitTerminalSoon(), 220);
+  window.setTimeout(() => {
+    state.terminal?.refresh(0, state.terminal.rows - 1);
+  }, 260);
   document.fonts?.ready
     ?.then(() => {
       fitTerminalSoon();
+      state.terminal?.refresh(0, state.terminal.rows - 1);
     })
     .catch(() => {});
-  mount.addEventListener("pointerdown", () => {
-    state.terminal?.focus();
-  });
 
   state.terminal.onData((data) => {
     if (!state.websocket || state.websocket.readyState !== WebSocket.OPEN) {
