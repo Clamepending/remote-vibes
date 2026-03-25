@@ -17,6 +17,7 @@ const state = {
   pollTimer: null,
   resizeBound: false,
   sidebarOpen: false,
+  terminalResizeObserver: null,
 };
 
 function escapeHtml(value) {
@@ -86,7 +87,12 @@ function setSidebarOpen(nextValue) {
 function fitTerminalSoon() {
   window.requestAnimationFrame(() => {
     window.requestAnimationFrame(() => {
-      if (!state.fitAddon || !state.terminal) {
+      const mount = document.querySelector("#terminal-mount");
+      if (!state.fitAddon || !state.terminal || !mount) {
+        return;
+      }
+
+      if (mount.clientWidth < 20 || mount.clientHeight < 20) {
         return;
       }
 
@@ -333,12 +339,28 @@ function closeWebsocket() {
   state.connectedSessionId = null;
 }
 
+function observeTerminalMount(mount) {
+  state.terminalResizeObserver?.disconnect();
+  state.terminalResizeObserver = null;
+
+  if (!mount || typeof ResizeObserver === "undefined") {
+    return;
+  }
+
+  state.terminalResizeObserver = new ResizeObserver(() => {
+    fitTerminalSoon();
+  });
+
+  state.terminalResizeObserver.observe(mount);
+}
+
 function mountTerminal() {
   const mount = document.querySelector("#terminal-mount");
   if (!mount) {
     return;
   }
 
+  observeTerminalMount(mount);
   state.terminal?.dispose();
   closeWebsocket();
 
@@ -377,6 +399,13 @@ function mountTerminal() {
   state.terminal.loadAddon(state.fitAddon);
   state.terminal.open(mount);
   fitTerminalSoon();
+  window.setTimeout(() => fitTerminalSoon(), 60);
+  window.setTimeout(() => fitTerminalSoon(), 220);
+  document.fonts?.ready
+    ?.then(() => {
+      fitTerminalSoon();
+    })
+    .catch(() => {});
   mount.addEventListener("pointerdown", () => {
     state.terminal?.focus();
   });
@@ -394,6 +423,11 @@ function mountTerminal() {
     window.addEventListener("resize", handleResize);
     window.addEventListener("orientationchange", handleResize);
     window.visualViewport?.addEventListener("resize", handleResize);
+    document.addEventListener("visibilitychange", () => {
+      if (document.visibilityState === "visible") {
+        fitTerminalSoon();
+      }
+    });
     state.resizeBound = true;
   }
 
