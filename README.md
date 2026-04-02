@@ -17,6 +17,14 @@ Use that gist URL directly. The repo `raw.githubusercontent.com/.../install.sh` 
 
 You can access any localhost ports by clicking on it in the sidebar.
 
+## Universal Approximation Theorem Demo
+
+Interactive visualization of how a sum of ReLU units approximates any continuous function via SGD. Once the server is running, open:
+
+```
+http://localhost:4123/universal-approximation.html
+```
+
 tips:
 - Press the "shift+tab" button on the top right to swap to bypass-permisisons mode to not have to approve things all the time.
 - Use builtin voice to text to just speak and send commands

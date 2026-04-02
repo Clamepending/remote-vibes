@@ -1,0 +1,569 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Universal Approximation — SGD Visualization</title>
+  <style>
+    :root {
+      --bg: #0d1117;
+      --surface: #161b22;
+      --border: #30363d;
+      --text: #c9d1d9;
+      --text-dim: #8b949e;
+      --accent: #58a6ff;
+      --pink: #f778ba;
+      --yellow: #e3b341;
+      --green: #3fb950;
+    }
+    * { margin: 0; padding: 0; box-sizing: border-box; }
+    body {
+      font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Helvetica, Arial, sans-serif;
+      background: var(--bg);
+      color: var(--text);
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      min-height: 100vh;
+      padding: 32px 16px;
+    }
+    h1 {
+      font-size: 1.5rem;
+      font-weight: 600;
+      letter-spacing: -0.02em;
+      margin-bottom: 4px;
+    }
+    .subtitle {
+      font-size: 0.85rem;
+      color: var(--text-dim);
+      margin-bottom: 24px;
+    }
+    .main {
+      display: flex;
+      gap: 24px;
+      align-items: flex-start;
+      flex-wrap: wrap;
+      justify-content: center;
+    }
+    canvas {
+      background: var(--surface);
+      border: 1px solid var(--border);
+      border-radius: 10px;
+    }
+    .panel {
+      background: var(--surface);
+      border: 1px solid var(--border);
+      border-radius: 10px;
+      padding: 20px;
+      width: 240px;
+      display: flex;
+      flex-direction: column;
+      gap: 16px;
+    }
+    .panel h2 {
+      font-size: 0.8rem;
+      text-transform: uppercase;
+      letter-spacing: 0.08em;
+      color: var(--text-dim);
+      border-bottom: 1px solid var(--border);
+      padding-bottom: 8px;
+    }
+    .field { display: flex; flex-direction: column; gap: 4px; }
+    .field label {
+      font-size: 0.78rem;
+      color: var(--text-dim);
+      display: flex;
+      justify-content: space-between;
+    }
+    .field label .val { color: var(--accent); font-weight: 600; }
+    select, input[type=range] { width: 100%; }
+    select {
+      padding: 6px 10px;
+      border: 1px solid var(--border);
+      border-radius: 6px;
+      background: var(--bg);
+      color: var(--text);
+      font-size: 0.82rem;
+    }
+    input[type=range] {
+      accent-color: var(--accent);
+      height: 4px;
+    }
+    .btn-row { display: flex; gap: 8px; }
+    button {
+      flex: 1;
+      padding: 8px 0;
+      border: 1px solid var(--border);
+      border-radius: 6px;
+      background: var(--bg);
+      color: var(--text);
+      font-size: 0.8rem;
+      cursor: pointer;
+      transition: all 0.15s;
+      font-weight: 500;
+    }
+    button:hover { border-color: var(--accent); color: var(--accent); }
+    button.primary {
+      background: var(--accent);
+      color: var(--bg);
+      border-color: var(--accent);
+      font-weight: 600;
+    }
+    button.primary:hover { opacity: 0.85; }
+    button.danger { color: var(--pink); border-color: transparent; }
+    button.danger:hover { border-color: var(--pink); }
+    .stats {
+      font-family: 'SF Mono', SFMono-Regular, Consolas, monospace;
+      font-size: 0.75rem;
+      color: var(--text-dim);
+      line-height: 1.7;
+    }
+    .stats .val { color: var(--text); }
+    .legend {
+      display: flex;
+      flex-direction: column;
+      gap: 6px;
+      font-size: 0.78rem;
+    }
+    .legend-item { display: flex; align-items: center; gap: 8px; }
+    .legend-item .swatch {
+      width: 16px; height: 3px; border-radius: 2px; flex-shrink: 0;
+    }
+    .formula {
+      font-family: 'SF Mono', SFMono-Regular, Consolas, monospace;
+      font-size: 0.68rem;
+      color: var(--text-dim);
+      background: var(--bg);
+      border-radius: 6px;
+      padding: 10px;
+      line-height: 1.5;
+      word-break: break-all;
+      max-height: 100px;
+      overflow-y: auto;
+    }
+  </style>
+</head>
+<body>
+  <h1>Universal Approximation Theorem</h1>
+  <p class="subtitle">Watch SGD fit a sum of ReLUs to any continuous function on [0, 1]</p>
+
+  <div class="main">
+    <canvas id="canvas" width="640" height="440"></canvas>
+
+    <div class="panel">
+      <div>
+        <h2>Target function</h2>
+        <div class="field">
+          <select id="targetSelect">
+            <option value="sin">sin(2&pi;x)</option>
+            <option value="quadratic">4x(1 &minus; x)</option>
+            <option value="abs">|x &minus; 0.5| &times; 2</option>
+            <option value="step">Step</option>
+            <option value="bumps">sin(5&pi;x) &middot; 4x(1&minus;x)</option>
+          </select>
+        </div>
+      </div>
+
+      <div>
+        <h2>Network</h2>
+        <div class="field">
+          <label>Hidden units (ReLUs) <span class="val" id="numLabel">8</span></label>
+          <input type="range" id="numSlider" min="2" max="50" value="8">
+        </div>
+        <div class="field" style="margin-top:8px">
+          <label>Learning rate <span class="val" id="lrLabel">0.05</span></label>
+          <input type="range" id="lrSlider" min="-4" max="-0.3" step="0.1" value="-1.3">
+        </div>
+        <div class="field" style="margin-top:8px">
+          <label>Speed (steps/frame) <span class="val" id="speedLabel">3</span></label>
+          <input type="range" id="speedSlider" min="1" max="20" value="3">
+        </div>
+      </div>
+
+      <div>
+        <h2>Controls</h2>
+        <div class="btn-row">
+          <button class="primary" id="playBtn">▶ Play</button>
+          <button id="stepBtn">Step</button>
+        </div>
+        <div class="btn-row" style="margin-top:6px">
+          <button id="fitBtn">Fit (exact)</button>
+          <button class="danger" id="resetBtn">Reset</button>
+        </div>
+      </div>
+
+      <div>
+        <h2>Legend</h2>
+        <div class="legend">
+          <div class="legend-item"><span class="swatch" style="background:#58a6ff"></span> Target f(x)</div>
+          <div class="legend-item"><span class="swatch" style="background:#f778ba"></span> Approximation f&#x302;(x)</div>
+          <div class="legend-item"><span class="swatch" style="background:rgba(227,179,65,0.35)"></span> Individual ReLUs</div>
+          <div class="legend-item"><span class="swatch" style="background:#3fb950; width:6px; height:6px; border-radius:50%"></span> Sampled point</div>
+        </div>
+      </div>
+
+      <div>
+        <h2>Stats</h2>
+        <div class="stats" id="stats">
+          Step: <span class="val" id="statStep">0</span><br>
+          MSE: <span class="val" id="statMSE">—</span><br>
+          Last sample x: <span class="val" id="statX">—</span>
+        </div>
+      </div>
+
+      <div>
+        <h2>Formula</h2>
+        <div class="formula" id="formula">f&#x302;(x) = 0</div>
+      </div>
+    </div>
+  </div>
+
+<script>
+const canvas = document.getElementById('canvas');
+const ctx = canvas.getContext('2d');
+const W = canvas.width, H = canvas.height;
+const pad = { l: 52, r: 16, t: 24, b: 36 };
+const pw = W - pad.l - pad.r, ph = H - pad.t - pad.b;
+
+const targets = {
+  sin:       x => Math.sin(2 * Math.PI * x),
+  quadratic: x => 4 * x * (1 - x),
+  abs:       x => Math.abs(x - 0.5) * 2,
+  step:      x => x < 0.3 ? 0 : x < 0.7 ? 1 : 0.3,
+  bumps:     x => Math.sin(5 * Math.PI * x) * x * (1 - x) * 4,
+};
+
+let targetKey = 'sin';
+let numRelus = 8;
+let lr = 0.05;
+let stepsPerFrame = 3;
+let weights = [];   // a_i coefficients
+let biases = [];    // b_i breakpoints (fixed, evenly spaced)
+let biasTerm = 0;   // constant bias
+let step = 0;
+let playing = false;
+let animId = null;
+let lastSampleX = null;
+let lastSampleTarget = null;
+let lastSamplePred = null;
+
+function relu(v) { return v > 0 ? v : 0; }
+
+function evalNet(x) {
+  let s = biasTerm;
+  for (let i = 0; i < weights.length; i++) s += weights[i] * relu(x - biases[i]);
+  return s;
+}
+
+function initNetwork(n) {
+  numRelus = n;
+  weights = new Array(n).fill(0);
+  biases = Array.from({ length: n }, (_, i) => i / n);
+  biasTerm = 0;
+  step = 0;
+  lastSampleX = null;
+}
+
+// SGD: sample random x, compute gradient of (f(x) - fhat(x))^2, update
+function sgdStep() {
+  const target = targets[targetKey];
+  const x = Math.random();
+  const y = target(x);
+  const pred = evalNet(x);
+  const err = pred - y; // d/dw of 0.5*(pred-y)^2 = err
+
+  // Gradient for each weight: err * relu(x - b_i)
+  for (let i = 0; i < weights.length; i++) {
+    const feat = relu(x - biases[i]);
+    weights[i] -= lr * err * feat;
+  }
+  // Gradient for bias term: err * 1
+  biasTerm -= lr * err;
+
+  step++;
+  lastSampleX = x;
+  lastSampleTarget = y;
+  lastSamplePred = pred;
+}
+
+// Exact fit via least squares
+function fitExact() {
+  const target = targets[targetKey];
+  const N = 300;
+  const M = weights.length;
+  const cols = M + 1;
+  const XtX = new Float64Array(cols * cols);
+  const Xty = new Float64Array(cols);
+
+  for (let s = 0; s < N; s++) {
+    const x = s / (N - 1);
+    const y = target(x);
+    const feats = new Float64Array(cols);
+    for (let j = 0; j < M; j++) feats[j] = relu(x - biases[j]);
+    feats[M] = 1;
+    for (let i = 0; i < cols; i++) {
+      Xty[i] += feats[i] * y;
+      for (let j = 0; j < cols; j++) XtX[i * cols + j] += feats[i] * feats[j];
+    }
+  }
+  for (let i = 0; i < cols; i++) XtX[i * cols + i] += 1e-6;
+
+  const A = Array.from({ length: cols }, (_, i) => {
+    const row = new Float64Array(cols + 1);
+    for (let j = 0; j < cols; j++) row[j] = XtX[i * cols + j];
+    row[cols] = Xty[i];
+    return row;
+  });
+  for (let k = 0; k < cols; k++) {
+    let maxVal = Math.abs(A[k][k]), maxRow = k;
+    for (let i = k + 1; i < cols; i++) {
+      if (Math.abs(A[i][k]) > maxVal) { maxVal = Math.abs(A[i][k]); maxRow = i; }
+    }
+    [A[k], A[maxRow]] = [A[maxRow], A[k]];
+    const pivot = A[k][k];
+    if (Math.abs(pivot) < 1e-12) continue;
+    for (let j = k; j <= cols; j++) A[k][j] /= pivot;
+    for (let i = 0; i < cols; i++) {
+      if (i === k) continue;
+      const f = A[i][k];
+      for (let j = k; j <= cols; j++) A[i][j] -= f * A[k][j];
+    }
+  }
+  for (let i = 0; i < M; i++) weights[i] = A[i][cols];
+  biasTerm = A[M][cols];
+}
+
+function computeMSE() {
+  const target = targets[targetKey];
+  const N = 200;
+  let mse = 0;
+  for (let i = 0; i <= N; i++) {
+    const x = i / N;
+    mse += (target(x) - evalNet(x)) ** 2;
+  }
+  return mse / (N + 1);
+}
+
+function toX(x) { return pad.l + x * pw; }
+function toY(y, ymin, ymax) { return pad.t + ph - ((y - ymin) / (ymax - ymin)) * ph; }
+
+function draw() {
+  ctx.clearRect(0, 0, W, H);
+  const target = targets[targetKey];
+  const steps = 400;
+
+  // Compute y bounds
+  let ymin = Infinity, ymax = -Infinity;
+  for (let i = 0; i <= steps; i++) {
+    const x = i / steps;
+    const yt = target(x), ys = evalNet(x);
+    ymin = Math.min(ymin, yt, ys);
+    ymax = Math.max(ymax, yt, ys);
+  }
+  const margin = (ymax - ymin) * 0.12 || 0.5;
+  ymin -= margin; ymax += margin;
+
+  // Grid lines
+  ctx.strokeStyle = '#21262d';
+  ctx.lineWidth = 1;
+  for (let i = 0; i <= 4; i++) {
+    const y = pad.t + (ph * i) / 4;
+    ctx.beginPath(); ctx.moveTo(pad.l, y); ctx.lineTo(W - pad.r, y); ctx.stroke();
+    const x = pad.l + (pw * i) / 4;
+    ctx.beginPath(); ctx.moveTo(x, pad.t); ctx.lineTo(x, H - pad.b); ctx.stroke();
+  }
+
+  // Axis labels
+  ctx.fillStyle = '#484f58';
+  ctx.font = '11px -apple-system, sans-serif';
+  ctx.textAlign = 'center';
+  for (let i = 0; i <= 4; i++) {
+    ctx.fillText((i / 4).toFixed(2), pad.l + (pw * i) / 4, H - pad.b + 18);
+  }
+  ctx.textAlign = 'right';
+  for (let i = 0; i <= 4; i++) {
+    const val = ymin + ((ymax - ymin) * (4 - i)) / 4;
+    ctx.fillText(val.toFixed(2), pad.l - 8, pad.t + (ph * i) / 4 + 4);
+  }
+
+  // Individual ReLUs (faint yellow)
+  for (let k = 0; k < weights.length; k++) {
+    ctx.beginPath();
+    ctx.strokeStyle = 'rgba(227, 179, 65, 0.18)';
+    ctx.lineWidth = 1;
+    for (let i = 0; i <= steps; i++) {
+      const x = i / steps;
+      const y = weights[k] * relu(x - biases[k]);
+      const cx = toX(x), cy = toY(y, ymin, ymax);
+      i === 0 ? ctx.moveTo(cx, cy) : ctx.lineTo(cx, cy);
+    }
+    ctx.stroke();
+  }
+
+  // Error shading between curves
+  ctx.fillStyle = 'rgba(248, 81, 73, 0.06)';
+  ctx.beginPath();
+  for (let i = 0; i <= steps; i++) {
+    const x = i / steps;
+    const cy = toY(target(x), ymin, ymax);
+    i === 0 ? ctx.moveTo(toX(x), cy) : ctx.lineTo(toX(x), cy);
+  }
+  for (let i = steps; i >= 0; i--) {
+    const x = i / steps;
+    const cy = toY(evalNet(x), ymin, ymax);
+    ctx.lineTo(toX(x), cy);
+  }
+  ctx.closePath();
+  ctx.fill();
+
+  // Target function (blue)
+  ctx.beginPath();
+  ctx.strokeStyle = '#58a6ff';
+  ctx.lineWidth = 2.5;
+  ctx.setLineDash([]);
+  for (let i = 0; i <= steps; i++) {
+    const x = i / steps;
+    const cy = toY(target(x), ymin, ymax);
+    i === 0 ? ctx.moveTo(toX(x), cy) : ctx.lineTo(toX(x), cy);
+  }
+  ctx.stroke();
+
+  // Approximation (pink)
+  ctx.beginPath();
+  ctx.strokeStyle = '#f778ba';
+  ctx.lineWidth = 2.5;
+  for (let i = 0; i <= steps; i++) {
+    const x = i / steps;
+    const cy = toY(evalNet(x), ymin, ymax);
+    i === 0 ? ctx.moveTo(toX(x), cy) : ctx.lineTo(toX(x), cy);
+  }
+  ctx.stroke();
+
+  // Last sampled point
+  if (lastSampleX !== null) {
+    const sx = toX(lastSampleX);
+    // Vertical dashed line at sample
+    ctx.strokeStyle = 'rgba(63, 185, 80, 0.3)';
+    ctx.lineWidth = 1;
+    ctx.setLineDash([3, 3]);
+    ctx.beginPath();
+    ctx.moveTo(sx, pad.t);
+    ctx.lineTo(sx, H - pad.b);
+    ctx.stroke();
+    ctx.setLineDash([]);
+
+    // Target point (blue dot)
+    const tyc = toY(lastSampleTarget, ymin, ymax);
+    ctx.beginPath();
+    ctx.arc(sx, tyc, 5, 0, Math.PI * 2);
+    ctx.fillStyle = '#58a6ff';
+    ctx.fill();
+    ctx.strokeStyle = '#0d1117';
+    ctx.lineWidth = 1.5;
+    ctx.stroke();
+
+    // Prediction point (green dot)
+    const pyc = toY(lastSamplePred, ymin, ymax);
+    ctx.beginPath();
+    ctx.arc(sx, pyc, 5, 0, Math.PI * 2);
+    ctx.fillStyle = '#3fb950';
+    ctx.fill();
+    ctx.strokeStyle = '#0d1117';
+    ctx.lineWidth = 1.5;
+    ctx.stroke();
+
+    // Error line between them
+    ctx.strokeStyle = 'rgba(248, 81, 73, 0.5)';
+    ctx.lineWidth = 1.5;
+    ctx.setLineDash([2, 2]);
+    ctx.beginPath();
+    ctx.moveTo(sx, tyc);
+    ctx.lineTo(sx, pyc);
+    ctx.stroke();
+    ctx.setLineDash([]);
+  }
+
+  updateStats();
+  updateFormula();
+}
+
+function updateStats() {
+  document.getElementById('statStep').textContent = step;
+  document.getElementById('statMSE').textContent = computeMSE().toFixed(6);
+  document.getElementById('statX').textContent =
+    lastSampleX !== null ? lastSampleX.toFixed(4) : '—';
+}
+
+function updateFormula() {
+  const terms = [];
+  if (Math.abs(biasTerm) > 1e-6) terms.push(biasTerm.toFixed(3));
+  for (let i = 0; i < weights.length; i++) {
+    if (Math.abs(weights[i]) < 1e-6) continue;
+    const sign = weights[i] >= 0 ? '+' : '';
+    terms.push(`${sign}${weights[i].toFixed(2)}·ReLU(x−${biases[i].toFixed(2)})`);
+  }
+  document.getElementById('formula').textContent =
+    'f\u0302(x) = ' + (terms.length ? terms.join(' ') : '0');
+}
+
+// Animation loop
+function animate() {
+  for (let i = 0; i < stepsPerFrame; i++) sgdStep();
+  draw();
+  if (playing) animId = requestAnimationFrame(animate);
+}
+
+function togglePlay() {
+  playing = !playing;
+  document.getElementById('playBtn').textContent = playing ? '⏸ Pause' : '▶ Play';
+  if (playing) animId = requestAnimationFrame(animate);
+  else if (animId) cancelAnimationFrame(animId);
+}
+
+// Event listeners
+document.getElementById('playBtn').addEventListener('click', togglePlay);
+
+document.getElementById('stepBtn').addEventListener('click', () => {
+  sgdStep();
+  draw();
+});
+
+document.getElementById('fitBtn').addEventListener('click', () => {
+  fitExact();
+  draw();
+});
+
+document.getElementById('resetBtn').addEventListener('click', () => {
+  initNetwork(numRelus);
+  draw();
+});
+
+document.getElementById('targetSelect').addEventListener('change', e => {
+  targetKey = e.target.value;
+  initNetwork(numRelus);
+  draw();
+});
+
+document.getElementById('numSlider').addEventListener('input', e => {
+  numRelus = +e.target.value;
+  document.getElementById('numLabel').textContent = numRelus;
+  initNetwork(numRelus);
+  draw();
+});
+
+document.getElementById('lrSlider').addEventListener('input', e => {
+  lr = Math.pow(10, +e.target.value);
+  document.getElementById('lrLabel').textContent = lr.toFixed(4);
+});
+
+document.getElementById('speedSlider').addEventListener('input', e => {
+  stepsPerFrame = +e.target.value;
+  document.getElementById('speedLabel').textContent = stepsPerFrame;
+});
+
+// Init
+initNetwork(numRelus);
+draw();
+</script>
+</body>
+</html>
