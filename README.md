@@ -1,10 +1,10 @@
 # Remote Vibes
 
-Minimal browser terminal to vibe code on your laptop via your phone on the go.
+Minimal browser terminal to vibe code on your laptop/cluster via your phone on the go.
 
-1. Install [Tailscale](https://tailscale.com/download) on your laptop and phone.
+1. Install [Tailscale](https://tailscale.com/download) on your laptop/cluster and phone.
 2. Sign into the same account on both.
-3. Run this on the laptop:
+3. Run this on the laptop/cluster:
 
 ```bash
 bash <(curl -fsSL https://gist.githubusercontent.com/Clamepending/b40db6fc8775b843e6fc06a2b5857604/raw/install.sh)
@@ -30,3 +30,6 @@ tips:
   <a href="menu1.jpg"><img src="menu1.jpg" alt="Sidebar sessions view" width="220" /></a>
   <a href="menu2.jpg"><img src="menu2.jpg" alt="Sidebar ports view" width="220" /></a>
 </p>
+
+
+Sessions are saved, so restarts don't erase your sessions. The file explorer lets you see image files by tapping on them (useful for graphs).
