@@ -172,6 +172,13 @@ function getRouteState() {
     };
   }
 
+  if (explicitView === "gpu") {
+    return {
+      view: "gpu",
+      notePath: "",
+    };
+  }
+
   return {
     view: window.location.hash === "#gpu" ? "gpu" : "shell",
     notePath: "",
@@ -541,6 +548,22 @@ function getKnowledgeBaseUrl(notePath = "") {
   return url.toString();
 }
 
+function getGpuDashboardUrl() {
+  const url = new URL(window.location.href);
+  url.searchParams.set("view", "gpu");
+  url.searchParams.delete("note");
+  url.hash = "";
+  return url.toString();
+}
+
+function getShellUrl() {
+  const url = new URL(window.location.href);
+  url.searchParams.delete("view");
+  url.searchParams.delete("note");
+  url.hash = "";
+  return url.toString();
+}
+
 function maybeRedirectToPreferredOrigin() {
   if (!state.preferredBaseUrl) {
     return false;
@@ -741,10 +764,14 @@ function updateRoute({ view = state.currentView, notePath = state.knowledgeBase.
     }
 
     url.hash = "";
+  } else if (view === "gpu") {
+    url.searchParams.set("view", "gpu");
+    url.searchParams.delete("note");
+    url.hash = "";
   } else {
     url.searchParams.delete("view");
     url.searchParams.delete("note");
-    url.hash = view === "gpu" ? "#gpu" : "";
+    url.hash = "";
   }
 
   history.replaceState(null, "", `${url.pathname}${url.search}${url.hash}`);
@@ -1953,14 +1980,14 @@ function renderGpuCard() {
     : `<div class="gpu-empty">No GPU telemetry available.</div>`;
 
   return `
-    <button class="gpu-card ${gpu.available ? "" : "is-unavailable"}" type="button" id="open-gpu-dashboard">
+    <a class="gpu-card ${gpu.available ? "" : "is-unavailable"}" href="${escapeHtml(getGpuDashboardUrl())}" target="_blank" rel="noreferrer">
       <div class="gpu-topline">
         <span class="gpu-metric">${escapeHtml(statusText)}</span>
         <span class="gpu-detail">${escapeHtml(detailText)}</span>
       </div>
       <div class="gpu-summary">${escapeHtml(summaryText)}</div>
       <div class="gpu-bars">${bars}</div>
-    </button>
+    </a>
   `;
 }
 
@@ -2181,7 +2208,7 @@ function renderGpuDashboard() {
           <div class="terminal-meta">stacked GPU memory history plus agent autonomy · green is remote vibes · yellow is other workloads</div>
         </div>
         <div class="dashboard-actions">
-          <button class="ghost-button toolbar-control" type="button" id="back-to-shell">back</button>
+          <a class="ghost-button toolbar-control" href="${escapeHtml(getShellUrl())}">remote vibes</a>
         </div>
       </div>
       <div class="dashboard-range">
@@ -2201,6 +2228,16 @@ function renderGpuDashboard() {
         ${cards}
       </div>
     </section>
+  `;
+}
+
+function renderGpuApp() {
+  document.title = "GPU Dashboard · Remote Vibes";
+
+  return `
+    <main class="screen">
+      ${renderGpuDashboard()}
+    </main>
   `;
 }
 
@@ -2306,6 +2343,15 @@ function renderShell() {
     return;
   }
 
+  if (state.currentView === "gpu") {
+    app.innerHTML = renderGpuApp();
+    disposeTerminal();
+    bindGpuDashboardEvents();
+    return;
+  }
+
+  document.title = "Remote Vibes";
+
   teardownKnowledgeBaseGraphInteractions();
   syncFilesRoot();
 
@@ -2349,6 +2395,7 @@ function renderShell() {
           <section class="sidebar-section">
             <div class="section-head">
               <span>gpu usage</span>
+              <a class="ghost-button" href="${escapeHtml(getGpuDashboardUrl())}" target="_blank" rel="noreferrer">view</a>
             </div>
             <div id="gpu-card">${renderGpuCard()}</div>
           </section>
@@ -2454,7 +2501,18 @@ function bindSessionEvents() {
       }
 
       const nextSessionId = element.getAttribute("data-session-id");
-      if (!nextSessionId || nextSessionId === state.activeSessionId) {
+      if (!nextSessionId) {
+        setSidebarOpen(false);
+        return;
+      }
+
+      if (state.currentView !== "shell") {
+        setCurrentView("shell");
+      }
+
+      if (nextSessionId === state.activeSessionId) {
+        renderShell();
+        connectToSession(state.activeSessionId);
         setSidebarOpen(false);
         return;
       }
@@ -3046,19 +3104,7 @@ function setCurrentView(nextView, { notePath = state.knowledgeBase.selectedNoteP
   updateRoute({ view: state.currentView });
 }
 
-function bindGpuNavigationEvents() {
-  document.querySelector("#open-gpu-dashboard")?.addEventListener("click", async () => {
-    setCurrentView("gpu");
-    await loadGpuHistory(state.gpuHistory.range);
-    renderShell();
-  });
-  document.querySelector("#back-to-shell")?.addEventListener("click", () => {
-    setCurrentView("shell");
-    renderShell();
-    if (state.activeSessionId) {
-      connectToSession(state.activeSessionId);
-    }
-  });
+function bindGpuDashboardEvents() {
   document.querySelectorAll("[data-gpu-range]").forEach((button) => {
     button.addEventListener("click", async () => {
       const range = button.getAttribute("data-gpu-range") || "1d";
@@ -3094,8 +3140,6 @@ function bindShellEvents() {
   });
 
   bindSessionEvents();
-
-  bindGpuNavigationEvents();
 
   if (state.currentView === "shell") {
     document.querySelector("#tab-button")?.addEventListener("click", () => sendTerminalInput("\t"));

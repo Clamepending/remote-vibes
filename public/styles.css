@@ -291,6 +291,8 @@ textarea {
   padding: 12px;
   border-radius: 16px;
   text-align: left;
+  color: inherit;
+  text-decoration: none;
   background:
     radial-gradient(circle at top right, rgba(106, 227, 198, 0.14), transparent 42%),
     rgba(255, 255, 255, 0.04);
