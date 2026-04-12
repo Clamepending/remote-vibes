@@ -124,6 +124,8 @@ test("state is available without authentication", async () => {
     const gpuHistoryPayload = await gpuHistoryResponse.json();
     assert.equal(gpuHistoryPayload.history.range, "1d");
     assert.ok(Array.isArray(gpuHistoryPayload.history.gpus));
+    assert.equal(typeof gpuHistoryPayload.history.agentRuns, "object");
+    assert.ok(Array.isArray(gpuHistoryPayload.history.agentRuns.buckets));
   } finally {
     await app.close();
   }

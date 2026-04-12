@@ -516,6 +516,82 @@ textarea {
   font-size: 0.72rem;
 }
 
+.run-distribution-card {
+  gap: 14px;
+}
+
+.run-stats-grid,
+.run-bucket-row,
+.run-bucket-copy,
+.run-buckets {
+  display: grid;
+}
+
+.run-stats-grid {
+  grid-template-columns: repeat(auto-fit, minmax(120px, 1fr));
+  gap: 10px;
+}
+
+.run-stat {
+  display: grid;
+  gap: 4px;
+  padding: 12px;
+  border-radius: 14px;
+  background:
+    linear-gradient(180deg, rgba(255, 255, 255, 0.04), rgba(255, 255, 255, 0.02)),
+    rgba(10, 12, 14, 0.34);
+}
+
+.run-stat-label,
+.run-bucket-label {
+  font-family: "IBM Plex Mono", monospace;
+  font-size: 0.72rem;
+  text-transform: uppercase;
+}
+
+.run-stat-label,
+.run-bucket-meta {
+  color: var(--muted);
+}
+
+.run-stat-value {
+  font-size: 1.02rem;
+}
+
+.run-buckets {
+  gap: 10px;
+}
+
+.run-bucket-row {
+  gap: 8px;
+}
+
+.run-bucket-copy {
+  grid-template-columns: minmax(0, auto) minmax(0, 1fr);
+  align-items: baseline;
+  gap: 8px;
+}
+
+.run-bucket-meta {
+  justify-self: end;
+  font-size: 0.76rem;
+}
+
+.run-bucket-bar {
+  position: relative;
+  height: 12px;
+  border-radius: 999px;
+  overflow: hidden;
+  background: rgba(255, 255, 255, 0.08);
+}
+
+.run-bucket-fill {
+  display: block;
+  height: 100%;
+  border-radius: inherit;
+  background: linear-gradient(90deg, #74f0d3, #ffe189);
+}
+
 .knowledge-base-view {
   display: grid;
   gap: 12px;

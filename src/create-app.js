@@ -9,6 +9,7 @@ import express from "express";
 import { WebSocketServer } from "ws";
 import { pickPreferredUrl } from "./access-url.js";
 import { AgentPromptStore } from "./agent-prompt-store.js";
+import { AgentRunStore } from "./agent-run-store.js";
 import { GpuHistoryStore } from "./gpu-history-store.js";
 import { getGpuStatus } from "./gpu-manager.js";
 import { listListeningPorts } from "./ports.js";
@@ -183,12 +184,20 @@ export async function createRemoteVibesApp({
   const defaultProviderId = getDefaultProviderId(providers);
   const app = express();
   const stateDir = path.join(cwd, ".remote-vibes");
-  const sessionManager = new SessionManager({ cwd, providers, persistSessions, stateDir });
+  const agentRunStore = new AgentRunStore({ stateDir });
+  const sessionManager = new SessionManager({
+    cwd,
+    providers,
+    persistSessions,
+    stateDir,
+    agentRunStore,
+  });
   const agentPromptStore = new AgentPromptStore({ cwd, stateDir });
   const gpuHistoryStore = new GpuHistoryStore({
     stateDir,
     sampleIntervalMs: Number(process.env.REMOTE_VIBES_GPU_SAMPLE_MS || 60_000),
   });
+  await agentRunStore.initialize();
   await sessionManager.initialize();
   await agentPromptStore.initialize();
   await gpuHistoryStore.initialize();
@@ -254,10 +263,13 @@ export async function createRemoteVibesApp({
   });
 
   app.get("/api/gpu/history", async (request, response) => {
+    const range = typeof request.query.range === "string" ? request.query.range : "1d";
+
     response.json({
-      history: gpuHistoryStore.getHistory(
-        typeof request.query.range === "string" ? request.query.range : "1d",
-      ),
+      history: {
+        ...gpuHistoryStore.getHistory(range),
+        agentRuns: agentRunStore.getHistory(range),
+      },
     });
   });
 

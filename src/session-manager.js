@@ -3,6 +3,7 @@ import { readFileSync, readdirSync, rmSync, statSync } from "node:fs";
 import path from "node:path";
 import { randomUUID } from "node:crypto";
 import pty from "node-pty";
+import { AgentRunTracker } from "./agent-run-tracker.js";
 import { SessionStore } from "./session-store.js";
 
 const MAX_BUFFER_LENGTH = 200_000;
@@ -94,6 +95,8 @@ export class SessionManager {
     providers,
     persistSessions = true,
     stateDir = path.join(cwd, ".remote-vibes"),
+    agentRunStore = null,
+    runIdleTimeoutMs = Number(process.env.REMOTE_VIBES_RUN_IDLE_MS || 15_000),
   }) {
     this.cwd = cwd;
     this.providers = providers;
@@ -107,6 +110,12 @@ export class SessionManager {
     this.persistTimer = null;
     this.persistPromise = Promise.resolve();
     this.isShuttingDown = false;
+    this.agentRunTracker = agentRunStore
+      ? new AgentRunTracker({
+          store: agentRunStore,
+          idleTimeoutMs: runIdleTimeoutMs,
+        })
+      : null;
   }
 
   async initialize() {
@@ -250,6 +259,7 @@ export class SessionManager {
     session.restoreOnStartup = false;
     this.clearPendingMetaBroadcast(session);
     session.clients.clear();
+    this.queueAgentRunTracking(this.agentRunTracker?.handleSessionDelete(session));
 
     if (session.status !== "exited" && session.pty) {
       session.pty.kill();
@@ -292,6 +302,7 @@ export class SessionManager {
       return false;
     }
 
+    this.queueAgentRunTracking(this.agentRunTracker?.handleInput(session, input));
     session.pty.write(input);
     session.updatedAt = new Date().toISOString();
     this.schedulePersist();
@@ -339,6 +350,7 @@ export class SessionManager {
 
     if (preserveSessions) {
       await this.flushPersistedSessions();
+      this.agentRunTracker?.reset();
 
       for (const session of this.sessions.values()) {
         if (session.status !== "exited" && session.pty) {
@@ -353,6 +365,7 @@ export class SessionManager {
 
     this.closeAll();
     await this.flushPersistedSessions();
+    this.agentRunTracker?.reset();
   }
 
   makeDefaultName(provider) {
@@ -373,6 +386,16 @@ export class SessionManager {
     }
 
     this.schedulePersist();
+  }
+
+  queueAgentRunTracking(task) {
+    if (!task || typeof task.catch !== "function") {
+      return;
+    }
+
+    task.catch((error) => {
+      console.warn("[remote-vibes] failed to record agent run", error);
+    });
   }
 
   clearPendingMetaBroadcast(session) {
@@ -519,6 +542,7 @@ export class SessionManager {
     ptyProcess.onData((chunk) => {
       session.updatedAt = new Date().toISOString();
       session.lastOutputAt = session.updatedAt;
+      this.agentRunTracker?.handleOutput(session, chunk);
       this.pushOutput(session, chunk);
       this.scheduleSessionMetaBroadcast(session);
     });
@@ -527,6 +551,7 @@ export class SessionManager {
       session.pty = null;
 
       if (session.skipExitHandling) {
+        this.agentRunTracker?.forgetSession(session.id);
         return;
       }
 
@@ -540,6 +565,7 @@ export class SessionManager {
         session,
         `\r\n\u001b[1;31m[remote-vibes]\u001b[0m session exited (code ${exitCode}${signal ? `, signal ${signal}` : ""})\r\n`,
       );
+      this.queueAgentRunTracking(this.agentRunTracker?.handleSessionExit(session));
       this.scheduleSessionMetaBroadcast(session, { immediate: true });
       this.schedulePersist({ immediate: true });
     });

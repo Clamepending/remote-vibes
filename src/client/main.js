@@ -80,8 +80,19 @@ const state = {
   gpuHistory: {
     range: "1d",
     latestTimestamp: null,
+    lastUpdatedAt: null,
     sampleIntervalMs: 0,
     gpus: [],
+    agentRuns: {
+      totalRuns: 0,
+      totalRunMs: 0,
+      sessionCount: 0,
+      medianRunMs: 0,
+      p90RunMs: 0,
+      maxRunMs: 0,
+      latestEndedAt: null,
+      buckets: [],
+    },
   },
   currentView: "shell",
   agentPrompt: "",
@@ -1965,6 +1976,33 @@ function formatGpuRangeLabel(range) {
   return "1 day";
 }
 
+function formatDurationCompact(durationMs) {
+  const totalSeconds = Math.max(0, Math.round((Number(durationMs) || 0) / 1000));
+  if (!totalSeconds) {
+    return "0s";
+  }
+
+  const hours = Math.floor(totalSeconds / 3600);
+  const minutes = Math.floor((totalSeconds % 3600) / 60);
+  const seconds = totalSeconds % 60;
+
+  if (hours >= 24) {
+    const days = Math.floor(hours / 24);
+    const remainingHours = hours % 24;
+    return remainingHours ? `${days}d ${remainingHours}h` : `${days}d`;
+  }
+
+  if (hours) {
+    return minutes ? `${hours}h ${minutes}m` : `${hours}h`;
+  }
+
+  if (minutes) {
+    return seconds && minutes < 5 ? `${minutes}m ${seconds}s` : `${minutes}m`;
+  }
+
+  return `${seconds}s`;
+}
+
 function formatGpuDashboardTimestamp(timestamp, range) {
   if (!timestamp) {
     return "No samples yet";
@@ -1999,6 +2037,74 @@ function buildGpuLinePath(points, width, key) {
   }
 
   return `M ${points.map((point) => `${point.x},${point[key]}`).join(" L ")}`;
+}
+
+function renderAgentRunDistributionCard() {
+  const history = state.gpuHistory.agentRuns || {};
+  const totalRuns = Number(history.totalRuns) || 0;
+  const buckets = Array.isArray(history.buckets) ? history.buckets : [];
+  const maxBucketCount = Math.max(1, ...buckets.map((bucket) => Number(bucket.count) || 0));
+  const bucketMarkup = buckets.length
+    ? buckets
+        .map((bucket) => {
+          const count = Number(bucket.count) || 0;
+          const percent = totalRuns ? Math.round((count / totalRuns) * 100) : 0;
+          const width = Math.max(count > 0 ? 10 : 0, Math.round((count / maxBucketCount) * 100));
+
+          return `
+            <div class="run-bucket-row">
+              <div class="run-bucket-copy">
+                <span class="run-bucket-label">${escapeHtml(bucket.label)}</span>
+                <span class="run-bucket-meta">${escapeHtml(`${count} run${count === 1 ? "" : "s"} · ${percent}%`)}</span>
+              </div>
+              <div class="run-bucket-bar" aria-hidden="true">
+                <span class="run-bucket-fill" style="width:${width}%"></span>
+              </div>
+            </div>
+          `;
+        })
+        .join("")
+    : "";
+  const stats = [
+    { label: "runs", value: String(totalRuns) },
+    { label: "sessions", value: String(Number(history.sessionCount) || 0) },
+    { label: "median", value: formatDurationCompact(history.medianRunMs) },
+    { label: "p90", value: formatDurationCompact(history.p90RunMs) },
+    { label: "max", value: formatDurationCompact(history.maxRunMs) },
+    { label: "autonomy", value: formatDurationCompact(history.totalRunMs) },
+  ]
+    .map(
+      (entry) => `
+        <div class="run-stat">
+          <span class="run-stat-label">${escapeHtml(entry.label)}</span>
+          <strong class="run-stat-value">${escapeHtml(entry.value)}</strong>
+        </div>
+      `,
+    )
+    .join("");
+
+  return `
+    <article class="gpu-chart-card run-distribution-card">
+      <div class="gpu-chart-header">
+        <div>
+          <strong>Agent Run Lengths</strong>
+          <div class="gpu-chart-meta">prompt submit to quiet or exit · longer buckets mean more autonomous runs</div>
+        </div>
+      </div>
+      <div class="run-stats-grid">
+        ${stats}
+      </div>
+      ${
+        totalRuns
+          ? `
+            <div class="run-buckets">
+              ${bucketMarkup}
+            </div>
+          `
+          : `<div class="blank-state">No completed agent runs yet for this range. Start a prompt in an agent session and it will show up here once the run goes quiet.</div>`
+      }
+    </article>
+  `;
 }
 
 function renderGpuChart(gpuEntry) {
@@ -2062,16 +2168,17 @@ function renderGpuChart(gpuEntry) {
 
 function renderGpuDashboard() {
   const history = state.gpuHistory;
-  const cards = history.gpus.length
+  const gpuCards = history.gpus.length
     ? history.gpus.map((gpuEntry) => renderGpuChart(gpuEntry)).join("")
     : `<div class="blank-state">No GPU history yet. Samples will appear here after Remote Vibes records them.</div>`;
+  const cards = `${renderAgentRunDistributionCard()}${gpuCards}`;
 
   return `
     <section class="dashboard-panel">
       <div class="dashboard-toolbar">
         <div class="dashboard-copy">
           <strong>GPU Dashboard</strong>
-          <div class="terminal-meta">stacked memory history · green is remote vibes · yellow is other workloads</div>
+          <div class="terminal-meta">stacked GPU memory history plus agent autonomy · green is remote vibes · yellow is other workloads</div>
         </div>
         <div class="dashboard-actions">
           <button class="ghost-button toolbar-control" type="button" id="back-to-shell">back</button>
@@ -2088,7 +2195,7 @@ function renderGpuDashboard() {
             `,
           )
           .join("")}
-        <span class="dashboard-updated">${escapeHtml(formatGpuDashboardTimestamp(history.latestTimestamp, history.range))}</span>
+        <span class="dashboard-updated">${escapeHtml(formatGpuDashboardTimestamp(history.lastUpdatedAt, history.range))}</span>
       </div>
       <div class="dashboard-grid">
         ${cards}
@@ -2896,11 +3003,26 @@ function applyGpuState(payload) {
 }
 
 function applyGpuHistoryState(payload) {
+  const agentRuns = payload?.agentRuns || {};
+  const latestTimestamp = payload?.latestTimestamp || null;
+  const latestEndedAt = agentRuns?.latestEndedAt || null;
+
   state.gpuHistory = {
     range: payload?.range || state.gpuHistory.range || "1d",
-    latestTimestamp: payload?.latestTimestamp || null,
+    latestTimestamp,
+    lastUpdatedAt: Math.max(Number(latestTimestamp) || 0, Number(latestEndedAt) || 0) || null,
     sampleIntervalMs: Number(payload?.sampleIntervalMs) || 0,
     gpus: Array.isArray(payload?.gpus) ? payload.gpus : [],
+    agentRuns: {
+      totalRuns: Number(agentRuns?.totalRuns) || 0,
+      totalRunMs: Number(agentRuns?.totalRunMs) || 0,
+      sessionCount: Number(agentRuns?.sessionCount) || 0,
+      medianRunMs: Number(agentRuns?.medianRunMs) || 0,
+      p90RunMs: Number(agentRuns?.p90RunMs) || 0,
+      maxRunMs: Number(agentRuns?.maxRunMs) || 0,
+      latestEndedAt,
+      buckets: Array.isArray(agentRuns?.buckets) ? agentRuns.buckets : [],
+    },
   };
 }
 
