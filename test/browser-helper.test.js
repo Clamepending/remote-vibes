@@ -253,13 +253,13 @@ test("rv-browser run can drive a localhost app, upload files, and save screensho
       stepsFilePath,
       `${JSON.stringify(
         [
-          { action: "fill", selector: "#prompt", value: "a cinematic fox" },
-          { action: "select", selector: "#mode", value: "qa" },
+          { action: "type", selector: "#prompt", text: "a cinematic fox" },
+          { action: "select", selector: "#mode", option: "qa" },
           { action: "check", selector: "#accept" },
           { action: "setInputFiles", selector: "#upload", path: "sample.txt" },
-          { action: "waitForText", text: "Uploaded: sample.txt" },
+          { action: "wait", text: "Uploaded: sample.txt" },
           { action: "click", selector: "#generate" },
-          { action: "waitForText", text: "Generated (qa, approved): a cinematic fox" },
+          { action: "wait", text: "Generated (qa, approved): a cinematic fox" },
           { action: "screenshot", path: "artifacts/step.png", fullPage: true },
         ],
         null,
@@ -436,10 +436,27 @@ test("shell sessions can invoke rv-browser against localhost apps", async () => 
 
     const { session } = await createResponse.json();
     const websocket = new WebSocket(`${remoteVibes.baseUrl.replace("http", "ws")}/ws?sessionId=${session.id}`);
-    const marker = "REMOTE_VIBES_BROWSER_SESSION_DONE";
     const commandPath = path.join(workspaceDir, "rv-browser-command.txt");
     const jsonPath = path.join(workspaceDir, "rv-browser-session.json");
     const screenshotPath = path.join(workspaceDir, "rv-browser-session.png");
+    const stepsFilePath = path.join(workspaceDir, "session-steps.json");
+    const donePath = path.join(workspaceDir, "rv-browser-session.done");
+
+    await writeFile(
+      stepsFilePath,
+      `${JSON.stringify(
+        [
+          { action: "type", selector: "#prompt", text: "session eval prompt" },
+          { action: "select", selector: "#mode", option: "qa" },
+          { action: "click", selector: "#generate" },
+          { action: "wait", text: "Generated (qa, pending): session eval prompt" },
+          { action: "screenshot", path: path.basename(screenshotPath), fullPage: true },
+        ],
+        null,
+        2,
+      )}\n`,
+      "utf8",
+    );
 
     const snapshot = await new Promise((resolve, reject) => {
       let combined = "";
@@ -473,8 +490,10 @@ test("shell sessions can invoke rv-browser against localhost apps", async () => 
         data:
           [
             `command -v rv-browser > ${shellQuote(commandPath)}`,
-            `rv-browser screenshot ${demoPort} ${shellQuote(screenshotPath)} > ${shellQuote(jsonPath)}`,
-            `printf "${marker}\\n"`,
+            `rv-browser run ${demoPort} --steps-file ${shellQuote(path.basename(stepsFilePath))} --output ${shellQuote(
+              path.basename(screenshotPath),
+            )} > ${shellQuote(jsonPath)}`,
+            `touch ${shellQuote(donePath)}`,
           ].join(" && ") + "\r",
       }),
     );
@@ -482,6 +501,7 @@ test("shell sessions can invoke rv-browser against localhost apps", async () => 
     await waitForFile(commandPath);
     await waitForFile(jsonPath);
     await waitForFile(screenshotPath);
+    await waitForFile(donePath);
     websocket.close();
     await once(websocket, "close");
 
@@ -490,11 +510,60 @@ test("shell sessions can invoke rv-browser against localhost apps", async () => 
 
     const payload = JSON.parse(await readFile(jsonPath, "utf8"));
     assert.equal(payload.ok, true);
-    assert.equal(payload.command, "screenshot");
+    assert.equal(payload.command, "run");
+    assert.match(payload.text, /Generated \(qa, pending\): session eval prompt/);
+    assert.equal(await realpath(payload.outputPath), await realpath(screenshotPath));
     assert.ok((await stat(screenshotPath)).size > 0);
   } finally {
     await remoteVibes.app.close();
     await new Promise((resolve) => demoServer.close(resolve));
+    await rm(workspaceDir, { recursive: true, force: true });
+  }
+});
+
+test("agent wrappers inject rv-browser guidance for Codex and Claude", async () => {
+  const workspaceDir = await mkdtemp(path.join(os.tmpdir(), "remote-vibes-agent-wrapper-"));
+
+  try {
+    const captureScriptPath = path.join(workspaceDir, "capture-argv.sh");
+    const capturedArgsPath = path.join(workspaceDir, "captured-args.txt");
+
+    await writeFile(
+      captureScriptPath,
+      `#!/usr/bin/env bash
+set -euo pipefail
+printf '%s\n' "$@" > "$CAPTURED_ARGS_PATH"
+`,
+      "utf8",
+    );
+    await chmod(captureScriptPath, 0o755);
+
+    await execFile(path.join(rootDir, "bin", "codex"), ["exec", "hello"], {
+      cwd: workspaceDir,
+      env: {
+        ...browserTestEnv,
+        CAPTURED_ARGS_PATH: capturedArgsPath,
+        REMOTE_VIBES_REAL_CODEX_COMMAND: captureScriptPath,
+      },
+    });
+    const codexArgs = await readFile(capturedArgsPath, "utf8");
+    assert.match(codexArgs, /developer_instructions=/);
+    assert.match(codexArgs, /rv-browser run <port-or-url> --steps/);
+    assert.match(codexArgs, /type, click, select, wait, screenshot/);
+
+    await execFile(path.join(rootDir, "bin", "claude"), ["--print", "hello"], {
+      cwd: workspaceDir,
+      env: {
+        ...browserTestEnv,
+        CAPTURED_ARGS_PATH: capturedArgsPath,
+        REMOTE_VIBES_REAL_CLAUDE_COMMAND: captureScriptPath,
+      },
+    });
+    const claudeArgs = await readFile(capturedArgsPath, "utf8");
+    assert.match(claudeArgs, /--append-system-prompt/);
+    assert.match(claudeArgs, /rv-browser run <port-or-url> --steps/);
+    assert.match(claudeArgs, /type, click, select, wait, screenshot/);
+  } finally {
     await rm(workspaceDir, { recursive: true, force: true });
   }
 });

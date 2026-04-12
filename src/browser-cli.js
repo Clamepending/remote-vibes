@@ -39,15 +39,17 @@ function usageText() {
     "  rv-browser describe <port-or-url> [output.png] [--prompt <text>] [--provider auto|codex|claude]",
     "  rv-browser describe-file <image-path> [--prompt <text>] [--provider auto|codex|claude]",
     "",
+    "Recommended simple `run` actions for agents:",
+    "  type, click, select, wait, screenshot",
+    "  Additional supported actions: press, check, uncheck, setInputFiles, goto, waitForSelector, waitForText, waitForLoadState, waitForTimeout",
+    "",
     "Examples:",
     "  rv-browser screenshot 7860",
     "  rv-browser screenshot http://127.0.0.1:3000/ out.png --wait-for-text Ready",
     "  rv-browser run 7860 --steps-file eval-steps.json --output final.png",
+    `  rv-browser run 7860 --steps '[{"action":"type","selector":"textarea","text":"make it cinematic"},{"action":"click","selector":"text=Generate"},{"action":"wait","text":"Done"},{"action":"screenshot","path":"result.png"}]'`,
     "  rv-browser describe 7860 --prompt \"What visual issues do you see?\"",
     "  rv-browser describe-file results/chart.png --prompt \"Critique this chart's readability.\"",
-    "",
-    "Step actions supported by `run`:",
-    "  goto, click, fill, press, check, uncheck, select, setInputFiles, waitForSelector, waitForText, waitForLoadState, waitForTimeout, screenshot",
     "",
     "The target must be localhost, 127.0.0.1, ::1, 0.0.0.0, or a bare port number.",
   ].join("\n");
@@ -161,6 +163,7 @@ function normalizeActionName(action) {
     case "click":
       return "click";
     case "fill":
+    case "type":
       return "fill";
     case "press":
       return "press";
@@ -175,7 +178,9 @@ function normalizeActionName(action) {
     case "upload":
       return "setInputFiles";
     case "waitfor":
+    case "wait":
     case "waitforselector":
+    case "waitforvisible":
       return "waitForSelector";
     case "waitfortext":
       return "waitForText";
@@ -269,15 +274,17 @@ async function performAction(page, step, cwd, defaultTimeoutMs) {
 
     case "fill": {
       if (!step.selector) {
-        throw new UsageError("fill steps require a selector.");
+        throw new UsageError("type/fill steps require a selector.");
       }
 
-      await page.locator(step.selector).fill(String(step.value ?? ""), {
+      const nextValue = step.text ?? step.value ?? "";
+      await page.locator(step.selector).fill(String(nextValue), {
         timeout,
       });
       return {
         action,
         selector: step.selector,
+        value: String(nextValue),
       };
     }
 
@@ -322,10 +329,16 @@ async function performAction(page, step, cwd, defaultTimeoutMs) {
         throw new UsageError("select steps require a selector.");
       }
 
-      await page.locator(step.selector).selectOption(step.value);
+      const option = step.option ?? step.value;
+      if (option === undefined || option === null || option === "") {
+        throw new UsageError("select steps require an option or value.");
+      }
+
+      await page.locator(step.selector).selectOption(option);
       return {
         action,
         selector: step.selector,
+        value: option,
       };
     }
 
@@ -353,8 +366,45 @@ async function performAction(page, step, cwd, defaultTimeoutMs) {
     }
 
     case "waitForSelector": {
+      if (!step.selector && step.text) {
+        await page
+          .getByText(String(step.text), {
+            exact: step.exact === true,
+          })
+          .first()
+          .waitFor({
+            state: "visible",
+            timeout,
+          });
+        return {
+          action: step.action === "wait" ? "wait" : "waitForText",
+          text: String(step.text),
+        };
+      }
+
+      if (!step.selector && (step.ms !== undefined || step.timeoutMs !== undefined)) {
+        const delayMs = parseNumberOption(step.ms ?? step.timeoutMs ?? 250, "step.ms");
+        await page.waitForTimeout(delayMs);
+        return {
+          action: step.action === "wait" ? "wait" : "waitForTimeout",
+          delayMs,
+        };
+      }
+
+      if (!step.selector && step.state) {
+        await page.waitForLoadState(step.state, {
+          timeout,
+        });
+        return {
+          action: step.action === "wait" ? "wait" : "waitForLoadState",
+          state: step.state,
+        };
+      }
+
       if (!step.selector) {
-        throw new UsageError("waitForSelector steps require a selector.");
+        throw new UsageError(
+          "wait steps require a selector, text, state, or ms timeout.",
+        );
       }
 
       await page.locator(step.selector).waitFor({
@@ -362,7 +412,7 @@ async function performAction(page, step, cwd, defaultTimeoutMs) {
         timeout,
       });
       return {
-        action,
+        action: step.action === "wait" ? "wait" : action,
         selector: step.selector,
         state: step.state || "visible",
       };
