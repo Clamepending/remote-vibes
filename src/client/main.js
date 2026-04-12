@@ -21,6 +21,13 @@ const state = {
     freeMemoryMb: 0,
     perGpu: [],
   },
+  gpuHistory: {
+    range: "1d",
+    latestTimestamp: null,
+    sampleIntervalMs: 0,
+    gpus: [],
+  },
+  currentView: "shell",
   agentPrompt: "",
   agentPromptPath: "",
   agentPromptWikiRoot: ".remote-vibes",
@@ -613,14 +620,196 @@ function renderGpuCard() {
     : `<div class="gpu-empty">No GPU telemetry available.</div>`;
 
   return `
-    <div class="gpu-card ${gpu.available ? "" : "is-unavailable"}">
+    <button class="gpu-card ${gpu.available ? "" : "is-unavailable"}" type="button" id="open-gpu-dashboard">
       <div class="gpu-topline">
         <span class="gpu-metric">${escapeHtml(statusText)}</span>
         <span class="gpu-detail">${escapeHtml(detailText)}</span>
       </div>
       <div class="gpu-summary">${escapeHtml(summaryText)}</div>
       <div class="gpu-bars">${bars}</div>
-    </div>
+    </button>
+  `;
+}
+
+function formatGpuRangeLabel(range) {
+  if (range === "7d") {
+    return "7 days";
+  }
+
+  if (range === "30d") {
+    return "month";
+  }
+
+  return "1 day";
+}
+
+function formatGpuDashboardTimestamp(timestamp, range) {
+  if (!timestamp) {
+    return "No samples yet";
+  }
+
+  const date = new Date(timestamp);
+
+  if (range === "1d") {
+    return date.toLocaleString([], { hour: "numeric", minute: "2-digit", month: "short", day: "numeric" });
+  }
+
+  return date.toLocaleString([], { month: "short", day: "numeric", hour: "numeric" });
+}
+
+function buildGpuAreaPath(points, width, height, key, lowerKey = null) {
+  if (!points.length) {
+    return "";
+  }
+
+  const topPoints = points.map((point) => `${point.x},${point[key]}`);
+  const lowerPoints = points
+    .slice()
+    .reverse()
+    .map((point) => `${point.x},${lowerKey ? point[lowerKey] : height}`);
+
+  return `M ${topPoints.join(" L ")} L ${lowerPoints.join(" L ")} Z`;
+}
+
+function buildGpuLinePath(points, width, key) {
+  if (!points.length) {
+    return "";
+  }
+
+  return `M ${points.map((point) => `${point.x},${point[key]}`).join(" L ")}`;
+}
+
+function renderGpuChart(gpuEntry) {
+  const width = 860;
+  const height = 220;
+  const paddingTop = 18;
+  const paddingBottom = 28;
+  const chartHeight = height - paddingTop - paddingBottom;
+  const points = gpuEntry.points;
+
+  if (!points.length) {
+    return `<div class="blank-state">no samples for gpu ${escapeHtml(gpuEntry.index)}</div>`;
+  }
+
+  const minTimestamp = points[0].timestamp;
+  const maxTimestamp = points[points.length - 1].timestamp || minTimestamp + 1;
+  const timestampSpan = Math.max(1, maxTimestamp - minTimestamp);
+  const totalMemoryMb = Math.max(
+    1,
+    ...points.map((point) => Math.max(point.totalMemoryMb, point.remoteVibesMemoryMb + point.otherMemoryMb)),
+  );
+  const scaledPoints = points.map((point) => {
+    const usedRemote = point.remoteVibesMemoryMb;
+    const usedStacked = point.remoteVibesMemoryMb + point.otherMemoryMb;
+    return {
+      x: ((point.timestamp - minTimestamp) / timestampSpan) * width,
+      remoteTop: paddingTop + chartHeight * (1 - usedRemote / totalMemoryMb),
+      stackedTop: paddingTop + chartHeight * (1 - usedStacked / totalMemoryMb),
+      timestamp: point.timestamp,
+    };
+  });
+  const startLabel = formatGpuDashboardTimestamp(minTimestamp, state.gpuHistory.range);
+  const endLabel = formatGpuDashboardTimestamp(maxTimestamp, state.gpuHistory.range);
+
+  return `
+    <article class="gpu-chart-card">
+      <div class="gpu-chart-header">
+        <div>
+          <strong>GPU ${escapeHtml(gpuEntry.index)}</strong>
+          <div class="gpu-chart-meta">${escapeHtml(
+            `${Math.round((points[points.length - 1].totalMemoryMb || 0) / 1024)} GB total`,
+          )}</div>
+        </div>
+      </div>
+      <svg class="gpu-chart" viewBox="0 0 ${width} ${height}" role="img" aria-label="GPU ${escapeHtml(gpuEntry.index)} history">
+        <line class="gpu-grid-line" x1="0" y1="${paddingTop}" x2="${width}" y2="${paddingTop}" />
+        <line class="gpu-grid-line" x1="0" y1="${paddingTop + chartHeight / 2}" x2="${width}" y2="${paddingTop + chartHeight / 2}" />
+        <line class="gpu-grid-line" x1="0" y1="${paddingTop + chartHeight}" x2="${width}" y2="${paddingTop + chartHeight}" />
+        <path class="gpu-area-other" d="${buildGpuAreaPath(scaledPoints, width, height, "stackedTop", "remoteTop")}" />
+        <path class="gpu-area-remote" d="${buildGpuAreaPath(scaledPoints, width, height, "remoteTop")}" />
+        <path class="gpu-line-remote" d="${buildGpuLinePath(scaledPoints, width, "remoteTop")}" />
+        <path class="gpu-line-stacked" d="${buildGpuLinePath(scaledPoints, width, "stackedTop")}" />
+      </svg>
+      <div class="gpu-chart-axis">
+        <span>${escapeHtml(startLabel)}</span>
+        <span>${escapeHtml(endLabel)}</span>
+      </div>
+    </article>
+  `;
+}
+
+function renderGpuDashboard() {
+  const history = state.gpuHistory;
+  const cards = history.gpus.length
+    ? history.gpus.map((gpuEntry) => renderGpuChart(gpuEntry)).join("")
+    : `<div class="blank-state">No GPU history yet. Samples will appear here after Remote Vibes records them.</div>`;
+
+  return `
+    <section class="dashboard-panel">
+      <div class="dashboard-toolbar">
+        <div class="dashboard-copy">
+          <strong>GPU Dashboard</strong>
+          <div class="terminal-meta">stacked memory history · green is remote vibes · yellow is other workloads</div>
+        </div>
+        <div class="dashboard-actions">
+          <button class="ghost-button toolbar-control" type="button" id="back-to-shell">back</button>
+        </div>
+      </div>
+      <div class="dashboard-range">
+        <span class="dashboard-range-label">range</span>
+        ${["1d", "7d", "30d"]
+          .map(
+            (range) => `
+              <button class="ghost-button dashboard-range-button ${history.range === range ? "is-active" : ""}" type="button" data-gpu-range="${range}">
+                ${escapeHtml(formatGpuRangeLabel(range))}
+              </button>
+            `,
+          )
+          .join("")}
+        <span class="dashboard-updated">${escapeHtml(formatGpuDashboardTimestamp(history.latestTimestamp, history.range))}</span>
+      </div>
+      <div class="dashboard-grid">
+        ${cards}
+      </div>
+    </section>
+  `;
+}
+
+function renderTerminalPanel(activeSession) {
+  if (state.currentView === "gpu") {
+    return renderGpuDashboard();
+  }
+
+  return `
+    <section class="terminal-panel">
+      <div class="terminal-toolbar">
+        <button class="icon-button hidden-desktop" type="button" id="open-sidebar">≡</button>
+        <div class="terminal-copy">
+          <strong id="toolbar-title">${escapeHtml(activeSession ? activeSession.name : "new session")}</strong>
+          <div class="terminal-meta" id="toolbar-meta">${escapeHtml(
+            activeSession ? `${activeSession.providerLabel} · ${activeSession.cwd}` : state.defaultCwd,
+          )}</div>
+        </div>
+        <div class="toolbar-actions">
+          <button class="icon-button" type="button" id="refresh-sessions" aria-label="Refresh sessions">↻</button>
+          <button class="ghost-button toolbar-control" type="button" id="tab-button" data-terminal-control aria-label="Send Tab" ${activeSession ? "" : "disabled"}>tab</button>
+          <button class="ghost-button toolbar-control" type="button" id="shift-tab-button" data-terminal-control aria-label="Send Shift Tab" ${activeSession ? "" : "disabled"}>⇧⇥</button>
+          <button class="ghost-button toolbar-control" type="button" id="ctrl-p-button" data-terminal-control aria-label="Send Control P" ${activeSession ? "" : "disabled"}>^P</button>
+          <button class="ghost-button toolbar-control" type="button" id="ctrl-t-button" data-terminal-control aria-label="Send Control T" ${activeSession ? "" : "disabled"}>^T</button>
+          <button class="ghost-button toolbar-control" type="button" id="ctrl-c-button" data-terminal-control aria-label="Send Control C" ${activeSession ? "" : "disabled"}>^C</button>
+        </div>
+      </div>
+
+      <div class="terminal-stack">
+        <div class="terminal-mount" id="terminal-mount"></div>
+        <button class="jump-bottom-button ${activeSession && state.terminalShowJumpToBottom ? "is-visible" : ""}" type="button" id="jump-to-bottom" aria-label="Jump to bottom" ${activeSession ? "" : "disabled"}>
+          bottom
+        </button>
+        <div class="empty-state ${activeSession ? "hidden" : ""}" id="empty-state">
+          <p class="empty-state-copy">open the menu by tapping the top left icon, then click + to create a new session</p>
+        </div>
+      </div>
+    </section>
   `;
 }
 
@@ -775,42 +964,21 @@ function renderShell() {
         </div>
       </aside>
 
-      <section class="terminal-panel">
-        <div class="terminal-toolbar">
-          <button class="icon-button hidden-desktop" type="button" id="open-sidebar">≡</button>
-          <div class="terminal-copy">
-            <strong id="toolbar-title">${escapeHtml(activeSession ? activeSession.name : "new session")}</strong>
-            <div class="terminal-meta" id="toolbar-meta">${escapeHtml(
-              activeSession ? `${activeSession.providerLabel} · ${activeSession.cwd}` : state.defaultCwd,
-            )}</div>
-          </div>
-          <div class="toolbar-actions">
-            <button class="icon-button" type="button" id="refresh-sessions" aria-label="Refresh sessions">↻</button>
-            <button class="ghost-button toolbar-control" type="button" id="tab-button" data-terminal-control aria-label="Send Tab" ${activeSession ? "" : "disabled"}>tab</button>
-            <button class="ghost-button toolbar-control" type="button" id="shift-tab-button" data-terminal-control aria-label="Send Shift Tab" ${activeSession ? "" : "disabled"}>⇧⇥</button>
-            <button class="ghost-button toolbar-control" type="button" id="ctrl-p-button" data-terminal-control aria-label="Send Control P" ${activeSession ? "" : "disabled"}>^P</button>
-            <button class="ghost-button toolbar-control" type="button" id="ctrl-t-button" data-terminal-control aria-label="Send Control T" ${activeSession ? "" : "disabled"}>^T</button>
-            <button class="ghost-button toolbar-control" type="button" id="ctrl-c-button" data-terminal-control aria-label="Send Control C" ${activeSession ? "" : "disabled"}>^C</button>
-          </div>
-        </div>
-
-        <div class="terminal-stack">
-          <div class="terminal-mount" id="terminal-mount"></div>
-          <button class="jump-bottom-button ${activeSession && state.terminalShowJumpToBottom ? "is-visible" : ""}" type="button" id="jump-to-bottom" aria-label="Jump to bottom" ${activeSession ? "" : "disabled"}>
-            bottom
-          </button>
-          <div class="empty-state ${activeSession ? "hidden" : ""}" id="empty-state">
-            <p class="empty-state-copy">open the menu by tapping the top left icon, then click + to create a new session</p>
-          </div>
-        </div>
-      </section>
+      ${renderTerminalPanel(activeSession)}
       ${renderAgentPromptModal()}
     </main>
   `;
 
   bindShellEvents();
-  mountTerminal();
-  refreshShellUi();
+
+  if (state.currentView === "shell") {
+    mountTerminal();
+    refreshShellUi();
+  } else {
+    disposeTerminal();
+    refreshGpuCard();
+  }
+
   void refreshOpenFileTree();
 }
 
@@ -888,6 +1056,7 @@ function refreshGpuCard() {
   }
 
   gpuCard.innerHTML = renderGpuCard();
+  bindGpuNavigationEvents();
 }
 
 function bindFileTreeEvents() {
@@ -1082,6 +1251,50 @@ function applyGpuState(payload) {
   };
 }
 
+function applyGpuHistoryState(payload) {
+  state.gpuHistory = {
+    range: payload?.range || state.gpuHistory.range || "1d",
+    latestTimestamp: payload?.latestTimestamp || null,
+    sampleIntervalMs: Number(payload?.sampleIntervalMs) || 0,
+    gpus: Array.isArray(payload?.gpus) ? payload.gpus : [],
+  };
+}
+
+function syncViewFromLocation() {
+  state.currentView = window.location.hash === "#gpu" ? "gpu" : "shell";
+}
+
+function setCurrentView(nextView) {
+  state.currentView = nextView === "gpu" ? "gpu" : "shell";
+  const nextHash = state.currentView === "gpu" ? "#gpu" : "";
+
+  if (window.location.hash !== nextHash) {
+    history.replaceState(null, "", `${window.location.pathname}${window.location.search}${nextHash}`);
+  }
+}
+
+function bindGpuNavigationEvents() {
+  document.querySelector("#open-gpu-dashboard")?.addEventListener("click", async () => {
+    setCurrentView("gpu");
+    await loadGpuHistory(state.gpuHistory.range);
+    renderShell();
+  });
+  document.querySelector("#back-to-shell")?.addEventListener("click", () => {
+    setCurrentView("shell");
+    renderShell();
+    if (state.activeSessionId) {
+      connectToSession(state.activeSessionId);
+    }
+  });
+  document.querySelectorAll("[data-gpu-range]").forEach((button) => {
+    button.addEventListener("click", async () => {
+      const range = button.getAttribute("data-gpu-range") || "1d";
+      await loadGpuHistory(range);
+      renderShell();
+    });
+  });
+}
+
 function bindShellEvents() {
   document.querySelector("#session-form")?.addEventListener("submit", async (event) => {
     event.preventDefault();
@@ -1109,16 +1322,20 @@ function bindShellEvents() {
 
   bindSessionEvents();
 
-  document.querySelector("#tab-button")?.addEventListener("click", () => sendTerminalInput("\t"));
-  document.querySelector("#shift-tab-button")?.addEventListener("click", () => sendTerminalInput("\u001b[Z"));
-  document.querySelector("#ctrl-p-button")?.addEventListener("click", () => sendTerminalInput("\u0010"));
-  document.querySelector("#ctrl-t-button")?.addEventListener("click", () => sendTerminalInput("\u0014"));
-  document.querySelector("#ctrl-c-button")?.addEventListener("click", () => sendTerminalInput("\u0003"));
-  document.querySelector("#jump-to-bottom")?.addEventListener("click", () => {
-    state.terminal?.scrollToBottom();
-    state.terminal?.focus();
-    syncTerminalScrollState();
-  });
+  bindGpuNavigationEvents();
+
+  if (state.currentView === "shell") {
+    document.querySelector("#tab-button")?.addEventListener("click", () => sendTerminalInput("\t"));
+    document.querySelector("#shift-tab-button")?.addEventListener("click", () => sendTerminalInput("\u001b[Z"));
+    document.querySelector("#ctrl-p-button")?.addEventListener("click", () => sendTerminalInput("\u0010"));
+    document.querySelector("#ctrl-t-button")?.addEventListener("click", () => sendTerminalInput("\u0014"));
+    document.querySelector("#ctrl-c-button")?.addEventListener("click", () => sendTerminalInput("\u0003"));
+    document.querySelector("#jump-to-bottom")?.addEventListener("click", () => {
+      state.terminal?.scrollToBottom();
+      state.terminal?.focus();
+      syncTerminalScrollState();
+    });
+  }
 
   document.querySelector("#refresh-sessions")?.addEventListener("click", () => loadSessions());
   document.querySelector("#edit-agent-prompt")?.addEventListener("click", () => {
@@ -1711,6 +1928,15 @@ async function loadGpu() {
   }
 }
 
+async function loadGpuHistory(range = state.gpuHistory.range || "1d") {
+  try {
+    const payload = await fetchJson(`/api/gpu/history?range=${encodeURIComponent(range)}`);
+    applyGpuHistoryState(payload.history);
+  } catch (error) {
+    console.error(error);
+  }
+}
+
 async function bootstrapApp() {
   try {
     if ("virtualKeyboard" in navigator) {
@@ -1721,6 +1947,7 @@ async function bootstrapApp() {
   }
 
   syncViewportMetrics();
+  syncViewFromLocation();
   const payload = await fetchJson("/api/state");
   state.providers = payload.providers;
   state.sessions = payload.sessions;
@@ -1730,6 +1957,7 @@ async function bootstrapApp() {
   applyGpuState(payload.gpu);
   state.preferredBaseUrl = payload.preferredUrl ? new URL(payload.preferredUrl).origin : "";
   applyAgentPromptState(payload.agentPrompt);
+  await loadGpuHistory(state.gpuHistory.range);
 
   if (maybeRedirectToPreferredOrigin()) {
     return;
@@ -1742,6 +1970,18 @@ async function bootstrapApp() {
     connectToSession(state.activeSessionId);
   }
 
+  window.addEventListener("hashchange", async () => {
+    syncViewFromLocation();
+    if (state.currentView === "gpu") {
+      await loadGpuHistory(state.gpuHistory.range);
+    }
+
+    renderShell();
+    if (state.currentView === "shell" && state.activeSessionId) {
+      connectToSession(state.activeSessionId);
+    }
+  });
+
   if (state.pollTimer) {
     window.clearInterval(state.pollTimer);
   }
@@ -1750,6 +1990,9 @@ async function bootstrapApp() {
     loadSessions();
     loadPorts();
     loadGpu();
+    if (state.currentView === "gpu") {
+      void loadGpuHistory(state.gpuHistory.range).then(() => renderShell());
+    }
     void refreshOpenFileTree({ force: true });
   }, 3000);
 }

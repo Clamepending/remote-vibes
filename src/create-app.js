@@ -8,6 +8,7 @@ import express from "express";
 import { WebSocketServer } from "ws";
 import { pickPreferredUrl } from "./access-url.js";
 import { AgentPromptStore } from "./agent-prompt-store.js";
+import { GpuHistoryStore } from "./gpu-history-store.js";
 import { getGpuStatus } from "./gpu-manager.js";
 import { listListeningPorts } from "./ports.js";
 import { SessionManager } from "./session-manager.js";
@@ -153,11 +154,17 @@ export async function createRemoteVibesApp({
   const stateDir = path.join(cwd, ".remote-vibes");
   const sessionManager = new SessionManager({ cwd, providers, persistSessions, stateDir });
   const agentPromptStore = new AgentPromptStore({ cwd, stateDir });
+  const gpuHistoryStore = new GpuHistoryStore({
+    stateDir,
+    sampleIntervalMs: Number(process.env.REMOTE_VIBES_GPU_SAMPLE_MS || 60_000),
+  });
   await sessionManager.initialize();
   await agentPromptStore.initialize();
+  await gpuHistoryStore.initialize();
   let exposedPort = null;
   let closePromise = null;
   let terminatePromise = null;
+  let gpuHistoryTimer = null;
   let urls = [];
   let preferredUrl = null;
   const proxyServer = httpProxy.createProxyServer({
@@ -165,6 +172,15 @@ export async function createRemoteVibesApp({
     ws: true,
     xfwd: true,
   });
+
+  async function readGpuStatus({ recordHistory = true } = {}) {
+    const gpu = await getGpuStatus({ sessionRoots: sessionManager.listAgentProcessRoots() });
+    if (recordHistory) {
+      await gpuHistoryStore.record(gpu);
+    }
+
+    return gpu;
+  }
 
   app.use(express.json());
 
@@ -185,7 +201,7 @@ export async function createRemoteVibesApp({
       agentPrompt: await agentPromptStore.getState(),
       cwd,
       defaultProviderId,
-      gpu: await getGpuStatus({ sessionRoots: sessionManager.listAgentProcessRoots() }),
+      gpu: await readGpuStatus(),
       providers,
       sessions: sessionManager.listSessions(),
       urls,
@@ -202,7 +218,15 @@ export async function createRemoteVibesApp({
 
   app.get("/api/gpu", async (_request, response) => {
     response.json({
-      gpu: await getGpuStatus({ sessionRoots: sessionManager.listAgentProcessRoots() }),
+      gpu: await readGpuStatus(),
+    });
+  });
+
+  app.get("/api/gpu/history", async (request, response) => {
+    response.json({
+      history: gpuHistoryStore.getHistory(
+        typeof request.query.range === "string" ? request.query.range : "1d",
+      ),
     });
   });
 
@@ -314,6 +338,10 @@ export async function createRemoteVibesApp({
   exposedPort = resolvedPort;
   urls = await getAccessUrls(host, resolvedPort);
   preferredUrl = pickPreferredUrl(urls)?.url ?? urls[0]?.url ?? null;
+  gpuHistoryTimer = setInterval(() => {
+    void readGpuStatus();
+  }, gpuHistoryStore.sampleIntervalMs);
+  gpuHistoryTimer.unref?.();
 
   server.on("upgrade", (request, socket, head) => {
     const url = new URL(request.url || "/", `http://${request.headers.host}`);
@@ -391,6 +419,10 @@ export async function createRemoteVibesApp({
 
     closePromise = (async () => {
       await sessionManager.shutdown({ preserveSessions: persistSessions });
+      if (gpuHistoryTimer) {
+        clearInterval(gpuHistoryTimer);
+        gpuHistoryTimer = null;
+      }
       proxyServer.close();
       await new Promise((resolve) => websocketServer.close(resolve));
       await new Promise((resolve, reject) =>

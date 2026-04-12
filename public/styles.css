@@ -270,8 +270,10 @@ textarea {
 .gpu-card {
   display: grid;
   gap: 10px;
+  width: 100%;
   padding: 12px;
   border-radius: 16px;
+  text-align: left;
   background:
     radial-gradient(circle at top right, rgba(106, 227, 198, 0.14), transparent 42%),
     rgba(255, 255, 255, 0.04);
@@ -355,6 +357,146 @@ textarea {
 .gpu-empty {
   color: var(--muted);
   font-size: 0.78rem;
+}
+
+.dashboard-panel {
+  display: grid;
+  grid-template-rows: auto auto minmax(0, 1fr);
+  min-width: 0;
+  min-height: 0;
+  gap: 12px;
+  padding: 16px;
+  padding-top: max(16px, calc(var(--safe-top) + 10px));
+  padding-right: max(16px, calc(var(--safe-right) + 12px));
+  padding-bottom: max(16px, calc(var(--safe-bottom) + 10px));
+  padding-left: max(16px, calc(var(--safe-left) + 12px));
+  height: 100vh;
+  height: var(--app-height);
+  overflow: hidden;
+}
+
+.dashboard-toolbar,
+.dashboard-range,
+.gpu-chart-card {
+  border: 1px solid var(--line);
+  background: rgba(24, 29, 33, 0.74);
+  backdrop-filter: blur(16px);
+}
+
+.dashboard-toolbar,
+.dashboard-range {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 12px 14px;
+  border-radius: 16px;
+}
+
+.dashboard-copy {
+  min-width: 0;
+}
+
+.dashboard-copy strong,
+.dashboard-updated {
+  font-family: "IBM Plex Mono", monospace;
+}
+
+.dashboard-actions {
+  margin-left: auto;
+}
+
+.dashboard-range {
+  flex-wrap: wrap;
+}
+
+.dashboard-range-label {
+  color: var(--muted);
+  font-family: "IBM Plex Mono", monospace;
+  font-size: 0.74rem;
+  text-transform: uppercase;
+}
+
+.dashboard-range-button.is-active {
+  background: rgba(106, 227, 198, 0.16);
+  color: var(--accent);
+}
+
+.dashboard-updated {
+  margin-left: auto;
+  color: var(--muted);
+  font-size: 0.72rem;
+}
+
+.dashboard-grid {
+  display: grid;
+  gap: 12px;
+  min-height: 0;
+  overflow-y: auto;
+  padding-right: 2px;
+}
+
+.gpu-chart-card {
+  display: grid;
+  gap: 10px;
+  padding: 14px;
+  border-radius: 18px;
+}
+
+.gpu-chart-header {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.gpu-chart-meta {
+  color: var(--muted);
+  font-size: 0.78rem;
+}
+
+.gpu-chart {
+  width: 100%;
+  height: auto;
+  border-radius: 14px;
+  background:
+    linear-gradient(180deg, rgba(255, 255, 255, 0.04), rgba(255, 255, 255, 0.01)),
+    radial-gradient(circle at top right, rgba(106, 227, 198, 0.08), transparent 45%);
+}
+
+.gpu-grid-line {
+  stroke: rgba(255, 255, 255, 0.08);
+  stroke-width: 1;
+}
+
+.gpu-area-remote {
+  fill: rgba(106, 227, 198, 0.44);
+}
+
+.gpu-area-other {
+  fill: rgba(255, 216, 106, 0.34);
+}
+
+.gpu-line-remote,
+.gpu-line-stacked {
+  fill: none;
+  stroke-width: 2.4;
+}
+
+.gpu-line-remote {
+  stroke: #74f0d3;
+}
+
+.gpu-line-stacked {
+  stroke: #ffe189;
+}
+
+.gpu-chart-axis {
+  display: flex;
+  justify-content: space-between;
+  gap: 10px;
+  color: var(--muted);
+  font-family: "IBM Plex Mono", monospace;
+  font-size: 0.72rem;
 }
 
 .prompt-target {

@@ -101,6 +101,12 @@ test("state is available without authentication", async () => {
     assert.equal(typeof state.agentPrompt.prompt, "string");
     assert.equal(state.agentPrompt.promptPath, ".remote-vibes/agent-prompt.md");
     assert.ok(Array.isArray(state.agentPrompt.targets));
+
+    const gpuHistoryResponse = await fetch(`${baseUrl}/api/gpu/history?range=1d`);
+    assert.equal(gpuHistoryResponse.status, 200);
+    const gpuHistoryPayload = await gpuHistoryResponse.json();
+    assert.equal(gpuHistoryPayload.history.range, "1d");
+    assert.ok(Array.isArray(gpuHistoryPayload.history.gpus));
   } finally {
     await app.close();
   }
