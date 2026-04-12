@@ -45,6 +45,9 @@ export function buildStartupOutput(config) {
 
   lines.push("Port proxy:");
   lines.push("- /proxy/<port>/");
+  lines.push("Agent browser helper:");
+  lines.push("- rv-browser --help");
+  lines.push("- rv-browser screenshot 7860");
   lines.push("");
   lines.push(`${ANSI_GREEN}running${ANSI_RESET}`);
 

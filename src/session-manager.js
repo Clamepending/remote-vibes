@@ -2,6 +2,7 @@ import os from "node:os";
 import { statSync } from "node:fs";
 import path from "node:path";
 import { randomUUID } from "node:crypto";
+import { fileURLToPath } from "node:url";
 import pty from "node-pty";
 import { SessionStore } from "./session-store.js";
 
@@ -9,6 +10,9 @@ const MAX_BUFFER_LENGTH = 200_000;
 const STARTUP_DELAY_MS = 180;
 const SESSION_META_THROTTLE_MS = 180;
 const SESSION_PERSIST_THROTTLE_MS = 180;
+const __dirname = path.dirname(fileURLToPath(import.meta.url));
+const appRootDir = path.resolve(__dirname, "..");
+const helperBinDir = path.join(appRootDir, "bin");
 
 function getShellArgs(shellPath) {
   const shellName = path.basename(shellPath);
@@ -28,12 +32,24 @@ function trimBuffer(buffer) {
   return buffer.slice(buffer.length - MAX_BUFFER_LENGTH);
 }
 
+function prependPathEntry(existingPath, entry) {
+  const currentEntries = String(existingPath || "")
+    .split(path.delimiter)
+    .filter(Boolean);
+
+  return [entry, ...currentEntries.filter((candidate) => candidate !== entry)].join(path.delimiter);
+}
+
 function buildSessionEnv(sessionId, providerId) {
   return {
     ...process.env,
     COLORTERM: "truecolor",
     LANG: "en_US.UTF-8",
     LC_ALL: "en_US.UTF-8",
+    PATH: prependPathEntry(process.env.PATH, helperBinDir),
+    REMOTE_VIBES_APP_ROOT: appRootDir,
+    REMOTE_VIBES_BROWSER_COMMAND: "rv-browser",
+    REMOTE_VIBES_BROWSER_HELP: "rv-browser screenshot 7860",
     REMOTE_VIBES_PROVIDER: providerId,
     REMOTE_VIBES_SESSION_ID: sessionId,
     TERM: "xterm-256color",
@@ -129,6 +145,78 @@ export class SessionManager {
 
     this.schedulePersist({ immediate: true });
     return this.serializeSession(session);
+  }
+
+  renameSession(sessionId, name) {
+    const session = this.sessions.get(sessionId);
+
+    if (!session) {
+      return null;
+    }
+
+    const nextName = String(name ?? "").trim();
+    if (!nextName) {
+      throw new Error("Session name cannot be empty.");
+    }
+
+    if (nextName === session.name) {
+      return this.serializeSession(session);
+    }
+
+    session.name = nextName;
+    session.updatedAt = new Date().toISOString();
+    this.scheduleSessionMetaBroadcast(session, { immediate: true });
+    this.schedulePersist({ immediate: true });
+    return this.serializeSession(session);
+  }
+
+  forkSession(sessionId) {
+    const sourceSession = this.sessions.get(sessionId);
+
+    if (!sourceSession) {
+      return null;
+    }
+
+    const provider = this.getProvider(sourceSession.providerId);
+
+    if (!provider) {
+      throw new Error(`${sourceSession.providerLabel} is no longer configured on this host.`);
+    }
+
+    if (!provider.available) {
+      throw new Error(`${provider.label} is not installed on this host.`);
+    }
+
+    const createdAt = new Date().toISOString();
+    const forkSession = this.buildSessionRecord({
+      cwd: sourceSession.cwd,
+      name: this.makeForkName(sourceSession.name),
+      providerId: sourceSession.providerId,
+      providerLabel: sourceSession.providerLabel,
+      createdAt,
+      updatedAt: createdAt,
+      cols: sourceSession.cols,
+      rows: sourceSession.rows,
+      restoreOnStartup: true,
+      buffer: [
+        `\u001b[1;36m[remote-vibes]\u001b[0m forked from: ${sourceSession.name}`,
+        `\u001b[1;36m[remote-vibes]\u001b[0m this is a fresh sibling session in the same cwd`,
+        "",
+      ].join("\r\n"),
+    });
+
+    this.sessions.set(forkSession.id, forkSession);
+
+    try {
+      this.startSession(forkSession, provider);
+    } catch (error) {
+      this.sessions.delete(forkSession.id);
+      this.schedulePersist({ immediate: true });
+      throw error;
+    }
+
+    this.schedulePersist({ immediate: true });
+    return this.serializeSession(forkSession);
   }
 
   deleteSession(sessionId) {
@@ -258,6 +346,21 @@ export class SessionManager {
     ).length;
 
     return `${provider.defaultName} ${existingCount + 1}`;
+  }
+
+  makeForkName(baseName) {
+    const rootName = `${baseName} fork`;
+    let suffix = 1;
+    let nextName = rootName;
+
+    const existingNames = new Set(Array.from(this.sessions.values()).map((session) => session.name));
+
+    while (existingNames.has(nextName)) {
+      suffix += 1;
+      nextName = `${rootName} ${suffix}`;
+    }
+
+    return nextName;
   }
 
   pushOutput(session, chunk) {
@@ -405,6 +508,7 @@ export class SessionManager {
       : [
           `\u001b[1;36m[remote-vibes]\u001b[0m ${provider.label} session ready`,
           `\u001b[1;36m[remote-vibes]\u001b[0m cwd: ${sessionCwd}`,
+          "\u001b[1;36m[remote-vibes]\u001b[0m localhost browser helper: rv-browser --help",
           provider.launchCommand
             ? `\u001b[1;36m[remote-vibes]\u001b[0m launching: ${provider.launchCommand}`
             : `\u001b[1;36m[remote-vibes]\u001b[0m vanilla shell active`,

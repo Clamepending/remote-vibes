@@ -100,6 +100,10 @@ main() {
     chmod +x "$INSTALL_DIR/start.sh"
   fi
 
+  if [ -f "$INSTALL_DIR/bin/rv-browser" ] && [ ! -x "$INSTALL_DIR/bin/rv-browser" ]; then
+    chmod +x "$INSTALL_DIR/bin/rv-browser"
+  fi
+
   if [ "$SKIP_RUN" = "1" ]; then
     log "Skipping launch because REMOTE_VIBES_SKIP_RUN=1"
     return

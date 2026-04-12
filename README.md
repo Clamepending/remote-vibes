@@ -15,7 +15,19 @@ bash <(curl -fsSL https://gist.githubusercontent.com/Clamepending/b40db6fc8775b8
 
 Use that gist URL directly. The repo `raw.githubusercontent.com/.../install.sh` link can get rate-limited.
 
+The install command now launches Remote Vibes as a background server, so it keeps running even after the SSH session or terminal closes. Logs and the managed pid live under `~/.remote-vibes/.remote-vibes/`.
+
 You can access any localhost ports by clicking on it in the sidebar.
+
+Agents inside Remote Vibes also get an `rv-browser` command on `PATH`, so they can inspect localhost apps with a real browser. A few examples:
+
+```bash
+rv-browser doctor
+rv-browser screenshot 7860
+rv-browser run 7860 --steps-file eval-steps.json --output final.png
+```
+
+`rv-browser` is meant for arbitrary local UIs, not just Gradio. It works with anything the agent serves on `localhost` or `127.0.0.1`, captures screenshots, and can click/fill/upload files through a simple JSON step plan.
 
 tips:
 - Press the "shift+tab" button on the top right to swap to bypass-permisisons mode to not have to approve things all the time.

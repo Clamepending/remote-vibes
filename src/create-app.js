@@ -10,7 +10,12 @@ import { pickPreferredUrl } from "./access-url.js";
 import { listListeningPorts } from "./ports.js";
 import { SessionManager } from "./session-manager.js";
 import { detectProviders, getDefaultProviderId } from "./providers.js";
-import { listWorkspaceEntries, resolveWorkspaceEntry } from "./workspace-files.js";
+import {
+  listWorkspaceEntries,
+  readWorkspaceTextFile,
+  resolveWorkspaceEntry,
+  writeWorkspaceTextFile,
+} from "./workspace-files.js";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const publicDir = path.resolve(__dirname, "..", "public");
@@ -228,6 +233,35 @@ export async function createRemoteVibesApp({
     }
   });
 
+  app.get("/api/files/text", async (request, response) => {
+    try {
+      const file = await readWorkspaceTextFile({
+        root: typeof request.query.root === "string" ? request.query.root : cwd,
+        relativePath: typeof request.query.path === "string" ? request.query.path : "",
+        fallbackCwd: cwd,
+      });
+
+      response.json({ file });
+    } catch (error) {
+      response.status(error.statusCode || 400).json({ error: error.message });
+    }
+  });
+
+  app.put("/api/files/text", async (request, response) => {
+    try {
+      const file = await writeWorkspaceTextFile({
+        root: typeof request.body?.root === "string" ? request.body.root : cwd,
+        relativePath: typeof request.body?.path === "string" ? request.body.path : "",
+        fallbackCwd: cwd,
+        content: request.body?.content,
+      });
+
+      response.json({ file });
+    } catch (error) {
+      response.status(error.statusCode || 400).json({ error: error.message });
+    }
+  });
+
   app.post("/api/sessions", (request, response) => {
     try {
       const session = sessionManager.createSession({
@@ -244,6 +278,39 @@ export async function createRemoteVibesApp({
 
   app.get("/api/sessions", (_request, response) => {
     response.json({ sessions: sessionManager.listSessions() });
+  });
+
+  app.patch("/api/sessions/:sessionId", (request, response) => {
+    try {
+      const session = sessionManager.renameSession(
+        request.params.sessionId,
+        request.body?.name,
+      );
+
+      if (!session) {
+        response.status(404).json({ error: "Session not found." });
+        return;
+      }
+
+      response.json({ session });
+    } catch (error) {
+      response.status(400).json({ error: error.message });
+    }
+  });
+
+  app.post("/api/sessions/:sessionId/fork", (request, response) => {
+    try {
+      const session = sessionManager.forkSession(request.params.sessionId);
+
+      if (!session) {
+        response.status(404).json({ error: "Session not found." });
+        return;
+      }
+
+      response.status(201).json({ session });
+    } catch (error) {
+      response.status(400).json({ error: error.message });
+    }
   });
 
   app.delete("/api/sessions/:sessionId", (request, response) => {
