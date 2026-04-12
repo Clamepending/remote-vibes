@@ -56,7 +56,8 @@ body {
 
 button,
 input,
-select {
+select,
+textarea {
   font: inherit;
   font-size: 16px;
 }
@@ -72,7 +73,8 @@ button {
 }
 
 input,
-select {
+select,
+textarea {
   width: 100%;
   min-height: 48px;
   padding: 0 16px;
@@ -80,6 +82,12 @@ select {
   border-radius: 14px;
   background: rgba(255, 255, 255, 0.04);
   color: var(--text);
+}
+
+textarea {
+  min-height: 320px;
+  padding: 16px;
+  resize: vertical;
 }
 
 .screen {
@@ -247,6 +255,154 @@ select {
   background: rgba(255, 255, 255, 0.03);
   color: var(--muted);
   text-align: center;
+}
+
+.prompt-copy,
+.prompt-modal-copy {
+  display: grid;
+  gap: 4px;
+  color: var(--muted);
+  font-family: "IBM Plex Mono", monospace;
+  font-size: 0.72rem;
+  line-height: 1.5;
+}
+
+.gpu-card {
+  display: grid;
+  gap: 10px;
+  padding: 12px;
+  border-radius: 16px;
+  background:
+    radial-gradient(circle at top right, rgba(106, 227, 198, 0.14), transparent 42%),
+    rgba(255, 255, 255, 0.04);
+}
+
+.gpu-card.is-unavailable {
+  background: rgba(255, 255, 255, 0.03);
+}
+
+.gpu-topline {
+  display: grid;
+  gap: 4px;
+}
+
+.gpu-summary {
+  color: var(--muted);
+  font-size: 0.76rem;
+}
+
+.gpu-bars,
+.gpu-row,
+.gpu-row-copy {
+  display: grid;
+}
+
+.gpu-bars,
+.gpu-row {
+  gap: 8px;
+}
+
+.gpu-row-copy {
+  gap: 2px;
+}
+
+.gpu-row-label {
+  font-family: "IBM Plex Mono", monospace;
+  font-size: 0.74rem;
+  text-transform: uppercase;
+}
+
+.gpu-row-meta {
+  color: var(--muted);
+  font-size: 0.72rem;
+}
+
+.gpu-metric {
+  font-family: "IBM Plex Mono", monospace;
+  font-size: 0.94rem;
+  font-weight: 700;
+}
+
+.gpu-detail {
+  color: var(--muted);
+  font-size: 0.78rem;
+}
+
+.gpu-bar {
+  position: relative;
+  height: 10px;
+  border-radius: 999px;
+  background: rgba(255, 255, 255, 0.08);
+  overflow: hidden;
+}
+
+.gpu-bar-fill {
+  position: absolute;
+  inset: 0 auto 0 0;
+  border-radius: inherit;
+  display: block;
+  height: 100%;
+}
+
+.gpu-bar-fill-remote {
+  background: linear-gradient(90deg, #6ae3c6, #bff5d6);
+}
+
+.gpu-bar-fill-other {
+  background: linear-gradient(90deg, #ffd86a, #ffefaf);
+}
+
+.gpu-empty {
+  color: var(--muted);
+  font-size: 0.78rem;
+}
+
+.prompt-target {
+  display: flex;
+  justify-content: space-between;
+  gap: 10px;
+  padding: 10px 12px;
+  border-radius: 14px;
+  background: rgba(255, 255, 255, 0.04);
+  font-family: "IBM Plex Mono", monospace;
+  font-size: 0.74rem;
+}
+
+.prompt-target-conflict {
+  border: 1px solid rgba(255, 127, 121, 0.24);
+  color: #ffb1ac;
+}
+
+.prompt-modal-shell {
+  position: fixed;
+  inset: 0;
+  display: grid;
+  place-items: center;
+  padding: 24px;
+  z-index: 20;
+}
+
+.prompt-modal {
+  position: relative;
+  z-index: 21;
+  width: min(760px, 100%);
+  max-height: min(88vh, 960px);
+  display: grid;
+  gap: 14px;
+  padding: 18px;
+  border: 1px solid var(--line);
+  border-radius: 22px;
+  background: linear-gradient(180deg, rgba(17, 20, 23, 0.98), rgba(11, 14, 16, 0.96));
+  box-shadow: var(--shadow);
+}
+
+.prompt-form {
+  display: grid;
+  gap: 12px;
+}
+
+.prompt-textarea {
+  min-height: min(54vh, 560px);
 }
 
 .session-card,

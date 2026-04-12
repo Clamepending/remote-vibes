@@ -95,6 +95,16 @@ export class SessionManager {
     return this.sessions.get(sessionId) ?? null;
   }
 
+  listAgentProcessRoots() {
+    return Array.from(this.sessions.values())
+      .filter((session) => session.status === "running" && session.pty?.pid)
+      .map((session) => ({
+        sessionId: session.id,
+        providerId: session.providerId,
+        pid: Number(session.pty.pid),
+      }));
+  }
+
   createSession({ providerId, name, cwd }) {
     const provider = this.getProvider(providerId);
 

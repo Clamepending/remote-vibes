@@ -4,7 +4,7 @@ import os from "node:os";
 import path from "node:path";
 import test from "node:test";
 import { once } from "node:events";
-import { mkdtemp, mkdir, rm, writeFile } from "node:fs/promises";
+import { mkdtemp, mkdir, readFile, rm, writeFile } from "node:fs/promises";
 import { WebSocket } from "ws";
 import { createRemoteVibesApp } from "../src/create-app.js";
 
@@ -98,8 +98,78 @@ test("state is available without authentication", async () => {
     assert.ok(state.urls.length >= 1);
     assert.equal(typeof state.preferredUrl, "string");
     assert.ok(state.urls.some((entry) => entry.url === state.preferredUrl));
+    assert.equal(typeof state.agentPrompt.prompt, "string");
+    assert.equal(state.agentPrompt.promptPath, ".remote-vibes/agent-prompt.md");
+    assert.ok(Array.isArray(state.agentPrompt.targets));
   } finally {
     await app.close();
+  }
+});
+
+test("agent prompt api creates wiki scaffold and managed instruction files", async () => {
+  const workspaceDir = await createTempWorkspace("remote-vibes-agent-prompt-");
+  const { app, baseUrl } = await startApp({ cwd: workspaceDir });
+
+  try {
+    const stateResponse = await fetch(`${baseUrl}/api/state`);
+    assert.equal(stateResponse.status, 200);
+    const statePayload = await stateResponse.json();
+
+    assert.match(statePayload.agentPrompt.prompt, /Remote Vibes Agent Prompt/);
+    assert.equal(statePayload.agentPrompt.targets.length, 3);
+    assert.ok(statePayload.agentPrompt.targets.every((target) => target.status !== "conflict"));
+
+    const managedAgents = await readFile(path.join(workspaceDir, "AGENTS.md"), "utf8");
+    const managedClaude = await readFile(path.join(workspaceDir, "CLAUDE.md"), "utf8");
+    const promptSource = await readFile(path.join(workspaceDir, ".remote-vibes", "agent-prompt.md"), "utf8");
+    const wikiIndex = await readFile(path.join(workspaceDir, ".remote-vibes", "wiki", "index.md"), "utf8");
+
+    assert.match(managedAgents, /remote-vibes:managed-agent-prompt/);
+    assert.match(managedClaude, /remote-vibes:managed-agent-prompt/);
+    assert.match(managedAgents, /Edit this from Remote Vibes or \.remote-vibes\/agent-prompt\.md/);
+    assert.match(promptSource, /Remote Vibes Agent Prompt/);
+    assert.match(wikiIndex, /Wiki Index/);
+
+    const updateResponse = await fetch(`${baseUrl}/api/agent-prompt`, {
+      method: "PUT",
+      headers: {
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify({
+        prompt: "# Custom Prompt\n\nAlways log experiment changes in `.remote-vibes/wiki/log.md`.",
+      }),
+    });
+
+    assert.equal(updateResponse.status, 200);
+    const updatedPayload = await updateResponse.json();
+    assert.match(updatedPayload.prompt, /Custom Prompt/);
+
+    const updatedManagedAgents = await readFile(path.join(workspaceDir, "AGENTS.md"), "utf8");
+    assert.match(updatedManagedAgents, /Custom Prompt/);
+  } finally {
+    await app.close();
+    await rm(workspaceDir, { recursive: true, force: true });
+  }
+});
+
+test("agent prompt sync does not overwrite unmanaged instruction files", async () => {
+  const workspaceDir = await createTempWorkspace("remote-vibes-agent-conflict-");
+  await writeFile(path.join(workspaceDir, "AGENTS.md"), "# User-owned instructions\n", "utf8");
+
+  const { app, baseUrl } = await startApp({ cwd: workspaceDir });
+
+  try {
+    const response = await fetch(`${baseUrl}/api/agent-prompt`);
+    assert.equal(response.status, 200);
+    const payload = await response.json();
+    const agentsTarget = payload.targets.find((target) => target.label === "AGENTS.md");
+
+    assert.ok(agentsTarget);
+    assert.equal(agentsTarget.status, "conflict");
+    assert.equal(await readFile(path.join(workspaceDir, "AGENTS.md"), "utf8"), "# User-owned instructions\n");
+  } finally {
+    await app.close();
+    await rm(workspaceDir, { recursive: true, force: true });
   }
 });
 

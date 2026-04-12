@@ -9,6 +9,23 @@ const state = {
   providers: [],
   sessions: [],
   ports: [],
+  gpu: {
+    available: false,
+    total: 0,
+    used: 0,
+    idle: 0,
+    activeAgentSessions: 0,
+    totalMemoryMb: 0,
+    remoteVibesMemoryMb: 0,
+    otherMemoryMb: 0,
+    freeMemoryMb: 0,
+    perGpu: [],
+  },
+  agentPrompt: "",
+  agentPromptPath: "",
+  agentPromptWikiRoot: ".remote-vibes",
+  agentPromptTargets: [],
+  agentPromptEditorOpen: false,
   filesRootOverride: null,
   filesRoot: "",
   fileTreeEntries: {},
@@ -561,6 +578,104 @@ function renderPortCards() {
     .join("");
 }
 
+function renderGpuCard() {
+  const gpu = state.gpu || {};
+  const statusText = gpu.available ? `${gpu.used} / ${gpu.total} in use` : "unavailable";
+  const detailText = gpu.available
+    ? `${gpu.activeAgentSessions || 0} active agent${gpu.activeAgentSessions === 1 ? "" : "s"}`
+    : "nvidia-smi unavailable";
+  const summaryText = gpu.available
+    ? `${Math.round((gpu.remoteVibesMemoryMb || 0) / 1024)} GB ours · ${Math.round((gpu.otherMemoryMb || 0) / 1024)} GB other`
+    : "green: remote vibes · yellow: other";
+  const bars = gpu.available && Array.isArray(gpu.perGpu) && gpu.perGpu.length
+    ? gpu.perGpu
+        .map((entry) => {
+          const total = Math.max(1, entry.totalMemoryMb || 0);
+          const remotePercent = Math.max(0, Math.min(100, (entry.remoteVibesMemoryMb / total) * 100));
+          const otherPercent = Math.max(0, Math.min(100 - remotePercent, (entry.otherMemoryMb / total) * 100));
+
+          return `
+            <div class="gpu-row">
+              <div class="gpu-row-copy">
+                <span class="gpu-row-label">gpu ${escapeHtml(entry.index)}</span>
+                <span class="gpu-row-meta">${escapeHtml(
+                  `${Math.round(entry.remoteVibesMemoryMb / 1024)}G ours · ${Math.round(entry.otherMemoryMb / 1024)}G other / ${Math.round(entry.totalMemoryMb / 1024)}G`,
+                )}</span>
+              </div>
+              <div class="gpu-bar" aria-hidden="true">
+                <span class="gpu-bar-fill gpu-bar-fill-remote" style="width:${remotePercent}%"></span>
+                <span class="gpu-bar-fill gpu-bar-fill-other" style="left:${remotePercent}%;width:${otherPercent}%"></span>
+              </div>
+            </div>
+          `;
+        })
+        .join("")
+    : `<div class="gpu-empty">No GPU telemetry available.</div>`;
+
+  return `
+    <div class="gpu-card ${gpu.available ? "" : "is-unavailable"}">
+      <div class="gpu-topline">
+        <span class="gpu-metric">${escapeHtml(statusText)}</span>
+        <span class="gpu-detail">${escapeHtml(detailText)}</span>
+      </div>
+      <div class="gpu-summary">${escapeHtml(summaryText)}</div>
+      <div class="gpu-bars">${bars}</div>
+    </div>
+  `;
+}
+
+function renderAgentPromptTargets() {
+  if (!state.agentPromptTargets.length) {
+    return `<div class="blank-state">no managed files yet</div>`;
+  }
+
+  return state.agentPromptTargets
+    .map(
+      (target) => `
+        <div class="prompt-target prompt-target-${escapeHtml(target.status)}">
+          <span>${escapeHtml(target.label)}</span>
+          <span>${escapeHtml(target.status)}</span>
+        </div>
+      `,
+    )
+    .join("");
+}
+
+function renderAgentPromptModal() {
+  if (!state.agentPromptEditorOpen) {
+    return "";
+  }
+
+  return `
+    <div class="prompt-modal-shell" data-prompt-modal>
+      <button class="sidebar-scrim is-open" type="button" aria-label="Close prompt editor" data-close-prompt></button>
+      <section class="prompt-modal">
+        <div class="section-head">
+          <span>agent prompt</span>
+          <button class="icon-button" type="button" data-close-prompt>×</button>
+        </div>
+        <div class="prompt-modal-copy">
+          <div>source: ${escapeHtml(state.agentPromptPath || ".remote-vibes/agent-prompt.md")}</div>
+          <div>wiki root: ${escapeHtml(state.agentPromptWikiRoot)}</div>
+        </div>
+        <form class="prompt-form" id="agent-prompt-form">
+          <textarea
+            class="prompt-textarea"
+            name="prompt"
+            spellcheck="false"
+            autocapitalize="none"
+            autocorrect="off"
+          >${escapeHtml(state.agentPrompt)}</textarea>
+          <div class="inline-form">
+            <button class="ghost-button" type="button" data-close-prompt>close</button>
+            <button class="primary-button" type="submit">save</button>
+          </div>
+        </form>
+      </section>
+    </div>
+  `;
+}
+
 function renderShell() {
   syncFilesRoot();
 
@@ -599,6 +714,25 @@ function renderShell() {
               <span>sessions</span>
             </div>
             <div class="list-shell" id="sessions-list">${renderSessionCards()}</div>
+          </section>
+
+          <section class="sidebar-section">
+            <div class="section-head">
+              <span>gpu usage</span>
+            </div>
+            <div id="gpu-card">${renderGpuCard()}</div>
+          </section>
+
+          <section class="sidebar-section">
+            <div class="section-head">
+              <span>agent prompt</span>
+              <button class="ghost-button" type="button" id="edit-agent-prompt">edit</button>
+            </div>
+            <div class="prompt-copy">
+              <div>source: ${escapeHtml(state.agentPromptPath || ".remote-vibes/agent-prompt.md")}</div>
+              <div>wiki root: ${escapeHtml(state.agentPromptWikiRoot)}</div>
+            </div>
+            <div class="list-shell" id="agent-prompt-targets">${renderAgentPromptTargets()}</div>
           </section>
 
           <section class="sidebar-section">
@@ -670,6 +804,7 @@ function renderShell() {
           </div>
         </div>
       </section>
+      ${renderAgentPromptModal()}
     </main>
   `;
 
@@ -744,6 +879,15 @@ function refreshPortsList() {
   }
 
   portsList.innerHTML = renderPortCards();
+}
+
+function refreshGpuCard() {
+  const gpuCard = document.querySelector("#gpu-card");
+  if (!gpuCard) {
+    return;
+  }
+
+  gpuCard.innerHTML = renderGpuCard();
 }
 
 function bindFileTreeEvents() {
@@ -836,6 +980,7 @@ function refreshShellUi({ sessions = true, ports = true, files = true } = {}) {
     refreshFileTreeUi();
   }
 
+  refreshGpuCard();
   refreshToolbarUi();
 }
 
@@ -915,6 +1060,28 @@ function scheduleSessionsRefresh() {
   }, 180);
 }
 
+function applyAgentPromptState(payload) {
+  state.agentPrompt = payload?.prompt || "";
+  state.agentPromptPath = payload?.promptPath || ".remote-vibes/agent-prompt.md";
+  state.agentPromptWikiRoot = payload?.wikiRoot || ".remote-vibes";
+  state.agentPromptTargets = Array.isArray(payload?.targets) ? payload.targets : [];
+}
+
+function applyGpuState(payload) {
+  state.gpu = {
+    available: Boolean(payload?.available),
+    total: Number(payload?.total) || 0,
+    used: Number(payload?.used) || 0,
+    idle: Number(payload?.idle) || 0,
+    activeAgentSessions: Number(payload?.activeAgentSessions) || 0,
+    totalMemoryMb: Number(payload?.totalMemoryMb) || 0,
+    remoteVibesMemoryMb: Number(payload?.remoteVibesMemoryMb) || 0,
+    otherMemoryMb: Number(payload?.otherMemoryMb) || 0,
+    freeMemoryMb: Number(payload?.freeMemoryMb) || 0,
+    perGpu: Array.isArray(payload?.perGpu) ? payload.perGpu : [],
+  };
+}
+
 function bindShellEvents() {
   document.querySelector("#session-form")?.addEventListener("submit", async (event) => {
     event.preventDefault();
@@ -954,6 +1121,35 @@ function bindShellEvents() {
   });
 
   document.querySelector("#refresh-sessions")?.addEventListener("click", () => loadSessions());
+  document.querySelector("#edit-agent-prompt")?.addEventListener("click", () => {
+    state.agentPromptEditorOpen = true;
+    renderShell();
+  });
+  document.querySelectorAll("[data-close-prompt]").forEach((element) => {
+    element.addEventListener("click", () => {
+      state.agentPromptEditorOpen = false;
+      renderShell();
+    });
+  });
+  document.querySelector("#agent-prompt-form")?.addEventListener("submit", async (event) => {
+    event.preventDefault();
+    const formData = new FormData(event.currentTarget);
+
+    try {
+      const payload = await fetchJson("/api/agent-prompt", {
+        method: "PUT",
+        body: JSON.stringify({
+          prompt: String(formData.get("prompt") || ""),
+        }),
+      });
+
+      applyAgentPromptState(payload);
+      state.agentPromptEditorOpen = false;
+      renderShell();
+    } catch (error) {
+      window.alert(error.message);
+    }
+  });
   document.querySelector("#refresh-files")?.addEventListener("click", async () => {
     syncFilesRoot({ force: true });
     refreshFileTreeUi();
@@ -1505,6 +1701,16 @@ async function loadPorts() {
   }
 }
 
+async function loadGpu() {
+  try {
+    const payload = await fetchJson("/api/gpu");
+    applyGpuState(payload.gpu);
+    refreshShellUi({ sessions: false, ports: false, files: false });
+  } catch (error) {
+    console.error(error);
+  }
+}
+
 async function bootstrapApp() {
   try {
     if ("virtualKeyboard" in navigator) {
@@ -1521,7 +1727,9 @@ async function bootstrapApp() {
   state.ports = payload.ports ?? [];
   state.defaultCwd = payload.cwd;
   state.defaultProviderId = payload.defaultProviderId;
+  applyGpuState(payload.gpu);
   state.preferredBaseUrl = payload.preferredUrl ? new URL(payload.preferredUrl).origin : "";
+  applyAgentPromptState(payload.agentPrompt);
 
   if (maybeRedirectToPreferredOrigin()) {
     return;
@@ -1541,6 +1749,7 @@ async function bootstrapApp() {
   state.pollTimer = window.setInterval(() => {
     loadSessions();
     loadPorts();
+    loadGpu();
     void refreshOpenFileTree({ force: true });
   }, 3000);
 }

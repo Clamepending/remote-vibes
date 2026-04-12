@@ -7,6 +7,8 @@ import { promisify } from "node:util";
 import express from "express";
 import { WebSocketServer } from "ws";
 import { pickPreferredUrl } from "./access-url.js";
+import { AgentPromptStore } from "./agent-prompt-store.js";
+import { getGpuStatus } from "./gpu-manager.js";
 import { listListeningPorts } from "./ports.js";
 import { SessionManager } from "./session-manager.js";
 import { detectProviders, getDefaultProviderId } from "./providers.js";
@@ -148,8 +150,11 @@ export async function createRemoteVibesApp({
   const providers = await detectProviders();
   const defaultProviderId = getDefaultProviderId(providers);
   const app = express();
-  const sessionManager = new SessionManager({ cwd, providers, persistSessions });
+  const stateDir = path.join(cwd, ".remote-vibes");
+  const sessionManager = new SessionManager({ cwd, providers, persistSessions, stateDir });
+  const agentPromptStore = new AgentPromptStore({ cwd, stateDir });
   await sessionManager.initialize();
+  await agentPromptStore.initialize();
   let exposedPort = null;
   let closePromise = null;
   let terminatePromise = null;
@@ -177,8 +182,10 @@ export async function createRemoteVibesApp({
   app.get("/api/state", async (_request, response) => {
     response.json({
       appName: "Remote Vibes",
+      agentPrompt: await agentPromptStore.getState(),
       cwd,
       defaultProviderId,
+      gpu: await getGpuStatus({ sessionRoots: sessionManager.listAgentProcessRoots() }),
       providers,
       sessions: sessionManager.listSessions(),
       urls,
@@ -190,6 +197,12 @@ export async function createRemoteVibesApp({
   app.get("/api/ports", async (_request, response) => {
     response.json({
       ports: await listListeningPorts({ excludePorts: exposedPort ? [exposedPort] : [] }),
+    });
+  });
+
+  app.get("/api/gpu", async (_request, response) => {
+    response.json({
+      gpu: await getGpuStatus({ sessionRoots: sessionManager.listAgentProcessRoots() }),
     });
   });
 
@@ -244,6 +257,18 @@ export async function createRemoteVibesApp({
 
   app.get("/api/sessions", (_request, response) => {
     response.json({ sessions: sessionManager.listSessions() });
+  });
+
+  app.get("/api/agent-prompt", async (_request, response) => {
+    response.json(await agentPromptStore.getState());
+  });
+
+  app.put("/api/agent-prompt", async (request, response) => {
+    try {
+      response.json(await agentPromptStore.save(request.body?.prompt));
+    } catch (error) {
+      response.status(400).json({ error: error.message });
+    }
   });
 
   app.delete("/api/sessions/:sessionId", (request, response) => {
@@ -403,6 +428,7 @@ export async function createRemoteVibesApp({
     close,
     config: {
       appName: "Remote Vibes",
+      agentPrompt: await agentPromptStore.getState(),
       cwd,
       defaultProviderId,
       host,

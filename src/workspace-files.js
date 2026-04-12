@@ -17,6 +17,7 @@ const IMAGE_EXTENSIONS = new Set([
   ".webp",
 ]);
 const INTERNAL_PATH_SEGMENTS = new Set([".remote-vibes"]);
+const MANAGED_WORKSPACE_FILES = new Set(["AGENTS.md", "CLAUDE.md", "GEMINI.md"]);
 
 function buildHttpError(message, statusCode) {
   const error = new Error(message);
@@ -56,6 +57,11 @@ function containsInternalPathSegment(relativePath) {
     .split("/")
     .filter(Boolean)
     .some((segment) => INTERNAL_PATH_SEGMENTS.has(segment));
+}
+
+function isManagedWorkspaceFile(relativePath) {
+  const normalized = normalizeRelativePath(relativePath);
+  return normalized && !normalized.includes("/") && MANAGED_WORKSPACE_FILES.has(normalized);
 }
 
 export function isImageFile(fileName) {
@@ -132,7 +138,10 @@ export async function listWorkspaceEntries({
         isImage: child.isFile() && isImageFile(child.name),
       };
     })
-    .filter((child) => !containsInternalPathSegment(child.relativePath))
+    .filter(
+      (child) =>
+        !containsInternalPathSegment(child.relativePath) && !isManagedWorkspaceFile(child.relativePath),
+    )
     .sort((left, right) => {
       if (left.type !== right.type) {
         return left.type === "directory" ? -1 : 1;
