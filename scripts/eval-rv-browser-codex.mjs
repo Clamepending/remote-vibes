@@ -17,6 +17,7 @@ function shellQuote(value) {
 function parseArgs(argv) {
   const flags = {
     cleanup: false,
+    provider: "codex",
     timeoutMs: DEFAULT_TIMEOUT_MS,
   };
 
@@ -39,6 +40,20 @@ function parseArgs(argv) {
         throw new Error("--timeout-ms must be a positive number.");
       }
       flags.timeoutMs = timeoutMs;
+      continue;
+    }
+
+    if (argument === "--provider") {
+      index += 1;
+      if (index >= argv.length) {
+        throw new Error("--provider requires a value.");
+      }
+
+      const provider = String(argv[index]).trim().toLowerCase();
+      if (!["codex", "claude"].includes(provider)) {
+        throw new Error("--provider must be codex or claude.");
+      }
+      flags.provider = provider;
       continue;
     }
 
@@ -132,12 +147,22 @@ async function startDemoServer() {
   return server;
 }
 
-async function assertCodexAvailable() {
-  try {
-    await access("/Applications/Codex.app/Contents/Resources/codex", fsConstants.X_OK);
-  } catch {
-    throw new Error("Codex CLI is not installed at /Applications/Codex.app/Contents/Resources/codex.");
+async function assertProviderAvailable(provider) {
+  const providerPathHints = {
+    codex: ["/Applications/Codex.app/Contents/Resources/codex"],
+    claude: ["/opt/homebrew/bin/claude", "/usr/local/bin/claude"],
+  };
+
+  for (const candidate of providerPathHints[provider] || []) {
+    try {
+      await access(candidate, fsConstants.X_OK);
+      return;
+    } catch {
+      // Try the next hint.
+    }
   }
+
+  throw new Error(`${provider} CLI is not installed at a known path.`);
 }
 
 async function waitForSnapshot(websocket, timeoutMs) {
@@ -183,7 +208,7 @@ function buildPrompt(demoPort) {
 
 async function main() {
   const flags = parseArgs(process.argv.slice(2));
-  await assertCodexAvailable();
+  await assertProviderAvailable(flags.provider);
 
   const workspaceDir = await mkdtemp(path.join(os.tmpdir(), "remote-vibes-live-codex-"));
   const evalDir = path.join(workspaceDir, "eval");
@@ -243,7 +268,9 @@ async function main() {
         data:
           [
             `cd ${shellQuote(workspaceDir)}`,
-            `codex exec --dangerously-bypass-approvals-and-sandbox -C . "$(cat ${shellQuote(path.relative(workspaceDir, promptPath))})" > ${shellQuote(path.relative(workspaceDir, cliLogPath))} 2>&1`,
+            flags.provider === "codex"
+              ? `codex exec --dangerously-bypass-approvals-and-sandbox -C . "$(cat ${shellQuote(path.relative(workspaceDir, promptPath))})" > ${shellQuote(path.relative(workspaceDir, cliLogPath))} 2>&1`
+              : `claude -p --verbose --output-format stream-json --dangerously-skip-permissions "$(cat ${shellQuote(path.relative(workspaceDir, promptPath))})" > ${shellQuote(path.relative(workspaceDir, cliLogPath))} 2>&1`,
           ].join("; ") + "\r",
       }),
     );
@@ -273,6 +300,7 @@ async function main() {
       ok: true,
       workspaceDir,
       demoPort,
+      provider: flags.provider,
       screenshotBytes: screenshotStats.size,
       cliLogHasRvBrowser: /rv-browser/.test(cliLog),
       steps,

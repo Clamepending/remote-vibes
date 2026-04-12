@@ -74,3 +74,13 @@ test("providerDefinitions includes OpenCode with desktop and common CLI path hin
     "/usr/local/bin/opencode",
   ]);
 });
+
+test("providerDefinitions includes Claude path hints for common installs", () => {
+  const provider = providerDefinitions.find((entry) => entry.id === "claude");
+
+  assert.ok(provider);
+  assert.deepEqual(provider.pathHints, [
+    "/opt/homebrew/bin/claude",
+    "/usr/local/bin/claude",
+  ]);
+});

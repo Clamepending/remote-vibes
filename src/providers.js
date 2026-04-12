@@ -12,6 +12,10 @@ export const providerDefinitions = [
     command: "claude",
     launchCommand: "claude",
     defaultName: "Claude",
+    pathHints: [
+      "/opt/homebrew/bin/claude",
+      "/usr/local/bin/claude",
+    ],
   },
   {
     id: "codex",

@@ -37,10 +37,11 @@ For model training or experiment loops, the lightweight pattern is:
 - save generated images or plots to disk and use `rv-browser describe-file` for a qualitative read
 - ask the agent to write a short keep-training / stop-training note grounded in those rendered artifacts
 
-For a repeatable live Codex smoke test inside a Remote Vibes shell session, run:
+For a repeatable live agent smoke test inside a Remote Vibes shell session, run:
 
 ```bash
-node scripts/eval-rv-browser-codex.mjs
+node scripts/eval-rv-browser-codex.mjs --provider codex
+node scripts/eval-rv-browser-codex.mjs --provider claude
 ```
 
 tips:
