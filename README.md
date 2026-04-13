@@ -1,17 +1,24 @@
 # Remote Vibes
 
-Minimal browser terminal to vibe code on your laptop/cluster via your phone on the go.
+## Quickstart
 
-1. Install [Tailscale](https://tailscale.com/download) on your laptop/cluster and phone.
+Minimal browser terminal to vibe code on your server/cluster via your phone/laptop on the go.
+
+1. Install [Tailscale](https://tailscale.com/download) on your server/cluster and phone/laptop.
 2. Sign into the same account on both.
-3. Run this on the laptop/cluster:
+3. Run this on the server/cluster:
 
 ```bash
 bash <(curl -fsSL https://gist.githubusercontent.com/Clamepending/b40db6fc8775b843e6fc06a2b5857604/raw/install.sh)
 ```
 
-4. Open the Tailscale URL printed in the terminal on your phone.
+4. Open the Tailscale URL printed in the terminal on your phone/laptop.
 5. Run the same command again any time you want to update.
+
+
+
+
+## Details...
 
 Use that gist URL directly. The repo `raw.githubusercontent.com/.../install.sh` link can get rate-limited.
 
