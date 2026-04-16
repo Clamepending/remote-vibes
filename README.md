@@ -35,7 +35,16 @@ The install command now launches Remote Vibes as a background server, so it keep
 
 Remote Vibes uses GitHub Releases as the stable update channel. Friends' installs update to release tags like `v0.2.1`, not random in-progress commits on `main`.
 
-Cut a release from a clean `main` checkout:
+The safest path is the manual GitHub Actions workflow:
+
+1. Open GitHub Actions.
+2. Select `Release`.
+3. Click `Run workflow`.
+4. Choose `patch`, `minor`, or `major`.
+
+The workflow checks out a clean copy, installs Node.js 22, runs the full test suite, bumps the version, creates the tag, and publishes the GitHub Release.
+
+You can still cut a release locally from a clean `main` checkout:
 
 ```bash
 npm run release:patch
@@ -43,7 +52,7 @@ npm run release:minor
 npm run release:major
 ```
 
-Those commands bump `package.json`, commit `Release vX.Y.Z`, create an annotated git tag, push `main` and the tag, then publish a GitHub Release with generated notes. The in-app updater checks the latest GitHub Release first and only falls back to `main` if no release exists yet.
+Both paths bump `package.json`, commit `Release vX.Y.Z`, create an annotated git tag, push `main` and the tag, then publish a GitHub Release with generated notes. The in-app updater checks the latest GitHub Release first and only falls back to `main` if no release exists yet.
 
 You can access any localhost ports by clicking on it in the sidebar.
 

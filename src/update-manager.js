@@ -247,7 +247,14 @@ export class UpdateManager {
         };
       }
 
-      const updateAvailable = Boolean(currentCommit && latestCommit && currentCommit !== latestCommit);
+      let updateAvailable = Boolean(currentCommit && latestCommit && currentCommit !== latestCommit);
+      const aheadOfTarget =
+        updateAvailable && latest.targetType === "release"
+          ? await this.isCommitAncestor(latestCommit, currentCommit)
+          : false;
+      if (aheadOfTarget) {
+        updateAvailable = false;
+      }
       let reason = "";
 
       if (updateAvailable && dirtyState.blockingDirty) {
@@ -285,6 +292,7 @@ export class UpdateManager {
         releaseUrl: latest.releaseUrl,
         releasePublishedAt: latest.publishedAt,
         releaseCheck: latest.releaseCheck,
+        aheadOfTarget,
         dirty: dirtyState.dirty,
         blockingDirty: dirtyState.blockingDirty,
         dirtyFiles: dirtyState.dirtyFiles,
@@ -497,6 +505,19 @@ export class UpdateManager {
     }
 
     return "";
+  }
+
+  async isCommitAncestor(ancestorCommit, descendantCommit) {
+    if (!ancestorCommit || !descendantCommit) {
+      return false;
+    }
+
+    try {
+      await this.git(["merge-base", "--is-ancestor", ancestorCommit, descendantCommit]);
+      return true;
+    } catch {
+      return false;
+    }
   }
 
   async scheduleUpdateAndRestart() {

@@ -248,3 +248,57 @@ test("UpdateManager prefers GitHub Releases and schedules a tag checkout", async
     await rm(tempRoot, { recursive: true, force: true });
   }
 });
+
+test("UpdateManager does not offer to downgrade branch checkouts ahead of the latest release", async () => {
+  const { checkoutDir, sourceDir, tempRoot } = await createRepoPair();
+  const releaseCommit = await commitSourceVersion(sourceDir, "v2");
+  await commitSourceVersion(sourceDir, "v3");
+  await git(checkoutDir, ["pull", "--ff-only"]);
+  await git(checkoutDir, ["remote", "set-url", "origin", "git@github.com:Clamepending/remote-vibes.git"]);
+
+  try {
+    const manager = new UpdateManager({
+      cwd: checkoutDir,
+      stateDir: path.join(tempRoot, "state"),
+      cacheMs: 0,
+      fetch: async () => ({
+        ok: true,
+        status: 200,
+        async json() {
+          return {
+            tag_name: "v2.0.0",
+            name: "Remote Vibes v2.0.0",
+            html_url: "https://github.com/Clamepending/remote-vibes/releases/tag/v2.0.0",
+            published_at: "2026-04-16T08:00:00Z",
+          };
+        },
+      }),
+      execFile(command, args, options) {
+        if (
+          command === "git" &&
+          args[2] === "ls-remote" &&
+          args[3] === "https://github.com/Clamepending/remote-vibes.git" &&
+          args[4] === "refs/tags/v2.0.0"
+        ) {
+          return Promise.resolve({
+            stdout: `${releaseCommit}\trefs/tags/v2.0.0\n`,
+            stderr: "",
+          });
+        }
+
+        return execFile(command, args, options);
+      },
+    });
+
+    const status = await manager.getStatus({ force: true });
+
+    assert.equal(status.status, "current");
+    assert.equal(status.updateAvailable, false);
+    assert.equal(status.canUpdate, false);
+    assert.equal(status.targetType, "release");
+    assert.equal(status.latestVersion, "v2.0.0");
+    assert.equal(status.aheadOfTarget, true);
+  } finally {
+    await rm(tempRoot, { recursive: true, force: true });
+  }
+});

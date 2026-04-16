@@ -10,6 +10,8 @@ const bump = process.argv[2] || "patch";
 const noPush = process.argv.includes("--no-push");
 const noGitHubRelease = process.argv.includes("--no-github-release");
 const allowNonMain = process.argv.includes("--allow-non-main");
+const runningInGitHubActions = process.env.GITHUB_ACTIONS === "true";
+const hasGitHubToken = Boolean(process.env.GH_TOKEN || process.env.GITHUB_TOKEN);
 
 function run(command, args, { capture = false, allowFailure = false } = {}) {
   try {
@@ -119,15 +121,17 @@ if (!noGitHubRelease) {
     fail("GitHub CLI is required to publish a GitHub Release. Install gh or pass --no-github-release.");
   }
 
-  const ghAuth = run("gh", ["auth", "status", "--hostname", "github.com"], {
-    capture: true,
-    allowFailure: true,
-  });
-  if (!ghAuth) {
-    fail("GitHub CLI is not authenticated for github.com. Run `gh auth login` or pass --no-github-release.");
-  }
+  if (!hasGitHubToken) {
+    const ghAuth = run("gh", ["auth", "status", "--hostname", "github.com"], {
+      capture: true,
+      allowFailure: true,
+    });
+    if (!ghAuth) {
+      fail("GitHub CLI is not authenticated for github.com. Run `gh auth login` or pass --no-github-release.");
+    }
 
-  run("gh", ["auth", "setup-git", "--hostname", "github.com"]);
+    run("gh", ["auth", "setup-git", "--hostname", "github.com"]);
+  }
 }
 
 packageJson.version = version;
@@ -153,7 +157,7 @@ if (noPush) {
   process.exit(0);
 }
 
-const pushRemote = noGitHubRelease || !githubPushUrl ? "origin" : githubPushUrl;
+const pushRemote = runningInGitHubActions || noGitHubRelease || !githubPushUrl ? "origin" : githubPushUrl;
 run("git", ["push", pushRemote, currentBranch]);
 run("git", ["push", pushRemote, tag]);
 
