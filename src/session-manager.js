@@ -27,6 +27,7 @@ const PROVIDER_SESSION_CAPTURE_RETRY_INTERVAL_MS = 5_000;
 const PROVIDER_SESSION_CAPTURE_RETRY_WINDOW_MS = 90_000;
 const CODEX_SESSION_INDEX_LIMIT = 100;
 const CODEX_SESSION_META_READ_LIMIT = 8192;
+const CLAUDE_SKIP_PERMISSIONS_ARG = "--dangerously-skip-permissions";
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const appRootDir = path.resolve(__dirname, "..");
 const helperBinDir = path.join(appRootDir, "bin");
@@ -1419,11 +1420,15 @@ export class SessionManager {
         this.updateProviderState(session, { sessionId });
       }
 
-      const createCommand = buildShellCommand(launchCommand, ["--session-id", sessionId || session.id]);
+      const createCommand = buildShellCommand(launchCommand, [
+        CLAUDE_SKIP_PERMISSIONS_ARG,
+        "--session-id",
+        sessionId || session.id,
+      ]);
       return {
         commandString: restored && sessionId
           ? buildFallbackCommand([
-              buildShellCommand(launchCommand, ["--resume", sessionId]),
+              buildShellCommand(launchCommand, [CLAUDE_SKIP_PERMISSIONS_ARG, "--resume", sessionId]),
               createCommand,
             ])
           : createCommand,

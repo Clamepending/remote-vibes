@@ -235,13 +235,13 @@ test("Claude sessions use a fixed session id and resume it after restart", async
     const firstLaunch = await manager.prepareProviderLaunch(session, provider, { restored: false });
     assert.equal(
       firstLaunch.commandString,
-      "'claude' '--session-id' '11111111-2222-4333-8444-555555555555'",
+      "'claude' '--dangerously-skip-permissions' '--session-id' '11111111-2222-4333-8444-555555555555'",
     );
 
     const restoredLaunch = await manager.prepareProviderLaunch(session, provider, { restored: true });
     assert.equal(
       restoredLaunch.commandString,
-      "'claude' '--resume' '11111111-2222-4333-8444-555555555555' || 'claude' '--session-id' '11111111-2222-4333-8444-555555555555'",
+      "'claude' '--dangerously-skip-permissions' '--resume' '11111111-2222-4333-8444-555555555555' || 'claude' '--dangerously-skip-permissions' '--session-id' '11111111-2222-4333-8444-555555555555'",
     );
   } finally {
     await cleanupManager(manager, workspaceDir, userHomeDir);
@@ -299,7 +299,7 @@ test("Claude and Codex provider launches use the managed wrapper command when a 
     const claudeLaunch = await manager.prepareProviderLaunch(claudeSession, claudeProvider, { restored: false });
     assert.equal(
       claudeLaunch.commandString,
-      "'claude' '--session-id' '55555555-6666-4777-8888-999999999999'",
+      "'claude' '--dangerously-skip-permissions' '--session-id' '55555555-6666-4777-8888-999999999999'",
     );
 
     const codexLaunch = await manager.prepareProviderLaunch(codexSession, codexProvider, { restored: false });

@@ -278,11 +278,13 @@ test("claude sessions use a deterministic session id so restores pick up exactly
       restored: false,
     });
     assert.equal(session.providerState.sessionId, session.id);
+    assert.match(launchContext.commandString, /--dangerously-skip-permissions/);
     assert.match(launchContext.commandString, new RegExp(`--session-id' '${session.id}'`));
 
     const restoredContext = await manager.prepareProviderLaunch(session, provider, {
       restored: true,
     });
+    assert.match(restoredContext.commandString, /--dangerously-skip-permissions/);
     assert.match(restoredContext.commandString, new RegExp(`--resume' '${session.id}'`));
   } finally {
     if (manager) {
@@ -324,6 +326,7 @@ test("claude restore can recover older snapshots by matching the workspace proje
     });
 
     assert.equal(legacySession.providerState.sessionId, expectedSessionId);
+    assert.match(launchContext.commandString, /--dangerously-skip-permissions/);
     assert.match(launchContext.commandString, new RegExp(`--resume' '${expectedSessionId}'`));
   } finally {
     if (manager) {
