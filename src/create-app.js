@@ -7,8 +7,12 @@ import { promisify } from "node:util";
 import express from "express";
 import { WebSocketServer } from "ws";
 import { pickPreferredUrl } from "./access-url.js";
+import { AgentPromptStore } from "./agent-prompt-store.js";
+import { PortAliasStore } from "./port-alias-store.js";
 import { listListeningPorts } from "./ports.js";
 import { SessionManager } from "./session-manager.js";
+import { getRemoteVibesStateDir } from "./state-paths.js";
+import { UpdateManager } from "./update-manager.js";
 import { detectProviders, getDefaultProviderId } from "./providers.js";
 import {
   listWorkspaceEntries,
@@ -24,6 +28,41 @@ const execFileAsync = promisify(execFile);
 function normalizePort(value) {
   const port = Number(value);
   return Number.isInteger(port) && port > 0 && port < 65_536 ? port : null;
+}
+
+function createPortInUseError(host, port) {
+  const error = new Error(`listen EADDRINUSE: address already in use ${host}:${port}`);
+  error.code = "EADDRINUSE";
+  error.address = host;
+  error.port = port;
+  return error;
+}
+
+async function ensurePortAvailable(host, port) {
+  const normalizedPort = normalizePort(port);
+
+  if (!normalizedPort) {
+    return;
+  }
+
+  try {
+    const { stdout } = await execFileAsync(process.env.SHELL || "/bin/zsh", [
+      "-lc",
+      `lsof -nP -iTCP:${normalizedPort} -sTCP:LISTEN`,
+    ]);
+
+    if (stdout.split("\n").slice(1).some((line) => line.trim())) {
+      throw createPortInUseError(host, normalizedPort);
+    }
+  } catch (error) {
+    if (error?.code === "EADDRINUSE") {
+      throw error;
+    }
+
+    if (typeof error?.stdout === "string" && error.stdout.split("\n").slice(1).some((line) => line.trim())) {
+      throw createPortInUseError(host, normalizedPort);
+    }
+  }
 }
 
 function getPortFromProxyPath(pathname) {
@@ -147,13 +186,19 @@ export async function createRemoteVibesApp({
   host = process.env.REMOTE_VIBES_HOST || "0.0.0.0",
   port = Number(process.env.REMOTE_VIBES_PORT || 4123),
   cwd = process.cwd(),
+  stateDir = getRemoteVibesStateDir({ cwd }),
   persistSessions = true,
   onTerminate = null,
+  updateManager = new UpdateManager({ cwd, stateDir, port }),
 } = {}) {
   const providers = await detectProviders();
   const defaultProviderId = getDefaultProviderId(providers);
   const app = express();
-  const sessionManager = new SessionManager({ cwd, providers, persistSessions });
+  const agentPromptStore = new AgentPromptStore({ stateDir });
+  const portAliasStore = new PortAliasStore({ stateDir });
+  const sessionManager = new SessionManager({ cwd, providers, persistSessions, stateDir });
+  await agentPromptStore.initialize();
+  await portAliasStore.initialize();
   await sessionManager.initialize();
   let exposedPort = null;
   let closePromise = null;
@@ -166,8 +211,6 @@ export async function createRemoteVibesApp({
     xfwd: true,
   });
 
-  app.use(express.json());
-
   app.use((request, response, next) => {
     const proxiedPort = getPortFromReferrer(request);
 
@@ -179,23 +222,83 @@ export async function createRemoteVibesApp({
     proxyHttpRequest(request, response, proxyServer, proxiedPort, false);
   });
 
+  app.use("/api", express.json());
+
+  async function listNamedPorts() {
+    const ports = await listListeningPorts({ excludePorts: exposedPort ? [exposedPort] : [] });
+    return portAliasStore.apply(ports);
+  }
+
   app.get("/api/state", async (_request, response) => {
     response.json({
       appName: "Remote Vibes",
       cwd,
+      stateDir,
       defaultProviderId,
       providers,
       sessions: sessionManager.listSessions(),
       urls,
       preferredUrl,
-      ports: await listListeningPorts({ excludePorts: exposedPort ? [exposedPort] : [] }),
+      ports: await listNamedPorts(),
     });
   });
 
   app.get("/api/ports", async (_request, response) => {
     response.json({
-      ports: await listListeningPorts({ excludePorts: exposedPort ? [exposedPort] : [] }),
+      ports: await listNamedPorts(),
     });
+  });
+
+  app.get("/api/update/status", async (request, response) => {
+    const force = request.query.force === "1" || request.query.force === "true";
+    const update = await updateManager.getStatus({ force });
+    response.json({ update });
+  });
+
+  app.post("/api/update/apply", async (_request, response) => {
+    try {
+      const result = await updateManager.scheduleUpdateAndRestart();
+      response.json(result);
+    } catch (error) {
+      response.status(error.statusCode || 500).json({
+        error: error.message || "Could not schedule update.",
+        update: error.update,
+      });
+    }
+  });
+
+  app.patch("/api/ports/:port", async (request, response) => {
+    try {
+      const port = normalizePort(request.params.port);
+
+      if (!port) {
+        response.status(400).json({ error: "Invalid port." });
+        return;
+      }
+
+      const ports = await listNamedPorts();
+      const currentPort = ports.find((entry) => entry.port === port);
+
+      if (!currentPort) {
+        response.status(404).json({ error: "Port not found." });
+        return;
+      }
+
+      const name = typeof request.body?.name === "string" ? request.body.name : request.body?.name;
+      const nextName = await portAliasStore.rename(port, name);
+      const refreshedPorts = await listNamedPorts();
+      const renamedPort =
+        refreshedPorts.find((entry) => entry.port === port) ??
+        {
+          ...currentPort,
+          name: nextName || String(port),
+          customName: Boolean(nextName),
+        };
+
+      response.json({ port: renamedPort });
+    } catch (error) {
+      response.status(400).json({ error: error.message });
+    }
   });
 
   app.get("/api/files", async (request, response) => {
@@ -343,9 +446,10 @@ export async function createRemoteVibesApp({
   });
 
   app.use(express.static(publicDir));
+  await ensurePortAvailable(host, port);
 
   const server = await new Promise((resolve, reject) => {
-    const nextServer = app.listen(port, host, () => resolve(nextServer));
+    const nextServer = app.listen({ port, host, exclusive: true }, () => resolve(nextServer));
     nextServer.on("error", reject);
   });
   const websocketServer = new WebSocketServer({ noServer: true });
@@ -354,6 +458,7 @@ export async function createRemoteVibesApp({
       ? server.address().port
       : port;
   exposedPort = resolvedPort;
+  updateManager.setRuntime?.({ port: resolvedPort });
   urls = await getAccessUrls(host, resolvedPort);
   preferredUrl = pickPreferredUrl(urls)?.url ?? urls[0]?.url ?? null;
 
@@ -476,6 +581,7 @@ export async function createRemoteVibesApp({
       port: resolvedPort,
       providers,
       preferredUrl,
+      stateDir,
       urls,
     },
     server,

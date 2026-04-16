@@ -83,6 +83,9 @@ const state = {
   terminalOutputFrame: null,
   terminalComposing: false,
   terminalTextareaResetTimer: null,
+  update: null,
+  updateApplying: false,
+  updateTimer: null,
   sessionRefreshTimer: null,
   terminalInteractionCleanup: null,
   canvasAddon: null,
@@ -146,6 +149,69 @@ function getSessionLabel(session) {
   return isLive(session)
     ? { text: "live", className: "live" }
     : { text: "idle", className: "idle" };
+}
+
+function getPortDisplayName(port) {
+  return typeof port?.name === "string" && port.name.trim()
+    ? port.name.trim()
+    : String(port?.port ?? "");
+}
+
+function getPortMeta(port) {
+  const parts = [];
+
+  if (port.customName) {
+    parts.push(`:${port.port}`);
+  }
+
+  if (port.command) {
+    parts.push(port.command);
+  }
+
+  if (Array.isArray(port.hosts) && port.hosts.length) {
+    parts.push(port.hosts.join(", "));
+  }
+
+  return parts.join(" · ");
+}
+
+function renderUpdateBanner() {
+  const update = state.update;
+
+  if (state.updateApplying) {
+    return `
+      <section class="update-card is-applying">
+        <div class="update-copy">
+          <strong>updating remote vibes</strong>
+          <span>pulling the latest version, then restarting...</span>
+        </div>
+        <button class="ghost-button update-button" type="button" disabled>working</button>
+      </section>
+    `;
+  }
+
+  if (!update?.updateAvailable) {
+    return "";
+  }
+
+  const current = update.currentShort || "current";
+  const latest = update.latestShort || "latest";
+  const branch = update.branch || "main";
+  const detail = update.canUpdate
+    ? `${branch}: ${current} -> ${latest}`
+    : update.reason || "This checkout cannot be updated automatically.";
+
+  return `
+    <section class="update-card ${update.canUpdate ? "" : "is-blocked"}">
+      <div class="update-copy">
+        <strong>new version available</strong>
+        <span>${escapeHtml(detail)}</span>
+      </div>
+      <button class="${update.canUpdate ? "primary-button" : "ghost-button"} update-button" type="button" id="update-app" ${update.canUpdate ? "" : "disabled"}>
+        ${update.canUpdate ? "update & restart" : "blocked"}
+      </button>
+    </section>
+  `;
 }
 
 function setMobileSidebar(nextSidebar) {
@@ -811,10 +877,16 @@ function renderPortCards() {
   return state.ports
     .map(
       (port) => `
-        <a class="port-card" href="${escapeHtml(`${getAppBaseUrl()}${port.proxyPath}`)}" target="_blank" rel="noreferrer">
-          <span class="port-number">${port.port}</span>
-          <span class="port-meta">${escapeHtml(port.command)} · ${escapeHtml(port.hosts.join(", "))}</span>
-        </a>
+        <article class="port-card">
+          <a class="port-main" href="${escapeHtml(`${getAppBaseUrl()}${port.proxyPath}`)}" target="_blank" rel="noreferrer">
+            <span class="port-name" title="${escapeHtml(getPortDisplayName(port))}">${escapeHtml(getPortDisplayName(port))}</span>
+            <span class="port-meta">${escapeHtml(getPortMeta(port))}</span>
+          </a>
+          <div class="port-actions">
+            <a class="ghost-button session-action-button" href="${escapeHtml(`${getAppBaseUrl()}${port.proxyPath}`)}" target="_blank" rel="noreferrer">open</a>
+            <button class="ghost-button session-action-button" type="button" aria-label="Rename port" data-rename-port="${port.port}">edit</button>
+          </div>
+        </article>
       `,
     )
     .join("");
@@ -845,6 +917,8 @@ function renderShell() {
         </div>
 
         <div class="sidebar-body">
+          <div class="update-slot" id="update-banner">${renderUpdateBanner()}</div>
+
           <form class="session-form" id="session-form">
             <select name="providerId">${providerOptions}</select>
             <input type="text" name="cwd" value="${escapeHtml(state.defaultCwd || "")}" placeholder="cwd" />
@@ -877,12 +951,16 @@ function renderShell() {
 
       <section class="terminal-panel">
         <div class="terminal-toolbar">
-          <button class="icon-button hidden-desktop" type="button" id="open-sidebar">≡</button>
-          <div class="terminal-copy">
-            <strong id="toolbar-title">${escapeHtml(activeSession ? activeSession.name : "new session")}</strong>
-            <div class="terminal-meta" id="toolbar-meta">${escapeHtml(
-              activeSession ? `${activeSession.providerLabel} · ${activeSession.cwd}` : state.defaultCwd,
-            )}</div>
+          <div class="toolbar-primary">
+            <button class="icon-button hidden-desktop" type="button" id="open-sidebar">≡</button>
+            <div class="terminal-copy">
+              <strong id="toolbar-title" title="${escapeHtml(activeSession ? activeSession.name : "new session")}">${escapeHtml(
+                activeSession ? activeSession.name : "new session",
+              )}</strong>
+              <div class="terminal-meta" id="toolbar-meta">${escapeHtml(
+                activeSession ? `${activeSession.providerLabel} · ${activeSession.cwd}` : state.defaultCwd,
+              )}</div>
+            </div>
           </div>
           <div class="toolbar-actions">
             <button class="ghost-button hidden-desktop toolbar-control" type="button" id="open-files-sidebar" aria-label="Open files sidebar">files</button>
@@ -1073,6 +1151,51 @@ function refreshPortsList() {
   }
 
   portsList.innerHTML = renderPortCards();
+  bindPortEvents();
+}
+
+function refreshUpdateUi() {
+  const updateBanner = document.querySelector("#update-banner");
+  if (!updateBanner) {
+    return;
+  }
+
+  updateBanner.innerHTML = renderUpdateBanner();
+  bindUpdateEvents();
+}
+
+function bindPortEvents() {
+  document.querySelectorAll("[data-rename-port]").forEach((button) => {
+    button.addEventListener("click", async (event) => {
+      event.preventDefault();
+      const portNumber = Number(button.getAttribute("data-rename-port"));
+      const port = state.ports.find((entry) => entry.port === portNumber);
+
+      if (!port) {
+        return;
+      }
+
+      const nextName = window.prompt(
+        "Rename port (leave blank to reset)",
+        port.customName ? getPortDisplayName(port) : "",
+      );
+
+      if (nextName === null) {
+        return;
+      }
+
+      try {
+        const payload = await fetchJson(`/api/ports/${portNumber}`, {
+          method: "PATCH",
+          body: JSON.stringify({ name: nextName }),
+        });
+        updatePort(payload.port);
+        refreshShellUi({ sessions: false, ports: true, files: false });
+      } catch (error) {
+        window.alert(error.message);
+      }
+    });
+  });
 }
 
 function bindFileTreeEvents() {
@@ -1216,6 +1339,7 @@ function refreshToolbarUi() {
 
   if (title) {
     title.textContent = activeSession ? activeSession.name : "new session";
+    title.setAttribute("title", activeSession ? activeSession.name : "new session");
   }
 
   if (meta) {
@@ -1250,6 +1374,7 @@ function refreshShellUi({ sessions = true, ports = true, files = true } = {}) {
   }
 
   refreshToolbarUi();
+  refreshUpdateUi();
 }
 
 async function openWorkspaceFile(relativePath, { force = false } = {}) {
@@ -1436,6 +1561,8 @@ function scheduleSessionsRefresh() {
 }
 
 function bindShellEvents() {
+  bindUpdateEvents();
+
   document.querySelector("#session-form")?.addEventListener("submit", async (event) => {
     event.preventDefault();
     const formData = new FormData(event.currentTarget);
@@ -1537,6 +1664,62 @@ function bindShellEvents() {
       window.alert(error.message);
     }
   });
+}
+
+function bindUpdateEvents() {
+  document.querySelector("#update-app")?.addEventListener("click", async () => {
+    if (!state.update?.canUpdate || state.updateApplying) {
+      return;
+    }
+
+    if (!window.confirm("Update Remote Vibes to the latest GitHub version and restart it?")) {
+      return;
+    }
+
+    state.updateApplying = true;
+    refreshUpdateUi();
+
+    try {
+      const payload = await fetchJson("/api/update/apply", { method: "POST" });
+      state.update = payload.update ?? state.update;
+      waitForUpdateRestart();
+    } catch (error) {
+      state.updateApplying = false;
+      state.update = {
+        ...(state.update || {}),
+        updateAvailable: true,
+        canUpdate: false,
+        status: "blocked",
+        reason: error.message,
+      };
+      refreshUpdateUi();
+      window.alert(error.message);
+    }
+  });
+}
+
+function waitForUpdateRestart() {
+  let sawShutdown = false;
+  let attempts = 0;
+  const timer = window.setInterval(async () => {
+    attempts += 1;
+
+    try {
+      await fetchJson("/api/state", { cache: "no-store" });
+      if (sawShutdown) {
+        window.clearInterval(timer);
+        window.location.reload();
+      }
+    } catch {
+      sawShutdown = true;
+    }
+
+    if (attempts > 90) {
+      window.clearInterval(timer);
+      state.updateApplying = false;
+      void loadUpdateStatus({ force: true });
+    }
+  }, 2_000);
 }
 
 function closeWebsocket() {
@@ -1978,6 +2161,17 @@ function updateSession(session) {
   scheduleSessionsRefresh();
 }
 
+function updatePort(port) {
+  const index = state.ports.findIndex((entry) => entry.port === port.port);
+
+  if (index === -1) {
+    state.ports = [...state.ports, port].sort((left, right) => left.port - right.port);
+    return;
+  }
+
+  state.ports[index] = port;
+}
+
 async function loadSessions() {
   try {
     const previousActiveSessionId = state.activeSessionId;
@@ -2025,6 +2219,24 @@ async function loadPorts() {
   } catch (error) {
     console.error(error);
   }
+}
+
+async function loadUpdateStatus({ force = false } = {}) {
+  try {
+    const payload = await fetchJson(`/api/update/status${force ? "?force=1" : ""}`, {
+      cache: "no-store",
+    });
+    state.update = payload.update;
+  } catch (error) {
+    state.update = {
+      status: "error",
+      updateAvailable: false,
+      canUpdate: false,
+      reason: error.message,
+    };
+  }
+
+  refreshUpdateUi();
 }
 
 function renderFileEditorPage() {
@@ -2097,6 +2309,15 @@ async function bootstrapApp() {
   }
 
   renderShell();
+  void loadUpdateStatus();
+
+  if (state.updateTimer) {
+    window.clearInterval(state.updateTimer);
+  }
+
+  state.updateTimer = window.setInterval(() => {
+    void loadUpdateStatus({ force: true });
+  }, 5 * 60 * 1000);
 
   if (state.activeSessionId) {
     connectToSession(state.activeSessionId);

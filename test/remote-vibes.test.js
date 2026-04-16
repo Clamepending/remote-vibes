@@ -4,7 +4,7 @@ import os from "node:os";
 import path from "node:path";
 import test from "node:test";
 import { once } from "node:events";
-import { mkdtemp, mkdir, rm, writeFile } from "node:fs/promises";
+import { mkdtemp, mkdir, readFile, rm, writeFile } from "node:fs/promises";
 import { WebSocket } from "ws";
 import { createRemoteVibesApp } from "../src/create-app.js";
 
@@ -21,10 +21,12 @@ const PNG_FIXTURE = Buffer.from([
 ]);
 
 async function startApp(options = {}) {
+  const appCwd = options.cwd ?? process.cwd();
   const app = await createRemoteVibesApp({
     host: "127.0.0.1",
     port: 0,
-    cwd: process.cwd(),
+    cwd: appCwd,
+    stateDir: options.stateDir ?? path.join(appCwd, ".remote-vibes"),
     persistSessions: false,
     ...options,
   });
@@ -78,6 +80,22 @@ async function waitForShutdown(baseUrl) {
   throw new Error("Remote Vibes never shut down.");
 }
 
+async function waitForSessionName(baseUrl, sessionId, expectedName) {
+  for (let attempt = 0; attempt < 30; attempt += 1) {
+    const response = await fetch(`${baseUrl}/api/sessions`);
+    const payload = await response.json();
+    const session = payload.sessions.find((entry) => entry.id === sessionId);
+
+    if (session?.name === expectedName) {
+      return session;
+    }
+
+    await new Promise((resolve) => setTimeout(resolve, 100));
+  }
+
+  throw new Error(`Timed out waiting for session ${sessionId} to be renamed to ${expectedName}.`);
+}
+
 test("state is available without authentication", async () => {
   const { app, baseUrl } = await startApp();
 
@@ -98,6 +116,154 @@ test("state is available without authentication", async () => {
     assert.ok(state.urls.length >= 1);
     assert.equal(typeof state.preferredUrl, "string");
     assert.ok(state.urls.some((entry) => entry.url === state.preferredUrl));
+  } finally {
+    await app.close();
+  }
+});
+
+test("update endpoints expose status and schedule restart through the update manager", async () => {
+  let statusForce = false;
+  let runtimePort = null;
+  let scheduleCalls = 0;
+  const updateManager = {
+    setRuntime({ port }) {
+      runtimePort = port;
+    },
+    async getStatus({ force } = {}) {
+      statusForce = Boolean(force);
+      return {
+        status: "available",
+        updateAvailable: true,
+        canUpdate: true,
+        currentShort: "1111111",
+        latestShort: "2222222",
+        branch: "main",
+      };
+    },
+    async scheduleUpdateAndRestart() {
+      scheduleCalls += 1;
+      return {
+        ok: true,
+        scheduled: true,
+        logPath: "/tmp/remote-vibes-update.log",
+      };
+    },
+  };
+  const { app, baseUrl } = await startApp({ updateManager });
+
+  try {
+    assert.equal(typeof runtimePort, "number");
+
+    const statusResponse = await fetch(`${baseUrl}/api/update/status?force=1`);
+    assert.equal(statusResponse.status, 200);
+    assert.deepEqual(await statusResponse.json(), {
+      update: {
+        status: "available",
+        updateAvailable: true,
+        canUpdate: true,
+        currentShort: "1111111",
+        latestShort: "2222222",
+        branch: "main",
+      },
+    });
+    assert.equal(statusForce, true);
+
+    const applyResponse = await fetch(`${baseUrl}/api/update/apply`, {
+      method: "POST",
+    });
+    assert.equal(applyResponse.status, 200);
+    assert.deepEqual(await applyResponse.json(), {
+      ok: true,
+      scheduled: true,
+      logPath: "/tmp/remote-vibes-update.log",
+    });
+    assert.equal(scheduleCalls, 1);
+  } finally {
+    await app.close();
+  }
+});
+
+test("agent prompt scaffold is created for the workspace", async () => {
+  const workspaceDir = await createTempWorkspace("remote-vibes-agent-prompt-");
+  const { app } = await startApp({ cwd: workspaceDir });
+
+  try {
+    const prompt = await readFile(path.join(workspaceDir, ".remote-vibes", "agent-prompt.md"), "utf8");
+    assert.match(prompt, /Remote Vibes Agent Prompt/);
+    assert.match(prompt, /rv-session-name/);
+  } finally {
+    await app.close();
+    await rm(workspaceDir, { recursive: true, force: true });
+  }
+});
+
+test("starting on an occupied port fails with EADDRINUSE", async () => {
+  const blocker = http.createServer((_request, response) => {
+    response.end("busy");
+  });
+
+  await new Promise((resolve) => blocker.listen(0, "0.0.0.0", resolve));
+  const address = blocker.address();
+  const occupiedPort = typeof address === "object" && address ? address.port : null;
+
+  try {
+    await assert.rejects(
+      () =>
+        createRemoteVibesApp({
+          host: "0.0.0.0",
+          port: occupiedPort,
+          cwd: process.cwd(),
+          stateDir: path.join(process.cwd(), ".remote-vibes"),
+          persistSessions: false,
+        }),
+      { code: "EADDRINUSE" },
+    );
+  } finally {
+    await new Promise((resolve) => blocker.close(resolve));
+  }
+});
+
+test("rv-session-name can rename the current session from inside a live shell", async () => {
+  const { app, baseUrl } = await startApp();
+
+  try {
+    const createResponse = await fetch(`${baseUrl}/api/sessions`, {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify({
+        providerId: "shell",
+        name: "Shell 1",
+        cwd: process.cwd(),
+      }),
+    });
+
+    assert.equal(createResponse.status, 201);
+    const { session } = await createResponse.json();
+
+    const websocket = new WebSocket(`${baseUrl.replace("http", "ws")}/ws?sessionId=${session.id}`);
+
+    await new Promise((resolve, reject) => {
+      const timeout = setTimeout(() => reject(new Error("Timed out waiting for websocket open.")), 5_000);
+      websocket.on("open", () => {
+        clearTimeout(timeout);
+        resolve();
+      });
+    });
+
+    websocket.send(
+      JSON.stringify({
+        type: "input",
+        data: "rv-session-name \"results reviewer\"\r",
+      }),
+    );
+
+    const renamedSession = await waitForSessionName(baseUrl, session.id, "results reviewer");
+    assert.equal(renamedSession.name, "results reviewer");
+
+    websocket.close();
+    await once(websocket, "close");
   } finally {
     await app.close();
   }
@@ -189,6 +355,76 @@ test("shell session streams websocket output and honors custom cwd", async () =>
     });
 
     assert.equal(deleteResponse.status, 200);
+  } finally {
+    await app.close();
+  }
+});
+
+test("reloading a live session keeps a large transcript available in the reconnect snapshot", async () => {
+  const { app, baseUrl } = await startApp();
+
+  try {
+    const createResponse = await fetch(`${baseUrl}/api/sessions`, {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify({
+        providerId: "shell",
+        name: "Large Transcript",
+        cwd: process.cwd(),
+      }),
+    });
+
+    assert.equal(createResponse.status, 201);
+    const { session } = await createResponse.json();
+
+    const firstSocket = new WebSocket(`${baseUrl.replace("http", "ws")}/ws?sessionId=${session.id}`);
+
+    await new Promise((resolve, reject) => {
+      const timeout = setTimeout(() => reject(new Error("Timed out waiting for websocket open.")), 5_000);
+      firstSocket.on("open", () => {
+        clearTimeout(timeout);
+        resolve();
+      });
+    });
+
+    const beginMarker = `BEGIN-${Date.now()}`;
+    const endMarker = `END-${Date.now()}`;
+    firstSocket.send(
+      JSON.stringify({
+        type: "input",
+        data:
+          `python3 - <<'PY'\n` +
+          `print(${JSON.stringify(beginMarker)})\n` +
+          `print("A" * 260000)\n` +
+          `print(${JSON.stringify(endMarker)})\n` +
+          `PY\n\r`,
+      }),
+    );
+
+    await new Promise((resolve) => setTimeout(resolve, 2_500));
+    firstSocket.close();
+    await once(firstSocket, "close");
+
+    const restoredSocket = new WebSocket(`${baseUrl.replace("http", "ws")}/ws?sessionId=${session.id}`);
+    const snapshot = await new Promise((resolve, reject) => {
+      const timeout = setTimeout(() => reject(new Error("Timed out waiting for restored snapshot.")), 5_000);
+
+      restoredSocket.on("message", (chunk) => {
+        const payload = JSON.parse(String(chunk));
+        if (payload.type === "snapshot") {
+          clearTimeout(timeout);
+          resolve(payload);
+        }
+      });
+    });
+
+    assert.match(snapshot.data, new RegExp(beginMarker));
+    assert.match(snapshot.data, new RegExp(endMarker));
+
+    restoredSocket.close();
+    await once(restoredSocket, "close");
   } finally {
     await app.close();
   }
@@ -359,6 +595,64 @@ test("ports are discoverable and proxy through localhost", async () => {
     await app.close();
     await new Promise((resolve) => previewServer.close(resolve));
     await new Promise((resolve) => forbiddenServer.close(resolve));
+  }
+});
+
+test("ports can be renamed and reset", async () => {
+  const previewServer = http.createServer((_request, response) => {
+    response.writeHead(200, { "Content-Type": "text/plain" });
+    response.end("preview");
+  });
+
+  await new Promise((resolve) => previewServer.listen(0, "127.0.0.1", resolve));
+  const previewPort = previewServer.address().port;
+  const { app, baseUrl } = await startApp();
+
+  try {
+    const ports = await waitForPort(baseUrl, previewPort);
+    const initialPort = ports.find((entry) => entry.port === previewPort);
+    assert.equal(initialPort?.name, String(previewPort));
+    assert.equal(initialPort?.customName, false);
+
+    const renameResponse = await fetch(`${baseUrl}/api/ports/${previewPort}`, {
+      method: "PATCH",
+      headers: {
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify({
+        name: "Model UI",
+      }),
+    });
+
+    assert.equal(renameResponse.status, 200);
+    const renamePayload = await renameResponse.json();
+    assert.equal(renamePayload.port.name, "Model UI");
+    assert.equal(renamePayload.port.customName, true);
+
+    const stateResponse = await fetch(`${baseUrl}/api/state`);
+    assert.equal(stateResponse.status, 200);
+    const statePayload = await stateResponse.json();
+    const renamedPort = statePayload.ports.find((entry) => entry.port === previewPort);
+    assert.equal(renamedPort?.name, "Model UI");
+    assert.equal(renamedPort?.customName, true);
+
+    const resetResponse = await fetch(`${baseUrl}/api/ports/${previewPort}`, {
+      method: "PATCH",
+      headers: {
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify({
+        name: "",
+      }),
+    });
+
+    assert.equal(resetResponse.status, 200);
+    const resetPayload = await resetResponse.json();
+    assert.equal(resetPayload.port.name, String(previewPort));
+    assert.equal(resetPayload.port.customName, false);
+  } finally {
+    await app.close();
+    await new Promise((resolve) => previewServer.close(resolve));
   }
 });
 
@@ -595,6 +889,67 @@ test("renamed sessions keep their updated name after restart", async () => {
       await secondApp.close();
     }
 
+    await rm(workspaceDir, { recursive: true, force: true });
+  }
+});
+
+test("renamed ports keep their updated name after restart", async () => {
+  const workspaceDir = await createTempWorkspace("remote-vibes-port-rename-persist-");
+  const previewServer = http.createServer((_request, response) => {
+    response.writeHead(200, { "Content-Type": "text/plain" });
+    response.end("preview");
+  });
+  let firstApp = null;
+  let secondApp = null;
+
+  await new Promise((resolve) => previewServer.listen(0, "127.0.0.1", resolve));
+  const previewPort = previewServer.address().port;
+
+  try {
+    const firstRun = await startApp({
+      cwd: workspaceDir,
+      persistSessions: true,
+    });
+    firstApp = firstRun.app;
+
+    await waitForPort(firstRun.baseUrl, previewPort);
+
+    const renameResponse = await fetch(`${firstRun.baseUrl}/api/ports/${previewPort}`, {
+      method: "PATCH",
+      headers: {
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify({
+        name: "Shared Preview",
+      }),
+    });
+
+    assert.equal(renameResponse.status, 200);
+    assert.equal((await renameResponse.json()).port.name, "Shared Preview");
+
+    await firstApp.close();
+    firstApp = null;
+
+    const secondRun = await startApp({
+      cwd: workspaceDir,
+      persistSessions: true,
+    });
+    secondApp = secondRun.app;
+
+    const ports = await waitForPort(secondRun.baseUrl, previewPort);
+    const renamedPort = ports.find((entry) => entry.port === previewPort);
+    assert.equal(renamedPort?.name, "Shared Preview");
+    assert.equal(renamedPort?.customName, true);
+  } finally {
+    if (firstApp) {
+      await firstApp.close();
+    }
+
+    if (secondApp) {
+      await secondApp.close();
+    }
+
+    await new Promise((resolve) => previewServer.close(resolve));
     await rm(workspaceDir, { recursive: true, force: true });
   }
 });

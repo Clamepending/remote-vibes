@@ -261,6 +261,66 @@ select {
   text-align: center;
 }
 
+.update-slot:empty {
+  display: none;
+}
+
+.update-card {
+  display: grid;
+  gap: 10px;
+  padding: 12px;
+  border: 1px solid rgba(106, 227, 198, 0.36);
+  border-radius: 18px;
+  background:
+    radial-gradient(circle at top left, rgba(106, 227, 198, 0.2), transparent 58%),
+    rgba(106, 227, 198, 0.1);
+  box-shadow: 0 14px 34px rgba(0, 0, 0, 0.18);
+}
+
+.update-card.is-blocked {
+  border-color: rgba(255, 196, 115, 0.32);
+  background:
+    radial-gradient(circle at top left, rgba(255, 196, 115, 0.18), transparent 58%),
+    rgba(255, 196, 115, 0.08);
+}
+
+.update-card.is-applying {
+  border-color: rgba(255, 255, 255, 0.14);
+  background:
+    radial-gradient(circle at top left, rgba(106, 227, 198, 0.14), transparent 58%),
+    rgba(255, 255, 255, 0.05);
+}
+
+.update-copy {
+  display: grid;
+  gap: 4px;
+  min-width: 0;
+}
+
+.update-copy strong {
+  font-size: 0.88rem;
+  line-height: 1.2;
+  text-transform: lowercase;
+}
+
+.update-copy span {
+  color: var(--muted);
+  font-family: "IBM Plex Mono", monospace;
+  font-size: 0.72rem;
+  line-height: 1.4;
+  overflow-wrap: anywhere;
+}
+
+.update-button {
+  width: 100%;
+  min-height: 40px;
+  border-radius: 12px;
+  font-family: "IBM Plex Mono", monospace;
+  font-size: 0.72rem;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+}
+
 .session-card,
 .port-card {
   display: grid;
@@ -308,12 +368,14 @@ select {
 
 .session-name,
 .port-number,
+.port-name,
 .terminal-copy strong {
   font-weight: 700;
 }
 
 .session-name,
-.port-number {
+.port-number,
+.port-name {
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
@@ -360,13 +422,27 @@ select {
 }
 
 .port-card {
-  text-decoration: none;
-  color: inherit;
+  grid-template-columns: minmax(0, 1fr) auto;
+  align-items: start;
 }
 
 .port-card:hover {
   border-color: rgba(106, 227, 198, 0.34);
   background: rgba(106, 227, 198, 0.1);
+}
+
+.port-main {
+  display: grid;
+  gap: 8px;
+  min-width: 0;
+  text-decoration: none;
+  color: inherit;
+}
+
+.port-actions {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
 }
 
 .file-root-form {
@@ -665,7 +741,17 @@ select {
   backdrop-filter: blur(16px);
 }
 
+.toolbar-primary {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr);
+  align-items: center;
+  gap: 10px;
+  min-width: 0;
+}
+
 .terminal-copy {
+  display: grid;
+  gap: 4px;
   min-width: 0;
 }
 
@@ -702,6 +788,17 @@ select {
   min-width: 40px;
   padding: 0 12px;
   flex: 0 0 auto;
+}
+
+@media (max-width: 1180px) {
+  .terminal-toolbar {
+    grid-template-columns: minmax(0, 1fr);
+    align-items: stretch;
+  }
+
+  .toolbar-actions {
+    justify-content: flex-start;
+  }
 }
 
 .toolbar-control {
@@ -910,8 +1007,12 @@ select:disabled {
   }
 
   .terminal-toolbar {
-    grid-template-columns: 42px minmax(0, 1fr) auto;
+    grid-template-columns: minmax(0, 1fr);
     border-radius: 20px;
+  }
+
+  .toolbar-primary {
+    grid-template-columns: 42px minmax(0, 1fr);
   }
 
   .terminal-stack {
@@ -970,15 +1071,24 @@ select:disabled {
     grid-template-columns: 1fr;
   }
 
+  .port-card {
+    grid-template-columns: 1fr;
+  }
+
   .session-side {
     justify-content: space-between;
+  }
+
+  .port-actions {
+    justify-content: flex-start;
   }
 
   .session-time {
     grid-column: auto;
   }
+
   .terminal-toolbar {
-    grid-template-columns: 42px minmax(0, 1fr) auto;
+    grid-template-columns: minmax(0, 1fr);
     min-height: 54px;
     padding: 8px;
   }

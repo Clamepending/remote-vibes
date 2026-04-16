@@ -1,0 +1,68 @@
+#!/usr/bin/env node
+
+import path from "node:path";
+import process from "node:process";
+import { mkdir, writeFile } from "node:fs/promises";
+
+function printHelp() {
+  process.stdout.write(`rv-session-name
+
+Rename the current Remote Vibes session to a short human-readable task label.
+
+Usage:
+  rv-session-name <new name>
+
+Examples:
+  rv-session-name "results reviewer"
+  rv-session-name checkpoint worker
+`);
+}
+
+async function writeRenameRequest(rootDir, sessionId, name) {
+  const requestDir = path.join(rootDir, "session-name-requests");
+  const requestPath = path.join(requestDir, `${sessionId}.json`);
+  await mkdir(requestDir, { recursive: true });
+  await writeFile(
+    requestPath,
+    `${JSON.stringify({ sessionId, name, requestedAt: new Date().toISOString() }, null, 2)}\n`,
+    "utf8",
+  );
+}
+
+async function main() {
+  const args = process.argv.slice(2);
+
+  if (!args.length || args[0] === "--help" || args[0] === "-h") {
+    printHelp();
+    process.exit(args.length ? 0 : 1);
+  }
+
+  const sessionId = String(process.env.REMOTE_VIBES_SESSION_ID || "").trim();
+  if (!sessionId) {
+    process.stderr.write("rv-session-name: REMOTE_VIBES_SESSION_ID is not set.\n");
+    process.exit(1);
+  }
+
+  const rootDir = String(process.env.REMOTE_VIBES_ROOT || "").trim();
+  if (!rootDir) {
+    process.stderr.write("rv-session-name: REMOTE_VIBES_ROOT is not set.\n");
+    process.exit(1);
+  }
+
+  const nextName = args.join(" ").trim();
+  if (!nextName) {
+    process.stderr.write("rv-session-name: provide a non-empty session name.\n");
+    process.exit(1);
+  }
+
+  try {
+    await writeRenameRequest(rootDir, sessionId, nextName);
+  } catch (error) {
+    process.stderr.write(`rv-session-name: failed to queue rename request (${error.message}).\n`);
+    process.exit(1);
+  }
+
+  process.stdout.write(`${nextName}\n`);
+}
+
+void main();
