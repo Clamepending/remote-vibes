@@ -36,18 +36,18 @@ function stripBuiltInPromptSections(prompt) {
   return normalizePrompt(normalized.slice(0, match.index));
 }
 
-function getWikiV2Section() {
+function getWikiV2Section({ wikiRootLabel = ".remote-vibes/wiki" } = {}) {
   return normalizePrompt(`
 ${WIKI_V2_MARKER}
 
 ## Knowledge Model
 
-Use \`.remote-vibes/\` as the workspace memory system. Treat it as a living wiki that helps future agents avoid rediscovering the same things.
+Use \`${wikiRootLabel}\` as the workspace memory system. Treat it as a living wiki that helps future agents avoid rediscovering the same things.
 
-- \`.remote-vibes/raw/\` is the exact source layer for manifests, commands, commits, paths, and artifact pointers.
-- \`.remote-vibes/wiki/\` is the synthesized knowledge layer for durable notes.
-- \`.remote-vibes/wiki/index.md\` is the entrypoint, not the entire knowledge system.
-- \`.remote-vibes/wiki/log.md\` is chronological and append-only.
+- \`${wikiRootLabel}/\` is the synthesized knowledge layer for durable notes.
+- \`${wikiRootLabel}/index.md\` is the entrypoint, not the entire knowledge system.
+- \`${wikiRootLabel}/log.md\` is chronological and append-only.
+- Use \`${wikiRootLabel}/raw/sources/\` for exact source manifests, commands, commits, paths, and artifact pointers when provenance matters.
 
 Prefer promoting useful findings into durable notes over leaving them trapped in terminal output.
 
@@ -58,7 +58,7 @@ Not all information is equally durable.
 - Keep immediate session findings lightweight at first.
 - Crystallize reusable conclusions into durable notes after meaningful work.
 - Prefer updating canonical notes over creating near-duplicates.
-- Preserve exact provenance in \`.remote-vibes/raw/sources/\` when it matters.
+- Preserve exact provenance in \`${wikiRootLabel}/raw/sources/\` when it matters.
 - Keep session-local scratch local unless it becomes useful to other agents.
 
 ## Note Shapes
@@ -76,8 +76,8 @@ You do not need rigid schemas everywhere, but write notes intentionally.
 ## Writing Rules
 
 - Distinguish observation from interpretation.
-- Prefer one page per experiment family under \`.remote-vibes/wiki/experiments/\`.
-- Use \`.remote-vibes/wiki/topics/\` for cross-cutting knowledge.
+- Prefer one page per experiment family under \`${wikiRootLabel}/experiments/\`.
+- Use \`${wikiRootLabel}/topics/\` for cross-cutting knowledge.
 - Record relevant commits, branches, run ids, output directories, artifact paths, and commands when they matter.
 - Link graphs, images, logs, notebooks, and outputs instead of pasting bulky data.
 - Prefer fewer, better notes.
@@ -128,17 +128,17 @@ Do not leave contradictory notes side by side without explanation.
 `);
 }
 
-function getAgentMailboxSection() {
+function getAgentMailboxSection({ wikiRootLabel = ".remote-vibes/wiki" } = {}) {
   return normalizePrompt(`
 ${AGENT_MAILBOX_MARKER}
 
 ## Agent Mailboxes
 
-Use markdown inboxes for lightweight agent-to-agent coordination inside \`.remote-vibes/wiki/comms/\`. Keep the protocol simple and async.
+Use markdown inboxes for lightweight agent-to-agent coordination inside \`${wikiRootLabel}/comms/\`. Keep the protocol simple and async.
 
 - Your mailbox id is the value of \`REMOTE_VIBES_SESSION_ID\`.
-- Create your inbox on first use at \`.remote-vibes/wiki/comms/agents/<REMOTE_VIBES_SESSION_ID>/inbox/\`.
-- Keep handled mail in \`.remote-vibes/wiki/comms/agents/<REMOTE_VIBES_SESSION_ID>/processed/\`.
+- Create your inbox on first use at \`${wikiRootLabel}/comms/agents/<REMOTE_VIBES_SESSION_ID>/inbox/\`.
+- Keep handled mail in \`${wikiRootLabel}/comms/agents/<REMOTE_VIBES_SESSION_ID>/processed/\`.
 - To message another agent, create a new markdown file in that agent's \`inbox/\`. Never append to or rewrite an existing message file.
 - Every message must include frontmatter with at least \`from\`, \`from_name\`, \`reply_to\`, \`sent_at\`, and \`subject\`.
 - Route by stable session ids, but use \`from_name\` and \`subject\` to keep messages readable.
@@ -169,7 +169,7 @@ Use markdown inboxes for lightweight agent-to-agent coordination inside \`.remot
 - On Linux, \`inotifywait\` is a reasonable fallback. On macOS, \`fswatch\` is a reasonable fallback. If no watcher tool exists, use periodic polling with a modest sleep interval.
 - Do not run a noisy foreground watcher in the main task terminal, and keep watcher output concise enough that it acts like a ping rather than a transcript flood.
 - Keep messages short, concrete, and action-oriented. Link to files, graphs, or wiki pages instead of pasting long logs.
-- If you need ad hoc group coordination, create a shared inbox under \`.remote-vibes/wiki/comms/groups/<topic>/inbox/\` and use the same one-file-per-message pattern.
+- If you need ad hoc group coordination, create a shared inbox under \`${wikiRootLabel}/comms/groups/<topic>/inbox/\` and use the same one-file-per-message pattern.
 
 Suggested message template:
 
@@ -186,22 +186,24 @@ Message body
 `);
 }
 
-function ensureBuiltInPromptSections(prompt) {
+function ensureBuiltInPromptSections(prompt, options = {}) {
   const normalized = stripBuiltInPromptSections(prompt);
 
   if (!normalized) {
     return "";
   }
 
-  return normalizePrompt(`${normalized}\n${getWikiV2Section()}\n${getAgentMailboxSection()}`);
+  return normalizePrompt(
+    `${normalized}\n${getWikiV2Section(options)}\n${getAgentMailboxSection(options)}`,
+  );
 }
 
-function getDefaultPrompt() {
+function getDefaultPrompt(options = {}) {
   return ensureBuiltInPromptSections(`
 # Remote Vibes Agent Prompt
 
-Use the repo-local memory system in \`.remote-vibes/\` as your persistent shared knowledge layer. Treat it as a living wiki, not a dump of notes.
-`);
+Use the configured Remote Vibes wiki as your persistent shared knowledge layer. Treat it as a living wiki, not a dump of notes.
+`, options);
 }
 
 function renderManagedFile(prompt, sourcePath) {
@@ -255,16 +257,37 @@ async function ensureFile(filePath, nextContent) {
 }
 
 export class AgentPromptStore {
-  constructor({ cwd, stateDir }) {
+  constructor({ cwd, stateDir, wikiRootPath = path.join(stateDir, "wiki") }) {
     this.cwd = cwd;
     this.stateDir = stateDir;
     this.promptFilePath = path.join(stateDir, PROMPT_FILENAME);
     this.prompt = "";
     this.targets = [];
+    this.wikiRootPath = wikiRootPath;
+  }
+
+  getWikiRootLabel() {
+    const relativePath = path.relative(this.cwd, this.wikiRootPath);
+
+    if (!relativePath) {
+      return ".";
+    }
+
+    if (!relativePath.startsWith("..") && !path.isAbsolute(relativePath)) {
+      return relativePath;
+    }
+
+    return this.wikiRootPath;
+  }
+
+  setWikiRootPath(wikiRootPath) {
+    this.wikiRootPath = wikiRootPath;
   }
 
   async initialize() {
-    const prompt = (await readTextIfExists(this.promptFilePath)) ?? getDefaultPrompt();
+    const prompt =
+      (await readTextIfExists(this.promptFilePath)) ??
+      getDefaultPrompt({ wikiRootLabel: this.getWikiRootLabel() });
     await this.persistPrompt(prompt);
     await this.ensureWikiScaffold();
     this.targets = await this.syncManagedFiles();
@@ -274,7 +297,8 @@ export class AgentPromptStore {
     return {
       prompt: this.prompt,
       promptPath: path.relative(this.cwd, this.promptFilePath) || PROMPT_FILENAME,
-      wikiRoot: ".remote-vibes",
+      wikiRoot: this.getWikiRootLabel(),
+      wikiRootPath: this.wikiRootPath,
       targets: this.targets,
     };
   }
@@ -287,7 +311,8 @@ export class AgentPromptStore {
   }
 
   async persistPrompt(prompt) {
-    this.prompt = ensureBuiltInPromptSections(prompt) || getDefaultPrompt();
+    const options = { wikiRootLabel: this.getWikiRootLabel() };
+    this.prompt = ensureBuiltInPromptSections(prompt, options) || getDefaultPrompt(options);
     await writeAtomic(this.promptFilePath, this.prompt);
   }
 
@@ -306,27 +331,23 @@ export class AgentPromptStore {
   async ensureWikiScaffold() {
     const scaffold = [
       {
-        filePath: path.join(this.stateDir, "README.md"),
-        content: "# Remote Vibes Wiki\n\nCanonical wiki root for this workspace.\n",
-      },
-      {
-        filePath: path.join(this.stateDir, "raw", "sources", ".gitkeep"),
+        filePath: path.join(this.wikiRootPath, "raw", "sources", ".gitkeep"),
         content: "",
       },
       {
-        filePath: path.join(this.stateDir, "wiki", "experiments", ".gitkeep"),
+        filePath: path.join(this.wikiRootPath, "experiments", ".gitkeep"),
         content: "",
       },
       {
-        filePath: path.join(this.stateDir, "wiki", "topics", ".gitkeep"),
+        filePath: path.join(this.wikiRootPath, "topics", ".gitkeep"),
         content: "",
       },
       {
-        filePath: path.join(this.stateDir, "wiki", "index.md"),
+        filePath: path.join(this.wikiRootPath, "index.md"),
         content: "# Wiki Index\n\n- Add experiment pages under `experiments/`.\n- Add cross-cutting pages under `topics/`.\n- Append major updates to `log.md`.\n",
       },
       {
-        filePath: path.join(this.stateDir, "wiki", "log.md"),
+        filePath: path.join(this.wikiRootPath, "log.md"),
         content: "# Wiki Log\n\n",
       },
     ];

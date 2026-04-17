@@ -31,6 +31,8 @@ By default, the installer uses the latest GitHub Release when one exists, then f
 
 The install command now launches Remote Vibes as a background server, so it keeps running even after the SSH session or terminal closes. The app checkout lives under `~/.remote-vibes/app`, and settings, logs, session history, and the managed pid live under `~/.remote-vibes/`.
 
+New sessions can be started by choosing a folder from the browser, then picking the agent provider. The knowledge base folder is configurable in the sidebar settings; by default, Remote Vibes keeps local git backups of the wiki every 10 minutes.
+
 ## Releases
 
 Remote Vibes uses GitHub Releases as the stable update channel. Friends' installs update to release tags like `v0.2.1`, not random in-progress commits on `main`.

@@ -5,7 +5,7 @@ import os from "node:os";
 import path from "node:path";
 import test from "node:test";
 import { once } from "node:events";
-import { mkdtemp, mkdir, readFile, rm, writeFile } from "node:fs/promises";
+import { mkdtemp, mkdir, readFile, realpath, rm, writeFile } from "node:fs/promises";
 import { promisify } from "node:util";
 import { WebSocket } from "ws";
 import { createRemoteVibesApp } from "../src/create-app.js";
@@ -120,15 +120,15 @@ test("state is available without authentication", async () => {
     assert.ok(state.urls.some((entry) => entry.url === state.preferredUrl));
     assert.equal(typeof state.agentPrompt.prompt, "string");
     assert.equal(state.agentPrompt.promptPath, ".remote-vibes/agent-prompt.md");
+    assert.equal(state.agentPrompt.wikiRoot, ".remote-vibes/wiki");
     assert.ok(Array.isArray(state.agentPrompt.targets));
+    assert.equal(state.settings.wikiGitBackupEnabled, true);
+    assert.equal(state.settings.wikiRelativeRoot, ".remote-vibes/wiki");
+    assert.equal(typeof state.settings.wikiPath, "string");
+    assert.equal(state.settings.wikiBackup.enabled, true);
 
-    const gpuHistoryResponse = await fetch(`${baseUrl}/api/gpu/history?range=1d`);
-    assert.equal(gpuHistoryResponse.status, 200);
-    const gpuHistoryPayload = await gpuHistoryResponse.json();
-    assert.equal(gpuHistoryPayload.history.range, "1d");
-    assert.ok(Array.isArray(gpuHistoryPayload.history.gpus));
-    assert.equal(typeof gpuHistoryPayload.history.agentRuns, "object");
-    assert.ok(Array.isArray(gpuHistoryPayload.history.agentRuns.buckets));
+    const gpuResponse = await fetch(`${baseUrl}/api/gpu`);
+    assert.equal(gpuResponse.status, 404);
   } finally {
     await app.close();
   }
@@ -438,6 +438,125 @@ test("knowledge base api indexes markdown notes and linked note content", async 
     );
     assert.equal(invalidNoteResponse.status, 400);
     assert.match((await invalidNoteResponse.json()).error, /escapes the knowledge base root/i);
+  } finally {
+    await app.close();
+    await rm(workspaceDir, { recursive: true, force: true });
+  }
+});
+
+test("settings api moves the wiki folder, refreshes agent instructions, and the knowledge base follows", async () => {
+  const workspaceDir = await createTempWorkspace("remote-vibes-custom-wiki-");
+  const customWikiDir = path.join(workspaceDir, "mac-brain");
+  await mkdir(path.join(customWikiDir, "topics"), { recursive: true });
+  const canonicalCustomWikiDir = await realpath(customWikiDir);
+  await writeFile(
+    path.join(customWikiDir, "index.md"),
+    "# Custom Wiki\n\nSee [[topics/one]].\n",
+    "utf8",
+  );
+  await writeFile(path.join(customWikiDir, "topics", "one.md"), "# One\n\nhello\n", "utf8");
+
+  const { app, baseUrl } = await startApp({ cwd: workspaceDir });
+
+  try {
+    const settingsResponse = await fetch(`${baseUrl}/api/settings`, {
+      method: "PATCH",
+      headers: {
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify({
+        wikiGitBackupEnabled: false,
+        wikiPath: customWikiDir,
+      }),
+    });
+
+    assert.equal(settingsResponse.status, 200);
+    const settingsPayload = await settingsResponse.json();
+    assert.equal(settingsPayload.settings.wikiPath, customWikiDir);
+    assert.equal(settingsPayload.settings.wikiRelativeRoot, "mac-brain");
+    assert.equal(settingsPayload.settings.wikiGitBackupEnabled, false);
+    assert.equal(settingsPayload.agentPrompt.wikiRoot, "mac-brain");
+
+    const managedAgents = await readFile(path.join(workspaceDir, "AGENTS.md"), "utf8");
+    assert.match(managedAgents, /Use `mac-brain` as the workspace memory system/);
+    assert.match(managedAgents, /mac-brain\/comms\/agents/);
+
+    const indexResponse = await fetch(`${baseUrl}/api/knowledge-base`);
+    assert.equal(indexResponse.status, 200);
+    const indexPayload = await indexResponse.json();
+    assert.equal(indexPayload.rootPath, canonicalCustomWikiDir);
+    assert.equal(indexPayload.relativeRoot, "mac-brain");
+    assert.deepEqual(
+      indexPayload.notes.map((note) => note.relativePath),
+      ["index.md", "log.md", "topics/one.md"],
+    );
+  } finally {
+    await app.close();
+    await rm(workspaceDir, { recursive: true, force: true });
+  }
+});
+
+test("wiki backup endpoint initializes git and commits wiki changes", async () => {
+  const workspaceDir = await createTempWorkspace("remote-vibes-wiki-backup-");
+  const { app, baseUrl } = await startApp({ cwd: workspaceDir });
+  const wikiDir = path.join(workspaceDir, ".remote-vibes", "wiki");
+
+  try {
+    const firstBackupResponse = await fetch(`${baseUrl}/api/wiki/backup`, {
+      method: "POST",
+    });
+    assert.equal(firstBackupResponse.status, 200);
+    const firstBackupPayload = await firstBackupResponse.json();
+    assert.equal(firstBackupPayload.backup.lastStatus, "committed");
+    assert.match(firstBackupPayload.backup.lastCommit, /^[0-9a-f]+$/);
+
+    await writeFile(path.join(wikiDir, "log.md"), "# Wiki Log\n\n- new note\n", "utf8");
+    const secondBackupResponse = await fetch(`${baseUrl}/api/wiki/backup`, {
+      method: "POST",
+    });
+    assert.equal(secondBackupResponse.status, 200);
+    const secondBackupPayload = await secondBackupResponse.json();
+    assert.equal(secondBackupPayload.backup.lastStatus, "committed");
+
+    const { stdout } = await execFileAsync("git", ["-C", wikiDir, "log", "--oneline"]);
+    assert.match(stdout, /Remote Vibes wiki backup/);
+    assert.ok(stdout.trim().split("\n").length >= 2);
+  } finally {
+    await app.close();
+    await rm(workspaceDir, { recursive: true, force: true });
+  }
+});
+
+test("folder browser api lists selectable folders and supports parent navigation", async () => {
+  const workspaceDir = await createTempWorkspace("remote-vibes-folder-picker-");
+  await mkdir(path.join(workspaceDir, "alpha", "nested"), { recursive: true });
+  await writeFile(path.join(workspaceDir, "notes.txt"), "not a folder\n", "utf8");
+  const canonicalWorkspaceDir = await realpath(workspaceDir);
+  const canonicalAlphaDir = await realpath(path.join(workspaceDir, "alpha"));
+
+  const { app, baseUrl } = await startApp({ cwd: workspaceDir });
+
+  try {
+    const rootResponse = await fetch(`${baseUrl}/api/folders?root=${encodeURIComponent(workspaceDir)}`);
+    assert.equal(rootResponse.status, 200);
+    const rootPayload = await rootResponse.json();
+
+    assert.equal(rootPayload.currentPath, canonicalWorkspaceDir);
+    assert.ok(rootPayload.parentPath);
+    assert.ok(rootPayload.entries.some((entry) => entry.name === "alpha"));
+    assert.ok(!rootPayload.entries.some((entry) => entry.name === "notes.txt"));
+
+    const childResponse = await fetch(
+      `${baseUrl}/api/folders?root=${encodeURIComponent(path.join(workspaceDir, "alpha"))}`,
+    );
+    assert.equal(childResponse.status, 200);
+    const childPayload = await childResponse.json();
+    assert.equal(childPayload.currentPath, canonicalAlphaDir);
+    assert.equal(childPayload.parentPath, canonicalWorkspaceDir);
+    assert.deepEqual(
+      childPayload.entries.map((entry) => entry.name),
+      ["nested"],
+    );
   } finally {
     await app.close();
     await rm(workspaceDir, { recursive: true, force: true });

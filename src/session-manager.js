@@ -215,6 +215,7 @@ export function buildSessionEnv(
   workspaceRoot = appRootDir,
   stateDir = null,
   baseEnv = process.env,
+  wikiRootPath = null,
 ) {
   const providers = Array.isArray(providersOrWorkspaceRoot) ? providersOrWorkspaceRoot : [];
   const resolvedWorkspaceRoot = Array.isArray(providersOrWorkspaceRoot)
@@ -226,7 +227,8 @@ export function buildSessionEnv(
     (Array.isArray(providersOrWorkspaceRoot)
       ? getRemoteVibesStateDir({ cwd: resolvedWorkspaceRoot, env })
       : getLegacyWorkspaceStateDir(resolvedWorkspaceRoot));
-  const agentDir = path.join(resolvedStateDir, "wiki", "comms", "agents", sessionId);
+  const resolvedWikiRootPath = wikiRootPath || path.join(resolvedStateDir, "wiki");
+  const agentDir = path.join(resolvedWikiRootPath, "comms", "agents", sessionId);
 
   return {
     ...env,
@@ -249,8 +251,8 @@ export function buildSessionEnv(
     REMOTE_VIBES_AGENT_PROMPT_PATH: path.join(resolvedStateDir, AGENT_PROMPT_FILENAME),
     REMOTE_VIBES_PROVIDER: providerId,
     REMOTE_VIBES_SESSION_ID: sessionId,
-    REMOTE_VIBES_WIKI_DIR: path.join(resolvedStateDir, "wiki"),
-    REMOTE_VIBES_COMMS_DIR: path.join(resolvedStateDir, "wiki", "comms"),
+    REMOTE_VIBES_WIKI_DIR: resolvedWikiRootPath,
+    REMOTE_VIBES_COMMS_DIR: path.join(resolvedWikiRootPath, "comms"),
     REMOTE_VIBES_AGENT_DIR: agentDir,
     REMOTE_VIBES_AGENT_INBOX: path.join(agentDir, "inbox"),
     REMOTE_VIBES_AGENT_PROCESSED_DIR: path.join(agentDir, "processed"),
@@ -751,6 +753,7 @@ export class SessionManager {
     providers,
     persistSessions = true,
     stateDir = getRemoteVibesStateDir({ cwd }),
+    wikiRootPath = path.join(stateDir, "wiki"),
     agentRunStore = null,
     runIdleTimeoutMs = Number(process.env.REMOTE_VIBES_RUN_IDLE_MS || 15_000),
     env = process.env,
@@ -760,6 +763,7 @@ export class SessionManager {
     this.providers = providers;
     this.persistSessions = persistSessions;
     this.stateDir = stateDir;
+    this.wikiRootPath = wikiRootPath;
     this.env = env && typeof env === "object" ? { ...env } : { ...process.env };
     this.userHomeDir = getProviderHomeDir(userHomeDir);
     this.sessionStore = new SessionStore({
@@ -776,6 +780,10 @@ export class SessionManager {
           idleTimeoutMs: runIdleTimeoutMs,
         })
       : null;
+  }
+
+  setWikiRootPath(wikiRootPath) {
+    this.wikiRootPath = wikiRootPath;
   }
 
   async initialize() {
@@ -1526,7 +1534,15 @@ export class SessionManager {
       await listOpenCodeSessions(
         provider.launchCommand,
         session.cwd,
-        buildSessionEnv(session.id, provider.id, this.providers, this.cwd, this.stateDir, this.env),
+        buildSessionEnv(
+          session.id,
+          provider.id,
+          this.providers,
+          this.cwd,
+          this.stateDir,
+          this.env,
+          this.wikiRootPath,
+        ),
       ),
       session.cwd,
     );
@@ -1600,7 +1616,15 @@ export class SessionManager {
         await listOpenCodeSessions(
           provider.launchCommand,
           session.cwd,
-          buildSessionEnv(session.id, provider.id, this.providers, this.cwd, this.stateDir, this.env),
+          buildSessionEnv(
+            session.id,
+            provider.id,
+            this.providers,
+            this.cwd,
+            this.stateDir,
+            this.env,
+            this.wikiRootPath,
+          ),
         ),
         session.cwd,
       );
@@ -1693,7 +1717,15 @@ export class SessionManager {
 
     const ptyProcess = pty.spawn(session.shell, getShellArgs(session.shell), {
       cwd: sessionCwd,
-      env: buildSessionEnv(session.id, provider.id, this.providers, this.cwd, this.stateDir, this.env),
+      env: buildSessionEnv(
+        session.id,
+        provider.id,
+        this.providers,
+        this.cwd,
+        this.stateDir,
+        this.env,
+        this.wikiRootPath,
+      ),
       name: "xterm-256color",
       cols: session.cols,
       rows: session.rows,

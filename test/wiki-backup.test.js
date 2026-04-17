@@ -1,0 +1,62 @@
+import assert from "node:assert/strict";
+import { execFile } from "node:child_process";
+import { mkdtemp, mkdir, readFile, realpath, rm, writeFile } from "node:fs/promises";
+import os from "node:os";
+import path from "node:path";
+import test from "node:test";
+import { promisify } from "node:util";
+import { WikiBackupService } from "../src/wiki-backup.js";
+
+const execFileAsync = promisify(execFile);
+
+async function git(cwd, args) {
+  return execFileAsync("git", ["-C", cwd, ...args]);
+}
+
+test("wiki backup creates an isolated git repo even inside another checkout", async () => {
+  const rootDir = await mkdtemp(path.join(os.tmpdir(), "remote-vibes-wiki-backup-nested-"));
+  const wikiDir = path.join(rootDir, "wiki");
+
+  try {
+    await git(rootDir, ["init", "-b", "main"]);
+    await git(rootDir, ["config", "user.name", "Remote Vibes Test"]);
+    await git(rootDir, ["config", "user.email", "test@example.com"]);
+    await writeFile(path.join(rootDir, "README.md"), "# Parent\n", "utf8");
+    await git(rootDir, ["add", "README.md"]);
+    await git(rootDir, ["commit", "-m", "Parent initial"]);
+
+    await mkdir(wikiDir, { recursive: true });
+    const canonicalWikiDir = await realpath(wikiDir);
+    await writeFile(path.join(wikiDir, "index.md"), "# Wiki\n", "utf8");
+
+    const backup = new WikiBackupService({ wikiPath: wikiDir, enabled: true });
+    const status = await backup.runBackup();
+
+    assert.equal(status.lastStatus, "committed");
+    assert.match(status.lastCommit, /^[0-9a-f]+$/);
+
+    const { stdout: wikiTopLevel } = await git(wikiDir, ["rev-parse", "--show-toplevel"]);
+    assert.equal(wikiTopLevel.trim(), canonicalWikiDir);
+
+    const { stdout: parentLog } = await git(rootDir, ["log", "--oneline"]);
+    assert.match(parentLog, /Parent initial/);
+    assert.doesNotMatch(parentLog, /Remote Vibes wiki backup/);
+  } finally {
+    await rm(rootDir, { recursive: true, force: true });
+  }
+});
+
+test("disabled wiki backup does not initialize git", async () => {
+  const wikiDir = await mkdtemp(path.join(os.tmpdir(), "remote-vibes-wiki-backup-disabled-"));
+
+  try {
+    await writeFile(path.join(wikiDir, "index.md"), "# Wiki\n", "utf8");
+    const backup = new WikiBackupService({ wikiPath: wikiDir, enabled: false });
+    const status = await backup.runBackup();
+
+    assert.equal(status.lastStatus, "skipped");
+    await assert.rejects(readFile(path.join(wikiDir, ".git", "HEAD"), "utf8"));
+  } finally {
+    await rm(wikiDir, { recursive: true, force: true });
+  }
+});

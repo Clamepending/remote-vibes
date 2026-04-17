@@ -109,41 +109,30 @@ const state = {
   providers: [],
   sessions: [],
   ports: [],
-  gpu: {
-    available: false,
-    total: 0,
-    used: 0,
-    idle: 0,
-    activeAgentSessions: 0,
-    totalMemoryMb: 0,
-    remoteVibesMemoryMb: 0,
-    otherMemoryMb: 0,
-    freeMemoryMb: 0,
-    perGpu: [],
-  },
-  gpuHistory: {
-    range: "1d",
-    latestTimestamp: null,
-    lastUpdatedAt: null,
-    sampleIntervalMs: 0,
-    gpus: [],
-    agentRuns: {
-      totalRuns: 0,
-      totalRunMs: 0,
-      sessionCount: 0,
-      medianRunMs: 0,
-      p90RunMs: 0,
-      maxRunMs: 0,
-      latestEndedAt: null,
-      buckets: [],
-    },
-  },
   currentView: "shell",
   agentPrompt: "",
   agentPromptPath: "",
-  agentPromptWikiRoot: ".remote-vibes",
+  agentPromptWikiRoot: ".remote-vibes/wiki",
   agentPromptTargets: [],
   agentPromptEditorOpen: false,
+  settings: {
+    wikiPath: "",
+    wikiRelativeRoot: ".remote-vibes/wiki",
+    wikiGitBackupEnabled: true,
+    wikiBackupIntervalMs: 10 * 60 * 1000,
+    wikiBackup: null,
+  },
+  folderPicker: {
+    open: false,
+    target: "",
+    root: "",
+    path: "",
+    currentPath: "",
+    parentPath: "",
+    entries: [],
+    loading: false,
+    error: "",
+  },
   filesRootOverride: null,
   filesRoot: "",
   fileTreeEntries: {},
@@ -231,15 +220,6 @@ function getRouteState() {
     };
   }
 
-  if (explicitView === "gpu") {
-    return {
-      view: "gpu",
-      root,
-      path: "",
-      notePath: "",
-    };
-  }
-
   if (explicitView === "file") {
     return {
       view: "file",
@@ -250,7 +230,7 @@ function getRouteState() {
   }
 
   return {
-    view: window.location.hash === "#gpu" ? "gpu" : "shell",
+    view: "shell",
     root,
     path,
     notePath: "",
@@ -689,20 +669,70 @@ function getKnowledgeBaseUrl(notePath = "") {
   return url.toString();
 }
 
-function getGpuDashboardUrl() {
-  const url = new URL(window.location.href);
-  url.searchParams.set("view", "gpu");
-  url.searchParams.delete("note");
-  url.hash = "";
-  return url.toString();
-}
-
 function getShellUrl() {
   const url = new URL(window.location.href);
   url.searchParams.delete("view");
   url.searchParams.delete("note");
   url.hash = "";
   return url.toString();
+}
+
+function getFolderPickerTitle() {
+  if (state.folderPicker.target === "wiki") {
+    return "choose wiki folder";
+  }
+
+  return "choose session folder";
+}
+
+function getFolderPickerCurrentPath() {
+  return state.folderPicker.currentPath || state.folderPicker.root || state.defaultCwd || "";
+}
+
+function getFolderPickerTargetInput() {
+  if (state.folderPicker.target === "wiki") {
+    return document.querySelector("#wiki-path-input");
+  }
+
+  return document.querySelector("#session-cwd-input");
+}
+
+function getWikiBackupStatusText() {
+  const backup = state.settings.wikiBackup;
+
+  if (!state.settings.wikiGitBackupEnabled) {
+    return "git backup disabled";
+  }
+
+  if (!backup?.lastStatus || backup.lastStatus === "idle") {
+    return "git backup enabled";
+  }
+
+  if (backup.lastStatus === "committed") {
+    return backup.lastCommit ? `last backup ${backup.lastCommit}` : "last backup committed";
+  }
+
+  if (backup.lastStatus === "clean") {
+    return "wiki already backed up";
+  }
+
+  if (backup.lastStatus === "error") {
+    return backup.lastMessage || "wiki backup failed";
+  }
+
+  return backup.lastMessage || backup.lastStatus;
+}
+
+function applyFolderPickerSelection() {
+  const input = getFolderPickerTargetInput();
+  const selectedPath = getFolderPickerCurrentPath();
+
+  if (input instanceof HTMLInputElement && selectedPath) {
+    input.value = selectedPath;
+  }
+
+  state.folderPicker.open = false;
+  renderShell();
 }
 
 function maybeRedirectToPreferredOrigin() {
@@ -1017,11 +1047,6 @@ function updateRoute({
       url.searchParams.delete("note");
     }
 
-    url.searchParams.delete("path");
-    url.hash = "";
-  } else if (view === "gpu") {
-    url.searchParams.set("view", "gpu");
-    url.searchParams.delete("note");
     url.searchParams.delete("path");
     url.hash = "";
   } else if (view === "file") {
@@ -2317,309 +2342,9 @@ function renderPortCards() {
     .join("");
 }
 
-function renderGpuCard() {
-  const gpu = state.gpu || {};
-  const statusText = gpu.available ? `${gpu.used} / ${gpu.total} in use` : "unavailable";
-  const detailText = gpu.available
-    ? `${gpu.activeAgentSessions || 0} active agent${gpu.activeAgentSessions === 1 ? "" : "s"}`
-    : "nvidia-smi unavailable";
-  const summaryText = gpu.available
-    ? `${Math.round((gpu.remoteVibesMemoryMb || 0) / 1024)} GB ours · ${Math.round((gpu.otherMemoryMb || 0) / 1024)} GB other`
-    : "green: remote vibes · yellow: other";
-  const bars = gpu.available && Array.isArray(gpu.perGpu) && gpu.perGpu.length
-    ? gpu.perGpu
-        .map((entry) => {
-          const total = Math.max(1, entry.totalMemoryMb || 0);
-          const remotePercent = Math.max(0, Math.min(100, (entry.remoteVibesMemoryMb / total) * 100));
-          const otherPercent = Math.max(0, Math.min(100 - remotePercent, (entry.otherMemoryMb / total) * 100));
-
-          return `
-            <div class="gpu-row">
-              <div class="gpu-row-copy">
-                <span class="gpu-row-label">gpu ${escapeHtml(entry.index)}</span>
-                <span class="gpu-row-meta">${escapeHtml(
-                  `${Math.round(entry.remoteVibesMemoryMb / 1024)}G ours · ${Math.round(entry.otherMemoryMb / 1024)}G other / ${Math.round(entry.totalMemoryMb / 1024)}G`,
-                )}</span>
-              </div>
-              <div class="gpu-bar" aria-hidden="true">
-                <span class="gpu-bar-fill gpu-bar-fill-remote" style="width:${remotePercent}%"></span>
-                <span class="gpu-bar-fill gpu-bar-fill-other" style="left:${remotePercent}%;width:${otherPercent}%"></span>
-              </div>
-            </div>
-          `;
-        })
-        .join("")
-    : `<div class="gpu-empty">No GPU telemetry available.</div>`;
-
-  return `
-    <a class="gpu-card ${gpu.available ? "" : "is-unavailable"}" href="${escapeHtml(getGpuDashboardUrl())}" target="_blank" rel="noreferrer">
-      <div class="gpu-topline">
-        <span class="gpu-metric">${escapeHtml(statusText)}</span>
-        <span class="gpu-detail">${escapeHtml(detailText)}</span>
-      </div>
-      <div class="gpu-summary">${escapeHtml(summaryText)}</div>
-      <div class="gpu-bars">${bars}</div>
-    </a>
-  `;
-}
-
-function formatGpuRangeLabel(range) {
-  if (range === "7d") {
-    return "7 days";
-  }
-
-  if (range === "30d") {
-    return "month";
-  }
-
-  return "1 day";
-}
-
-function formatDurationCompact(durationMs) {
-  const totalSeconds = Math.max(0, Math.round((Number(durationMs) || 0) / 1000));
-  if (!totalSeconds) {
-    return "0s";
-  }
-
-  const hours = Math.floor(totalSeconds / 3600);
-  const minutes = Math.floor((totalSeconds % 3600) / 60);
-  const seconds = totalSeconds % 60;
-
-  if (hours >= 24) {
-    const days = Math.floor(hours / 24);
-    const remainingHours = hours % 24;
-    return remainingHours ? `${days}d ${remainingHours}h` : `${days}d`;
-  }
-
-  if (hours) {
-    return minutes ? `${hours}h ${minutes}m` : `${hours}h`;
-  }
-
-  if (minutes) {
-    return seconds && minutes < 5 ? `${minutes}m ${seconds}s` : `${minutes}m`;
-  }
-
-  return `${seconds}s`;
-}
-
-function formatGpuDashboardTimestamp(timestamp, range) {
-  if (!timestamp) {
-    return "No samples yet";
-  }
-
-  const date = new Date(timestamp);
-
-  if (range === "1d") {
-    return date.toLocaleString([], { hour: "numeric", minute: "2-digit", month: "short", day: "numeric" });
-  }
-
-  return date.toLocaleString([], { month: "short", day: "numeric", hour: "numeric" });
-}
-
-function buildGpuAreaPath(points, width, height, key, lowerKey = null) {
-  if (!points.length) {
-    return "";
-  }
-
-  const topPoints = points.map((point) => `${point.x},${point[key]}`);
-  const lowerPoints = points
-    .slice()
-    .reverse()
-    .map((point) => `${point.x},${lowerKey ? point[lowerKey] : height}`);
-
-  return `M ${topPoints.join(" L ")} L ${lowerPoints.join(" L ")} Z`;
-}
-
-function buildGpuLinePath(points, width, key) {
-  if (!points.length) {
-    return "";
-  }
-
-  return `M ${points.map((point) => `${point.x},${point[key]}`).join(" L ")}`;
-}
-
-function renderAgentRunDistributionCard() {
-  const history = state.gpuHistory.agentRuns || {};
-  const totalRuns = Number(history.totalRuns) || 0;
-  const buckets = Array.isArray(history.buckets) ? history.buckets : [];
-  const maxBucketCount = Math.max(1, ...buckets.map((bucket) => Number(bucket.count) || 0));
-  const bucketMarkup = buckets.length
-    ? buckets
-        .map((bucket) => {
-          const count = Number(bucket.count) || 0;
-          const percent = totalRuns ? Math.round((count / totalRuns) * 100) : 0;
-          const width = Math.max(count > 0 ? 10 : 0, Math.round((count / maxBucketCount) * 100));
-
-          return `
-            <div class="run-bucket-row">
-              <div class="run-bucket-copy">
-                <span class="run-bucket-label">${escapeHtml(bucket.label)}</span>
-                <span class="run-bucket-meta">${escapeHtml(`${count} run${count === 1 ? "" : "s"} · ${percent}%`)}</span>
-              </div>
-              <div class="run-bucket-bar" aria-hidden="true">
-                <span class="run-bucket-fill" style="width:${width}%"></span>
-              </div>
-            </div>
-          `;
-        })
-        .join("")
-    : "";
-  const stats = [
-    { label: "runs", value: String(totalRuns) },
-    { label: "sessions", value: String(Number(history.sessionCount) || 0) },
-    { label: "median", value: formatDurationCompact(history.medianRunMs) },
-    { label: "p90", value: formatDurationCompact(history.p90RunMs) },
-    { label: "max", value: formatDurationCompact(history.maxRunMs) },
-    { label: "autonomy", value: formatDurationCompact(history.totalRunMs) },
-  ]
-    .map(
-      (entry) => `
-        <div class="run-stat">
-          <span class="run-stat-label">${escapeHtml(entry.label)}</span>
-          <strong class="run-stat-value">${escapeHtml(entry.value)}</strong>
-        </div>
-      `,
-    )
-    .join("");
-
-  return `
-    <article class="gpu-chart-card run-distribution-card">
-      <div class="gpu-chart-header">
-        <div>
-          <strong>Agent Run Lengths</strong>
-          <div class="gpu-chart-meta">prompt submit to quiet or exit · longer buckets mean more autonomous runs</div>
-        </div>
-      </div>
-      <div class="run-stats-grid">
-        ${stats}
-      </div>
-      ${
-        totalRuns
-          ? `
-            <div class="run-buckets">
-              ${bucketMarkup}
-            </div>
-          `
-          : `<div class="blank-state">No completed agent runs yet for this range. Start a prompt in an agent session and it will show up here once the run goes quiet.</div>`
-      }
-    </article>
-  `;
-}
-
-function renderGpuChart(gpuEntry) {
-  const width = 860;
-  const height = 220;
-  const paddingTop = 18;
-  const paddingBottom = 28;
-  const chartHeight = height - paddingTop - paddingBottom;
-  const points = gpuEntry.points;
-
-  if (!points.length) {
-    return `<div class="blank-state">no samples for gpu ${escapeHtml(gpuEntry.index)}</div>`;
-  }
-
-  const minTimestamp = points[0].timestamp;
-  const maxTimestamp = points[points.length - 1].timestamp || minTimestamp + 1;
-  const timestampSpan = Math.max(1, maxTimestamp - minTimestamp);
-  const totalMemoryMb = Math.max(
-    1,
-    ...points.map((point) => Math.max(point.totalMemoryMb, point.remoteVibesMemoryMb + point.otherMemoryMb)),
-  );
-  const scaledPoints = points.map((point) => {
-    const usedRemote = point.remoteVibesMemoryMb;
-    const usedStacked = point.remoteVibesMemoryMb + point.otherMemoryMb;
-    return {
-      x: ((point.timestamp - minTimestamp) / timestampSpan) * width,
-      remoteTop: paddingTop + chartHeight * (1 - usedRemote / totalMemoryMb),
-      stackedTop: paddingTop + chartHeight * (1 - usedStacked / totalMemoryMb),
-      timestamp: point.timestamp,
-    };
-  });
-  const startLabel = formatGpuDashboardTimestamp(minTimestamp, state.gpuHistory.range);
-  const endLabel = formatGpuDashboardTimestamp(maxTimestamp, state.gpuHistory.range);
-
-  return `
-    <article class="gpu-chart-card">
-      <div class="gpu-chart-header">
-        <div>
-          <strong>GPU ${escapeHtml(gpuEntry.index)}</strong>
-          <div class="gpu-chart-meta">${escapeHtml(
-            `${Math.round((points[points.length - 1].totalMemoryMb || 0) / 1024)} GB total`,
-          )}</div>
-        </div>
-      </div>
-      <svg class="gpu-chart" viewBox="0 0 ${width} ${height}" role="img" aria-label="GPU ${escapeHtml(gpuEntry.index)} history">
-        <line class="gpu-grid-line" x1="0" y1="${paddingTop}" x2="${width}" y2="${paddingTop}" />
-        <line class="gpu-grid-line" x1="0" y1="${paddingTop + chartHeight / 2}" x2="${width}" y2="${paddingTop + chartHeight / 2}" />
-        <line class="gpu-grid-line" x1="0" y1="${paddingTop + chartHeight}" x2="${width}" y2="${paddingTop + chartHeight}" />
-        <path class="gpu-area-other" d="${buildGpuAreaPath(scaledPoints, width, height, "stackedTop", "remoteTop")}" />
-        <path class="gpu-area-remote" d="${buildGpuAreaPath(scaledPoints, width, height, "remoteTop")}" />
-        <path class="gpu-line-remote" d="${buildGpuLinePath(scaledPoints, width, "remoteTop")}" />
-        <path class="gpu-line-stacked" d="${buildGpuLinePath(scaledPoints, width, "stackedTop")}" />
-      </svg>
-      <div class="gpu-chart-axis">
-        <span>${escapeHtml(startLabel)}</span>
-        <span>${escapeHtml(endLabel)}</span>
-      </div>
-    </article>
-  `;
-}
-
-function renderGpuDashboard() {
-  const history = state.gpuHistory;
-  const gpuCards = history.gpus.length
-    ? history.gpus.map((gpuEntry) => renderGpuChart(gpuEntry)).join("")
-    : `<div class="blank-state">No GPU history yet. Samples will appear here after Remote Vibes records them.</div>`;
-  const cards = `${renderAgentRunDistributionCard()}${gpuCards}`;
-
-  return `
-    <section class="dashboard-panel">
-      <div class="dashboard-toolbar">
-        <div class="dashboard-copy">
-          <strong>GPU Dashboard</strong>
-          <div class="terminal-meta">stacked GPU memory history plus agent autonomy · green is remote vibes · yellow is other workloads</div>
-        </div>
-        <div class="dashboard-actions">
-          <a class="ghost-button toolbar-control" href="${escapeHtml(getShellUrl())}">remote vibes</a>
-        </div>
-      </div>
-      <div class="dashboard-range">
-        <span class="dashboard-range-label">range</span>
-        ${["1d", "7d", "30d"]
-          .map(
-            (range) => `
-              <button class="ghost-button dashboard-range-button ${history.range === range ? "is-active" : ""}" type="button" data-gpu-range="${range}">
-                ${escapeHtml(formatGpuRangeLabel(range))}
-              </button>
-            `,
-          )
-          .join("")}
-        <span class="dashboard-updated">${escapeHtml(formatGpuDashboardTimestamp(history.lastUpdatedAt, history.range))}</span>
-      </div>
-      <div class="dashboard-grid">
-        ${cards}
-      </div>
-    </section>
-  `;
-}
-
-function renderGpuApp() {
-  document.title = "GPU Dashboard · Remote Vibes";
-
-  return `
-    <main class="screen">
-      ${renderGpuDashboard()}
-    </main>
-  `;
-}
-
 function renderTerminalPanel(activeSession) {
   if (state.currentView === "knowledge-base") {
     return renderKnowledgeBaseView();
-  }
-
-  if (state.currentView === "gpu") {
-    return renderGpuDashboard();
   }
 
   return `
@@ -2708,6 +2433,57 @@ function renderAgentPromptModal() {
   `;
 }
 
+function renderFolderPickerEntries() {
+  if (state.folderPicker.loading) {
+    return `<div class="blank-state">loading folders...</div>`;
+  }
+
+  if (state.folderPicker.error) {
+    return `<div class="blank-state">${escapeHtml(state.folderPicker.error)}</div>`;
+  }
+
+  if (!state.folderPicker.entries.length) {
+    return `<div class="blank-state">no subfolders</div>`;
+  }
+
+  return state.folderPicker.entries
+    .map(
+      (entry) => `
+        <button class="folder-picker-row" type="button" data-folder-picker-open="${escapeHtml(entry.path)}">
+          <span class="file-caret">dir</span>
+          <span class="file-label">${escapeHtml(entry.name)}</span>
+        </button>
+      `,
+    )
+    .join("");
+}
+
+function renderFolderPickerModal() {
+  if (!state.folderPicker.open) {
+    return "";
+  }
+
+  const currentPath = getFolderPickerCurrentPath();
+
+  return `
+    <div class="prompt-modal-shell" data-folder-picker-modal>
+      <button class="sidebar-scrim is-open" type="button" aria-label="Close folder picker" data-close-folder-picker></button>
+      <section class="prompt-modal folder-picker-modal">
+        <div class="section-head">
+          <span>${escapeHtml(getFolderPickerTitle())}</span>
+          <button class="icon-button" type="button" data-close-folder-picker>×</button>
+        </div>
+        <div class="folder-picker-path" title="${escapeHtml(currentPath)}">${escapeHtml(currentPath)}</div>
+        <div class="folder-picker-actions">
+          <button class="ghost-button folder-picker-button" type="button" id="folder-picker-up" ${state.folderPicker.parentPath ? "" : "disabled"}>up</button>
+          <button class="primary-button folder-picker-button" type="button" id="folder-picker-select" ${currentPath ? "" : "disabled"}>choose this folder</button>
+        </div>
+        <div class="folder-picker-list">${renderFolderPickerEntries()}</div>
+      </section>
+    </div>
+  `;
+}
+
 function renderUpdateBanner() {
   const update = state.update;
 
@@ -2763,13 +2539,6 @@ function renderShell() {
     return;
   }
 
-  if (state.currentView === "gpu") {
-    app.innerHTML = renderGpuApp();
-    disposeTerminal();
-    bindGpuDashboardEvents();
-    return;
-  }
-
   document.title = "Remote Vibes";
 
   teardownKnowledgeBaseGraphInteractions();
@@ -2801,7 +2570,20 @@ function renderShell() {
 
           <form class="session-form" id="session-form">
             <select name="providerId">${providerOptions}</select>
-            <input type="text" name="cwd" value="${escapeHtml(state.defaultCwd || "")}" placeholder="cwd" />
+            <div class="folder-input-row">
+              <input
+                id="session-cwd-input"
+                type="text"
+                name="cwd"
+                value="${escapeHtml(state.defaultCwd || "")}"
+                placeholder="session folder"
+                autocomplete="off"
+                autocorrect="off"
+                autocapitalize="none"
+                spellcheck="false"
+              />
+              <button class="ghost-button folder-browse-button" type="button" data-folder-picker-target="session">choose</button>
+            </div>
             <div class="inline-form">
               <input type="text" name="name" placeholder="name" />
               <button class="primary-button" type="submit">+</button>
@@ -2813,14 +2595,6 @@ function renderShell() {
               <span>sessions</span>
             </div>
             <div class="list-shell" id="sessions-list">${renderSessionCards()}</div>
-          </section>
-
-          <section class="sidebar-section">
-            <div class="section-head">
-              <span>gpu usage</span>
-              <a class="ghost-button" href="${escapeHtml(getGpuDashboardUrl())}" target="_blank" rel="noreferrer">view</a>
-            </div>
-            <div id="gpu-card">${renderGpuCard()}</div>
           </section>
 
           <section class="sidebar-section">
@@ -2837,9 +2611,40 @@ function renderShell() {
               </a>
             </div>
             <div class="prompt-copy">
-              <div>obsidian-style view for ${escapeHtml(state.agentPromptWikiRoot)}/wiki</div>
+              <div>obsidian-style view for ${escapeHtml(state.settings.wikiRelativeRoot || state.agentPromptWikiRoot)}</div>
               <div>markdown notes + graph view in a dedicated tab</div>
             </div>
+          </section>
+
+          <section class="sidebar-section">
+            <div class="section-head">
+              <span>settings</span>
+              <button class="ghost-button" type="button" id="backup-wiki-now">backup now</button>
+            </div>
+            <form class="settings-form" id="settings-form">
+              <label class="field-label" for="wiki-path-input">wiki folder</label>
+              <div class="folder-input-row">
+                <input
+                  class="file-root-input"
+                  id="wiki-path-input"
+                  name="wikiPath"
+                  type="text"
+                  value="${escapeHtml(state.settings.wikiPath || "")}"
+                  placeholder="${escapeHtml(state.defaultCwd || "wiki folder")}"
+                  autocomplete="off"
+                  autocorrect="off"
+                  autocapitalize="none"
+                  spellcheck="false"
+                />
+                <button class="ghost-button folder-browse-button" type="button" data-folder-picker-target="wiki">choose</button>
+              </div>
+              <label class="checkbox-row">
+                <input type="checkbox" name="wikiGitBackupEnabled" ${state.settings.wikiGitBackupEnabled ? "checked" : ""} />
+                <span>git backup every 10 min</span>
+              </label>
+              <button class="primary-button settings-save-button" type="submit">save settings</button>
+              <div class="settings-status">${escapeHtml(getWikiBackupStatusText())}</div>
+            </form>
           </section>
 
           <section class="sidebar-section">
@@ -2899,6 +2704,7 @@ function renderShell() {
 
       ${renderTerminalPanel(activeSession)}
       ${renderAgentPromptModal()}
+      ${renderFolderPickerModal()}
       <aside class="sidebar sidebar-right ${state.mobileSidebar === "right" ? "is-open" : ""}" data-sidebar-panel="right">
         <div class="sidebar-mobile-actions sidebar-mobile-actions-right">
           <button class="icon-button hidden-desktop" type="button" id="close-right-sidebar">×</button>
@@ -2944,7 +2750,6 @@ function renderShell() {
     refreshShellUi();
   } else {
     disposeTerminal();
-    refreshGpuCard();
     refreshKnowledgeBaseUi();
   }
 
@@ -3096,28 +2901,6 @@ function refreshUpdateUi() {
 
   updateBanner.innerHTML = renderUpdateBanner();
   bindUpdateEvents();
-}
-
-function refreshGpuCard() {
-  const gpuCard = document.querySelector("#gpu-card");
-  if (!gpuCard) {
-    return;
-  }
-
-  gpuCard.innerHTML = renderGpuCard();
-  bindGpuNavigationEvents();
-}
-
-function bindGpuNavigationEvents() {
-  document.querySelector("#gpu-card .gpu-card")?.addEventListener("click", (event) => {
-    if (event.metaKey || event.ctrlKey || event.shiftKey || event.altKey || event.button !== 0) {
-      return;
-    }
-
-    event.preventDefault();
-    setCurrentView("gpu");
-    void loadGpuHistory(state.gpuHistory.range).then(() => renderShell());
-  });
 }
 
 function bindPortEvents() {
@@ -3647,7 +3430,6 @@ function refreshShellUi({ sessions = true, ports = true, files = true } = {}) {
     refreshOpenFileUi();
   }
 
-  refreshGpuCard();
   refreshKnowledgeBaseUi();
   refreshToolbarUi();
 }
@@ -3838,47 +3620,32 @@ function scheduleSessionsRefresh() {
 function applyAgentPromptState(payload) {
   state.agentPrompt = payload?.prompt || "";
   state.agentPromptPath = payload?.promptPath || ".remote-vibes/agent-prompt.md";
-  state.agentPromptWikiRoot = payload?.wikiRoot || ".remote-vibes";
+  state.agentPromptWikiRoot = payload?.wikiRoot || state.settings.wikiRelativeRoot || ".remote-vibes/wiki";
   state.agentPromptTargets = Array.isArray(payload?.targets) ? payload.targets : [];
 }
 
-function applyGpuState(payload) {
-  state.gpu = {
-    available: Boolean(payload?.available),
-    total: Number(payload?.total) || 0,
-    used: Number(payload?.used) || 0,
-    idle: Number(payload?.idle) || 0,
-    activeAgentSessions: Number(payload?.activeAgentSessions) || 0,
-    totalMemoryMb: Number(payload?.totalMemoryMb) || 0,
-    remoteVibesMemoryMb: Number(payload?.remoteVibesMemoryMb) || 0,
-    otherMemoryMb: Number(payload?.otherMemoryMb) || 0,
-    freeMemoryMb: Number(payload?.freeMemoryMb) || 0,
-    perGpu: Array.isArray(payload?.perGpu) ? payload.perGpu : [],
-  };
-}
+function applySettingsState(payload) {
+  const settings = payload?.settings || payload || {};
+  const backup = settings.wikiBackup || settings.backup || state.settings.wikiBackup;
 
-function applyGpuHistoryState(payload) {
-  const agentRuns = payload?.agentRuns || {};
-  const latestTimestamp = payload?.latestTimestamp || null;
-  const latestEndedAt = agentRuns?.latestEndedAt || null;
-
-  state.gpuHistory = {
-    range: payload?.range || state.gpuHistory.range || "1d",
-    latestTimestamp,
-    lastUpdatedAt: Math.max(Number(latestTimestamp) || 0, Number(latestEndedAt) || 0) || null,
-    sampleIntervalMs: Number(payload?.sampleIntervalMs) || 0,
-    gpus: Array.isArray(payload?.gpus) ? payload.gpus : [],
-    agentRuns: {
-      totalRuns: Number(agentRuns?.totalRuns) || 0,
-      totalRunMs: Number(agentRuns?.totalRunMs) || 0,
-      sessionCount: Number(agentRuns?.sessionCount) || 0,
-      medianRunMs: Number(agentRuns?.medianRunMs) || 0,
-      p90RunMs: Number(agentRuns?.p90RunMs) || 0,
-      maxRunMs: Number(agentRuns?.maxRunMs) || 0,
-      latestEndedAt,
-      buckets: Array.isArray(agentRuns?.buckets) ? agentRuns.buckets : [],
-    },
+  state.settings = {
+    wikiPath: settings.wikiPath || state.settings.wikiPath || "",
+    wikiRelativeRoot:
+      settings.wikiRelativeRoot ||
+      settings.wikiRelativePath ||
+      state.settings.wikiRelativeRoot ||
+      ".remote-vibes/wiki",
+    wikiGitBackupEnabled:
+      settings.wikiGitBackupEnabled === undefined
+        ? state.settings.wikiGitBackupEnabled
+        : Boolean(settings.wikiGitBackupEnabled),
+    wikiBackupIntervalMs:
+      Number(settings.wikiBackupIntervalMs) ||
+      state.settings.wikiBackupIntervalMs ||
+      10 * 60 * 1000,
+    wikiBackup: backup || null,
   };
+  state.agentPromptWikiRoot = state.settings.wikiRelativeRoot;
 }
 
 function syncViewFromLocation() {
@@ -3897,21 +3664,58 @@ function setCurrentView(nextView, { notePath = state.knowledgeBase.selectedNoteP
     return;
   }
 
-  state.currentView = nextView === "gpu" ? "gpu" : "shell";
+  state.currentView = "shell";
   updateRoute({ view: state.currentView });
 }
 
-function bindGpuDashboardEvents() {
-  document.querySelectorAll("[data-gpu-range]").forEach((button) => {
+function bindShellEvents() {
+  document.querySelectorAll("[data-folder-picker-target]").forEach((button) => {
     button.addEventListener("click", async () => {
-      const range = button.getAttribute("data-gpu-range") || "1d";
-      await loadGpuHistory(range);
+      const target = button.getAttribute("data-folder-picker-target") || "session";
+      const input =
+        target === "wiki"
+          ? document.querySelector("#wiki-path-input")
+          : document.querySelector("#session-cwd-input");
+      const initialPath =
+        input instanceof HTMLInputElement && input.value.trim()
+          ? input.value.trim()
+          : target === "wiki"
+            ? state.settings.wikiPath || state.defaultCwd
+            : state.defaultCwd;
+
+      await loadFolderPicker(initialPath, { target });
+    });
+  });
+
+  document.querySelectorAll("[data-close-folder-picker]").forEach((element) => {
+    element.addEventListener("click", () => {
+      state.folderPicker.open = false;
       renderShell();
     });
   });
-}
 
-function bindShellEvents() {
+  document.querySelectorAll("[data-folder-picker-open]").forEach((button) => {
+    button.addEventListener("click", async () => {
+      await loadFolderPicker(button.getAttribute("data-folder-picker-open") || state.defaultCwd, {
+        target: state.folderPicker.target,
+      });
+    });
+  });
+
+  document.querySelector("#folder-picker-up")?.addEventListener("click", async () => {
+    if (!state.folderPicker.parentPath) {
+      return;
+    }
+
+    await loadFolderPicker(state.folderPicker.parentPath, {
+      target: state.folderPicker.target,
+    });
+  });
+
+  document.querySelector("#folder-picker-select")?.addEventListener("click", () => {
+    applyFolderPickerSelection();
+  });
+
   document.querySelector("#session-form")?.addEventListener("submit", async (event) => {
     event.preventDefault();
     const formData = new FormData(event.currentTarget);
@@ -3980,6 +3784,39 @@ function bindShellEvents() {
       renderShell();
     } catch (error) {
       window.alert(error.message);
+    }
+  });
+  document.querySelector("#settings-form")?.addEventListener("submit", async (event) => {
+    event.preventDefault();
+    const form = event.currentTarget;
+
+    if (!(form instanceof HTMLFormElement)) {
+      return;
+    }
+
+    try {
+      await saveSettingsFromForm(form);
+      renderShell();
+    } catch (error) {
+      window.alert(error.message);
+    }
+  });
+  document.querySelector("#backup-wiki-now")?.addEventListener("click", async (event) => {
+    const button = event.currentTarget;
+    if (button instanceof HTMLButtonElement) {
+      button.disabled = true;
+      button.textContent = "backing up...";
+    }
+
+    try {
+      await backupWikiNow();
+      renderShell();
+    } catch (error) {
+      window.alert(error.message);
+      if (button instanceof HTMLButtonElement) {
+        button.disabled = false;
+        button.textContent = "backup now";
+      }
     }
   });
   document.querySelector("#refresh-files")?.addEventListener("click", async () => {
@@ -4660,23 +4497,83 @@ async function loadUpdateStatus({ force = false } = {}) {
   refreshUpdateUi();
 }
 
-async function loadGpu() {
+async function loadFolderPicker(root, { target = state.folderPicker.target } = {}) {
+  const nextRoot = normalizeWorkspaceRoot(root || state.defaultCwd || "/");
+  state.folderPicker = {
+    ...state.folderPicker,
+    currentPath: nextRoot,
+    entries: [],
+    error: "",
+    loading: true,
+    open: true,
+    parentPath: "",
+    path: "",
+    root: nextRoot,
+    target,
+  };
+  renderShell();
+
   try {
-    const payload = await fetchJson("/api/gpu");
-    applyGpuState(payload.gpu);
-    refreshShellUi({ sessions: false, ports: false, files: false });
+    const params = new URLSearchParams();
+    params.set("root", nextRoot);
+    const payload = await fetchJson(`/api/folders?${params.toString()}`);
+
+    if (!state.folderPicker.open || state.folderPicker.root !== nextRoot) {
+      return;
+    }
+
+    state.folderPicker = {
+      ...state.folderPicker,
+      currentPath: payload.currentPath || nextRoot,
+      entries: Array.isArray(payload.entries) ? payload.entries : [],
+      error: "",
+      loading: false,
+      parentPath: payload.parentPath || "",
+      path: payload.relativePath || "",
+      root: payload.root || nextRoot,
+    };
   } catch (error) {
-    console.error(error);
+    if (!state.folderPicker.open || state.folderPicker.root !== nextRoot) {
+      return;
+    }
+
+    state.folderPicker = {
+      ...state.folderPicker,
+      entries: [],
+      error: error.message,
+      loading: false,
+    };
+  }
+
+  renderShell();
+}
+
+async function saveSettingsFromForm(form) {
+  const formData = new FormData(form);
+  const payload = await fetchJson("/api/settings", {
+    method: "PATCH",
+    body: JSON.stringify({
+      wikiGitBackupEnabled: formData.get("wikiGitBackupEnabled") === "on",
+      wikiPath: String(formData.get("wikiPath") || ""),
+    }),
+  });
+
+  applySettingsState(payload.settings);
+  applyAgentPromptState(payload.agentPrompt);
+  state.knowledgeBase.noteCache = {};
+
+  if (state.currentView === "knowledge-base") {
+    await loadKnowledgeBaseIndex();
+    await ensureKnowledgeBaseSelectionLoaded({ force: true });
   }
 }
 
-async function loadGpuHistory(range = state.gpuHistory.range || "1d") {
-  try {
-    const payload = await fetchJson(`/api/gpu/history?range=${encodeURIComponent(range)}`);
-    applyGpuHistoryState(payload.history);
-  } catch (error) {
-    console.error(error);
-  }
+async function backupWikiNow() {
+  const payload = await fetchJson("/api/wiki/backup", {
+    method: "POST",
+  });
+
+  applySettingsState(payload.settings || { wikiBackup: payload.backup });
 }
 
 function renderFileEditorPage() {
@@ -4723,10 +4620,9 @@ async function bootstrapApp() {
   state.ports = payload.ports ?? [];
   state.defaultCwd = payload.cwd;
   state.defaultProviderId = payload.defaultProviderId;
-  applyGpuState(payload.gpu);
+  applySettingsState(payload.settings);
   state.preferredBaseUrl = payload.preferredUrl ? new URL(payload.preferredUrl).origin : "";
   applyAgentPromptState(payload.agentPrompt);
-  await loadGpuHistory(state.gpuHistory.range);
 
   if (maybeRedirectToPreferredOrigin()) {
     return;
@@ -4775,9 +4671,6 @@ async function bootstrapApp() {
 
   window.addEventListener("hashchange", async () => {
     syncViewFromLocation();
-    if (state.currentView === "gpu") {
-      await loadGpuHistory(state.gpuHistory.range);
-    }
 
     renderShell();
     if (state.currentView === "shell" && state.activeSessionId) {
@@ -4792,10 +4685,6 @@ async function bootstrapApp() {
   state.pollTimer = window.setInterval(() => {
     loadSessions();
     loadPorts();
-    loadGpu();
-    if (state.currentView === "gpu") {
-      void loadGpuHistory(state.gpuHistory.range).then(() => renderShell());
-    }
     void refreshOpenFileTree({ force: true });
   }, 3000);
 }

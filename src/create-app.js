@@ -10,14 +10,15 @@ import { WebSocketServer } from "ws";
 import { buildPortUrlFromBase, getTailscaleUrl, pickPreferredUrl } from "./access-url.js";
 import { AgentPromptStore } from "./agent-prompt-store.js";
 import { AgentRunStore } from "./agent-run-store.js";
-import { GpuHistoryStore } from "./gpu-history-store.js";
-import { getGpuStatus } from "./gpu-manager.js";
+import { listFolderEntries } from "./folder-browser.js";
 import { PortAliasStore } from "./port-alias-store.js";
 import { listListeningPorts } from "./ports.js";
+import { SettingsStore } from "./settings-store.js";
 import { SessionManager } from "./session-manager.js";
 import { getRemoteVibesStateDir } from "./state-paths.js";
 import { TailscaleServeManager } from "./tailscale-serve.js";
 import { UpdateManager } from "./update-manager.js";
+import { WikiBackupService } from "./wiki-backup.js";
 import { detectProviders, getDefaultProviderId } from "./providers.js";
 import { listKnowledgeBase, readKnowledgeBaseNote } from "./knowledge-base.js";
 import {
@@ -248,28 +249,35 @@ export async function createRemoteVibesApp({
   const defaultProviderId = getDefaultProviderId(providers);
   const app = express();
   const agentRunStore = new AgentRunStore({ stateDir });
+  const settingsStore = new SettingsStore({ cwd, stateDir });
   const portAliasStore = new PortAliasStore({ stateDir });
+  await settingsStore.initialize();
+  const wikiBackupService = new WikiBackupService({
+    enabled: settingsStore.settings.wikiGitBackupEnabled,
+    intervalMs: settingsStore.settings.wikiBackupIntervalMs,
+    wikiPath: settingsStore.settings.wikiPath,
+  });
   const sessionManager = new SessionManager({
     cwd,
     providers,
     persistSessions,
     stateDir,
     agentRunStore,
+    wikiRootPath: settingsStore.settings.wikiPath,
   });
-  const agentPromptStore = new AgentPromptStore({ cwd, stateDir });
-  const gpuHistoryStore = new GpuHistoryStore({
+  const agentPromptStore = new AgentPromptStore({
+    cwd,
     stateDir,
-    sampleIntervalMs: Number(process.env.REMOTE_VIBES_GPU_SAMPLE_MS || 60_000),
+    wikiRootPath: settingsStore.settings.wikiPath,
   });
   await agentRunStore.initialize();
   await portAliasStore.initialize();
   await sessionManager.initialize();
   await agentPromptStore.initialize();
-  await gpuHistoryStore.initialize();
+  wikiBackupService.start();
   let exposedPort = null;
   let closePromise = null;
   let terminatePromise = null;
-  let gpuHistoryTimer = null;
   let urls = [];
   let preferredUrl = null;
   const proxyServer = httpProxy.createProxyServer({
@@ -277,15 +285,6 @@ export async function createRemoteVibesApp({
     ws: true,
     xfwd: true,
   });
-
-  async function readGpuStatus({ recordHistory = true } = {}) {
-    const gpu = await getGpuStatus({ sessionRoots: sessionManager.listAgentProcessRoots() });
-    if (recordHistory) {
-      await gpuHistoryStore.record(gpu);
-    }
-
-    return gpu;
-  }
 
   async function readTailscaleServeStatus({ refresh = false } = {}) {
     if (!tailscaleServeManager || typeof tailscaleServeManager.getStatus !== "function") {
@@ -369,6 +368,12 @@ export async function createRemoteVibesApp({
     return Promise.all(namedPorts.map((entry) => decoratePortForAccess(entry, serveStatus)));
   }
 
+  function getSettingsState() {
+    return settingsStore.getState({
+      backupStatus: wikiBackupService.getStatus(),
+    });
+  }
+
   app.use(express.json());
 
   app.use((request, response, next) => {
@@ -388,9 +393,9 @@ export async function createRemoteVibesApp({
       agentPrompt: await agentPromptStore.getState(),
       cwd,
       defaultProviderId,
-      gpu: await readGpuStatus(),
       providers,
       sessions: sessionManager.listSessions(),
+      settings: getSettingsState(),
       stateDir,
       urls,
       preferredUrl,
@@ -518,21 +523,59 @@ export async function createRemoteVibesApp({
     }
   });
 
-  app.get("/api/gpu", async (_request, response) => {
+  app.get("/api/settings", (_request, response) => {
     response.json({
-      gpu: await readGpuStatus(),
+      settings: getSettingsState(),
     });
   });
 
-  app.get("/api/gpu/history", async (request, response) => {
-    const range = typeof request.query.range === "string" ? request.query.range : "1d";
+  app.patch("/api/settings", async (request, response) => {
+    try {
+      const settings = await settingsStore.update({
+        wikiGitBackupEnabled: request.body?.wikiGitBackupEnabled,
+        wikiPath: request.body?.wikiPath,
+      });
 
+      agentPromptStore.setWikiRootPath(settings.wikiPath);
+      sessionManager.setWikiRootPath(settings.wikiPath);
+      await agentPromptStore.save(agentPromptStore.prompt);
+      wikiBackupService.setConfig({
+        enabled: settings.wikiGitBackupEnabled,
+        intervalMs: settings.wikiBackupIntervalMs,
+        wikiPath: settings.wikiPath,
+      });
+      wikiBackupService.start();
+      void wikiBackupService.runBackup({ reason: "settings" });
+
+      response.json({
+        settings: getSettingsState(),
+        agentPrompt: await agentPromptStore.getState(),
+      });
+    } catch (error) {
+      response.status(error.statusCode || 400).json({ error: error.message });
+    }
+  });
+
+  app.post("/api/wiki/backup", async (_request, response) => {
+    const status = await wikiBackupService.runBackup({ reason: "manual" });
     response.json({
-      history: {
-        ...gpuHistoryStore.getHistory(range),
-        agentRuns: agentRunStore.getHistory(range),
-      },
+      backup: status,
+      settings: getSettingsState(),
     });
+  });
+
+  app.get("/api/folders", async (request, response) => {
+    try {
+      response.json(
+        await listFolderEntries({
+          root: typeof request.query.root === "string" ? request.query.root : cwd,
+          relativePath: typeof request.query.path === "string" ? request.query.path : "",
+          fallbackCwd: cwd,
+        }),
+      );
+    } catch (error) {
+      response.status(error.statusCode || 400).json({ error: error.message });
+    }
   });
 
   app.get("/api/files", async (request, response) => {
@@ -574,7 +617,8 @@ export async function createRemoteVibesApp({
     try {
       response.json(
         await listKnowledgeBase({
-          rootPath: path.join(stateDir, "wiki"),
+          relativeRoot: settingsStore.getState().wikiRelativeRoot,
+          rootPath: settingsStore.settings.wikiPath,
         }),
       );
     } catch (error) {
@@ -586,7 +630,8 @@ export async function createRemoteVibesApp({
     try {
       response.json(
         await readKnowledgeBaseNote({
-          rootPath: path.join(stateDir, "wiki"),
+          relativeRoot: settingsStore.getState().wikiRelativeRoot,
+          rootPath: settingsStore.settings.wikiPath,
           relativePath: typeof request.query.path === "string" ? request.query.path : "",
         }),
       );
@@ -757,11 +802,6 @@ export async function createRemoteVibesApp({
     helperBaseUrl: getHelperBaseUrl(host, resolvedPort),
     preferredUrl,
   });
-  gpuHistoryTimer = setInterval(() => {
-    void readGpuStatus();
-  }, gpuHistoryStore.sampleIntervalMs);
-  gpuHistoryTimer.unref?.();
-
   server.on("upgrade", (request, socket, head) => {
     const url = new URL(request.url || "/", `http://${request.headers.host}`);
 
@@ -839,10 +879,7 @@ export async function createRemoteVibesApp({
     closePromise = (async () => {
       await sessionManager.shutdown({ preserveSessions: persistSessions });
       await removeServerInfo(stateDir);
-      if (gpuHistoryTimer) {
-        clearInterval(gpuHistoryTimer);
-        gpuHistoryTimer = null;
-      }
+      wikiBackupService.stop();
       proxyServer.close();
       await new Promise((resolve) => websocketServer.close(resolve));
       await new Promise((resolve, reject) => {
@@ -890,6 +927,7 @@ export async function createRemoteVibesApp({
       port: resolvedPort,
       providers,
       preferredUrl,
+      settings: getSettingsState(),
       stateDir,
       urls,
     },

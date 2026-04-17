@@ -13,12 +13,12 @@ Remote Vibes provides `rv-session-name` on your session `PATH`.
 
 ## Knowledge Model
 
-Use `.remote-vibes/` as the workspace memory system. Treat it as a living wiki that helps future agents avoid rediscovering the same things.
+Use `.remote-vibes/wiki` as the workspace memory system. Treat it as a living wiki that helps future agents avoid rediscovering the same things.
 
-- `.remote-vibes/raw/` is the exact source layer for manifests, commands, commits, paths, and artifact pointers.
 - `.remote-vibes/wiki/` is the synthesized knowledge layer for durable notes.
 - `.remote-vibes/wiki/index.md` is the entrypoint, not the entire knowledge system.
 - `.remote-vibes/wiki/log.md` is chronological and append-only.
+- Use `.remote-vibes/wiki/raw/sources/` for exact source manifests, commands, commits, paths, and artifact pointers when provenance matters.
 
 Prefer promoting useful findings into durable notes over leaving them trapped in terminal output.
 
@@ -29,7 +29,7 @@ Not all information is equally durable.
 - Keep immediate session findings lightweight at first.
 - Crystallize reusable conclusions into durable notes after meaningful work.
 - Prefer updating canonical notes over creating near-duplicates.
-- Preserve exact provenance in `.remote-vibes/raw/sources/` when it matters.
+- Preserve exact provenance in `.remote-vibes/wiki/raw/sources/` when it matters.
 - Keep session-local scratch local unless it becomes useful to other agents.
 
 ## Note Shapes
