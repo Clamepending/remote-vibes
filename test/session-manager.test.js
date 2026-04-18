@@ -147,6 +147,50 @@ async function writeArchivedCodexSessionMeta(homeDir, { sessionId, cwd, timestam
   await writeFile(path.join(archivedDir, fileName), `${firstLine}\n`, "utf8");
 }
 
+async function writeClaudeSubagent(homeDir, cwd, sessionId, {
+  agentId = "a1234567890abcdef",
+  description = "Research helper",
+  agentType = "general-purpose",
+  timestamps = ["2026-04-18T10:00:00.000Z", "2026-04-18T10:01:00.000Z"],
+  complete = true,
+} = {}) {
+  const projectDir = path.join(homeDir, ".claude", "projects", path.resolve(cwd).replaceAll(path.sep, "-"));
+  const subagentsDir = path.join(projectDir, sessionId, "subagents");
+  const fileBase = `agent-${agentId}`;
+  await mkdir(subagentsDir, { recursive: true });
+  await writeFile(
+    path.join(subagentsDir, `${fileBase}.meta.json`),
+    `${JSON.stringify({ agentType, description })}\n`,
+    "utf8",
+  );
+
+  const lines = [
+    {
+      type: "user",
+      isSidechain: true,
+      agentId,
+      promptId: "prompt-1",
+      timestamp: timestamps[0],
+      message: { role: "user", content: "Please explore this side task." },
+    },
+    {
+      type: "assistant",
+      isSidechain: true,
+      agentId,
+      timestamp: timestamps[1],
+      message: {
+        role: "assistant",
+        stop_reason: complete ? "end_turn" : "tool_use",
+        content: complete
+          ? [{ type: "text", text: "Finished." }]
+          : [{ type: "tool_use", name: "Read", input: { file_path: "README.md" } }],
+      },
+    },
+  ];
+
+  await writeFile(path.join(subagentsDir, `${fileBase}.jsonl`), `${lines.map((line) => JSON.stringify(line)).join("\n")}\n`, "utf8");
+}
+
 async function writeGeminiSessions(homeDir, cwd, projectId, sessions) {
   const geminiDir = path.join(homeDir, ".gemini");
   await mkdir(geminiDir, { recursive: true });
@@ -327,6 +371,78 @@ test("Claude sessions use a fixed session id and resume it after restart", async
       restoredLaunch.commandString,
       `${claudeWrapperCommand} '--dangerously-skip-permissions' '--resume' '11111111-2222-4333-8444-555555555555' || ${claudeWrapperCommand} '--dangerously-skip-permissions' '--session-id' '11111111-2222-4333-8444-555555555555'`,
     );
+  } finally {
+    await cleanupManager(manager, workspaceDir, userHomeDir);
+  }
+});
+
+test("Claude sessions expose completed subagents from Claude sidechain transcripts", async () => {
+  const { manager, workspaceDir, userHomeDir } = await createManager();
+
+  try {
+    const claudeSessionId = "11111111-2222-4333-8444-555555555555";
+    await writeClaudeSubagent(userHomeDir, workspaceDir, claudeSessionId, {
+      agentId: "abc123abc123",
+      description: "ARC hill-climbing trial",
+      agentType: "general-purpose",
+      timestamps: ["2026-04-18T10:00:00.000Z", "2026-04-18T10:01:00.000Z"],
+      complete: true,
+    });
+
+    const session = manager.buildSessionRecord({
+      id: "99999999-8888-4777-8666-555555555555",
+      providerId: "claude",
+      providerLabel: "Claude Code",
+      name: "Claude 1",
+      cwd: workspaceDir,
+      providerState: {
+        sessionId: claudeSessionId,
+      },
+    });
+
+    const serialized = manager.serializeSession(session);
+    assert.equal(serialized.subagents.length, 1);
+    assert.equal(serialized.subagents[0].name, "ARC hill-climbing trial");
+    assert.equal(serialized.subagents[0].agentType, "general-purpose");
+    assert.equal(serialized.subagents[0].status, "done");
+    assert.equal(serialized.subagents[0].messageCount, 2);
+    assert.equal(serialized.subagents[0].toolUseCount, 0);
+    assert.equal(serialized.subagents[0].parentProviderSessionId, claudeSessionId);
+  } finally {
+    await cleanupManager(manager, workspaceDir, userHomeDir);
+  }
+});
+
+test("Claude sessions expose active subagents when the session id is the provider id", async () => {
+  const { manager, workspaceDir, userHomeDir } = await createManager();
+
+  try {
+    const claudeSessionId = "22222222-3333-4444-8555-666666666666";
+    const now = Date.now();
+    await writeClaudeSubagent(userHomeDir, workspaceDir, claudeSessionId, {
+      agentId: "def456def456",
+      description: "Read docs in parallel",
+      agentType: "explorer",
+      timestamps: [new Date(now - 1_000).toISOString(), new Date(now).toISOString()],
+      complete: false,
+    });
+
+    const session = manager.buildSessionRecord({
+      id: claudeSessionId,
+      providerId: "claude",
+      providerLabel: "Claude Code",
+      name: "Claude 1",
+      cwd: workspaceDir,
+    });
+
+    const serialized = manager.serializeSession(session);
+    assert.equal(serialized.subagents.length, 1);
+    assert.equal(serialized.subagents[0].name, "Read docs in parallel");
+    assert.equal(serialized.subagents[0].agentType, "explorer");
+    assert.equal(serialized.subagents[0].status, "working");
+    assert.equal(serialized.subagents[0].messageCount, 2);
+    assert.equal(serialized.subagents[0].toolUseCount, 1);
+    assert.equal(serialized.subagents[0].parentProviderSessionId, claudeSessionId);
   } finally {
     await cleanupManager(manager, workspaceDir, userHomeDir);
   }

@@ -28,6 +28,7 @@ const PROVIDER_SESSION_CAPTURE_RETRY_INTERVAL_MS = 5_000;
 const PROVIDER_SESSION_CAPTURE_RETRY_WINDOW_MS = 90_000;
 const CODEX_SESSION_INDEX_LIMIT = 100;
 const CODEX_SESSION_META_READ_LIMIT = 8192;
+const CLAUDE_SUBAGENT_TRANSCRIPT_READ_LIMIT = 1_000_000;
 const CLAUDE_SKIP_PERMISSIONS_ARG = "--dangerously-skip-permissions";
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const appRootDir = path.resolve(__dirname, "..");
@@ -387,6 +388,12 @@ function getHomeDirectory(env = process.env) {
   return String(env?.HOME || os.homedir() || "").trim() || os.homedir();
 }
 
+function getClaudeHomeDir(homeDirOrEnv = process.env) {
+  return typeof homeDirOrEnv === "string"
+    ? getProviderHomeDir(homeDirOrEnv)
+    : getHomeDirectory(homeDirOrEnv);
+}
+
 function getCodexRootDir(homeDir = os.homedir()) {
   return path.join(getProviderHomeDir(homeDir), ".codex");
 }
@@ -404,14 +411,16 @@ function normalizeClaudeProjectDirName(cwd) {
   return normalizedCwd ? normalizedCwd.replaceAll(path.sep, "-") : null;
 }
 
-function listClaudeSessionsForCwd(cwd, env = process.env) {
+function getClaudeProjectDirForCwd(cwd, homeDirOrEnv = process.env) {
   const projectDirName = normalizeClaudeProjectDirName(cwd);
+  return projectDirName ? path.join(getClaudeHomeDir(homeDirOrEnv), ".claude", "projects", projectDirName) : null;
+}
 
-  if (!projectDirName) {
+function listClaudeSessionsForCwd(cwd, homeDirOrEnv = process.env) {
+  const projectDir = getClaudeProjectDirForCwd(cwd, homeDirOrEnv);
+  if (!projectDir) {
     return [];
   }
-
-  const projectDir = path.join(getHomeDirectory(env), ".claude", "projects", projectDirName);
 
   try {
     return sortSessionsByUpdated(
@@ -428,6 +437,183 @@ function listClaudeSessionsForCwd(cwd, env = process.env) {
   } catch {
     return [];
   }
+}
+
+function parseClaudeSubagentJsonLine(line) {
+  try {
+    const payload = JSON.parse(line);
+    return payload && typeof payload === "object" ? payload : null;
+  } catch {
+    return null;
+  }
+}
+
+function readClaudeSubagentMeta(filePath) {
+  try {
+    const payload = JSON.parse(readFileSync(filePath, "utf8"));
+    return payload && typeof payload === "object" ? payload : {};
+  } catch {
+    return {};
+  }
+}
+
+function summarizeClaudeSubagentTranscript(filePath, fallbackAgentId) {
+  let stats;
+  try {
+    stats = statSync(filePath);
+  } catch {
+    return null;
+  }
+
+  if (stats.size > CLAUDE_SUBAGENT_TRANSCRIPT_READ_LIMIT) {
+    return {
+      agentId: fallbackAgentId,
+      createdAt: new Date(stats.birthtimeMs || stats.mtimeMs).toISOString(),
+      updatedAt: new Date(stats.mtimeMs).toISOString(),
+      status: Date.now() - stats.mtimeMs <= SESSION_ACTIVITY_IDLE_MS * 2 ? "working" : "done",
+      messageCount: null,
+      toolUseCount: null,
+      promptId: null,
+    };
+  }
+
+  let lines;
+  try {
+    lines = readFileSync(filePath, "utf8").split(/\r?\n/).filter(Boolean);
+  } catch {
+    return null;
+  }
+
+  let firstTimestamp = null;
+  let lastTimestamp = null;
+  let lastPayload = null;
+  let agentId = fallbackAgentId;
+  let promptId = null;
+  let toolUseCount = 0;
+
+  for (const line of lines) {
+    const payload = parseClaudeSubagentJsonLine(line);
+    if (!payload) {
+      continue;
+    }
+
+    if (typeof payload.agentId === "string" && payload.agentId.trim()) {
+      agentId = payload.agentId.trim();
+    }
+    if (typeof payload.promptId === "string" && payload.promptId.trim()) {
+      promptId = payload.promptId.trim();
+    }
+    if (typeof payload.timestamp === "string" && payload.timestamp.trim()) {
+      firstTimestamp ||= payload.timestamp;
+      lastTimestamp = payload.timestamp;
+    }
+
+    const content = payload.message?.content;
+    if (Array.isArray(content)) {
+      toolUseCount += content.filter((entry) => entry?.type === "tool_use").length;
+    }
+
+    lastPayload = payload;
+  }
+
+  const lastStopReason = lastPayload?.message?.stop_reason;
+  const completed = lastPayload?.type === "assistant" && lastStopReason === "end_turn";
+  const updatedMs = lastTimestamp ? Date.parse(lastTimestamp) : stats.mtimeMs;
+  const status = completed || Date.now() - updatedMs > SESSION_ACTIVITY_IDLE_MS * 2 ? "done" : "working";
+
+  return {
+    agentId,
+    createdAt: firstTimestamp || new Date(stats.birthtimeMs || stats.mtimeMs).toISOString(),
+    updatedAt: lastTimestamp || new Date(stats.mtimeMs).toISOString(),
+    status,
+    messageCount: lines.length,
+    toolUseCount,
+    promptId,
+  };
+}
+
+function listClaudeSubagentsForSession(session, homeDirOrEnv = process.env) {
+  if (session?.providerId !== "claude") {
+    return [];
+  }
+
+  const projectDir = getClaudeProjectDirForCwd(session.cwd, homeDirOrEnv);
+  if (!projectDir) {
+    return [];
+  }
+
+  const claudeSessionIds = Array.from(
+    new Set(
+      [session.providerState?.sessionId, session.id]
+        .map((value) => (typeof value === "string" ? value.trim() : ""))
+        .filter(Boolean),
+    ),
+  );
+
+  const subagents = [];
+
+  for (const claudeSessionId of claudeSessionIds) {
+    const subagentsDir = path.join(projectDir, claudeSessionId, "subagents");
+    let entries;
+    try {
+      entries = readdirSync(subagentsDir, { withFileTypes: true });
+    } catch {
+      continue;
+    }
+
+    const transcriptEntries = entries
+      .filter((entry) => entry.isFile() && entry.name.endsWith(".jsonl"))
+      .map((entry) => {
+        const transcriptPath = path.join(subagentsDir, entry.name);
+        try {
+          return {
+            entry,
+            transcriptPath,
+            updated: statSync(transcriptPath).mtimeMs,
+          };
+        } catch {
+          return null;
+        }
+      })
+      .filter(Boolean)
+      .sort((left, right) => Number(right.updated || 0) - Number(left.updated || 0))
+      .slice(0, 12);
+
+    for (const { entry, transcriptPath } of transcriptEntries) {
+      const fileBase = entry.name.slice(0, -".jsonl".length);
+      const fallbackAgentId = fileBase.replace(/^agent-/, "") || fileBase;
+      const summary = summarizeClaudeSubagentTranscript(transcriptPath, fallbackAgentId);
+      if (!summary) {
+        continue;
+      }
+
+      const meta = readClaudeSubagentMeta(path.join(subagentsDir, `${fileBase}.meta.json`));
+      const description = typeof meta.description === "string" ? meta.description.trim() : "";
+      const agentType = typeof meta.agentType === "string" && meta.agentType.trim()
+        ? meta.agentType.trim()
+        : "subagent";
+      const displayId = summary.agentId || fallbackAgentId;
+
+      subagents.push({
+        id: `${claudeSessionId}:${fileBase}`,
+        agentId: displayId,
+        parentProviderSessionId: claudeSessionId,
+        name: normalizeSessionName(description) || `Subagent ${displayId.slice(0, 6)}`,
+        description,
+        agentType,
+        status: summary.status,
+        createdAt: summary.createdAt,
+        updatedAt: summary.updatedAt,
+        promptId: summary.promptId,
+        messageCount: summary.messageCount,
+        toolUseCount: summary.toolUseCount,
+      });
+    }
+  }
+
+  return subagents
+    .sort((left, right) => String(right.updatedAt || "").localeCompare(String(left.updatedAt || "")))
+    .slice(0, 12);
 }
 
 async function readFirstLine(filePath, byteLimit = CODEX_SESSION_META_READ_LIMIT) {
@@ -1333,6 +1519,7 @@ export class SessionManager {
       activityStatus: session.activityStatus,
       activityStartedAt: session.activityStartedAt,
       activityCompletedAt: session.activityCompletedAt,
+      subagents: listClaudeSubagentsForSession(session, this.userHomeDir),
     };
   }
 
@@ -1570,7 +1757,7 @@ export class SessionManager {
       const launchCommand = getManagedProviderLaunchCommand(provider);
       this.setPendingProviderCapture(session, null);
       const fallbackSessionId = restored
-        ? listClaudeSessionsForCwd(session.cwd, this.env)[0]?.id || null
+        ? listClaudeSessionsForCwd(session.cwd, this.userHomeDir)[0]?.id || null
         : null;
       const sessionId = session.providerState?.sessionId || fallbackSessionId || (!restored ? session.id : null);
 

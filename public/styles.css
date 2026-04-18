@@ -2121,6 +2121,14 @@ input[readonly][data-folder-picker-target] {
   margin: 0;
 }
 
+.session-subagents {
+  display: grid;
+  gap: 1px;
+  margin: 0 0 2px 15px;
+  padding-left: 9px;
+  border-left: 1px solid rgba(222, 228, 235, 0.12);
+}
+
 .session-card,
 .port-card {
   display: grid;
@@ -2142,6 +2150,32 @@ input[readonly][data-folder-picker-target] {
   cursor: pointer;
   overflow: hidden;
   position: relative;
+}
+
+.session-subagent-card {
+  display: grid;
+  grid-template-columns: 17px minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 7px;
+  min-height: 28px;
+  padding: 3px 5px;
+  border-radius: 8px;
+  color: rgba(222, 228, 235, 0.72);
+  position: relative;
+}
+
+.session-subagent-card:hover {
+  background: rgba(255, 255, 255, 0.032);
+}
+
+.session-subagent-card .session-name {
+  font-size: 0.75rem;
+  font-weight: 650;
+}
+
+.session-subagent-card .session-subtitle,
+.session-subagent-card .session-time {
+  font-size: 0.64rem;
 }
 
 .session-card:hover {

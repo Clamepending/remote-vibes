@@ -3732,6 +3732,7 @@ function ensureSessionProjectDefaults(groups) {
 
 function renderSessionCard(session) {
   const status = getSessionLabel(session);
+  const subagents = Array.isArray(session.subagents) ? session.subagents : [];
 
   return `
     <article class="session-card ${session.id === state.activeSessionId ? "is-active" : ""}" data-session-id="${session.id}">
@@ -3764,6 +3765,41 @@ function renderSessionCard(session) {
         </button>
       </div>
     </article>
+    ${
+      subagents.length
+        ? `<div class="session-subagents" aria-label="Claude subagents">${subagents.map((subagent) => renderSessionSubagentCard(subagent)).join("")}</div>`
+        : ""
+    }
+  `;
+}
+
+function getSubagentLabel(subagent) {
+  if (subagent?.status === "working") {
+    return { className: "working", title: "Claude subagent is working" };
+  }
+
+  return { className: "read", title: "Claude subagent finished" };
+}
+
+function renderSessionSubagentCard(subagent) {
+  const status = getSubagentLabel(subagent);
+  const messageCount = Number(subagent.messageCount);
+  const toolUseCount = Number(subagent.toolUseCount);
+  const metaParts = [
+    subagent.agentType || "subagent",
+    subagent.messageCount != null && Number.isFinite(messageCount) ? `${messageCount} msgs` : "",
+    subagent.toolUseCount != null && Number.isFinite(toolUseCount) ? `${toolUseCount} tools` : "",
+  ].filter(Boolean);
+
+  return `
+    <div class="session-subagent-card" title="${escapeHtml(subagent.description || subagent.name || "Claude subagent")}">
+      <span class="session-activity-dot ${status.className}" role="img" aria-label="${escapeHtml(status.title)}" title="${escapeHtml(status.title)}"></span>
+      <div class="session-main">
+        <div class="session-name">${escapeHtml(subagent.name || "Claude subagent")}</div>
+        <div class="session-subtitle">${escapeHtml(metaParts.join(" · "))}</div>
+      </div>
+      <span class="session-time">${relativeTime(subagent.updatedAt)}</span>
+    </div>
   `;
 }
 
