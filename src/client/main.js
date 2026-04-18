@@ -3618,12 +3618,6 @@ function renderSidebarNav(providerOptions) {
   const wikiLabel = state.settings.wikiRelativeRoot || state.agentPromptWikiRoot || "wiki";
   const primaryItems = [
     {
-      view: "search",
-      icon: "⌕",
-      label: "Search",
-      meta: "sessions, ports, notes",
-    },
-    {
       view: "plugins",
       icon: "⌘",
       label: "Plugins",
