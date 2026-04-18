@@ -728,14 +728,6 @@ function getAgentPromptUrl() {
   return url.toString();
 }
 
-function getShellUrl() {
-  const url = new URL(window.location.href);
-  url.searchParams.delete("view");
-  url.searchParams.delete("note");
-  url.hash = "";
-  return url.toString();
-}
-
 function getFolderPickerTitle() {
   if (state.folderPicker.target === "wiki") {
     return "choose wiki folder";
@@ -3222,25 +3214,13 @@ function renderSessionCards() {
     .join("");
 }
 
-function renderSidebarNav(activeSession) {
-  const shellActive = state.currentView === "shell";
+function renderSidebarNav() {
   const knowledgeBaseActive = state.currentView === "knowledge-base";
   const agentPromptActive = state.currentView === "agent-prompt";
   const wikiLabel = state.settings.wikiRelativeRoot || state.agentPromptWikiRoot || "wiki";
 
   return `
     <nav class="sidebar-nav" aria-label="Main views">
-      <a
-        class="sidebar-nav-item ${shellActive ? "is-active" : ""}"
-        href="${escapeHtml(getShellUrl())}"
-        data-open-main-view="shell"
-      >
-        <span class="sidebar-nav-icon" aria-hidden="true">▸</span>
-        <span class="sidebar-nav-copy">
-          <span class="sidebar-nav-label">Terminal</span>
-          <span class="sidebar-nav-meta">${escapeHtml(activeSession ? activeSession.name : "session workspace")}</span>
-        </span>
-      </a>
       <a
         class="sidebar-nav-item ${knowledgeBaseActive ? "is-active" : ""}"
         href="${escapeHtml(getKnowledgeBaseUrl(state.knowledgeBase.selectedNotePath || ""))}"
@@ -3631,7 +3611,7 @@ function renderShell() {
             >+</button>
           </form>
 
-          ${renderSidebarNav(activeSession)}
+          ${renderSidebarNav()}
 
           <section class="sidebar-section">
             <div class="section-head">
