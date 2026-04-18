@@ -298,27 +298,10 @@ test("agent prompt api creates wiki scaffold and managed instruction files", asy
     assert.match(promptSource, /remote-vibes:wiki-v2-protocol:v2/);
     assert.match(promptSource, /Treat links as traversal hints, not decoration/);
     assert.match(promptSource, /Start with the directly named files, notes, messages, or artifacts/);
-    assert.match(promptSource, /Routine coordination, temporary resource negotiation/);
-    assert.match(promptSource, /processed paths over inbox paths/);
-    assert.match(promptSource, /remote-vibes:agent-mailbox-protocol:v2/);
-    assert.match(promptSource, /sent_at/);
-    assert.match(promptSource, /from_name/);
-    assert.match(promptSource, /subject/);
-    assert.match(promptSource, /short human-readable role or task label/);
-    assert.match(promptSource, /workload-oriented label/);
-    assert.match(promptSource, /rather than `Codex <id>` or `Claude <id>`/);
-    assert.match(promptSource, /Remote Vibes provides `rv-session-name` on your session `PATH`/);
-    assert.match(promptSource, /run `rv-session-name "<short task label>"`/);
-    assert.match(promptSource, /keep `from_name` aligned with your current session name/);
-    assert.match(promptSource, /Remote Vibes provides `rv-mailwatch` on your session `PATH`/);
-    assert.match(promptSource, /prefer launching `rv-mailwatch --quiet --no-bell &`/);
-    assert.match(promptSource, /rv-mailwatch --quiet --no-bell --once --timeout/);
-    assert.match(promptSource, /waiting on a shared inbox rather than your default inbox/);
-    assert.match(promptSource, /rv-mailwatch --inbox <path> --from <peer-session-id> --after <request-sent-at> --print-path/);
-    assert.match(promptSource, /use that same timestamp as the `--after` baseline/);
-    assert.match(promptSource, /confirm the matched message's `from` field before acting/);
-    assert.match(promptSource, /platform-agnostic watcher patterns/);
-    assert.match(promptSource, /On Linux, `inotifywait` is a reasonable fallback/);
+    assert.doesNotMatch(promptSource, /remote-vibes:agent-mailbox-protocol/);
+    assert.doesNotMatch(promptSource, /Agent Mailboxes/);
+    assert.doesNotMatch(promptSource, /rv-mailwatch/);
+    assert.doesNotMatch(promptSource, /from_name/);
     assert.match(wikiIndex, /Wiki Index/);
 
     const updateResponse = await fetch(`${baseUrl}/api/agent-prompt`, {
@@ -336,22 +319,22 @@ test("agent prompt api creates wiki scaffold and managed instruction files", asy
     assert.match(updatedPayload.prompt, /Custom Prompt/);
     assert.match(updatedPayload.prompt, /remote-vibes:wiki-v2-protocol:v2/);
     assert.match(updatedPayload.prompt, /Prefer fewer, better notes/);
-    assert.match(updatedPayload.prompt, /remote-vibes:agent-mailbox-protocol:v2/);
-    assert.match(updatedPayload.prompt, /subject/);
+    assert.doesNotMatch(updatedPayload.prompt, /remote-vibes:agent-mailbox-protocol/);
+    assert.doesNotMatch(updatedPayload.prompt, /Agent Mailboxes/);
 
     const updatedManagedAgents = await readFile(path.join(workspaceDir, "AGENTS.md"), "utf8");
     assert.match(updatedManagedAgents, /Custom Prompt/);
     assert.match(updatedManagedAgents, /Knowledge Model/);
-    assert.match(updatedManagedAgents, /Agent Mailboxes/);
-    assert.match(updatedManagedAgents, /processed\//);
+    assert.doesNotMatch(updatedManagedAgents, /Agent Mailboxes/);
+    assert.doesNotMatch(updatedManagedAgents, /rv-mailwatch/);
   } finally {
     await app.close();
     await rm(workspaceDir, { recursive: true, force: true });
   }
 });
 
-test("existing prompt files are upgraded with the built-in agent mailbox protocol", async () => {
-  const workspaceDir = await createTempWorkspace("remote-vibes-agent-mailbox-upgrade-");
+test("existing prompt files are upgraded with the current built-in wiki protocol only", async () => {
+  const workspaceDir = await createTempWorkspace("remote-vibes-agent-prompt-upgrade-");
   const stateDir = path.join(workspaceDir, ".remote-vibes");
   await mkdir(stateDir, { recursive: true });
   await writeFile(
@@ -370,27 +353,21 @@ test("existing prompt files are upgraded with the built-in agent mailbox protoco
     assert.match(payload.prompt, /Custom Prompt/);
     assert.match(payload.prompt, /remote-vibes:wiki-v2-protocol:v2/);
     assert.match(payload.prompt, /Search And Traversal/);
-    assert.match(payload.prompt, /remote-vibes:agent-mailbox-protocol:v2/);
-    assert.match(payload.prompt, /REMOTE_VIBES_SESSION_ID/);
-    assert.match(payload.prompt, /older than one hour/);
-    assert.match(payload.prompt, /from_name/);
-    assert.match(payload.prompt, /subject/);
-    assert.match(payload.prompt, /rv-session-name/);
     assert.match(payload.prompt, /specific exchange or artifact/);
-    assert.match(payload.prompt, /rv-mailwatch/);
-    assert.match(payload.prompt, /--once --timeout/);
-    assert.match(payload.prompt, /platform-agnostic watcher patterns/);
-    assert.match(payload.prompt, /neutral label such as `agent <first 8 chars of session id>`/);
+    assert.doesNotMatch(payload.prompt, /remote-vibes:agent-mailbox-protocol/);
+    assert.doesNotMatch(payload.prompt, /Agent Mailboxes/);
+    assert.doesNotMatch(payload.prompt, /rv-mailwatch/);
+    assert.doesNotMatch(payload.prompt, /REMOTE_VIBES_SESSION_ID/);
 
     const savedPrompt = await readFile(path.join(stateDir, "agent-prompt.md"), "utf8");
     assert.match(savedPrompt, /Custom Prompt/);
     assert.match(savedPrompt, /Crystallization And Supersession/);
-    assert.match(savedPrompt, /Agent Mailboxes/);
+    assert.doesNotMatch(savedPrompt, /Agent Mailboxes/);
 
     const managedGemini = await readFile(path.join(workspaceDir, "GEMINI.md"), "utf8");
     assert.match(managedGemini, /Treat links as traversal hints, not decoration/);
-    assert.match(managedGemini, /Agent Mailboxes/);
-    assert.match(managedGemini, /reply_to/);
+    assert.doesNotMatch(managedGemini, /Agent Mailboxes/);
+    assert.doesNotMatch(managedGemini, /reply_to/);
   } finally {
     await app.close();
     await rm(workspaceDir, { recursive: true, force: true });
@@ -431,21 +408,19 @@ Old mailbox guidance.
     const payload = await response.json();
     assert.match(payload.prompt, /Custom Prompt/);
     assert.doesNotMatch(payload.prompt, /remote-vibes:wiki-v2-protocol:v1/);
-    assert.doesNotMatch(payload.prompt, /remote-vibes:agent-mailbox-protocol:v1/);
+    assert.doesNotMatch(payload.prompt, /remote-vibes:agent-mailbox-protocol/);
     assert.match(payload.prompt, /remote-vibes:wiki-v2-protocol:v2/);
-    assert.match(payload.prompt, /remote-vibes:agent-mailbox-protocol:v2/);
-    assert.match(payload.prompt, /from_name/);
-    assert.match(payload.prompt, /Routine coordination, temporary resource negotiation/);
-    assert.match(payload.prompt, /short human-readable role or task label/);
-    assert.match(payload.prompt, /rv-mailwatch/);
-    assert.match(payload.prompt, /On Linux, `inotifywait` is a reasonable fallback/);
+    assert.match(payload.prompt, /Knowledge Model/);
+    assert.doesNotMatch(payload.prompt, /Agent Mailboxes/);
+    assert.doesNotMatch(payload.prompt, /from_name/);
+    assert.doesNotMatch(payload.prompt, /rv-mailwatch/);
     assert.doesNotMatch(payload.prompt, /Old Wiki Section/);
     assert.doesNotMatch(payload.prompt, /Old Mailbox Section/);
 
     const savedPrompt = await readFile(path.join(stateDir, "agent-prompt.md"), "utf8");
     assert.doesNotMatch(savedPrompt, /remote-vibes:wiki-v2-protocol:v1/);
-    assert.doesNotMatch(savedPrompt, /remote-vibes:agent-mailbox-protocol:v1/);
-    assert.match(savedPrompt, /processed paths over inbox paths/);
+    assert.doesNotMatch(savedPrompt, /remote-vibes:agent-mailbox-protocol/);
+    assert.match(savedPrompt, /Knowledge Model/);
   } finally {
     await app.close();
     await rm(workspaceDir, { recursive: true, force: true });
@@ -590,7 +565,8 @@ test("settings api moves the wiki folder, refreshes agent instructions, and the 
 
     const managedAgents = await readFile(path.join(workspaceDir, "AGENTS.md"), "utf8");
     assert.match(managedAgents, /Use `mac-brain` as the workspace memory system/);
-    assert.match(managedAgents, /mac-brain\/comms\/agents/);
+    assert.match(managedAgents, /`mac-brain\/raw\/sources\/`/);
+    assert.doesNotMatch(managedAgents, /Agent Mailboxes/);
 
     const indexResponse = await fetch(`${baseUrl}/api/knowledge-base`);
     assert.equal(indexResponse.status, 200);
