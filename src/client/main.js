@@ -14,6 +14,9 @@ const KNOWLEDGE_BASE_GRAPH_DRAG_SLOP_PX = 6;
 const PORT_PREVIEW_TAB_PREFIX = "port:";
 const ROUTED_MAIN_VIEWS = new Set(["search", "plugins", "automations", "system", "swarm"]);
 const SESSION_WORKING_SPINNER_MS = 900;
+const FILE_IMAGE_MIN_ZOOM = 1;
+const FILE_IMAGE_MAX_ZOOM = 8;
+const FILE_IMAGE_ZOOM_STEP = 0.25;
 const SYSTEM_HISTORY_REFRESH_MS = 30_000;
 const SYSTEM_HISTORY_RANGES = [
   { id: "1h", label: "1h", title: "last hour" },
@@ -2205,6 +2208,9 @@ function ensureOpenFileTab(relativePath, { mode = "text", name = "", url, extern
       url: url || "",
       externalUrl: externalUrl || "",
       port: port ?? null,
+      imageZoom: 1,
+      imageOffsetX: 0,
+      imageOffsetY: 0,
     };
     state.openFileTabs.push(tab);
   } else {
@@ -2257,6 +2263,40 @@ function setOpenFileSelection(relativePath, { status = "external", message = "op
   tab.saving = false;
   tab.requestId = state.openFileRequestId;
   syncOpenFileStateFromTab(tab);
+}
+
+function getOpenImageZoom(tab = getActiveOpenFileTab()) {
+  const zoom = Number(tab?.imageZoom);
+  return Number.isFinite(zoom) ? clamp(zoom, FILE_IMAGE_MIN_ZOOM, FILE_IMAGE_MAX_ZOOM) : 1;
+}
+
+function getOpenImageOffset(tab = getActiveOpenFileTab()) {
+  const offsetX = Number(tab?.imageOffsetX);
+  const offsetY = Number(tab?.imageOffsetY);
+  return {
+    x: Number.isFinite(offsetX) ? offsetX : 0,
+    y: Number.isFinite(offsetY) ? offsetY : 0,
+  };
+}
+
+function setOpenImageTransform(tab, { zoom = tab?.imageZoom, offsetX = tab?.imageOffsetX, offsetY = tab?.imageOffsetY } = {}) {
+  if (!tab) {
+    return;
+  }
+
+  tab.imageZoom = getOpenImageZoom({ imageZoom: zoom });
+  tab.imageOffsetX = Number.isFinite(Number(offsetX)) ? Number(offsetX) : 0;
+  tab.imageOffsetY = Number.isFinite(Number(offsetY)) ? Number(offsetY) : 0;
+}
+
+function getOpenImageTransformStyle(tab = getActiveOpenFileTab()) {
+  const zoom = getOpenImageZoom(tab);
+  const offset = getOpenImageOffset(tab);
+  return `--image-zoom:${zoom};--image-x:${offset.x}px;--image-y:${offset.y}px;`;
+}
+
+function getOpenImageZoomLabel(tab = getActiveOpenFileTab()) {
+  return `${Math.round(getOpenImageZoom(tab) * 100)}%`;
 }
 
 function buildAppUrl(params = new URLSearchParams()) {
@@ -3990,6 +4030,8 @@ function renderOpenFilePanel() {
   }
 
   if (state.openFileStatus === "image") {
+    const zoomLabel = getOpenImageZoomLabel(activeTab);
+    const imageStyle = getOpenImageTransformStyle(activeTab);
     return `
       <div class="file-editor-card file-image-card">
         <div class="file-editor-head">
@@ -3998,11 +4040,15 @@ function renderOpenFilePanel() {
             <div class="file-editor-path" title="${escapeHtml(state.openFileRelativePath)}">${escapeHtml(state.openFileRelativePath)}</div>
           </div>
           <div class="file-editor-actions">
+            <button class="ghost-button file-editor-button file-image-control" type="button" data-image-zoom="out" aria-label="Zoom image out">-</button>
+            <span class="file-image-zoom-label" aria-label="Image zoom">${escapeHtml(zoomLabel)}</span>
+            <button class="ghost-button file-editor-button file-image-control" type="button" data-image-zoom="in" aria-label="Zoom image in">+</button>
+            <button class="ghost-button file-editor-button" type="button" data-image-zoom="reset">fit</button>
             <a class="ghost-button file-editor-open" href="${escapeHtml(rawHref)}" target="_blank" rel="noreferrer">raw</a>
           </div>
         </div>
-        <div class="file-image-preview">
-          <img src="${escapeHtml(rawHref)}" alt="${escapeHtml(state.openFileName)}" />
+        <div class="file-image-preview" data-image-preview>
+          <img src="${escapeHtml(rawHref)}" alt="${escapeHtml(state.openFileName)}" style="${escapeHtml(imageStyle)}" draggable="false" />
         </div>
       </div>
     `;
@@ -7853,8 +7899,177 @@ function syncOpenFileEditorStateUi() {
   }
 }
 
+function syncOpenImageTransformDom(tab = getActiveOpenFileTab()) {
+  if (!tab || tab.status !== "image") {
+    return;
+  }
+
+  const preview = document.querySelector("[data-image-preview]");
+  const image = preview?.querySelector("img");
+  const label = document.querySelector(".file-image-zoom-label");
+  const zoom = getOpenImageZoom(tab);
+  const offset = getOpenImageOffset(tab);
+
+  if (image instanceof HTMLElement) {
+    image.style.setProperty("--image-zoom", String(zoom));
+    image.style.setProperty("--image-x", `${offset.x}px`);
+    image.style.setProperty("--image-y", `${offset.y}px`);
+  }
+
+  if (label) {
+    label.textContent = getOpenImageZoomLabel(tab);
+  }
+
+  document.querySelectorAll("[data-image-zoom]").forEach((button) => {
+    if (!(button instanceof HTMLButtonElement)) {
+      return;
+    }
+
+    const action = button.getAttribute("data-image-zoom");
+    button.disabled =
+      (action === "out" && zoom <= FILE_IMAGE_MIN_ZOOM + 0.001) ||
+      (action === "in" && zoom >= FILE_IMAGE_MAX_ZOOM - 0.001);
+  });
+}
+
+function updateOpenImageTransform(tab, { zoom, offsetX, offsetY } = {}) {
+  if (!tab || tab.status !== "image") {
+    return;
+  }
+
+  const nextZoom = getOpenImageZoom({ imageZoom: zoom ?? tab.imageZoom });
+  const shouldResetPan = nextZoom <= FILE_IMAGE_MIN_ZOOM + 0.001;
+  setOpenImageTransform(tab, {
+    zoom: nextZoom,
+    offsetX: shouldResetPan ? 0 : offsetX ?? tab.imageOffsetX,
+    offsetY: shouldResetPan ? 0 : offsetY ?? tab.imageOffsetY,
+  });
+  syncOpenFileStateFromTab(tab);
+  syncOpenImageTransformDom(tab);
+}
+
+function zoomOpenImage(tab, nextZoom, anchorClientPoint = null) {
+  if (!tab || tab.status !== "image") {
+    return;
+  }
+
+  const preview = document.querySelector("[data-image-preview]");
+  const currentZoom = getOpenImageZoom(tab);
+  const zoom = getOpenImageZoom({ imageZoom: nextZoom });
+  const currentOffset = getOpenImageOffset(tab);
+
+  if (
+    zoom <= FILE_IMAGE_MIN_ZOOM + 0.001 ||
+    !(preview instanceof HTMLElement) ||
+    !anchorClientPoint
+  ) {
+    updateOpenImageTransform(tab, {
+      zoom,
+      offsetX: zoom <= FILE_IMAGE_MIN_ZOOM + 0.001 ? 0 : currentOffset.x,
+      offsetY: zoom <= FILE_IMAGE_MIN_ZOOM + 0.001 ? 0 : currentOffset.y,
+    });
+    return;
+  }
+
+  const rect = preview.getBoundingClientRect();
+  const anchorX = anchorClientPoint.clientX - rect.left - rect.width / 2;
+  const anchorY = anchorClientPoint.clientY - rect.top - rect.height / 2;
+  const ratio = zoom / currentZoom;
+  const nextOffsetX = anchorX - (anchorX - currentOffset.x) * ratio;
+  const nextOffsetY = anchorY - (anchorY - currentOffset.y) * ratio;
+  updateOpenImageTransform(tab, { zoom, offsetX: nextOffsetX, offsetY: nextOffsetY });
+}
+
+function bindImagePreviewEvents() {
+  const preview = document.querySelector("[data-image-preview]");
+  if (!(preview instanceof HTMLElement) || preview.dataset.bound === "true") {
+    return;
+  }
+
+  preview.dataset.bound = "true";
+  syncOpenImageTransformDom();
+  preview.addEventListener(
+    "wheel",
+    (event) => {
+      const activeTab = getActiveOpenFileTab();
+      if (!activeTab || activeTab.status !== "image") {
+        return;
+      }
+
+      event.preventDefault();
+      const direction = event.deltaY > 0 ? -1 : 1;
+      const multiplier = direction > 0 ? 1.12 : 1 / 1.12;
+      zoomOpenImage(activeTab, getOpenImageZoom(activeTab) * multiplier, {
+        clientX: event.clientX,
+        clientY: event.clientY,
+      });
+    },
+    { passive: false },
+  );
+
+  preview.addEventListener("pointerdown", (event) => {
+    const activeTab = getActiveOpenFileTab();
+    if (!activeTab || activeTab.status !== "image" || event.button !== 0) {
+      return;
+    }
+
+    event.preventDefault();
+    const startOffset = getOpenImageOffset(activeTab);
+    const dragState = {
+      pointerId: event.pointerId,
+      clientX: event.clientX,
+      clientY: event.clientY,
+      offsetX: startOffset.x,
+      offsetY: startOffset.y,
+    };
+    preview.dataset.dragging = JSON.stringify(dragState);
+    preview.classList.add("is-panning");
+    preview.setPointerCapture?.(event.pointerId);
+  });
+
+  preview.addEventListener("pointermove", (event) => {
+    const activeTab = getActiveOpenFileTab();
+    if (!activeTab || activeTab.status !== "image" || !preview.dataset.dragging) {
+      return;
+    }
+
+    let dragState;
+    try {
+      dragState = JSON.parse(preview.dataset.dragging);
+    } catch {
+      dragState = null;
+    }
+
+    if (!dragState || dragState.pointerId !== event.pointerId) {
+      return;
+    }
+
+    updateOpenImageTransform(activeTab, {
+      zoom: getOpenImageZoom(activeTab),
+      offsetX: dragState.offsetX + event.clientX - dragState.clientX,
+      offsetY: dragState.offsetY + event.clientY - dragState.clientY,
+    });
+  });
+
+  const endPan = (event) => {
+    if (preview.dataset.dragging) {
+      preview.releasePointerCapture?.(event.pointerId);
+    }
+    preview.dataset.dragging = "";
+    preview.classList.remove("is-panning");
+  };
+
+  preview.addEventListener("pointerup", endPan);
+  preview.addEventListener("pointercancel", endPan);
+  preview.addEventListener("lostpointercapture", () => {
+    preview.dataset.dragging = "";
+    preview.classList.remove("is-panning");
+  });
+}
+
 function bindFileEditorEvents() {
   bindLineNumberEditors();
+  bindImagePreviewEvents();
 
   document.querySelectorAll("[data-file-tab]").forEach((button) => {
     button.addEventListener("click", () => {
@@ -7931,6 +8146,27 @@ function bindFileEditorEvents() {
     }
 
     await openWorkspaceFile(state.openFileRelativePath, { force: true });
+  });
+
+  document.querySelectorAll("[data-image-zoom]").forEach((button) => {
+    button.addEventListener("click", () => {
+      const activeTab = getActiveOpenFileTab();
+      if (!activeTab || activeTab.status !== "image") {
+        return;
+      }
+
+      const action = button.getAttribute("data-image-zoom");
+      if (action === "reset") {
+        updateOpenImageTransform(activeTab, { zoom: 1, offsetX: 0, offsetY: 0 });
+        return;
+      }
+
+      const nextZoom =
+        action === "in"
+          ? getOpenImageZoom(activeTab) + FILE_IMAGE_ZOOM_STEP
+          : getOpenImageZoom(activeTab) - FILE_IMAGE_ZOOM_STEP;
+      zoomOpenImage(activeTab, nextZoom);
+    });
   });
 }
 
