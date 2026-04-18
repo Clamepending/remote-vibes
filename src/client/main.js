@@ -9,6 +9,7 @@ const KNOWLEDGE_BASE_GRAPH_HEIGHT = 680;
 const KNOWLEDGE_BASE_GRAPH_MIN_SCALE = 0.35;
 const KNOWLEDGE_BASE_GRAPH_MAX_SCALE = 2.8;
 const KNOWLEDGE_BASE_GRAPH_FIT_PADDING = 72;
+const KNOWLEDGE_BASE_GRAPH_FOCUS_SCALE = 1.65;
 const KNOWLEDGE_BASE_GRAPH_DRAG_SLOP_PX = 6;
 const PORT_PREVIEW_TAB_PREFIX = "port:";
 const ROUTED_MAIN_VIEWS = new Set(["search", "plugins", "automations", "system"]);
@@ -259,6 +260,7 @@ const state = {
     selectedNoteRequestId: 0,
     searchQuery: "",
     noteCache: {},
+    pendingGraphFocusPath: "",
     graphLayout: {
       width: KNOWLEDGE_BASE_GRAPH_WIDTH,
       height: KNOWLEDGE_BASE_GRAPH_HEIGHT,
@@ -2328,6 +2330,57 @@ function fitKnowledgeBaseGraphCamera() {
   syncKnowledgeBaseGraphDom();
 }
 
+function focusKnowledgeBaseGraphNode(relativePath) {
+  const layout = state.knowledgeBase.graphLayout;
+  const normalizedPath = normalizeFileTreePath(relativePath);
+
+  if (!normalizedPath || !layout.nodes.length) {
+    return false;
+  }
+
+  const node = layout.nodes.find((entry) => entry.relativePath === normalizedPath);
+  if (!node) {
+    return false;
+  }
+
+  const nextScale = clamp(
+    Math.max(layout.scale || 1, KNOWLEDGE_BASE_GRAPH_FOCUS_SCALE),
+    KNOWLEDGE_BASE_GRAPH_MIN_SCALE,
+    KNOWLEDGE_BASE_GRAPH_MAX_SCALE,
+  );
+
+  layout.scale = nextScale;
+  layout.offsetX = layout.width / 2 - node.x * nextScale;
+  layout.offsetY = layout.height / 2 - node.y * nextScale;
+  layout.cameraInitialized = true;
+  syncKnowledgeBaseGraphDom();
+  return true;
+}
+
+function requestKnowledgeBaseGraphFocus(relativePath) {
+  const normalizedPath = normalizeFileTreePath(relativePath);
+  if (!normalizedPath) {
+    return;
+  }
+
+  state.knowledgeBase.pendingGraphFocusPath = normalizedPath;
+}
+
+function applyPendingKnowledgeBaseGraphFocus() {
+  const pendingPath = state.knowledgeBase.pendingGraphFocusPath;
+
+  if (!pendingPath) {
+    return false;
+  }
+
+  if (!focusKnowledgeBaseGraphNode(pendingPath)) {
+    return false;
+  }
+
+  state.knowledgeBase.pendingGraphFocusPath = "";
+  return true;
+}
+
 function scheduleKnowledgeBaseGraphFrame() {
   const layout = state.knowledgeBase.graphLayout;
 
@@ -2674,17 +2727,24 @@ async function ensureKnowledgeBaseSelectionLoaded({ force = false } = {}) {
   await loadKnowledgeBaseNote(nextPath, { force });
 }
 
-async function openKnowledgeBaseNote(relativePath, { force = false } = {}) {
+async function openKnowledgeBaseNote(relativePath, { force = false, focusGraph = false } = {}) {
   const normalizedPath = normalizeFileTreePath(relativePath) || getKnowledgeBaseDefaultNotePath();
 
   if (!normalizedPath) {
     return;
   }
 
+  if (focusGraph) {
+    requestKnowledgeBaseGraphFocus(normalizedPath);
+  }
+
   state.knowledgeBase.selectedNotePath = normalizedPath;
   updateRoute({ view: "knowledge-base", notePath: normalizedPath });
   renderShell();
   await loadKnowledgeBaseNote(normalizedPath, { force });
+  if (focusGraph) {
+    requestKnowledgeBaseGraphFocus(normalizedPath);
+  }
   renderShell();
 }
 
@@ -2706,7 +2766,7 @@ async function selectKnowledgeBaseNoteForWorkspaceFile(relativePath, { openInKno
 
   if (openInKnowledgeBase || state.currentView === "knowledge-base") {
     setCurrentView("knowledge-base", { notePath });
-    await openKnowledgeBaseNote(notePath);
+    await openKnowledgeBaseNote(notePath, { focusGraph: true });
   }
 
   return true;
@@ -5423,7 +5483,11 @@ function bindKnowledgeBaseGraphInteractions() {
     syncKnowledgeBaseGraphDom();
   }
 
-  startKnowledgeBaseGraphSimulation(0.22);
+  const focusedPendingNode = applyPendingKnowledgeBaseGraphFocus();
+
+  if (!focusedPendingNode) {
+    startKnowledgeBaseGraphSimulation(0.22);
+  }
 }
 
 function bindKnowledgeBaseNoteOpenEvents() {
@@ -5516,6 +5580,7 @@ function refreshKnowledgeBaseUi() {
     } else {
       syncKnowledgeBaseGraphDom();
     }
+    applyPendingKnowledgeBaseGraphFocus();
     return;
   }
 
