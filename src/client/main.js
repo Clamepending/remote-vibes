@@ -2475,6 +2475,72 @@ function getKnowledgeBaseGraphColor(groupKey) {
   return KNOWLEDGE_BASE_GRAPH_COLOR_PALETTE[hashString(normalizedKey) % KNOWLEDGE_BASE_GRAPH_COLOR_PALETTE.length];
 }
 
+function getKnowledgeBaseGraphGroupLabel(groupKey) {
+  const normalizedKey = String(groupKey || "root").toLowerCase();
+  const labels = {
+    index: "index",
+    log: "log",
+    root: "root notes",
+  };
+
+  return labels[normalizedKey] || normalizedKey;
+}
+
+function renderKnowledgeBaseGraphLegend(layout) {
+  const groups = new Map();
+
+  for (const node of layout.nodes || []) {
+    const groupKey = node.groupKey || "root";
+    const group = groups.get(groupKey) || {
+      key: groupKey,
+      label: getKnowledgeBaseGraphGroupLabel(groupKey),
+      color: node.color || getKnowledgeBaseGraphColor(groupKey),
+      count: 0,
+    };
+    group.count += 1;
+    groups.set(groupKey, group);
+  }
+
+  if (!groups.size) {
+    return "";
+  }
+
+  const knownOrder = ["index", "log", "root", "topics", "experiments", "procedures", "entities"];
+  const orderedGroups = [...groups.values()].sort((left, right) => {
+    const leftIndex = knownOrder.indexOf(left.key);
+    const rightIndex = knownOrder.indexOf(right.key);
+
+    if (leftIndex !== -1 || rightIndex !== -1) {
+      return (leftIndex === -1 ? Number.MAX_SAFE_INTEGER : leftIndex) -
+        (rightIndex === -1 ? Number.MAX_SAFE_INTEGER : rightIndex);
+    }
+
+    return left.label.localeCompare(right.label);
+  });
+
+  return `
+    <div class="knowledge-base-graph-legend" aria-label="Knowledge graph color legend">
+      ${orderedGroups
+        .map(
+          (group) => `
+            <div
+              class="knowledge-base-graph-legend-item"
+              ${renderStyleVariables({
+                "--kb-legend-fill": group.color?.fill,
+                "--kb-legend-stroke": group.color?.stroke,
+              })}
+            >
+              <span class="knowledge-base-graph-legend-swatch" aria-hidden="true"></span>
+              <span class="knowledge-base-graph-legend-label">${escapeHtml(group.label)}</span>
+              <span class="knowledge-base-graph-legend-count">${group.count}</span>
+            </div>
+          `,
+        )
+        .join("")}
+    </div>
+  `;
+}
+
 function renderStyleVariables(variables) {
   const entries = Object.entries(variables || {}).filter(([, value]) => value !== undefined && value !== null && value !== "");
 
@@ -3427,6 +3493,7 @@ function renderKnowledgeBaseGraph() {
           </g>
         </svg>
       </div>
+      ${renderKnowledgeBaseGraphLegend(layout)}
     </article>
   `;
 }

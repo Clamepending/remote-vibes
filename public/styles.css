@@ -2035,7 +2035,7 @@ input[readonly][data-folder-picker-target] {
 
 .knowledge-base-graph-card {
   display: grid;
-  grid-template-rows: auto minmax(0, 1fr);
+  grid-template-rows: auto minmax(0, 1fr) auto;
   overflow: hidden;
 }
 
@@ -2139,6 +2139,48 @@ input[readonly][data-folder-picker-target] {
 
 .knowledge-base-graph-node.is-selected text {
   fill: #f4f4f2;
+}
+
+.knowledge-base-graph-legend {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  padding: 0 12px 14px;
+}
+
+.knowledge-base-graph-legend-item {
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+  min-height: 28px;
+  padding: 5px 9px;
+  border: 1px solid rgba(255, 255, 255, 0.07);
+  border-radius: 999px;
+  background: rgba(255, 255, 255, 0.035);
+  color: rgba(244, 247, 251, 0.82);
+  font-family: "IBM Plex Mono", monospace;
+  font-size: 0.66rem;
+  letter-spacing: 0.02em;
+}
+
+.knowledge-base-graph-legend-swatch {
+  width: 10px;
+  height: 10px;
+  border: 1px solid var(--kb-legend-stroke, rgba(246, 246, 248, 0.5));
+  border-radius: 50%;
+  background: var(--kb-legend-fill, rgba(226, 226, 230, 0.68));
+  box-shadow: 0 0 10px rgba(226, 226, 230, 0.08);
+}
+
+.knowledge-base-graph-legend-label {
+  max-width: 120px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.knowledge-base-graph-legend-count {
+  color: var(--muted);
 }
 
 .prompt-target {
