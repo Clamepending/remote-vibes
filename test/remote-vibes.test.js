@@ -7,8 +7,10 @@ import test from "node:test";
 import { once } from "node:events";
 import { chmod, mkdtemp, mkdir, readFile, realpath, rm, writeFile } from "node:fs/promises";
 import { promisify } from "node:util";
+import { chromium } from "playwright-core";
 import { WebSocket } from "ws";
 import { createRemoteVibesApp } from "../src/create-app.js";
+import { resolveBrowserExecutablePath } from "../src/browser-runtime.js";
 import { buildSessionEnv } from "../src/session-manager.js";
 import { SleepPreventionService } from "../src/sleep-prevention.js";
 
@@ -1034,6 +1036,127 @@ test("shell session keeps running while the browser websocket disconnects", asyn
       await fetch(`${baseUrl}/api/sessions/${session.id}`, { method: "DELETE" });
     }
     await app.close();
+  }
+});
+
+test("mobile terminal keeps history scroll anchored while the keyboard viewport resizes", async (t) => {
+  const executablePath = await resolveBrowserExecutablePath({ env: process.env });
+  if (!executablePath) {
+    t.skip("No local Chromium/Chrome executable is available for the mobile terminal smoke.");
+    return;
+  }
+
+  const workspaceDir = await createTempWorkspace("remote-vibes-mobile-scroll-");
+  const { app, baseUrl } = await startApp({ cwd: workspaceDir });
+  let websocket = null;
+  let browser = null;
+
+  try {
+    const createResponse = await fetch(`${baseUrl}/api/sessions`, {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify({
+        providerId: "shell",
+        name: "Mobile Scroll Smoke",
+        cwd: workspaceDir,
+      }),
+    });
+
+    assert.equal(createResponse.status, 201);
+    const { session } = await createResponse.json();
+    const websocketUrl = `${baseUrl.replace("http", "ws")}/ws?sessionId=${session.id}`;
+    const command =
+      "i=1; while [ \"$i\" -le 180 ]; do printf 'RV_MOBILE_SCROLL_%03d\\n' \"$i\"; i=$((i+1)); done\r";
+
+    websocket = new WebSocket(websocketUrl);
+    await new Promise((resolve, reject) => {
+      let combined = "";
+      let sentCommand = false;
+      const timeout = setTimeout(() => {
+        reject(new Error("Timed out writing terminal history for the mobile scroll smoke."));
+      }, 10_000);
+
+      websocket.on("open", () => {
+        websocket.send(JSON.stringify({ type: "resize", cols: 80, rows: 24 }));
+      });
+
+      websocket.on("message", (chunk) => {
+        const payload = JSON.parse(String(chunk));
+        combined += payload.data || "";
+
+        if (!sentCommand) {
+          websocket.send(JSON.stringify({ type: "input", data: command }));
+          sentCommand = true;
+        }
+
+        if (combined.includes("RV_MOBILE_SCROLL_180")) {
+          clearTimeout(timeout);
+          resolve();
+        }
+      });
+    });
+
+    browser = await chromium.launch({ executablePath, headless: true });
+    const context = await browser.newContext({
+      viewport: { width: 390, height: 760 },
+      isMobile: true,
+      hasTouch: true,
+      deviceScaleFactor: 2,
+    });
+    const page = await context.newPage();
+    await page.goto(baseUrl, { waitUntil: "domcontentloaded" });
+    await page.waitForSelector("#terminal-mount .xterm-viewport", { timeout: 10_000 });
+    await page.waitForFunction(
+      () => document.querySelector("#terminal-mount .xterm")?.textContent?.includes("RV_MOBILE_SCROLL_180"),
+      null,
+      { timeout: 10_000 },
+    );
+
+    const initial = await page.evaluate(() => {
+      const viewport = document.querySelector("#terminal-mount .xterm-viewport");
+      const textarea = document.querySelector("#terminal-mount .xterm-helper-textarea");
+
+      viewport.scrollTop = Math.round(viewport.scrollHeight * 0.42);
+      viewport.dispatchEvent(new Event("scroll"));
+      textarea?.focus();
+
+      return {
+        activeIsTextarea: document.activeElement === textarea,
+        scrollTop: viewport.scrollTop,
+      };
+    });
+
+    assert.equal(initial.activeIsTextarea, true);
+
+    await page.setViewportSize({ width: 390, height: 430 });
+    await page.waitForTimeout(300);
+    await page.setViewportSize({ width: 390, height: 760 });
+    await page.waitForTimeout(500);
+
+    const expanded = await page.evaluate(() => {
+      const viewport = document.querySelector("#terminal-mount .xterm-viewport");
+      const textarea = document.querySelector("#terminal-mount .xterm-helper-textarea");
+
+      return {
+        activeIsTextarea: document.activeElement === textarea,
+        scrollTop: viewport.scrollTop,
+      };
+    });
+
+    assert.ok(
+      Math.abs(expanded.scrollTop - initial.scrollTop) <= 30,
+      `terminal history scroll drifted from ${initial.scrollTop} to ${expanded.scrollTop}`,
+    );
+    assert.equal(expanded.activeIsTextarea, false);
+  } finally {
+    if (websocket && websocket.readyState < WebSocket.CLOSING) {
+      websocket.close();
+    }
+    await browser?.close().catch(() => {});
+    await app.close();
+    await rm(workspaceDir, { recursive: true, force: true });
   }
 });
 

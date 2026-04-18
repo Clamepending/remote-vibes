@@ -19,6 +19,8 @@ const FILE_IMAGE_MAX_ZOOM = 8;
 const FILE_IMAGE_ZOOM_STEP = 0.25;
 const SYSTEM_HISTORY_REFRESH_MS = 30_000;
 const SELECTION_REFRESH_RETRY_MS = 250;
+const MOBILE_KEYBOARD_RESIZE_THRESHOLD_PX = 80;
+const MOBILE_KEYBOARD_SETTLE_MS = 650;
 const TERMINAL_WEBSOCKET_RECONNECT_BASE_MS = 300;
 const TERMINAL_WEBSOCKET_RECONNECT_MAX_MS = 4_000;
 const SYSTEM_CHART_WIDTH = 560;
@@ -362,6 +364,9 @@ const state = {
   mobileSidebar: null,
   terminalResizeObserver: null,
   terminalSelectionDisposable: null,
+  terminalFitFrame: null,
+  terminalResizeScrollAnchor: null,
+  terminalResizeScrollAnchorUntil: 0,
   pendingTerminalOutput: "",
   pendingTerminalScrollToBottom: false,
   terminalOutputFrame: null,
@@ -388,6 +393,8 @@ const state = {
   terminalInteractionCleanup: null,
   canvasAddon: null,
   terminalShowJumpToBottom: false,
+  lastVisualViewportHeight: 0,
+  mobileKeyboardSettlingUntil: 0,
   preferredBaseUrl: "",
 };
 
@@ -738,9 +745,76 @@ function closeMobileSidebar() {
   setMobileSidebar(null);
 }
 
-function fitTerminalSoon() {
+function getTerminalViewport() {
+  const viewport = document.querySelector("#terminal-mount .xterm-viewport");
+  return viewport instanceof HTMLElement ? viewport : null;
+}
+
+function captureTerminalScrollSnapshot() {
+  const viewport = getTerminalViewport();
+  if (!viewport || viewport.scrollHeight <= viewport.clientHeight) {
+    return null;
+  }
+
+  const maxScrollTop = Math.max(0, viewport.scrollHeight - viewport.clientHeight);
+  const bottomOffset = Math.max(0, maxScrollTop - viewport.scrollTop);
+
+  return {
+    atBottom: bottomOffset <= 2,
+    scrollTop: viewport.scrollTop,
+  };
+}
+
+function restoreTerminalScrollSnapshot(snapshot) {
+  if (!snapshot) {
+    return;
+  }
+
   window.requestAnimationFrame(() => {
-    window.requestAnimationFrame(() => {
+    const viewport = getTerminalViewport();
+    if (!viewport) {
+      return;
+    }
+
+    const maxScrollTop = Math.max(0, viewport.scrollHeight - viewport.clientHeight);
+    const nextScrollTop = snapshot.atBottom
+      ? maxScrollTop
+      : Math.min(maxScrollTop, Math.max(0, snapshot.scrollTop));
+
+    viewport.scrollTop = nextScrollTop;
+    syncTerminalScrollState();
+  });
+}
+
+function rememberTerminalResizeScrollAnchor() {
+  if (getUiNow() < state.terminalResizeScrollAnchorUntil && state.terminalResizeScrollAnchor) {
+    state.terminalResizeScrollAnchorUntil = getUiNow() + MOBILE_KEYBOARD_SETTLE_MS;
+    return;
+  }
+
+  state.terminalResizeScrollAnchor = captureTerminalScrollSnapshot();
+  state.terminalResizeScrollAnchorUntil = getUiNow() + MOBILE_KEYBOARD_SETTLE_MS;
+}
+
+function getActiveTerminalResizeScrollAnchor() {
+  if (getUiNow() > state.terminalResizeScrollAnchorUntil) {
+    state.terminalResizeScrollAnchor = null;
+    state.terminalResizeScrollAnchorUntil = 0;
+    return null;
+  }
+
+  return state.terminalResizeScrollAnchor;
+}
+
+function fitTerminalSoon() {
+  if (state.terminalFitFrame) {
+    return;
+  }
+
+  const scrollSnapshot = getActiveTerminalResizeScrollAnchor() || captureTerminalScrollSnapshot();
+  state.terminalFitFrame = window.requestAnimationFrame(() => {
+    state.terminalFitFrame = window.requestAnimationFrame(() => {
+      state.terminalFitFrame = null;
       const mount = document.querySelector("#terminal-mount");
       if (!state.fitAddon || !state.terminal || !mount) {
         return;
@@ -752,6 +826,7 @@ function fitTerminalSoon() {
 
       state.fitAddon.fit();
       sendResize();
+      restoreTerminalScrollSnapshot(scrollSnapshot);
     });
   });
 }
@@ -759,6 +834,12 @@ function fitTerminalSoon() {
 function cleanupTerminalInteractions() {
   state.terminalInteractionCleanup?.();
   state.terminalInteractionCleanup = null;
+  if (state.terminalFitFrame) {
+    window.cancelAnimationFrame(state.terminalFitFrame);
+    state.terminalFitFrame = null;
+  }
+  state.terminalResizeScrollAnchor = null;
+  state.terminalResizeScrollAnchorUntil = 0;
   if (state.terminalTextareaResetTimer) {
     window.clearTimeout(state.terminalTextareaResetTimer);
     state.terminalTextareaResetTimer = null;
@@ -999,6 +1080,26 @@ function syncViewportMetrics() {
   const viewport = window.visualViewport;
   const nextHeight = Math.max(320, Math.round(viewport?.height ?? window.innerHeight));
   document.documentElement.style.setProperty("--app-height", `${nextHeight}px`);
+
+  const previousHeight = state.lastVisualViewportHeight;
+  state.lastVisualViewportHeight = nextHeight;
+  const heightDelta = previousHeight > 0 ? nextHeight - previousHeight : 0;
+
+  if (previousHeight > 0 && isCoarsePointerDevice() && Math.abs(heightDelta) >= 20) {
+    rememberTerminalResizeScrollAnchor();
+  }
+
+  if (
+    previousHeight > 0 &&
+    isCoarsePointerDevice() &&
+    heightDelta >= MOBILE_KEYBOARD_RESIZE_THRESHOLD_PX
+  ) {
+    state.mobileKeyboardSettlingUntil = getUiNow() + MOBILE_KEYBOARD_SETTLE_MS;
+    const textarea = state.terminal?.textarea;
+    if (textarea instanceof HTMLTextAreaElement && document.activeElement === textarea) {
+      textarea.blur();
+    }
+  }
 }
 
 function getTerminalDisplayProfile(mount) {
@@ -1009,6 +1110,7 @@ function getTerminalDisplayProfile(mount) {
       fontSize: 12,
       lineHeight: 1.08,
       scrollSensitivity: 1.2,
+      smoothScrollDuration: 0,
     };
   }
 
@@ -1017,6 +1119,7 @@ function getTerminalDisplayProfile(mount) {
       fontSize: 13,
       lineHeight: 1.12,
       scrollSensitivity: 1.28,
+      smoothScrollDuration: 30,
     };
   }
 
@@ -1024,6 +1127,7 @@ function getTerminalDisplayProfile(mount) {
     fontSize: 14,
     lineHeight: 1.18,
     scrollSensitivity: 1.35,
+    smoothScrollDuration: 60,
   };
 }
 
@@ -1045,6 +1149,10 @@ function applyTerminalDisplayProfile(mount) {
 
   if (currentOptions.scrollSensitivity !== profile.scrollSensitivity) {
     currentOptions.scrollSensitivity = profile.scrollSensitivity;
+  }
+
+  if (currentOptions.smoothScrollDuration !== profile.smoothScrollDuration) {
+    currentOptions.smoothScrollDuration = profile.smoothScrollDuration;
   }
 }
 
@@ -1095,7 +1203,9 @@ function scrollTerminalToBottom() {
 
   state.terminalShowJumpToBottom = false;
   refreshTerminalJumpUi();
-  state.terminal?.focus();
+  if (!isCoarsePointerDevice()) {
+    state.terminal?.focus();
+  }
   window.requestAnimationFrame(() => {
     syncTerminalScrollState();
   });
@@ -9643,6 +9753,10 @@ function setupTerminalInteractions(mount) {
   };
 
   const finishTouch = () => {
+    if (getUiNow() < state.mobileKeyboardSettlingUntil) {
+      return;
+    }
+
     if (!touchState.moved && touchState.maxDistance < TOUCH_TAP_SLOP_PX) {
       state.terminal?.focus();
     }
@@ -9784,7 +9898,7 @@ function mountTerminal() {
     macOptionIsMeta: true,
     scrollSensitivity: getTerminalDisplayProfile(mount).scrollSensitivity,
     scrollback: 5000,
-    smoothScrollDuration: 60,
+    smoothScrollDuration: getTerminalDisplayProfile(mount).smoothScrollDuration,
     theme: {
       background: "#090b0d",
       foreground: "#f3efe8",
