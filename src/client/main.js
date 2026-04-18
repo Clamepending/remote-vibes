@@ -3649,9 +3649,26 @@ function renderSessionCard(session) {
       </div>
       <span class="session-time">${relativeTime(session.lastOutputAt)}</span>
       <div class="session-actions">
-        <button class="ghost-button session-action-button" type="button" aria-label="Fork session" title="Fork session" data-fork-session="${session.id}">fork</button>
-        <button class="ghost-button session-action-button" type="button" aria-label="Rename session" title="Rename session" data-rename-session="${session.id}">edit</button>
-        <button class="danger-button session-delete-button" type="button" aria-label="Delete session" title="Delete session" data-delete-session="${session.id}">x</button>
+        <button class="session-action-button" type="button" aria-label="Fork session" title="Fork session" data-fork-session="${session.id}">
+          <svg viewBox="0 0 18 18" aria-hidden="true" focusable="false">
+            <path d="M5 3.5v2.2a4.8 4.8 0 0 0 4.8 4.8H13" />
+            <path d="M5 14.5v-2.2a4.8 4.8 0 0 1 4.8-4.8H13" />
+            <path d="M12 5.5 14.5 8 12 10.5" />
+          </svg>
+        </button>
+        <button class="session-action-button" type="button" aria-label="Rename session" title="Rename session" data-rename-session="${session.id}">
+          <svg viewBox="0 0 18 18" aria-hidden="true" focusable="false">
+            <path d="m4 12.8-.5 2.7 2.7-.5 7.7-7.7-2.2-2.2L4 12.8Z" />
+            <path d="m10.8 6 2.2 2.2" />
+          </svg>
+        </button>
+        <button class="session-action-button session-delete-button" type="button" aria-label="Delete session" title="Delete session" data-delete-session="${session.id}">
+          <svg viewBox="0 0 18 18" aria-hidden="true" focusable="false">
+            <path d="M4.5 6h9" />
+            <path d="M7 6V4.5h4V6" />
+            <path d="m6 8 .4 6h5.2l.4-6" />
+          </svg>
+        </button>
       </div>
     </article>
   `;
@@ -3669,7 +3686,6 @@ function renderSessionCards() {
     .map((group) => {
       const expanded = state.sessionProjectExpanded.has(group.key);
       const active = group.sessions.some((session) => session.id === state.activeSessionId);
-      const countLabel = `${group.sessions.length} ${group.sessions.length === 1 ? "session" : "sessions"}`;
 
       return `
         <section class="session-project ${expanded ? "is-expanded" : ""} ${active ? "has-active-session" : ""}" data-session-project="${escapeHtml(group.key)}">
@@ -3685,9 +3701,7 @@ function renderSessionCards() {
               <span class="file-icon file-icon-folder ${expanded ? "is-open" : ""}" aria-hidden="true"></span>
               <span class="session-project-copy">
                 <span class="session-project-name">${escapeHtml(group.name)}</span>
-                <span class="session-project-path">${escapeHtml(group.cwd || "unknown folder")}</span>
               </span>
-              <span class="session-project-count">${escapeHtml(countLabel)}</span>
             </button>
             <button
               class="session-project-new"
@@ -4411,8 +4425,6 @@ function renderShell() {
             <div class="section-head">
               <span>Threads</span>
               <div class="section-actions">
-                <button class="icon-button sidebar-head-button" type="button" id="expand-session-projects" aria-label="Expand projects" title="Expand projects">↙</button>
-                <button class="icon-button sidebar-head-button" type="button" id="collapse-session-projects" aria-label="Collapse projects" title="Collapse projects">≡</button>
                 <button class="icon-button sidebar-head-button" type="button" data-folder-picker-target="session" aria-label="Add project" title="Add project">+</button>
               </div>
             </div>
@@ -6135,18 +6147,6 @@ function bindShellEvents() {
 
     state.pluginSearchQuery = input.value;
     refreshPluginSearchUi();
-  });
-
-  document.querySelector("#expand-session-projects")?.addEventListener("click", () => {
-    state.sessionProjectInteractionSeen = true;
-    state.sessionProjectExpanded = new Set(getSessionProjectGroups().map((group) => group.key));
-    refreshSessionsList();
-  });
-
-  document.querySelector("#collapse-session-projects")?.addEventListener("click", () => {
-    state.sessionProjectInteractionSeen = true;
-    state.sessionProjectExpanded.clear();
-    refreshSessionsList();
   });
 
   if (state.currentView === "shell") {

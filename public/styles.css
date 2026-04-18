@@ -1800,33 +1800,33 @@ input[readonly][data-folder-picker-target] {
 
 .session-project {
   display: grid;
-  gap: 2px;
+  gap: 1px;
   min-width: 0;
 }
 
 .session-project-head {
   display: grid;
-  grid-template-columns: minmax(0, 1fr) 26px;
+  grid-template-columns: minmax(0, 1fr) 24px;
   align-items: center;
-  gap: 2px;
+  gap: 3px;
   min-width: 0;
-  border-radius: 8px;
+  border-radius: 7px;
 }
 
 .session-project.has-active-session .session-project-head {
-  background: rgba(255, 255, 255, 0.035);
+  background: transparent;
 }
 
 .session-project-toggle {
   display: flex;
   align-items: center;
-  gap: 5px;
+  gap: 8px;
   min-width: 0;
-  min-height: 30px;
-  padding: 3px 5px;
+  min-height: 34px;
+  padding: 4px 5px;
   border-radius: 8px;
   background: transparent;
-  color: rgba(222, 228, 235, 0.82);
+  color: rgba(222, 228, 235, 0.68);
   text-align: left;
 }
 
@@ -1836,7 +1836,7 @@ input[readonly][data-folder-picker-target] {
 }
 
 .session-project.has-active-session .session-project-toggle {
-  color: var(--text);
+  color: rgba(222, 228, 235, 0.88);
 }
 
 .session-project-copy {
@@ -1845,43 +1845,31 @@ input[readonly][data-folder-picker-target] {
   line-height: 1.2;
 }
 
-.session-project-name,
-.session-project-path {
+.session-project-name {
   overflow: hidden;
   white-space: nowrap;
   text-overflow: ellipsis;
 }
 
 .session-project-name {
+  font-size: 0.86rem;
   font-weight: 700;
   line-height: 1.2;
-}
-
-.session-project-path,
-.session-project-count {
-  color: var(--muted);
-  font-family: "IBM Plex Mono", monospace;
-  font-size: 0.62rem;
-}
-
-.session-project-count {
-  flex: 0 0 auto;
-  margin-left: auto;
 }
 
 .session-project-new {
   display: inline-flex;
   align-items: center;
   justify-content: center;
-  width: 25px;
-  min-width: 25px;
-  min-height: 25px;
-  padding: 0;
+  width: 23px;
+  min-width: 23px;
+  min-height: 23px;
+  padding: 0 0 1px;
   border-radius: 7px;
   background: transparent;
-  color: rgba(222, 228, 235, 0.72);
+  color: rgba(222, 228, 235, 0.62);
   font-family: "IBM Plex Mono", monospace;
-  font-size: 0.86rem;
+  font-size: 0.78rem;
   opacity: 0;
   transition: opacity 120ms ease, background 120ms ease, color 120ms ease;
 }
@@ -1899,10 +1887,9 @@ input[readonly][data-folder-picker-target] {
 
 .session-project-sessions {
   display: grid;
-  gap: 2px;
-  padding-left: 14px;
-  margin-left: 10px;
-  border-left: 1px solid rgba(147, 161, 178, 0.18);
+  gap: 1px;
+  padding-left: 31px;
+  margin: 0;
 }
 
 .session-card,
@@ -1918,9 +1905,9 @@ input[readonly][data-folder-picker-target] {
 .session-card {
   grid-template-columns: 17px minmax(0, 1fr) auto;
   align-items: center;
-  gap: 7px;
-  min-height: 34px;
-  padding: 5px 7px;
+  gap: 8px;
+  min-height: 32px;
+  padding: 4px 6px;
   border-radius: 9px;
   background: transparent;
   cursor: pointer;
@@ -1929,12 +1916,12 @@ input[readonly][data-folder-picker-target] {
 }
 
 .session-card:hover {
-  background: rgba(255, 255, 255, 0.06);
+  background: rgba(255, 255, 255, 0.045);
 }
 
 .session-card.is-active {
   border-color: transparent;
-  background: rgba(140, 137, 150, 0.28);
+  background: rgba(140, 137, 150, 0.24);
 }
 
 .session-side {
@@ -1945,9 +1932,9 @@ input[readonly][data-folder-picker-target] {
 .session-actions {
   display: inline-flex;
   align-items: center;
-  gap: 3px;
+  gap: 2px;
   position: absolute;
-  right: 5px;
+  right: 4px;
   top: 50%;
   z-index: 2;
   padding: 2px;
@@ -1972,20 +1959,44 @@ input[readonly][data-folder-picker-target] {
 }
 
 .session-action-button {
-  min-height: 24px;
-  padding: 0 7px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-height: 22px;
+  min-width: 22px;
+  padding: 0;
+  border: 0;
   border-radius: 7px;
+  background: transparent;
+  color: rgba(222, 228, 235, 0.74);
   font-family: "IBM Plex Mono", monospace;
   font-size: 0.62rem;
   letter-spacing: 0.03em;
   text-transform: uppercase;
 }
 
-.session-delete-button {
-  min-height: 24px;
-  min-width: 24px;
-  padding: 0 7px;
-  border-radius: 7px;
+.session-action-button:hover {
+  background: rgba(255, 255, 255, 0.1);
+  color: var(--text);
+  transform: none;
+}
+
+.session-action-button svg {
+  width: 14px;
+  height: 14px;
+}
+
+.session-action-button svg path {
+  fill: none;
+  stroke: currentColor;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+  stroke-width: 1.6;
+}
+
+.session-delete-button:hover {
+  background: rgba(255, 141, 134, 0.14);
+  color: #ff9f99;
 }
 
 .session-activity-dot {
