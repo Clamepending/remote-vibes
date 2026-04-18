@@ -3770,7 +3770,10 @@ function renderKnowledgeBaseView() {
   const backupRepoUrl = getKnowledgeBaseBackupRepoUrl();
 
   return `
-    <section class="dashboard-panel knowledge-base-view">
+    <section class="dashboard-panel knowledge-base-view" ${renderMainViewAttributes(
+      "knowledge-base",
+      `knowledge-base:${selectedNotePath || ""}:${state.knowledgeBase.selectedNoteEditing ? "edit" : "view"}`,
+    )}>
       <div class="dashboard-toolbar">
         <button class="icon-button hidden-desktop" type="button" id="open-sidebar" aria-label="Open sidebar" ${tooltipAttributes("Open sidebar")}>≡</button>
         <div class="dashboard-copy">
@@ -4585,7 +4588,10 @@ function renderSearchResults() {
 
 function renderSearchView() {
   return `
-    <section class="dashboard-panel main-view search-view">
+    <section class="dashboard-panel main-view search-view" ${renderMainViewAttributes(
+      "search",
+      `search:${state.globalSearchQuery || ""}`,
+    )}>
       <div class="dashboard-toolbar">
         <button class="icon-button hidden-desktop" type="button" id="open-sidebar" aria-label="Open sidebar" ${tooltipAttributes("Open sidebar")}>≡</button>
         <div class="dashboard-copy">
@@ -4742,7 +4748,10 @@ function renderAgentMailPluginPanel() {
 
 function renderPluginsView() {
   return `
-    <section class="dashboard-panel main-view plugins-view">
+    <section class="dashboard-panel main-view plugins-view" ${renderMainViewAttributes(
+      "plugins",
+      `plugins:${state.pluginSearchQuery || ""}`,
+    )}>
       <div class="dashboard-toolbar">
         <button class="icon-button hidden-desktop" type="button" id="open-sidebar" aria-label="Open sidebar" ${tooltipAttributes("Open sidebar")}>≡</button>
         <div class="dashboard-copy">
@@ -4786,7 +4795,7 @@ function renderAutomationsView() {
   const wikiBackupLabel = wikiBackupEnabled ? "enabled" : "disabled";
 
   return `
-    <section class="dashboard-panel main-view automations-view">
+    <section class="dashboard-panel main-view automations-view" ${renderMainViewAttributes("automations")}>
       <div class="dashboard-toolbar">
         <button class="icon-button hidden-desktop" type="button" id="open-sidebar" aria-label="Open sidebar" ${tooltipAttributes("Open sidebar")}>≡</button>
         <div class="dashboard-copy">
@@ -5296,7 +5305,10 @@ function renderSystemView() {
   const updated = updatedAge ? (updatedAge === "live" ? "updated just now" : `updated ${updatedAge} ago`) : "waiting for first sample";
 
   return `
-    <section class="dashboard-panel main-view system-view">
+    <section class="dashboard-panel main-view system-view" ${renderMainViewAttributes(
+      "system",
+      `system:${state.systemHistoryRange || "1h"}`,
+    )}>
       <div class="dashboard-toolbar">
         <button class="icon-button hidden-desktop" type="button" id="open-sidebar" aria-label="Open sidebar" ${tooltipAttributes("Open sidebar")}>≡</button>
         <div class="dashboard-copy">
@@ -5720,7 +5732,10 @@ function renderSwarmGraphView() {
       : "choose a session to inspect its agent swarm";
 
   return `
-    <section class="dashboard-panel main-view swarm-view">
+    <section class="dashboard-panel main-view swarm-view" ${renderMainViewAttributes(
+      "swarm",
+      `swarm:${state.swarmGraph.sessionId || ""}`,
+    )}>
       <div class="dashboard-toolbar">
         <button class="icon-button hidden-desktop" type="button" id="open-sidebar" aria-label="Open sidebar" ${tooltipAttributes("Open sidebar")}>≡</button>
         <div class="dashboard-copy">
@@ -5803,7 +5818,7 @@ function renderTerminalPanel(activeSession) {
   }
 
   return `
-    <section class="terminal-panel">
+    <section class="terminal-panel" ${renderMainViewAttributes("shell", `shell:${activeSession?.id || ""}`)}>
       <div class="terminal-toolbar">
         <button class="icon-button hidden-desktop" type="button" id="open-sidebar" aria-label="Open sidebar" ${tooltipAttributes("Open sidebar")}>≡</button>
         <div class="terminal-copy">
@@ -5875,7 +5890,7 @@ function getAgentPromptTargetSummary() {
 
 function renderAgentPromptView() {
   return `
-    <section class="dashboard-panel agent-prompt-view">
+    <section class="dashboard-panel agent-prompt-view" ${renderMainViewAttributes("agent-prompt")}>
       <div class="dashboard-toolbar">
         <button class="icon-button hidden-desktop" type="button" id="open-sidebar" aria-label="Open sidebar" ${tooltipAttributes("Open sidebar")}>≡</button>
         <div class="dashboard-copy">
@@ -6046,6 +6061,10 @@ function renderFolderPickerModal() {
   `;
 }
 
+function renderMainViewAttributes(view, key = view) {
+  return `data-main-view="${escapeHtml(view)}" data-main-scroll-key="${escapeHtml(key || view)}"`;
+}
+
 function captureScrollSnapshot(selector) {
   const element = document.querySelector(selector);
   if (!(element instanceof HTMLElement)) {
@@ -6070,6 +6089,55 @@ function restoreScrollSnapshot(selector, snapshot) {
 
   element.scrollLeft = snapshot.left;
   element.scrollTop = snapshot.top;
+}
+
+const MAIN_VIEW_SCROLL_TARGETS = [
+  ["mainRoot", "[data-main-view]"],
+  ["dashboardGrid", ".dashboard-grid"],
+  ["searchResults", "#global-search-results"],
+  ["pluginsLayout", ".plugins-layout"],
+  ["automationGrid", ".automation-grid"],
+  ["systemDashboard", ".system-dashboard"],
+  ["knowledgeBaseGrid", ".knowledge-base-grid"],
+  ["knowledgeBaseNotes", ".knowledge-base-note-list"],
+  ["knowledgeBaseNote", ".knowledge-base-note-card"],
+  ["knowledgeBaseEditor", "#knowledge-base-note-editor"],
+  ["agentPromptGrid", ".agent-prompt-grid"],
+  ["agentPromptTargets", "#agent-prompt-targets"],
+  ["agentPromptEditor", "#agent-prompt-textarea"],
+  ["swarmGraph", ".swarm-graph-scroller"],
+  ["swarmDetails", ".swarm-details"],
+];
+
+function captureMainViewScrollSnapshots() {
+  const mainView = document.querySelector("[data-main-view]");
+  const snapshots = {};
+
+  for (const [key, selector] of MAIN_VIEW_SCROLL_TARGETS) {
+    snapshots[key] = captureScrollSnapshot(selector);
+  }
+
+  return {
+    key: mainView instanceof HTMLElement ? mainView.dataset.mainScrollKey || "" : "",
+    view: mainView instanceof HTMLElement ? mainView.dataset.mainView || "" : "",
+    snapshots,
+  };
+}
+
+function restoreMainViewScrollSnapshots(snapshot) {
+  const mainView = document.querySelector("[data-main-view]");
+  if (
+    !(mainView instanceof HTMLElement) ||
+    !snapshot?.view ||
+    mainView.dataset.mainView !== snapshot.view ||
+    mainView.dataset.mainScrollKey !== snapshot.key
+  ) {
+    return;
+  }
+
+  for (const [key, selector] of MAIN_VIEW_SCROLL_TARGETS) {
+    restoreScrollSnapshot(selector, snapshot.snapshots?.[key]);
+  }
 }
 
 function captureExplorerScrollSnapshots() {
@@ -6155,6 +6223,7 @@ function renderUpdateBanner() {
 
 function renderShell() {
   const explorerScrollSnapshot = captureExplorerScrollSnapshots();
+  const mainViewScrollSnapshot = captureMainViewScrollSnapshots();
   teardownKnowledgeBaseGraphInteractions();
   syncFilesRoot();
   const viewTitles = {
@@ -6248,6 +6317,7 @@ function renderShell() {
     </main>
   `;
   restoreExplorerScrollSnapshots(explorerScrollSnapshot);
+  restoreMainViewScrollSnapshots(mainViewScrollSnapshot);
 
   bindShellEvents();
 
