@@ -276,6 +276,10 @@ const state = {
   },
   sessionProjectExpanded: new Set(),
   sessionProjectInteractionSeen: false,
+  sessionListInteractionUntil: 0,
+  sessionRefreshFlushTimer: null,
+  sessionProjectSuppressClickKey: "",
+  sessionProjectSuppressClickUntil: 0,
   filesRootOverride: null,
   filesRoot: "",
   fileTreeEntries: {},
@@ -6187,7 +6191,15 @@ function renderShell() {
   void refreshOpenFileTree();
 }
 
-function isSessionListInteractionActive() {
+function getUiNow() {
+  return globalThis.performance?.now ? globalThis.performance.now() : Date.now();
+}
+
+function isSessionListTemporarilyProtected() {
+  return getUiNow() < state.sessionListInteractionUntil;
+}
+
+function isSessionListHoveredOrFocused() {
   const sessionsList = document.querySelector("#sessions-list");
   return Boolean(
     sessionsList
@@ -6195,13 +6207,85 @@ function isSessionListInteractionActive() {
   );
 }
 
+function isSessionListInteractionActive() {
+  return isSessionListTemporarilyProtected() || isSessionListHoveredOrFocused();
+}
+
+function scheduleDeferredSessionRefreshFlush(delay = 120) {
+  if (state.sessionRefreshFlushTimer) {
+    window.clearTimeout(state.sessionRefreshFlushTimer);
+  }
+
+  state.sessionRefreshFlushTimer = window.setTimeout(() => {
+    state.sessionRefreshFlushTimer = null;
+    flushDeferredSessionRefresh();
+  }, delay);
+}
+
+function markSessionListInteractionActive(duration = 700) {
+  state.sessionListInteractionUntil = Math.max(state.sessionListInteractionUntil, getUiNow() + duration);
+  scheduleDeferredSessionRefreshFlush(duration + 40);
+}
+
 function flushDeferredSessionRefresh() {
-  if (!state.sessionsRefreshDeferred || isSessionListInteractionActive()) {
+  if (!state.sessionsRefreshDeferred) {
+    return;
+  }
+
+  if (isSessionListTemporarilyProtected()) {
+    const delay = Math.max(80, state.sessionListInteractionUntil - getUiNow() + 40);
+    scheduleDeferredSessionRefreshFlush(delay);
+    return;
+  }
+
+  if (isSessionListHoveredOrFocused()) {
     return;
   }
 
   state.sessionsRefreshDeferred = false;
   refreshSessionsList({ force: true });
+}
+
+function toggleSessionProject(projectKey) {
+  if (!projectKey) {
+    return;
+  }
+
+  state.sessionProjectInteractionSeen = true;
+  markSessionListInteractionActive();
+
+  if (state.sessionProjectExpanded.has(projectKey)) {
+    state.sessionProjectExpanded.delete(projectKey);
+  } else {
+    state.sessionProjectExpanded.add(projectKey);
+  }
+
+  refreshSessionsList({ force: true });
+}
+
+function suppressNextSessionProjectClick(projectKey) {
+  state.sessionProjectSuppressClickKey = projectKey || "";
+  state.sessionProjectSuppressClickUntil = getUiNow() + 350;
+  window.setTimeout(() => {
+    if (getUiNow() >= state.sessionProjectSuppressClickUntil) {
+      state.sessionProjectSuppressClickKey = "";
+      state.sessionProjectSuppressClickUntil = 0;
+    }
+  }, 380);
+}
+
+function consumeSuppressedSessionProjectClick(projectKey) {
+  if (
+    projectKey
+    && projectKey === state.sessionProjectSuppressClickKey
+    && getUiNow() < state.sessionProjectSuppressClickUntil
+  ) {
+    state.sessionProjectSuppressClickKey = "";
+    state.sessionProjectSuppressClickUntil = 0;
+    return true;
+  }
+
+  return false;
 }
 
 function bindSessionEvents() {
@@ -6217,20 +6301,34 @@ function bindSessionEvents() {
   }
 
   document.querySelectorAll("[data-session-project-toggle]").forEach((button) => {
-    button.addEventListener("click", () => {
-      const projectKey = button.getAttribute("data-session-project-toggle");
-      if (!projectKey) {
+    button.addEventListener("pointerdown", (event) => {
+      if (event.button != null && event.button !== 0) {
         return;
       }
 
-      state.sessionProjectInteractionSeen = true;
-      if (state.sessionProjectExpanded.has(projectKey)) {
-        state.sessionProjectExpanded.delete(projectKey);
-      } else {
-        state.sessionProjectExpanded.add(projectKey);
+      event.preventDefault();
+      event.stopPropagation();
+      button.dataset.sessionProjectPointerToggle = "true";
+      const projectKey = button.getAttribute("data-session-project-toggle");
+      suppressNextSessionProjectClick(projectKey);
+      toggleSessionProject(projectKey);
+    });
+
+    button.addEventListener("click", (event) => {
+      event.preventDefault();
+      event.stopPropagation();
+      const projectKey = button.getAttribute("data-session-project-toggle");
+      if (button.dataset.sessionProjectPointerToggle === "true") {
+        delete button.dataset.sessionProjectPointerToggle;
+        consumeSuppressedSessionProjectClick(projectKey);
+        return;
       }
 
-      refreshSessionsList();
+      if (consumeSuppressedSessionProjectClick(projectKey)) {
+        return;
+      }
+
+      toggleSessionProject(projectKey);
     });
   });
 
@@ -6395,6 +6493,10 @@ function refreshSessionsList({ force = false } = {}) {
 
   if (!force && isSessionListInteractionActive()) {
     state.sessionsRefreshDeferred = true;
+    if (isSessionListTemporarilyProtected()) {
+      const delay = Math.max(80, state.sessionListInteractionUntil - getUiNow() + 40);
+      scheduleDeferredSessionRefreshFlush(delay);
+    }
     return;
   }
 
