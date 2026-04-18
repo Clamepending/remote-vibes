@@ -19,10 +19,12 @@ const FILE_IMAGE_MAX_ZOOM = 8;
 const FILE_IMAGE_ZOOM_STEP = 0.25;
 const SYSTEM_HISTORY_REFRESH_MS = 30_000;
 const SELECTION_REFRESH_RETRY_MS = 250;
+const SYSTEM_CHART_WIDTH = 560;
+const SYSTEM_CHART_HEIGHT = 150;
 const SYSTEM_HISTORY_RANGES = [
-  { id: "1h", label: "1h", title: "last hour" },
-  { id: "1d", label: "1d", title: "last day" },
-  { id: "1w", label: "1w", title: "last week" },
+  { id: "1h", label: "last hour", title: "last hour" },
+  { id: "1d", label: "last day", title: "last day" },
+  { id: "1w", label: "last week", title: "last week" },
 ];
 const SYSTEM_CHART_COLORS = [
   "#f4f4f5",
@@ -5026,21 +5028,44 @@ function getLatestSeriesValue(series) {
   return null;
 }
 
-function getChartPoint(value, index, totalPoints, width, height) {
-  const x = totalPoints <= 1 ? width / 2 : (index / (totalPoints - 1)) * width;
-  const y = height - (getMetricPercent(value) / 100) * height;
+function getSystemHistoryTimestampMs(sample) {
+  const timestamp = new Date(sample?.checkedAt || "").getTime();
+  return Number.isFinite(timestamp) ? timestamp : null;
+}
+
+function buildSystemChartContext(history, totalPoints) {
+  const timestamps = Array.from({ length: totalPoints }, (_, index) => getSystemHistoryTimestampMs(history[index]));
+  const validTimestamps = timestamps.filter((timestamp) => timestamp !== null);
+  const minTimestamp = validTimestamps.length ? Math.min(...validTimestamps) : null;
+  const maxTimestamp = validTimestamps.length ? Math.max(...validTimestamps) : null;
+
+  return {
+    width: SYSTEM_CHART_WIDTH,
+    height: SYSTEM_CHART_HEIGHT,
+    x(index) {
+      const timestamp = timestamps[index];
+      if (timestamp !== null && minTimestamp !== null && maxTimestamp !== null && maxTimestamp > minTimestamp) {
+        return ((timestamp - minTimestamp) / (maxTimestamp - minTimestamp)) * SYSTEM_CHART_WIDTH;
+      }
+
+      return totalPoints <= 1 ? SYSTEM_CHART_WIDTH / 2 : (index / (totalPoints - 1)) * SYSTEM_CHART_WIDTH;
+    },
+  };
+}
+
+function getChartPoint(value, index, context) {
+  const x = context.x(index);
+  const y = context.height - (getMetricPercent(value) / 100) * context.height;
   return {
     x: Number(x.toFixed(2)),
     y: Number(y.toFixed(2)),
   };
 }
 
-function renderChartSeries(series, seriesIndex, totalPoints) {
-  const width = 560;
-  const height = 150;
+function renderChartSeries(series, seriesIndex, chartContext) {
   const color = SYSTEM_CHART_COLORS[seriesIndex % SYSTEM_CHART_COLORS.length];
   const points = series.values
-    .map((value, index) => (getFiniteMetricPercent(value) === null ? null : getChartPoint(value, index, totalPoints, width, height)))
+    .map((value, index) => (getFiniteMetricPercent(value) === null ? null : getChartPoint(value, index, chartContext)))
     .filter(Boolean);
 
   if (!points.length) {
@@ -5056,7 +5081,7 @@ function renderChartSeries(series, seriesIndex, totalPoints) {
       return;
     }
 
-    const point = getChartPoint(percent, index, totalPoints, width, height);
+    const point = getChartPoint(percent, index, chartContext);
     pathData += `${openSegment ? "L" : "M"} ${point.x} ${point.y} `;
     openSegment = true;
   });
@@ -5068,9 +5093,37 @@ function renderChartSeries(series, seriesIndex, totalPoints) {
   `;
 }
 
-function renderUtilizationLineChart({ emptyMessage, series, showLegendValues = true, subtitle, title }) {
+function formatSystemChartTime(timestamp, rangeId) {
+  const date = new Date(timestamp || "");
+  if (!Number.isFinite(date.getTime())) {
+    return "";
+  }
+
+  const options =
+    rangeId === "1w"
+      ? { weekday: "short", hour: "numeric" }
+      : { hour: "numeric", minute: "2-digit" };
+  return new Intl.DateTimeFormat(undefined, options).format(date);
+}
+
+function getSystemChartXAxisLabels(history, range) {
+  const firstSample = history.find((sample) => getSystemHistoryTimestampMs(sample) !== null);
+  const lastSample = [...history].reverse().find((sample) => getSystemHistoryTimestampMs(sample) !== null);
+  const left = formatSystemChartTime(firstSample?.checkedAt, range.id) || "oldest";
+  const right = formatSystemChartTime(lastSample?.checkedAt, range.id) || "latest";
+
+  return {
+    left,
+    center: `time · ${range.title}`,
+    right,
+  };
+}
+
+function renderUtilizationLineChart({ emptyMessage, history, range, series, showLegendValues = true, subtitle, title }) {
   const activeSeries = series.filter((entry) => entry.values.some((value) => getFiniteMetricPercent(value) !== null));
   const totalPoints = Math.max(1, ...activeSeries.map((entry) => entry.values.length));
+  const chartContext = buildSystemChartContext(history, totalPoints);
+  const xAxisLabels = getSystemChartXAxisLabels(history, range);
   const visibleLegend = activeSeries.slice(0, 16);
   const hiddenLegendCount = Math.max(0, activeSeries.length - visibleLegend.length);
 
@@ -5084,16 +5137,21 @@ function renderUtilizationLineChart({ emptyMessage, series, showLegendValues = t
         activeSeries.length
           ? `
             <div class="system-line-chart-wrap">
-              <svg class="system-line-chart" viewBox="0 0 560 150" role="img" aria-label="${escapeHtml(title)} utilization history">
-                <line class="system-line-chart-grid" x1="0" y1="0" x2="560" y2="0"></line>
-                <line class="system-line-chart-grid" x1="0" y1="75" x2="560" y2="75"></line>
-                <line class="system-line-chart-grid" x1="0" y1="150" x2="560" y2="150"></line>
-                ${activeSeries.map((entry, index) => renderChartSeries(entry, index, totalPoints)).join("")}
+              <svg class="system-line-chart" viewBox="0 0 ${SYSTEM_CHART_WIDTH} ${SYSTEM_CHART_HEIGHT}" preserveAspectRatio="none" role="img" aria-label="${escapeHtml(title)} utilization history over ${escapeHtml(range.title)}">
+                <line class="system-line-chart-grid" x1="0" y1="0" x2="${SYSTEM_CHART_WIDTH}" y2="0"></line>
+                <line class="system-line-chart-grid" x1="0" y1="${SYSTEM_CHART_HEIGHT / 2}" x2="${SYSTEM_CHART_WIDTH}" y2="${SYSTEM_CHART_HEIGHT / 2}"></line>
+                <line class="system-line-chart-grid" x1="0" y1="${SYSTEM_CHART_HEIGHT}" x2="${SYSTEM_CHART_WIDTH}" y2="${SYSTEM_CHART_HEIGHT}"></line>
+                ${activeSeries.map((entry, index) => renderChartSeries(entry, index, chartContext)).join("")}
               </svg>
               <div class="system-line-chart-axis" aria-hidden="true">
                 <span>100%</span>
                 <span>50%</span>
                 <span>0%</span>
+              </div>
+              <div class="system-line-chart-x-axis" aria-hidden="true">
+                <span>${escapeHtml(xAxisLabels.left)}</span>
+                <span>${escapeHtml(xAxisLabels.center)}</span>
+                <span>${escapeHtml(xAxisLabels.right)}</span>
               </div>
             </div>
             <div class="system-chart-legend">
@@ -5134,7 +5192,7 @@ function renderSystemUtilizationCharts(system) {
       <div class="system-history-head">
         <div>
           <strong>History</strong>
-          <span>${escapeHtml(range.title)} · ${escapeHtml(sampleText)}${escapeHtml(rawText)}${escapeHtml(intervalText)}</span>
+          <span>${escapeHtml(range.title)} · x-axis is time, oldest → newest · ${escapeHtml(sampleText)}${escapeHtml(rawText)}${escapeHtml(intervalText)}</span>
         </div>
         <div class="system-history-ranges" role="group" aria-label="System history range">
           ${SYSTEM_HISTORY_RANGES.map(
@@ -5158,6 +5216,8 @@ function renderSystemUtilizationCharts(system) {
         ${renderUtilizationLineChart({
           title: "CPU core history",
           subtitle: state.systemHistoryLoading ? "loading history..." : sampleText,
+          history,
+          range,
           series: buildCpuCoreChartSeries(history),
           showLegendValues: false,
           emptyMessage: "CPU core history starts after the first sample.",
@@ -5165,18 +5225,24 @@ function renderSystemUtilizationCharts(system) {
         ${renderUtilizationLineChart({
           title: "GPU history",
           subtitle: state.systemHistoryLoading ? "loading history..." : sampleText,
+          history,
+          range,
           series: buildGpuChartSeries(history),
           emptyMessage: "GPU utilization is not exposed by this host.",
         })}
         ${renderUtilizationLineChart({
           title: "Memory history",
           subtitle: state.systemHistoryLoading ? "loading history..." : sampleText,
+          history,
+          range,
           series: buildMemoryChartSeries(history),
           emptyMessage: "Memory history starts after the first sample.",
         })}
         ${renderUtilizationLineChart({
           title: "Disk history",
           subtitle: state.systemHistoryLoading ? "loading history..." : sampleText,
+          history,
+          range,
           series: buildStorageChartSeries(history),
           emptyMessage: "Disk history starts after the first sample.",
         })}

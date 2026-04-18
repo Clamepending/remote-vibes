@@ -1863,6 +1863,7 @@ input[readonly][data-folder-picker-target] {
 .system-line-chart-wrap {
   position: relative;
   min-width: 0;
+  padding-bottom: 26px;
   overflow: hidden;
   border-radius: 14px;
   background:
@@ -1874,7 +1875,7 @@ input[readonly][data-folder-picker-target] {
   display: block;
   width: 100%;
   height: 150px;
-  padding: 12px 36px 12px 12px;
+  padding: 0;
   overflow: visible;
 }
 
@@ -1900,15 +1901,48 @@ input[readonly][data-folder-picker-target] {
 
 .system-line-chart-axis {
   position: absolute;
-  top: 7px;
-  right: 9px;
-  bottom: 9px;
+  top: 0;
+  right: 8px;
+  bottom: 26px;
   display: grid;
   align-content: space-between;
   color: rgba(232, 236, 240, 0.48);
   font-family: "IBM Plex Mono", monospace;
   font-size: 0.64rem;
   pointer-events: none;
+  text-align: right;
+  text-shadow: 0 1px 7px rgba(0, 0, 0, 0.8);
+}
+
+.system-line-chart-x-axis {
+  position: absolute;
+  right: 10px;
+  bottom: 7px;
+  left: 10px;
+  display: grid;
+  grid-template-columns: 1fr auto 1fr;
+  gap: 10px;
+  color: rgba(232, 236, 240, 0.5);
+  font-family: "IBM Plex Mono", monospace;
+  font-size: 0.64rem;
+  pointer-events: none;
+}
+
+.system-line-chart-x-axis span {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.system-line-chart-x-axis span:nth-child(2) {
+  color: rgba(232, 236, 240, 0.68);
+  text-align: center;
+  text-transform: uppercase;
+}
+
+.system-line-chart-x-axis span:last-child {
+  text-align: right;
 }
 
 .system-chart-legend {
