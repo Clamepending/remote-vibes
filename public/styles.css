@@ -3695,6 +3695,10 @@ input[readonly][data-folder-picker-target] {
   justify-content: space-between;
 }
 
+.file-web-head {
+  justify-content: flex-end;
+}
+
 .file-editor-copy {
   min-width: 0;
 }

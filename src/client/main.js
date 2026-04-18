@@ -3973,15 +3973,10 @@ function renderOpenFilePanel() {
   if (state.openFileStatus === "web") {
     const previewUrl = activeTab?.url || "";
     const externalUrl = activeTab?.externalUrl || previewUrl;
-    const portMeta = activeTab?.port ? `:${activeTab.port}` : previewUrl;
 
     return `
       <div class="file-editor-card file-web-card">
-        <div class="file-editor-head">
-          <div class="file-editor-copy">
-            <div class="file-editor-name">${escapeHtml(state.openFileName || "web preview")}</div>
-            <div class="file-editor-path" title="${escapeHtml(externalUrl)}">${escapeHtml(portMeta)}</div>
-          </div>
+        <div class="file-editor-head file-web-head">
           <div class="file-editor-actions">
             <button class="ghost-button file-editor-button" type="button" id="reload-open-file">reload</button>
             ${
