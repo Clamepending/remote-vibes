@@ -10,7 +10,7 @@ import { WebSocketServer } from "ws";
 import { buildPortUrlFromBase, getTailscaleUrl, pickPreferredUrl } from "./access-url.js";
 import { AgentPromptStore } from "./agent-prompt-store.js";
 import { AgentRunStore } from "./agent-run-store.js";
-import { listFolderEntries } from "./folder-browser.js";
+import { createFolderEntry, listFolderEntries } from "./folder-browser.js";
 import { PortAliasStore } from "./port-alias-store.js";
 import { listListeningPorts } from "./ports.js";
 import { SettingsStore } from "./settings-store.js";
@@ -242,6 +242,7 @@ export async function createRemoteVibesApp({
   persistSessions = true,
   listPorts = listListeningPorts,
   accessUrlsProvider = getAccessUrls,
+  providers: providerOverrides = null,
   tailscaleServeManager = new TailscaleServeManager(),
   sleepPreventionFactory = (settings) =>
     new SleepPreventionService({
@@ -250,7 +251,7 @@ export async function createRemoteVibesApp({
   onTerminate = null,
   updateManager = new UpdateManager({ cwd, stateDir, port }),
 } = {}) {
-  const providers = await detectProviders();
+  const providers = Array.isArray(providerOverrides) ? providerOverrides : await detectProviders();
   const defaultProviderId = getDefaultProviderId(providers);
   const app = express();
   const agentRunStore = new AgentRunStore({ stateDir });
@@ -600,6 +601,21 @@ export async function createRemoteVibesApp({
           fallbackCwd: cwd,
         }),
       );
+    } catch (error) {
+      response.status(error.statusCode || 400).json({ error: error.message });
+    }
+  });
+
+  app.post("/api/folders", async (request, response) => {
+    try {
+      const payload = await createFolderEntry({
+        root: typeof request.body?.root === "string" ? request.body.root : cwd,
+        relativePath: typeof request.body?.path === "string" ? request.body.path : "",
+        name: request.body?.name,
+        fallbackCwd: cwd,
+      });
+
+      response.status(201).json(payload);
     } catch (error) {
       response.status(error.statusCode || 400).json({ error: error.message });
     }

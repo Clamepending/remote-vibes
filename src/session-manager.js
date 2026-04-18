@@ -202,7 +202,7 @@ function getManagedProviderLaunchCommand(provider) {
   }
 
   if (provider.id === "claude" || provider.id === "codex") {
-    return provider.command || provider.launchCommand || null;
+    return path.join(helperBinDir, provider.command || provider.id);
   }
 
   return provider.launchCommand || provider.command || null;
@@ -933,6 +933,8 @@ export class SessionManager {
     }
 
     const createdAt = new Date().toISOString();
+    const forkProviderState = this.getForkProviderState(sourceSession);
+    const sharesProviderMemory = Boolean(forkProviderState?.sessionId);
     const forkSession = this.buildSessionRecord({
       cwd: sourceSession.cwd,
       name: this.makeForkName(sourceSession.name),
@@ -942,10 +944,13 @@ export class SessionManager {
       updatedAt: createdAt,
       cols: sourceSession.cols,
       rows: sourceSession.rows,
+      providerState: forkProviderState,
       restoreOnStartup: true,
       buffer: [
         `\u001b[1;36m[remote-vibes]\u001b[0m forked from: ${sourceSession.name}`,
-        `\u001b[1;36m[remote-vibes]\u001b[0m this is a fresh sibling session in the same cwd`,
+        sharesProviderMemory
+          ? `\u001b[1;36m[remote-vibes]\u001b[0m resuming the source agent memory in the same cwd`
+          : `\u001b[1;36m[remote-vibes]\u001b[0m started in the same cwd; no provider memory id was available to resume`,
         "",
       ].join("\r\n"),
       autoRenameEnabled: sourceSession.providerId !== "shell",
@@ -963,6 +968,28 @@ export class SessionManager {
 
     this.schedulePersist({ immediate: true });
     return this.serializeSession(forkSession);
+  }
+
+  getForkProviderState(sourceSession) {
+    if (!sourceSession) {
+      return null;
+    }
+
+    const sourceProviderSessionId =
+      sourceSession.providerState?.sessionId ||
+      (sourceSession.providerId === "claude" ? sourceSession.id : null);
+
+    if (!sourceProviderSessionId) {
+      return sourceSession.providerState
+        ? { ...sourceSession.providerState, forkedFromSessionId: sourceSession.id }
+        : null;
+    }
+
+    return {
+      ...(sourceSession.providerState || {}),
+      sessionId: sourceProviderSessionId,
+      forkedFromSessionId: sourceSession.id,
+    };
   }
 
   deleteSession(sessionId) {
@@ -1433,12 +1460,12 @@ export class SessionManager {
         "--session-id",
         sessionId || session.id,
       ]);
+      const resumeCommand = sessionId
+        ? buildShellCommand(launchCommand, [CLAUDE_SKIP_PERMISSIONS_ARG, "--resume", sessionId])
+        : null;
       return {
-        commandString: restored && sessionId
-          ? buildFallbackCommand([
-              buildShellCommand(launchCommand, [CLAUDE_SKIP_PERMISSIONS_ARG, "--resume", sessionId]),
-              createCommand,
-            ])
+        commandString: (restored || session.providerState?.forkedFromSessionId) && sessionId
+          ? buildFallbackCommand([resumeCommand, createCommand])
           : createCommand,
         afterLaunch: null,
       };
@@ -1452,6 +1479,18 @@ export class SessionManager {
         await listCodexTrackedSessions(this.userHomeDir),
         session.cwd,
       );
+      const existingSessionId = session.providerState?.sessionId || null;
+
+      if (!restored && existingSessionId) {
+        this.setPendingProviderCapture(session, null);
+        return {
+          commandString: buildFallbackCommand([
+            buildShellCommand(launchCommand, ["resume", existingSessionId]),
+            createCommand,
+          ]),
+          afterLaunch: null,
+        };
+      }
 
       if (restored) {
         this.setPendingProviderCapture(session, null);
@@ -1489,6 +1528,19 @@ export class SessionManager {
     if (provider.id === "gemini") {
       const knownSessions = await listGeminiSessions(session.cwd, this.userHomeDir);
       const createCommand = buildShellCommand(provider.launchCommand);
+      const existingSessionId = session.providerState?.sessionId || null;
+
+      if (!restored && existingSessionId) {
+        this.setPendingProviderCapture(session, null);
+        return {
+          commandString: buildFallbackCommand([
+            buildShellCommand(provider.launchCommand, ["--resume", existingSessionId]),
+            buildShellCommand(provider.launchCommand, ["--resume", "latest"]),
+            createCommand,
+          ]),
+          afterLaunch: null,
+        };
+      }
 
       if (restored) {
         this.setPendingProviderCapture(session, null);
@@ -1526,6 +1578,16 @@ export class SessionManager {
       this.setPendingProviderCapture(session, null);
       return {
         commandString: buildShellCommand(provider.launchCommand),
+        afterLaunch: null,
+      };
+    }
+
+    const existingSessionId = session.providerState?.sessionId || null;
+
+    if (!restored && existingSessionId) {
+      this.setPendingProviderCapture(session, null);
+      return {
+        commandString: buildShellCommand(provider.launchCommand, ["--session", existingSessionId]),
         afterLaunch: null,
       };
     }

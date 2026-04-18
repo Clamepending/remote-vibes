@@ -5,7 +5,7 @@ import os from "node:os";
 import path from "node:path";
 import test from "node:test";
 import { once } from "node:events";
-import { mkdtemp, mkdir, readFile, realpath, rm, writeFile } from "node:fs/promises";
+import { chmod, mkdtemp, mkdir, readFile, realpath, rm, writeFile } from "node:fs/promises";
 import { promisify } from "node:util";
 import { WebSocket } from "ws";
 import { createRemoteVibesApp } from "../src/create-app.js";
@@ -660,6 +660,34 @@ test("folder browser api lists selectable folders and supports parent navigation
       childPayload.entries.map((entry) => entry.name),
       ["nested"],
     );
+
+    const createResponse = await fetch(`${baseUrl}/api/folders`, {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify({
+        root: workspaceDir,
+        name: "beta",
+      }),
+    });
+    assert.equal(createResponse.status, 201);
+    const createPayload = await createResponse.json();
+    assert.equal(createPayload.folder.name, "beta");
+    assert.equal(createPayload.folder.path, await realpath(path.join(workspaceDir, "beta")));
+
+    const traversalResponse = await fetch(`${baseUrl}/api/folders`, {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify({
+        root: workspaceDir,
+        name: "../outside",
+      }),
+    });
+    assert.equal(traversalResponse.status, 400);
+    assert.match((await traversalResponse.json()).error, /single folder name/i);
   } finally {
     await app.close();
     await rm(workspaceDir, { recursive: true, force: true });
@@ -907,7 +935,7 @@ test("rv-session-name falls back to a filesystem request when localhost is unrea
   }
 });
 
-test("sessions can be forked into fresh sibling sessions", async () => {
+test("sessions can be forked and report whether provider memory is resumable", async () => {
   const { app, baseUrl } = await startApp();
 
   try {
@@ -968,12 +996,168 @@ test("sessions can be forked into fresh sibling sessions", async () => {
     });
 
     assert.match(snapshot.data, /forked from: Parent Session/);
-    assert.match(snapshot.data, /fresh sibling session/i);
+    assert.match(snapshot.data, /no provider memory id was available to resume/i);
 
     websocket.close();
     await once(websocket, "close");
   } finally {
     await app.close();
+  }
+});
+
+test("forked Claude sessions resume source memory with a secret-word flow", async () => {
+  const workspaceDir = await createTempWorkspace("remote-vibes-claude-fork-memory-");
+  const fakeBinDir = path.join(workspaceDir, "fake-bin");
+  const memoryDir = path.join(workspaceDir, "fake-claude-memory");
+  await mkdir(fakeBinDir, { recursive: true });
+  await mkdir(memoryDir, { recursive: true });
+
+  const fakeClaudePath = path.join(fakeBinDir, "claude");
+  await writeFile(
+    fakeClaudePath,
+    `#!/usr/bin/env bash
+set -euo pipefail
+if [ "\${1:-}" = "--version" ]; then
+  printf 'Claude Code v0.0.0-test\\n'
+  exit 0
+fi
+session_id=""
+previous=""
+for arg in "$@"; do
+  if [ "$previous" = "--session-id" ] || [ "$previous" = "--resume" ]; then
+    session_id="$arg"
+  fi
+  previous="$arg"
+done
+if [ -z "$session_id" ]; then
+  session_id="default"
+fi
+memory_file="$FAKE_CLAUDE_MEMORY_DIR/$session_id.txt"
+printf '[fake-claude] session %s ready\\n' "$session_id"
+while IFS= read -r line; do
+  clean="$(printf '%s' "$line" | tr -d '\\r')"
+  case "$clean" in
+    *"remember our secret word is "*)
+      secret="\${clean##*remember our secret word is }"
+      printf '%s\\n' "$secret" > "$memory_file"
+      printf 'remembered %s\\n' "$secret"
+      ;;
+    *"what was the secret word"*)
+      if [ -f "$memory_file" ]; then
+        printf 'secret word: %s\\n' "$(cat "$memory_file")"
+      else
+        printf 'secret word: unknown\\n'
+      fi
+      ;;
+    *)
+      printf 'heard: %s\\n' "$clean"
+      ;;
+  esac
+done
+`,
+    "utf8",
+  );
+  await chmod(fakeClaudePath, 0o755);
+
+  const previousMemoryDir = process.env.FAKE_CLAUDE_MEMORY_DIR;
+  process.env.FAKE_CLAUDE_MEMORY_DIR = memoryDir;
+
+  const { app, baseUrl } = await startApp({
+    cwd: workspaceDir,
+    stateDir: path.join(workspaceDir, ".remote-vibes"),
+    providers: [
+      {
+        id: "claude",
+        label: "Claude Code",
+        command: "claude",
+        defaultName: "Claude",
+        available: true,
+        launchCommand: fakeClaudePath,
+      },
+      {
+        id: "shell",
+        label: "Vanilla Shell",
+        command: null,
+        defaultName: "Shell",
+        available: true,
+        launchCommand: null,
+      },
+    ],
+  });
+
+  const waitForSessionOutput = async (sessionId, trigger, matcher) => {
+    const websocket = new WebSocket(`${baseUrl.replace("http", "ws")}/ws?sessionId=${sessionId}`);
+
+    try {
+      return await new Promise((resolve, reject) => {
+        let combined = "";
+        let triggered = false;
+        const timeout = setTimeout(() => {
+          reject(new Error(`Timed out waiting for session output: ${matcher}\n${combined}`));
+        }, 8_000);
+
+        websocket.on("message", (chunk) => {
+          const payload = JSON.parse(String(chunk));
+          combined += payload.data || "";
+
+          if (!triggered && combined.includes("[fake-claude] session")) {
+            triggered = true;
+            websocket.send(JSON.stringify({ type: "input", data: trigger }));
+          }
+
+          if (matcher.test(combined)) {
+            clearTimeout(timeout);
+            resolve(combined);
+          }
+        });
+      });
+    } finally {
+      websocket.close();
+      await once(websocket, "close").catch(() => {});
+    }
+  };
+
+  try {
+    const createResponse = await fetch(`${baseUrl}/api/sessions`, {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify({
+        providerId: "claude",
+        name: "Secret Parent",
+        cwd: workspaceDir,
+      }),
+    });
+    assert.equal(createResponse.status, 201);
+    const { session: parentSession } = await createResponse.json();
+
+    await waitForSessionOutput(
+      parentSession.id,
+      "remember our secret word is amethyst\r",
+      /remembered amethyst/,
+    );
+
+    const forkResponse = await fetch(`${baseUrl}/api/sessions/${parentSession.id}/fork`, {
+      method: "POST",
+    });
+    assert.equal(forkResponse.status, 201);
+    const { session: forkSession } = await forkResponse.json();
+
+    const forkOutput = await waitForSessionOutput(
+      forkSession.id,
+      "what was the secret word?\r",
+      /secret word: amethyst/,
+    );
+    assert.match(forkOutput, /resuming the source agent memory/i);
+  } finally {
+    await app.close();
+    if (previousMemoryDir === undefined) {
+      delete process.env.FAKE_CLAUDE_MEMORY_DIR;
+    } else {
+      process.env.FAKE_CLAUDE_MEMORY_DIR = previousMemoryDir;
+    }
+    await rm(workspaceDir, { recursive: true, force: true });
   }
 });
 

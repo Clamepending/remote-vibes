@@ -74,6 +74,13 @@ async function cleanupManager(manager, workspaceDir, userHomeDir) {
   await rm(userHomeDir, { recursive: true, force: true });
 }
 
+function shellQuote(value) {
+  return `'${String(value).replace(/'/g, `'\\''`)}'`;
+}
+
+const claudeWrapperCommand = shellQuote(path.join(process.cwd(), "bin", "claude"));
+const codexWrapperCommand = shellQuote(path.join(process.cwd(), "bin", "codex"));
+
 async function appendCodexSessionIndex(homeDir, entries) {
   const codexDir = path.join(homeDir, ".codex");
   await mkdir(codexDir, { recursive: true });
@@ -235,13 +242,13 @@ test("Claude sessions use a fixed session id and resume it after restart", async
     const firstLaunch = await manager.prepareProviderLaunch(session, provider, { restored: false });
     assert.equal(
       firstLaunch.commandString,
-      "'claude' '--dangerously-skip-permissions' '--session-id' '11111111-2222-4333-8444-555555555555'",
+      `${claudeWrapperCommand} '--dangerously-skip-permissions' '--session-id' '11111111-2222-4333-8444-555555555555'`,
     );
 
     const restoredLaunch = await manager.prepareProviderLaunch(session, provider, { restored: true });
     assert.equal(
       restoredLaunch.commandString,
-      "'claude' '--dangerously-skip-permissions' '--resume' '11111111-2222-4333-8444-555555555555' || 'claude' '--dangerously-skip-permissions' '--session-id' '11111111-2222-4333-8444-555555555555'",
+      `${claudeWrapperCommand} '--dangerously-skip-permissions' '--resume' '11111111-2222-4333-8444-555555555555' || ${claudeWrapperCommand} '--dangerously-skip-permissions' '--session-id' '11111111-2222-4333-8444-555555555555'`,
     );
   } finally {
     await cleanupManager(manager, workspaceDir, userHomeDir);
@@ -299,11 +306,117 @@ test("Claude and Codex provider launches use the managed wrapper command when a 
     const claudeLaunch = await manager.prepareProviderLaunch(claudeSession, claudeProvider, { restored: false });
     assert.equal(
       claudeLaunch.commandString,
-      "'claude' '--dangerously-skip-permissions' '--session-id' '55555555-6666-4777-8888-999999999999'",
+      `${claudeWrapperCommand} '--dangerously-skip-permissions' '--session-id' '55555555-6666-4777-8888-999999999999'`,
     );
 
     const codexLaunch = await manager.prepareProviderLaunch(codexSession, codexProvider, { restored: false });
-    assert.equal(codexLaunch.commandString, "'codex'");
+    assert.equal(codexLaunch.commandString, codexWrapperCommand);
+  } finally {
+    await cleanupManager(manager, workspaceDir, userHomeDir);
+  }
+});
+
+test("forked provider launches resume the source provider session when available", async () => {
+  const { manager, workspaceDir, userHomeDir } = await createManager();
+
+  try {
+    const claudeLaunch = await manager.prepareProviderLaunch(
+      manager.buildSessionRecord({
+        providerId: "claude",
+        providerLabel: "Claude Code",
+        name: "Claude fork",
+        cwd: workspaceDir,
+        providerState: {
+          sessionId: "source-claude-session",
+          forkedFromSessionId: "parent-claude",
+        },
+      }),
+      manager.getProvider("claude"),
+      { restored: false },
+    );
+    assert.equal(
+      claudeLaunch.commandString,
+      `${claudeWrapperCommand} '--dangerously-skip-permissions' '--resume' 'source-claude-session' || ${claudeWrapperCommand} '--dangerously-skip-permissions' '--session-id' 'source-claude-session'`,
+    );
+
+    const codexLaunch = await manager.prepareProviderLaunch(
+      manager.buildSessionRecord({
+        providerId: "codex",
+        providerLabel: "Codex",
+        name: "Codex fork",
+        cwd: workspaceDir,
+        providerState: {
+          sessionId: "source-codex-thread",
+          forkedFromSessionId: "parent-codex",
+        },
+      }),
+      manager.getProvider("codex"),
+      { restored: false },
+    );
+    assert.equal(codexLaunch.commandString, `${codexWrapperCommand} 'resume' 'source-codex-thread' || ${codexWrapperCommand}`);
+
+    const geminiLaunch = await manager.prepareProviderLaunch(
+      manager.buildSessionRecord({
+        providerId: "gemini",
+        providerLabel: "Gemini CLI",
+        name: "Gemini fork",
+        cwd: workspaceDir,
+        providerState: {
+          sessionId: "source-gemini-chat",
+          forkedFromSessionId: "parent-gemini",
+        },
+      }),
+      manager.getProvider("gemini"),
+      { restored: false },
+    );
+    assert.equal(
+      geminiLaunch.commandString,
+      "'gemini' '--resume' 'source-gemini-chat' || 'gemini' '--resume' 'latest' || 'gemini'",
+    );
+
+    const openCodeLaunch = await manager.prepareProviderLaunch(
+      manager.buildSessionRecord({
+        providerId: "opencode",
+        providerLabel: "OpenCode",
+        name: "OpenCode fork",
+        cwd: workspaceDir,
+        providerState: {
+          sessionId: "source-opencode-session",
+          forkedFromSessionId: "parent-opencode",
+        },
+      }),
+      manager.getProvider("opencode"),
+      { restored: false },
+    );
+    assert.equal(openCodeLaunch.commandString, "'opencode' '--session' 'source-opencode-session'");
+  } finally {
+    await cleanupManager(manager, workspaceDir, userHomeDir);
+  }
+});
+
+test("forkSession carries the source provider session id into the fork", async () => {
+  const { manager, workspaceDir, userHomeDir } = await createManager();
+
+  try {
+    const sourceSession = manager.buildSessionRecord({
+      id: "11111111-2222-4333-8444-555555555555",
+      providerId: "codex",
+      providerLabel: "Codex",
+      name: "Parent Codex",
+      cwd: workspaceDir,
+      status: "running",
+      providerState: {
+        sessionId: "source-codex-thread",
+      },
+    });
+    manager.sessions.set(sourceSession.id, sourceSession);
+
+    const fork = manager.forkSession(sourceSession.id);
+    assert.ok(fork);
+    const forkRecord = manager.sessions.get(fork.id);
+    assert.equal(forkRecord.providerState.sessionId, "source-codex-thread");
+    assert.equal(forkRecord.providerState.forkedFromSessionId, sourceSession.id);
+    assert.match(forkRecord.buffer, /resuming the source agent memory/i);
   } finally {
     await cleanupManager(manager, workspaceDir, userHomeDir);
   }
@@ -334,7 +447,7 @@ test("Codex sessions capture the created Codex thread id and resume it after res
     ]);
 
     const firstLaunch = await manager.prepareProviderLaunch(session, provider, { restored: false });
-    assert.equal(firstLaunch.commandString, "'codex'");
+    assert.equal(firstLaunch.commandString, codexWrapperCommand);
 
     const newSessionId = "019d92d2-75bb-74f2-bb76-ff8c56cf5626";
     const newUpdatedAt = "2026-04-15T21:00:00.000Z";
@@ -360,7 +473,7 @@ test("Codex sessions capture the created Codex thread id and resume it after res
     const restoredLaunch = await manager.prepareProviderLaunch(session, provider, { restored: true });
     assert.equal(
       restoredLaunch.commandString,
-      "'codex' 'resume' '019d92d2-75bb-74f2-bb76-ff8c56cf5626' || 'codex' 'resume' '--last' || 'codex'",
+      `${codexWrapperCommand} 'resume' '019d92d2-75bb-74f2-bb76-ff8c56cf5626' || ${codexWrapperCommand} 'resume' '--last' || ${codexWrapperCommand}`,
     );
   } finally {
     await cleanupManager(manager, workspaceDir, userHomeDir);
@@ -384,7 +497,7 @@ test("Codex sessions capture the created Codex thread id from prompt history and
     session.pty = fakePty;
 
     const firstLaunch = await manager.prepareProviderLaunch(session, provider, { restored: false });
-    assert.equal(firstLaunch.commandString, "'codex'");
+    assert.equal(firstLaunch.commandString, codexWrapperCommand);
 
     const codexSessionId = "019d9376-d3dd-73f0-9a04-29dee0a2662f";
     const updatedAt = "2026-04-15T23:25:48.000Z";

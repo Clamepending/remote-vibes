@@ -712,7 +712,17 @@ function getFolderPickerTargetInput() {
     return document.querySelector("#files-root-input");
   }
 
-  return document.querySelector("#session-cwd-input");
+  return null;
+}
+
+function getSelectedSessionProviderId() {
+  const select = document.querySelector("#session-provider-select");
+
+  if (select instanceof HTMLSelectElement && select.value) {
+    return select.value;
+  }
+
+  return state.defaultProviderId;
 }
 
 function getSleepPreventionStatusText() {
@@ -795,9 +805,60 @@ function getWikiBackupStatusText() {
   return backup.lastMessage || backup.lastStatus;
 }
 
-function applyFolderPickerSelection() {
+async function createSessionInFolder(cwd) {
+  const selectedCwd = normalizeWorkspaceRoot(cwd);
+
+  if (!selectedCwd) {
+    throw new Error("Choose a folder before starting a session.");
+  }
+
+  const providerId = getSelectedSessionProviderId();
+  const payload = await fetchJson("/api/sessions", {
+    method: "POST",
+    body: JSON.stringify({ providerId, cwd: selectedCwd }),
+  });
+
+  state.defaultCwd = selectedCwd;
+  state.defaultProviderId = providerId;
+  state.folderPicker.open = false;
+  state.sessions = [payload.session, ...state.sessions];
+  state.activeSessionId = payload.session.id;
+  renderShell();
+  connectToSession(payload.session.id);
+  closeMobileSidebar();
+}
+
+async function createFolderFromPicker(folderName) {
+  const currentPath = getFolderPickerCurrentPath();
+  const payload = await fetchJson("/api/folders", {
+    method: "POST",
+    body: JSON.stringify({
+      root: currentPath,
+      name: folderName,
+    }),
+  });
+  const createdPath = payload?.folder?.path || "";
+
+  if (!createdPath) {
+    throw new Error("Folder was created, but Remote Vibes could not resolve its path.");
+  }
+
+  if (state.folderPicker.target === "session") {
+    await createSessionInFolder(createdPath);
+    return;
+  }
+
+  await loadFolderPicker(createdPath, { target: state.folderPicker.target });
+}
+
+async function applyFolderPickerSelection() {
   const input = getFolderPickerTargetInput();
   const selectedPath = getFolderPickerCurrentPath();
+
+  if (state.folderPicker.target === "session") {
+    await createSessionInFolder(selectedPath);
+    return;
+  }
 
   if (input instanceof HTMLInputElement && selectedPath) {
     input.value = selectedPath;
@@ -2480,10 +2541,11 @@ function renderFileTreeNodes(parentPath = "", depth = 0) {
         return `
           <div class="file-node">
             <button class="file-row file-row-button" type="button" data-file-toggle="${escapeHtml(entry.relativePath)}" style="--depth:${depth}">
-              <span class="file-caret">${expanded ? "v" : ">"}</span>
+              <span class="file-caret">${expanded ? "▾" : "▸"}</span>
+              <span class="file-icon file-icon-folder ${expanded ? "is-open" : ""}" aria-hidden="true"></span>
               <span class="file-label">${escapeHtml(entry.name)}</span>
             </button>
-            ${children}
+            ${children ? `<div class="file-children" style="--depth:${depth}">${children}</div>` : ""}
           </div>
         `;
       }
@@ -2498,7 +2560,8 @@ function renderFileTreeNodes(parentPath = "", depth = 0) {
           data-file-open-mode="${openMode}"
           style="--depth:${depth}"
         >
-          <span class="file-caret">${entry.isImage ? "img" : openMode === "text" ? "txt" : "file"}</span>
+          <span class="file-caret file-caret-spacer">·</span>
+          <span class="file-icon ${entry.isImage ? "file-icon-image" : openMode === "text" ? "file-icon-text" : "file-icon-file"}" aria-hidden="true"></span>
           <span class="file-label">${escapeHtml(entry.name)}</span>
         </button>
       `;
@@ -2601,7 +2664,6 @@ function renderTerminalPanel(activeSession) {
           )}</div>
         </div>
         <div class="toolbar-actions">
-          <button class="ghost-button hidden-desktop toolbar-control" type="button" id="open-files-sidebar" aria-label="Open files sidebar">files</button>
           <button class="icon-button" type="button" id="refresh-sessions" aria-label="Refresh sessions">↻</button>
           <button class="ghost-button toolbar-control" type="button" id="tab-button" data-terminal-control aria-label="Send Tab" ${activeSession ? "" : "disabled"}>tab</button>
           <button class="ghost-button toolbar-control" type="button" id="shift-tab-button" data-terminal-control aria-label="Send Shift Tab" ${activeSession ? "" : "disabled"}>⇧⇥</button>
@@ -2617,7 +2679,7 @@ function renderTerminalPanel(activeSession) {
           bottom
         </button>
         <div class="empty-state ${activeSession ? "hidden" : ""}" id="empty-state">
-          <p class="empty-state-copy">open the menu by tapping the top left icon, then click + to create a new session</p>
+          <p class="empty-state-copy">open the menu, choose a CLI, then pick or create a folder to start a session</p>
         </div>
       </div>
     </section>
@@ -2707,6 +2769,7 @@ function renderFolderPickerModal() {
   }
 
   const currentPath = getFolderPickerCurrentPath();
+  const isSessionTarget = state.folderPicker.target === "session";
 
   return `
     <div class="prompt-modal-shell" data-folder-picker-modal>
@@ -2719,8 +2782,22 @@ function renderFolderPickerModal() {
         <div class="folder-picker-path" title="${escapeHtml(currentPath)}">${escapeHtml(currentPath)}</div>
         <div class="folder-picker-actions">
           <button class="ghost-button folder-picker-button" type="button" id="folder-picker-up" ${state.folderPicker.parentPath ? "" : "disabled"}>up</button>
-          <button class="primary-button folder-picker-button" type="button" id="folder-picker-select" ${currentPath ? "" : "disabled"}>choose this folder</button>
+          <button class="primary-button folder-picker-button" type="button" id="folder-picker-select" ${currentPath ? "" : "disabled"}>${isSessionTarget ? "start session here" : "choose this folder"}</button>
         </div>
+        <form class="folder-create-form" id="folder-create-form">
+          <input
+            class="file-root-input"
+            id="folder-picker-new-folder"
+            name="folderName"
+            type="text"
+            placeholder="new folder name"
+            autocomplete="off"
+            autocorrect="off"
+            autocapitalize="none"
+            spellcheck="false"
+          />
+          <button class="ghost-button folder-picker-button" type="submit">${isSessionTarget ? "create + start" : "create folder"}</button>
+        </form>
         <div class="folder-picker-list">${renderFolderPickerEntries()}</div>
       </section>
     </div>
@@ -2811,28 +2888,9 @@ function renderShell() {
         <div class="sidebar-body">
           <div class="update-slot" id="update-banner">${renderUpdateBanner()}</div>
 
-          <form class="session-form" id="session-form">
-            <select name="providerId">${providerOptions}</select>
-            <div class="folder-input-row">
-              <input
-                id="session-cwd-input"
-                type="text"
-                name="cwd"
-                value="${escapeHtml(state.defaultCwd || "")}"
-                placeholder="session folder"
-                readonly
-                data-folder-picker-target="session"
-                autocomplete="off"
-                autocorrect="off"
-                autocapitalize="none"
-                spellcheck="false"
-              />
-              <button class="ghost-button folder-browse-button" type="button" data-folder-picker-target="session">choose</button>
-            </div>
-            <div class="inline-form">
-              <input type="text" name="name" placeholder="name" />
-              <button class="primary-button" type="submit">+</button>
-            </div>
+          <form class="session-form session-launcher" id="session-form">
+            <select id="session-provider-select" name="providerId" aria-label="Session CLI">${providerOptions}</select>
+            <button class="primary-button session-folder-button" type="button" data-folder-picker-target="session">choose folder</button>
           </form>
 
           <section class="sidebar-section">
@@ -2842,29 +2900,25 @@ function renderShell() {
             <div class="list-shell" id="sessions-list">${renderSessionCards()}</div>
           </section>
 
-          <section class="sidebar-section">
+          <section class="sidebar-section knowledge-settings-section">
             <div class="section-head">
               <span>knowledge base</span>
-              <a
-                class="ghost-button"
-                id="open-knowledge-base"
-                href="${escapeHtml(getKnowledgeBaseUrl(state.knowledgeBase.selectedNotePath || ""))}"
-                target="_blank"
-                rel="noreferrer"
-              >
-                view
-              </a>
+              <div class="section-actions">
+                <a
+                  class="ghost-button"
+                  id="open-knowledge-base"
+                  href="${escapeHtml(getKnowledgeBaseUrl(state.knowledgeBase.selectedNotePath || ""))}"
+                  target="_blank"
+                  rel="noreferrer"
+                >
+                  view
+                </a>
+                <button class="ghost-button" type="button" id="backup-wiki-now">backup now</button>
+              </div>
             </div>
             <div class="prompt-copy">
               <div>obsidian-style view for ${escapeHtml(state.settings.wikiRelativeRoot || state.agentPromptWikiRoot)}</div>
-              <div>markdown notes + graph view in a dedicated tab</div>
-            </div>
-          </section>
-
-          <section class="sidebar-section">
-            <div class="section-head">
-              <span>settings</span>
-              <button class="ghost-button" type="button" id="backup-wiki-now">backup now</button>
+              <div>${escapeHtml(getWikiBackupStatusText())}</div>
             </div>
             <form class="settings-form" id="settings-form">
               <label class="field-label" for="wiki-path-input">wiki folder</label>
@@ -2990,43 +3044,6 @@ function renderShell() {
       ${renderTerminalPanel(activeSession)}
       ${renderAgentPromptModal()}
       ${renderFolderPickerModal()}
-      <aside class="sidebar sidebar-right ${state.mobileSidebar === "right" ? "is-open" : ""}" data-sidebar-panel="right">
-        <div class="sidebar-mobile-actions sidebar-mobile-actions-right">
-          <button class="icon-button hidden-desktop" type="button" id="close-right-sidebar">×</button>
-        </div>
-
-        <div class="sidebar-body">
-          <section class="sidebar-section sidebar-section-fill">
-            <div class="section-head">
-              <span>files</span>
-              <div class="section-actions">
-                <button class="ghost-button files-root-reset" type="button" id="auto-files-root" ${state.filesRootOverride ? "" : "disabled"}>auto</button>
-                <button class="icon-button" type="button" id="refresh-files">↻</button>
-              </div>
-            </div>
-            <form class="file-root-form" id="files-root-form">
-              <input
-                class="file-root-input"
-                id="files-root-input"
-                name="root"
-                type="text"
-                value="${escapeHtml(state.filesRoot || state.defaultCwd || "")}"
-                placeholder="${escapeHtml(state.defaultCwd || "workspace path")}"
-                readonly
-                data-folder-picker-target="files"
-                autocomplete="off"
-                autocorrect="off"
-                autocapitalize="none"
-                spellcheck="false"
-              />
-              <button class="ghost-button file-root-submit" type="button" data-folder-picker-target="files">choose</button>
-            </form>
-            <div class="file-browser-stack">
-              <div class="file-tree" id="files-tree">${renderFileTree()}</div>
-            </div>
-          </section>
-        </div>
-      </aside>
     </main>
   `;
 
@@ -4099,15 +4116,23 @@ function setCurrentView(nextView, { notePath = state.knowledgeBase.selectedNoteP
 }
 
 function bindShellEvents() {
+  document.querySelector("#session-provider-select")?.addEventListener("change", () => {
+    state.defaultProviderId = getSelectedSessionProviderId();
+  });
+
   document.querySelectorAll("[data-folder-picker-target]").forEach((button) => {
     button.addEventListener("click", async () => {
       const target = button.getAttribute("data-folder-picker-target") || "session";
+      if (target === "session") {
+        state.defaultProviderId = getSelectedSessionProviderId();
+      }
+
       const input =
         target === "wiki"
           ? document.querySelector("#wiki-path-input")
           : target === "files"
             ? document.querySelector("#files-root-input")
-            : document.querySelector("#session-cwd-input");
+            : null;
       const initialPath =
         input instanceof HTMLInputElement && input.value.trim()
           ? input.value.trim()
@@ -4146,29 +4171,22 @@ function bindShellEvents() {
     });
   });
 
-  document.querySelector("#folder-picker-select")?.addEventListener("click", () => {
-    applyFolderPickerSelection();
+  document.querySelector("#folder-picker-select")?.addEventListener("click", async () => {
+    try {
+      await applyFolderPickerSelection();
+    } catch (error) {
+      window.alert(error.message);
+    }
   });
 
-  document.querySelector("#session-form")?.addEventListener("submit", async (event) => {
+  document.querySelector("#folder-create-form")?.addEventListener("submit", async (event) => {
     event.preventDefault();
-    const formData = new FormData(event.currentTarget);
-    const providerId = String(formData.get("providerId") || state.defaultProviderId);
-    const cwd = String(formData.get("cwd") || state.defaultCwd || "");
-    const name = String(formData.get("name") || "");
+    const form = event.currentTarget;
+    const formData = new FormData(form);
+    const folderName = String(formData.get("folderName") || "");
 
     try {
-      const payload = await fetchJson("/api/sessions", {
-        method: "POST",
-        body: JSON.stringify({ providerId, name, cwd }),
-      });
-
-      state.defaultCwd = cwd || state.defaultCwd;
-      state.sessions = [payload.session, ...state.sessions];
-      state.activeSessionId = payload.session.id;
-      renderShell();
-      connectToSession(payload.session.id);
-      closeMobileSidebar();
+      await createFolderFromPicker(folderName);
     } catch (error) {
       window.alert(error.message);
     }
@@ -4287,9 +4305,7 @@ function bindShellEvents() {
   });
   document.querySelector("#refresh-ports")?.addEventListener("click", () => loadPorts());
   document.querySelector("#open-sidebar")?.addEventListener("click", () => setMobileSidebar("left"));
-  document.querySelector("#open-files-sidebar")?.addEventListener("click", () => setMobileSidebar("right"));
   document.querySelector("#close-left-sidebar")?.addEventListener("click", () => closeMobileSidebar());
-  document.querySelector("#close-right-sidebar")?.addEventListener("click", () => closeMobileSidebar());
   document.querySelector("[data-sidebar-scrim]")?.addEventListener("click", () => closeMobileSidebar());
   document.querySelector("#relaunch-app")?.addEventListener("click", async (event) => {
     const button = event.currentTarget;
