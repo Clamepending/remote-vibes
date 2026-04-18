@@ -2155,31 +2155,55 @@ input[readonly][data-folder-picker-target] {
 .knowledge-base-note-list {
   display: grid;
   align-content: start;
-  gap: 8px;
+  gap: 4px;
 }
 
 .knowledge-base-note-row {
   display: grid;
-  gap: 6px;
-  padding: 12px;
+  grid-template-columns: 10px minmax(0, 1fr);
+  align-items: center;
+  gap: 10px;
+  min-height: 38px;
+  padding: 7px 10px;
   border: 1px solid transparent;
-  border-radius: 16px;
-  background: var(--surface);
+  border-radius: 12px;
+  background: transparent;
   color: inherit;
   text-align: left;
 }
 
 .knowledge-base-note-row:hover {
   border-color: rgba(255, 255, 255, 0.1);
-  background: var(--surface-hover);
+  background: rgba(255, 255, 255, 0.045);
 }
 
 .knowledge-base-note-row.is-active {
-  border-color: rgba(255, 255, 255, 0.14);
-  background: var(--surface-active);
+  border-color: rgba(255, 255, 255, 0.12);
+  background: rgba(255, 255, 255, 0.075);
+}
+
+.knowledge-base-note-accent {
+  width: 8px;
+  height: 8px;
+  border-radius: 999px;
+  background: var(--kb-note-accent-fill, var(--accent-soft));
+  box-shadow:
+    0 0 0 1px var(--kb-note-accent, var(--accent-line)),
+    0 0 16px rgba(255, 255, 255, 0.03);
+}
+
+.knowledge-base-note-row.is-active .knowledge-base-note-accent {
+  background: var(--kb-note-accent, var(--accent));
+  box-shadow:
+    0 0 0 2px rgba(255, 255, 255, 0.08),
+    0 0 18px var(--kb-note-accent-fill, var(--accent-soft));
 }
 
 .knowledge-base-note-title {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
   font-weight: 700;
 }
 

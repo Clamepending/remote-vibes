@@ -3399,16 +3399,23 @@ function renderKnowledgeBaseNoteList() {
   return notes
     .map((note) => {
       const isActive = note.relativePath === state.knowledgeBase.selectedNotePath;
-      const matchLabel = query ? "matches search" : note.excerpt || "No preview yet.";
+      const matchLabel = query ? "matches search" : note.excerpt || note.relativePath || "No preview yet.";
+      const noteColor = getKnowledgeBaseGraphColor(getKnowledgeBaseGraphGroupKey(note.relativePath));
+      const tooltip = [note.title, note.relativePath, matchLabel].filter(Boolean).join(" - ");
       return `
         <button
           class="knowledge-base-note-row ${isActive ? "is-active" : ""}"
           type="button"
           data-kb-note="${escapeHtml(note.relativePath)}"
+          aria-label="${escapeHtml(tooltip)}"
+          title="${escapeHtml(tooltip)}"
+          ${renderStyleVariables({
+            "--kb-note-accent": noteColor.stroke,
+            "--kb-note-accent-fill": noteColor.fill,
+          })}
         >
+          <span class="knowledge-base-note-accent" aria-hidden="true"></span>
           <span class="knowledge-base-note-title">${escapeHtml(note.title)}</span>
-          <span class="knowledge-base-note-path">${escapeHtml(note.relativePath)}</span>
-          <span class="knowledge-base-note-excerpt">${escapeHtml(matchLabel)}</span>
         </button>
       `;
     })
