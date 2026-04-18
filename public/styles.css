@@ -1501,10 +1501,6 @@ input[readonly][data-folder-picker-target] {
   font-size: 0.72rem;
 }
 
-.file-editor {
-  min-height: 0;
-}
-
 .file-editor-card {
   display: grid;
   grid-template-rows: auto auto minmax(0, 1fr);
@@ -1514,6 +1510,10 @@ input[readonly][data-folder-picker-target] {
   border: 1px solid var(--line);
   border-radius: 16px;
   background: rgba(255, 255, 255, 0.03);
+}
+
+.file-image-card {
+  grid-template-rows: auto minmax(0, 1fr);
 }
 
 .file-editor-head,
@@ -1584,6 +1584,34 @@ input[readonly][data-folder-picker-target] {
   font-family: "IBM Plex Mono", monospace;
   font-size: 0.76rem;
   line-height: 1.5;
+}
+
+.file-image-preview {
+  display: grid;
+  place-items: center;
+  min-height: 0;
+  overflow: auto;
+  border: 1px solid var(--line);
+  border-radius: 14px;
+  background:
+    linear-gradient(45deg, rgba(255, 255, 255, 0.025) 25%, transparent 25%),
+    linear-gradient(-45deg, rgba(255, 255, 255, 0.025) 25%, transparent 25%),
+    linear-gradient(45deg, transparent 75%, rgba(255, 255, 255, 0.025) 75%),
+    linear-gradient(-45deg, transparent 75%, rgba(255, 255, 255, 0.025) 75%),
+    rgba(8, 10, 12, 0.78);
+  background-position:
+    0 0,
+    0 8px,
+    8px -8px,
+    -8px 0;
+  background-size: 16px 16px;
+}
+
+.file-image-preview img {
+  display: block;
+  max-width: 100%;
+  max-height: 100%;
+  object-fit: contain;
 }
 
 .file-editor-screen {
@@ -1673,6 +1701,24 @@ input[readonly][data-folder-picker-target] {
   overflow: hidden;
 }
 
+.workspace-split {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr);
+  gap: 12px;
+  min-width: 0;
+  min-height: 0;
+  overflow: hidden;
+}
+
+.workspace-split.has-file-preview {
+  grid-template-columns: minmax(360px, 1.1fr) minmax(320px, 0.9fr);
+}
+
+.workspace-split > * {
+  min-width: 0;
+  min-height: 0;
+}
+
 .terminal-toolbar {
   display: grid;
   grid-template-columns: minmax(0, 1fr) auto;
@@ -1741,6 +1787,119 @@ input[readonly][data-folder-picker-target] {
   border-radius: 22px;
   background: var(--terminal);
   box-shadow: var(--shadow);
+}
+
+.file-preview-pane {
+  display: none;
+  min-height: 0;
+  overflow: hidden;
+  border: 1px solid rgba(255, 255, 255, 0.08);
+  border-radius: 22px;
+  background: rgba(13, 16, 18, 0.96);
+  box-shadow: var(--shadow);
+}
+
+.file-preview-pane.is-open {
+  display: grid;
+  grid-template-rows: auto minmax(0, 1fr);
+}
+
+.file-preview-tabs {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  align-items: stretch;
+  min-height: 42px;
+  border-bottom: 1px solid var(--line);
+  background: rgba(22, 26, 30, 0.92);
+}
+
+.file-preview-tab-strip {
+  display: flex;
+  min-width: 0;
+  overflow-x: auto;
+  scrollbar-width: none;
+}
+
+.file-preview-tab-strip::-webkit-scrollbar {
+  display: none;
+}
+
+.file-preview-tab {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  align-items: stretch;
+  min-width: 116px;
+  max-width: 210px;
+  border-right: 1px solid rgba(255, 255, 255, 0.06);
+  color: rgba(222, 228, 235, 0.76);
+}
+
+.file-preview-tab.is-active {
+  background: rgba(120, 126, 150, 0.28);
+  color: #f4f7fb;
+}
+
+.file-preview-tab-label,
+.file-preview-tab-close {
+  border-radius: 0;
+  background: transparent;
+  color: inherit;
+}
+
+.file-preview-tab-label {
+  min-width: 0;
+  padding: 0 8px 0 12px;
+  text-align: left;
+}
+
+.file-preview-tab-name {
+  display: block;
+  overflow: hidden;
+  font-family: "IBM Plex Mono", monospace;
+  font-size: 0.72rem;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+}
+
+.file-preview-tab-close,
+.file-preview-close-all {
+  min-width: 36px;
+  min-height: 40px;
+  padding: 0 8px;
+  font-size: 1rem;
+  line-height: 1;
+}
+
+.file-preview-tab-close {
+  opacity: 0.72;
+}
+
+.file-preview-tab-close:hover,
+.file-preview-close-all:hover {
+  background: rgba(255, 255, 255, 0.08);
+  transform: none;
+}
+
+.file-preview-close-all {
+  border-left: 1px solid rgba(255, 255, 255, 0.06);
+  border-radius: 0;
+  background: transparent;
+}
+
+.file-preview-body {
+  display: grid;
+  min-height: 0;
+  overflow: hidden;
+  padding: 10px;
+}
+
+.file-preview-body .file-editor-card {
+  height: 100%;
+  min-height: 0;
+}
+
+.file-editor {
+  min-height: 0;
 }
 
 .terminal-mount {
@@ -1945,6 +2104,15 @@ select:disabled {
   }
 
   .terminal-stack {
+    border-radius: 20px;
+  }
+
+  .workspace-split.has-file-preview {
+    grid-template-columns: minmax(0, 1fr);
+    grid-template-rows: minmax(220px, 1fr) minmax(260px, 0.8fr);
+  }
+
+  .file-preview-pane {
     border-radius: 20px;
   }
 

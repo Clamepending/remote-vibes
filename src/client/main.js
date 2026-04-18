@@ -150,6 +150,7 @@ const state = {
   fileTreeExpanded: new Set([""]),
   fileTreeLoading: new Set(),
   fileTreeError: "",
+  openFileTabs: [],
   knowledgeBase: {
     rootPath: "",
     relativeRoot: ".remote-vibes/wiki",
@@ -1128,12 +1129,68 @@ function isLikelyTextFile(fileName) {
   return !normalized.includes(".");
 }
 
-function isOpenFileDirty() {
-  return state.openFileStatus === "text" && state.openFileDraft !== state.openFileContent;
+function getActiveOpenFileTab() {
+  const activePath = normalizeFileTreePath(state.openFileRelativePath);
+  return state.openFileTabs.find((tab) => tab.relativePath === activePath) || null;
+}
+
+function isOpenFileDirty(tab = getActiveOpenFileTab()) {
+  return tab?.status === "text" && tab.draft !== tab.content;
+}
+
+function syncOpenFileStateFromTab(tab = getActiveOpenFileTab()) {
+  if (!tab) {
+    state.openFileRelativePath = "";
+    state.openFileName = "";
+    state.openFileStatus = "idle";
+    state.openFileContent = "";
+    state.openFileDraft = "";
+    state.openFileMessage = "";
+    state.openFileSaving = false;
+    return;
+  }
+
+  state.openFileRelativePath = tab.relativePath;
+  state.openFileName = tab.name;
+  state.openFileStatus = tab.status;
+  state.openFileContent = tab.content;
+  state.openFileDraft = tab.draft;
+  state.openFileMessage = tab.message;
+  state.openFileSaving = tab.saving;
+}
+
+function ensureOpenFileTab(relativePath, { mode = "text" } = {}) {
+  const normalizedPath = normalizeFileTreePath(relativePath);
+  if (!normalizedPath) {
+    return null;
+  }
+
+  let tab = state.openFileTabs.find((entry) => entry.relativePath === normalizedPath);
+  if (!tab) {
+    tab = {
+      relativePath: normalizedPath,
+      name: getFileDisplayName(normalizedPath),
+      mode,
+      status: "loading",
+      content: "",
+      draft: "",
+      message: "",
+      saving: false,
+      requestId: 0,
+    };
+    state.openFileTabs.push(tab);
+  } else {
+    tab.mode = mode || tab.mode;
+  }
+
+  state.openFileRelativePath = normalizedPath;
+  syncOpenFileStateFromTab(tab);
+  return tab;
 }
 
 function resetOpenFile() {
   state.openFileRequestId += 1;
+  state.openFileTabs = [];
   state.openFileRelativePath = "";
   state.openFileName = "";
   state.openFileStatus = "idle";
@@ -1145,14 +1202,21 @@ function resetOpenFile() {
 
 function setOpenFileSelection(relativePath, { status = "external", message = "opened in a new tab" } = {}) {
   const normalizedPath = normalizeFileTreePath(relativePath);
+  const tab = ensureOpenFileTab(normalizedPath, {
+    mode: status === "image" ? "image" : status === "text" ? "text" : "raw",
+  });
+  if (!tab) {
+    return;
+  }
+
   state.openFileRequestId += 1;
-  state.openFileRelativePath = normalizedPath;
-  state.openFileName = getFileDisplayName(normalizedPath);
-  state.openFileStatus = status;
-  state.openFileContent = "";
-  state.openFileDraft = "";
-  state.openFileMessage = message;
-  state.openFileSaving = false;
+  tab.status = status;
+  tab.content = "";
+  tab.draft = "";
+  tab.message = message;
+  tab.saving = false;
+  tab.requestId = state.openFileRequestId;
+  syncOpenFileStateFromTab(tab);
 }
 
 function buildAppUrl(params = new URLSearchParams()) {
@@ -2534,7 +2598,8 @@ function renderOpenFilePanel() {
   }
 
   const rawHref = getFileContentUrl(state.openFileRelativePath);
-  const dirty = isOpenFileDirty();
+  const activeTab = getActiveOpenFileTab();
+  const dirty = isOpenFileDirty(activeTab);
 
   if (state.openFileStatus === "loading") {
     return `
@@ -2565,6 +2630,25 @@ function renderOpenFilePanel() {
           </div>
         </div>
         <div class="blank-state">${escapeHtml(state.openFileMessage || "opened in a new tab because this file is not editable as text")}</div>
+      </div>
+    `;
+  }
+
+  if (state.openFileStatus === "image") {
+    return `
+      <div class="file-editor-card file-image-card">
+        <div class="file-editor-head">
+          <div class="file-editor-copy">
+            <div class="file-editor-name">${escapeHtml(state.openFileName)}</div>
+            <div class="file-editor-path" title="${escapeHtml(state.openFileRelativePath)}">${escapeHtml(state.openFileRelativePath)}</div>
+          </div>
+          <div class="file-editor-actions">
+            <a class="ghost-button file-editor-open" href="${escapeHtml(rawHref)}" target="_blank" rel="noreferrer">raw</a>
+          </div>
+        </div>
+        <div class="file-image-preview">
+          <img src="${escapeHtml(rawHref)}" alt="${escapeHtml(state.openFileName)}" />
+        </div>
       </div>
     `;
   }
@@ -2612,6 +2696,41 @@ function renderOpenFilePanel() {
   `;
 }
 
+function renderOpenFileTabs() {
+  if (!state.openFileTabs.length) {
+    return "";
+  }
+
+  return state.openFileTabs
+    .map((tab) => {
+      const active = tab.relativePath === state.openFileRelativePath;
+      const dirty = isOpenFileDirty(tab);
+      return `
+        <div class="file-preview-tab ${active ? "is-active" : ""}" title="${escapeHtml(tab.relativePath)}">
+          <button class="file-preview-tab-label" type="button" data-file-tab="${escapeHtml(tab.relativePath)}">
+            <span class="file-preview-tab-name">${escapeHtml(tab.name)}${dirty ? " *" : ""}</span>
+          </button>
+          <button class="file-preview-tab-close" type="button" aria-label="Close ${escapeHtml(tab.name)}" data-close-file-tab="${escapeHtml(tab.relativePath)}">×</button>
+        </div>
+      `;
+    })
+    .join("");
+}
+
+function renderFilePreviewPane() {
+  const open = state.openFileTabs.length > 0;
+
+  return `
+    <aside class="file-preview-pane ${open ? "is-open" : ""}" id="file-preview-pane" aria-hidden="${open ? "false" : "true"}">
+      <div class="file-preview-tabs">
+        <div class="file-preview-tab-strip">${renderOpenFileTabs()}</div>
+        <button class="icon-button file-preview-close-all" type="button" id="close-file-preview" aria-label="Close file preview">×</button>
+      </div>
+      <div class="file-preview-body file-editor" id="file-editor">${renderOpenFilePanel()}</div>
+    </aside>
+  `;
+}
+
 function renderFileTreeNodes(parentPath = "", depth = 0) {
   const entries = state.fileTreeEntries[normalizeFileTreePath(parentPath)];
 
@@ -2642,7 +2761,7 @@ function renderFileTreeNodes(parentPath = "", depth = 0) {
       }
 
       const isOpen = entry.relativePath === state.openFileRelativePath;
-      const openMode = entry.isImage ? "raw" : isLikelyTextFile(entry.name) ? "text" : "raw";
+      const openMode = entry.isImage ? "image" : isLikelyTextFile(entry.name) ? "text" : "raw";
       return `
         <button
           class="file-row file-row-button file-open-button ${isOpen ? "is-active" : ""}"
@@ -2764,14 +2883,17 @@ function renderTerminalPanel(activeSession) {
         </div>
       </div>
 
-      <div class="terminal-stack">
-        <div class="terminal-mount" id="terminal-mount"></div>
-        <button class="jump-bottom-button ${activeSession && state.terminalShowJumpToBottom ? "is-visible" : ""}" type="button" id="jump-to-bottom" aria-label="Jump to bottom" ${activeSession ? "" : "disabled"}>
-          bottom
-        </button>
-        <div class="empty-state ${activeSession ? "hidden" : ""}" id="empty-state">
-          <p class="empty-state-copy">open the menu, choose a CLI, then pick or create a folder to start a session</p>
+      <div class="workspace-split ${state.openFileTabs.length ? "has-file-preview" : ""}" id="workspace-split">
+        <div class="terminal-stack">
+          <div class="terminal-mount" id="terminal-mount"></div>
+          <button class="jump-bottom-button ${activeSession && state.terminalShowJumpToBottom ? "is-visible" : ""}" type="button" id="jump-to-bottom" aria-label="Jump to bottom" ${activeSession ? "" : "disabled"}>
+            bottom
+          </button>
+          <div class="empty-state ${activeSession ? "hidden" : ""}" id="empty-state">
+            <p class="empty-state-copy">open the menu, choose a CLI, then pick or create a folder to start a session</p>
+          </div>
         </div>
+        ${renderFilePreviewPane()}
       </div>
     </section>
   `;
@@ -3786,18 +3908,7 @@ function bindFileTreeEvents() {
         return;
       }
 
-      if (openMode === "raw") {
-        setOpenFileSelection(relativePath);
-        refreshFileTreeUi();
-        refreshOpenFileUi();
-        openFileInNewTab(relativePath);
-        return;
-      }
-
-      setOpenFileSelection(relativePath);
-      refreshFileTreeUi();
-      refreshOpenFileUi();
-      openTextFileInNewTab(relativePath);
+      void openWorkspaceFilePreview(relativePath, { mode: openMode });
     });
   });
 }
@@ -3830,6 +3941,16 @@ function refreshFileTreeUi() {
 }
 
 function refreshOpenFileUi() {
+  const previewPane = document.querySelector("#file-preview-pane");
+  if (previewPane) {
+    const workspaceSplit = document.querySelector("#workspace-split");
+    workspaceSplit?.classList.toggle("has-file-preview", state.openFileTabs.length > 0);
+    previewPane.outerHTML = renderFilePreviewPane();
+    bindFileEditorEvents();
+    fitTerminalSoon();
+    return;
+  }
+
   const fileEditor = document.querySelector("#file-editor");
   if (!fileEditor) {
     return;
@@ -3840,34 +3961,65 @@ function refreshOpenFileUi() {
 }
 
 function syncOpenFileEditorStateUi() {
+  syncOpenFileStateFromTab();
   const status = document.querySelector("#open-file-status");
   const saveButton = document.querySelector("#save-open-file");
+  const activeTab = getActiveOpenFileTab();
 
   if (status) {
-    status.textContent = state.openFileSaving
+    status.textContent = activeTab?.saving
       ? "saving changes..."
-      : isOpenFileDirty()
+      : isOpenFileDirty(activeTab)
         ? "unsaved changes"
         : "saved";
   }
 
   if (saveButton instanceof HTMLButtonElement) {
-    const dirty = isOpenFileDirty();
-    saveButton.disabled = !dirty || state.openFileSaving;
-    saveButton.textContent = state.openFileSaving ? "saving..." : dirty ? "save" : "saved";
+    const dirty = isOpenFileDirty(activeTab);
+    saveButton.disabled = !dirty || Boolean(activeTab?.saving);
+    saveButton.textContent = activeTab?.saving ? "saving..." : dirty ? "save" : "saved";
     saveButton.classList.toggle("primary-button", dirty);
     saveButton.classList.toggle("ghost-button", !dirty);
   }
 }
 
 function bindFileEditorEvents() {
+  document.querySelectorAll("[data-file-tab]").forEach((button) => {
+    button.addEventListener("click", () => {
+      activateOpenFileTab(button.getAttribute("data-file-tab"));
+    });
+  });
+
+  document.querySelectorAll("[data-close-file-tab]").forEach((button) => {
+    button.addEventListener("click", (event) => {
+      event.stopPropagation();
+      closeOpenFileTab(button.getAttribute("data-close-file-tab"));
+    });
+  });
+
+  document.querySelector("#close-file-preview")?.addEventListener("click", () => {
+    if (!confirmCloseOpenFileTabs(state.openFileTabs)) {
+      return;
+    }
+
+    resetOpenFile();
+    refreshFileTreeUi();
+    refreshOpenFileUi();
+  });
+
   document.querySelector("#open-file-editor")?.addEventListener("input", (event) => {
     const textarea = event.currentTarget;
     if (!(textarea instanceof HTMLTextAreaElement)) {
       return;
     }
 
-    state.openFileDraft = textarea.value;
+    const activeTab = getActiveOpenFileTab();
+    if (!activeTab) {
+      return;
+    }
+
+    activeTab.draft = textarea.value;
+    syncOpenFileStateFromTab(activeTab);
     syncOpenFileEditorStateUi();
   });
 
@@ -3939,63 +4091,160 @@ function refreshShellUi({ sessions = true, ports = true, files = true } = {}) {
 async function openWorkspaceFile(relativePath, { force = false } = {}) {
   const normalizedPath = normalizeFileTreePath(relativePath);
   const root = state.filesRoot;
+  const tab = ensureOpenFileTab(normalizedPath, { mode: "text" });
 
-  if (!root || !normalizedPath) {
+  if (!root || !normalizedPath || !tab) {
     return;
   }
 
-  if (!force && state.openFileRelativePath === normalizedPath && state.openFileStatus === "text") {
+  if (!force && tab.status === "text") {
+    syncOpenFileStateFromTab(tab);
     refreshOpenFileUi();
     return;
   }
 
   const requestId = state.openFileRequestId + 1;
   state.openFileRequestId = requestId;
-  state.openFileRelativePath = normalizedPath;
-  state.openFileName = getFileDisplayName(normalizedPath);
-  state.openFileStatus = "loading";
-  state.openFileContent = "";
-  state.openFileDraft = "";
-  state.openFileMessage = "";
-  state.openFileSaving = false;
+  tab.requestId = requestId;
+  tab.status = "loading";
+  tab.content = "";
+  tab.draft = "";
+  tab.message = "";
+  tab.saving = false;
+  syncOpenFileStateFromTab(tab);
   refreshFileTreeUi();
   refreshOpenFileUi();
 
   try {
     const payload = await fetchJson(`/api/files/text?${getFileTextRequestParams(normalizedPath).toString()}`);
 
-    if (state.openFileRequestId !== requestId || state.filesRoot !== root) {
+    if (tab.requestId !== requestId || state.filesRoot !== root) {
       return;
     }
 
-    state.openFileStatus = "text";
-    state.openFileContent = payload.file.content;
-    state.openFileDraft = payload.file.content;
-    state.openFileMessage = "";
-    state.openFileSaving = false;
-    refreshOpenFileUi();
+    tab.status = "text";
+    tab.content = payload.file.content;
+    tab.draft = payload.file.content;
+    tab.message = "";
+    tab.saving = false;
+    if (state.openFileRelativePath === normalizedPath) {
+      syncOpenFileStateFromTab(tab);
+      refreshOpenFileUi();
+    }
   } catch (error) {
-    if (state.openFileRequestId !== requestId || state.filesRoot !== root) {
+    if (tab.requestId !== requestId || state.filesRoot !== root) {
       return;
     }
 
     if (error.status === 400 || error.status === 413) {
-      state.openFileStatus = "external";
-      state.openFileContent = "";
-      state.openFileDraft = "";
-      state.openFileMessage = "this file is not editable as UTF-8 text, but you can still open it raw";
-      refreshOpenFileUi();
+      tab.status = "external";
+      tab.content = "";
+      tab.draft = "";
+      tab.message = "this file is not editable as UTF-8 text, but you can still open it raw";
+      if (state.openFileRelativePath === normalizedPath) {
+        syncOpenFileStateFromTab(tab);
+        refreshOpenFileUi();
+      }
       return;
     }
 
-    state.openFileStatus = "error";
-    state.openFileMessage = error.message;
-    refreshOpenFileUi();
+    tab.status = "error";
+    tab.message = error.message;
+    if (state.openFileRelativePath === normalizedPath) {
+      syncOpenFileStateFromTab(tab);
+      refreshOpenFileUi();
+    }
   }
 }
 
+async function openWorkspaceFilePreview(relativePath, { mode = "text", force = false } = {}) {
+  const normalizedPath = normalizeFileTreePath(relativePath);
+  const tab = ensureOpenFileTab(normalizedPath, { mode });
+
+  if (!tab) {
+    return;
+  }
+
+  if (mode === "image") {
+    tab.status = "image";
+    tab.content = "";
+    tab.draft = "";
+    tab.message = "";
+    tab.saving = false;
+    syncOpenFileStateFromTab(tab);
+    refreshFileTreeUi();
+    refreshOpenFileUi();
+    return;
+  }
+
+  if (mode === "raw") {
+    tab.status = "external";
+    tab.content = "";
+    tab.draft = "";
+    tab.message = "preview is not available for this file type, but you can still open it raw";
+    tab.saving = false;
+    syncOpenFileStateFromTab(tab);
+    refreshFileTreeUi();
+    refreshOpenFileUi();
+    return;
+  }
+
+  await openWorkspaceFile(normalizedPath, { force });
+}
+
+function activateOpenFileTab(relativePath) {
+  const normalizedPath = normalizeFileTreePath(relativePath);
+  const tab = state.openFileTabs.find((entry) => entry.relativePath === normalizedPath);
+  if (!tab) {
+    return;
+  }
+
+  syncOpenFileStateFromTab(tab);
+  refreshFileTreeUi();
+  refreshOpenFileUi();
+}
+
+function confirmCloseOpenFileTabs(tabs) {
+  const dirtyTabs = tabs.filter((tab) => isOpenFileDirty(tab));
+  if (!dirtyTabs.length) {
+    return true;
+  }
+
+  const label = dirtyTabs.length === 1 ? dirtyTabs[0].name : `${dirtyTabs.length} files`;
+  return window.confirm(`Close ${label} with unsaved changes?`);
+}
+
+function closeOpenFileTab(relativePath) {
+  const normalizedPath = normalizeFileTreePath(relativePath);
+  const tabIndex = state.openFileTabs.findIndex((entry) => entry.relativePath === normalizedPath);
+  if (tabIndex < 0) {
+    return;
+  }
+
+  if (!confirmCloseOpenFileTabs([state.openFileTabs[tabIndex]])) {
+    return;
+  }
+
+  const closingActiveTab = state.openFileRelativePath === normalizedPath;
+  state.openFileTabs.splice(tabIndex, 1);
+
+  if (closingActiveTab) {
+    const nextTab = state.openFileTabs[Math.min(tabIndex, state.openFileTabs.length - 1)] || null;
+    syncOpenFileStateFromTab(nextTab);
+  }
+
+  refreshFileTreeUi();
+  refreshOpenFileUi();
+}
+
 async function reloadOpenFile() {
-  if (!state.openFileRelativePath || state.openFileSaving) {
+  const activeTab = getActiveOpenFileTab();
+  if (!state.openFileRelativePath || activeTab?.saving) {
+    return;
+  }
+
+  if (activeTab?.status === "image") {
+    refreshOpenFileUi();
     return;
   }
 
@@ -4003,19 +4252,21 @@ async function reloadOpenFile() {
 }
 
 async function saveOpenFile() {
+  const activeTab = getActiveOpenFileTab();
   if (
     !state.filesRoot ||
     !state.openFileRelativePath ||
-    state.openFileStatus !== "text" ||
-    state.openFileSaving ||
-    !isOpenFileDirty()
+    activeTab?.status !== "text" ||
+    activeTab.saving ||
+    !isOpenFileDirty(activeTab)
   ) {
     return;
   }
 
   const root = state.filesRoot;
   const relativePath = state.openFileRelativePath;
-  state.openFileSaving = true;
+  activeTab.saving = true;
+  syncOpenFileStateFromTab(activeTab);
   syncOpenFileEditorStateUi();
 
   try {
@@ -4024,21 +4275,27 @@ async function saveOpenFile() {
       body: JSON.stringify({
         root,
         path: relativePath,
-        content: state.openFileDraft,
+        content: activeTab.draft,
       }),
     });
 
-    if (state.filesRoot !== root || state.openFileRelativePath !== relativePath) {
+    if (state.filesRoot !== root || activeTab.relativePath !== relativePath) {
       return;
     }
 
-    state.openFileContent = payload.file.content;
-    state.openFileDraft = payload.file.content;
-    state.openFileMessage = "";
+    activeTab.content = payload.file.content;
+    activeTab.draft = payload.file.content;
+    activeTab.message = "";
+    if (state.openFileRelativePath === relativePath) {
+      syncOpenFileStateFromTab(activeTab);
+    }
   } catch (error) {
     window.alert(error.message);
   } finally {
-    state.openFileSaving = false;
+    activeTab.saving = false;
+    if (state.openFileRelativePath === relativePath) {
+      syncOpenFileStateFromTab(activeTab);
+    }
     syncOpenFileEditorStateUi();
   }
 }
