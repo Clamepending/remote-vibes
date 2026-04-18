@@ -4903,6 +4903,10 @@ async function loadSessions() {
       state.activeSessionId = state.sessions[0].id;
     }
 
+    if (state.currentView !== "shell") {
+      return;
+    }
+
     if (!document.querySelector("#terminal-mount")) {
       renderShell();
       if (state.activeSessionId) {
