@@ -216,6 +216,63 @@ test("update endpoints report status and schedule restart", async () => {
   }
 });
 
+test("system endpoint reports host storage and utilization metrics", async () => {
+  const workspaceDir = await createTempWorkspace("remote-vibes-system-");
+  const systemPayload = {
+    checkedAt: "2026-04-18T10:00:00.000Z",
+    hostname: "test-host",
+    platform: "test",
+    uptimeSeconds: 120,
+    storage: {
+      primary: {
+        name: "Test Disk",
+        mountPoint: "/",
+        totalBytes: 1000,
+        usedBytes: 700,
+        availableBytes: 300,
+        usedPercent: 70,
+      },
+      volumes: [],
+      warnings: [],
+    },
+    cpu: {
+      model: "Test CPU",
+      coreCount: 1,
+      utilizationPercent: 25,
+      cores: [{ id: 0, label: "CPU 1", utilizationPercent: 25 }],
+      loadAverage: [0, 0, 0],
+    },
+    memory: {
+      totalBytes: 1000,
+      usedBytes: 500,
+      freeBytes: 500,
+      usedPercent: 50,
+    },
+    gpus: [{ id: "gpu-0", name: "Test GPU", utilizationPercent: 33, source: "test" }],
+    accelerators: [{ id: "accel-0", name: "Test Accelerator", utilizationPercent: null, source: "test" }],
+    warnings: [],
+  };
+  let calls = 0;
+  const { app, baseUrl } = await startApp({
+    cwd: workspaceDir,
+    systemMetricsProvider: async ({ cwd }) => {
+      calls += 1;
+      assert.equal(cwd, workspaceDir);
+      return systemPayload;
+    },
+  });
+
+  try {
+    const response = await fetch(`${baseUrl}/api/system`);
+    assert.equal(response.status, 200);
+    assert.deepEqual(await response.json(), { system: systemPayload });
+    assert.equal(calls, 1);
+  } finally {
+    await app.close();
+    await rm(workspaceDir, { recursive: true, force: true });
+  }
+});
+
 test("agent prompt api creates wiki scaffold and managed instruction files", async () => {
   const workspaceDir = await createTempWorkspace("remote-vibes-agent-prompt-");
   const { app, baseUrl } = await startApp({ cwd: workspaceDir });

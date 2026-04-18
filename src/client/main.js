@@ -11,7 +11,7 @@ const KNOWLEDGE_BASE_GRAPH_MAX_SCALE = 2.8;
 const KNOWLEDGE_BASE_GRAPH_FIT_PADDING = 72;
 const KNOWLEDGE_BASE_GRAPH_DRAG_SLOP_PX = 6;
 const PORT_PREVIEW_TAB_PREFIX = "port:";
-const ROUTED_MAIN_VIEWS = new Set(["search", "plugins", "automations"]);
+const ROUTED_MAIN_VIEWS = new Set(["search", "plugins", "automations", "system"]);
 const PLUGIN_CATALOG = [
   {
     name: "GitHub",
@@ -304,6 +304,10 @@ const state = {
   update: null,
   updateApplying: false,
   lastUpdateError: null,
+  systemMetrics: null,
+  systemMetricsLoading: false,
+  systemMetricsError: "",
+  systemMetricsRequestId: 0,
   updateTimer: null,
   settingsPollTimer: null,
   sessionRefreshTimer: null,
@@ -470,6 +474,35 @@ function relativeTime(timestamp) {
 
   const hours = Math.round(minutes / 60);
   return `${hours}h`;
+}
+
+function formatBytes(bytes) {
+  const value = Number(bytes || 0);
+  const units = ["B", "KB", "MB", "GB", "TB", "PB"];
+  let unitIndex = 0;
+  let scaled = Math.max(0, value);
+
+  while (scaled >= 1000 && unitIndex < units.length - 1) {
+    scaled /= 1000;
+    unitIndex += 1;
+  }
+
+  const digits = scaled >= 100 || unitIndex === 0 ? 0 : scaled >= 10 ? 1 : 2;
+  return `${scaled.toFixed(digits)} ${units[unitIndex]}`;
+}
+
+function formatPercent(value) {
+  const number = Number(value);
+  if (!Number.isFinite(number)) {
+    return "not exposed";
+  }
+
+  return `${Math.round(clamp(number, 0, 100))}%`;
+}
+
+function getMetricPercent(value) {
+  const number = Number(value);
+  return Number.isFinite(number) ? clamp(number, 0, 100) : 0;
 }
 
 function getSessionLabel(session) {
@@ -3741,6 +3774,12 @@ function renderSidebarNav(providerOptions) {
       label: "Automations",
       meta: "scheduled helpers",
     },
+    {
+      view: "system",
+      icon: "◌",
+      label: "System",
+      meta: "storage, CPU, GPU",
+    },
   ];
   const workspaceItems = [
     {
@@ -4085,6 +4124,230 @@ function renderAutomationsView() {
   `;
 }
 
+function renderMetricBar(value, className = "") {
+  const percent = getMetricPercent(value);
+  return `
+    <div class="metric-bar ${escapeHtml(className)}" style="--metric-value: ${percent}%">
+      <span></span>
+    </div>
+  `;
+}
+
+function renderSystemStorageCard(system) {
+  const primary = system?.storage?.primary;
+
+  if (!primary) {
+    return `
+      <article class="system-storage-card">
+        <div class="blank-state">storage metrics are not available on this host</div>
+      </article>
+    `;
+  }
+
+  const usedPercent = getMetricPercent(primary.usedPercent ?? primary.capacityPercent);
+  const freeBytes = Number(primary.availableBytes || 0);
+  const usedBytes = Number(primary.usedBytes || 0);
+  const totalBytes = Number(primary.totalBytes || 0);
+
+  return `
+    <article class="system-storage-card">
+      <div class="system-storage-head">
+        <strong>${escapeHtml(primary.name || primary.mountPoint || "Storage")}</strong>
+        <span>${escapeHtml(`${formatBytes(usedBytes)} of ${formatBytes(totalBytes)} used`)}</span>
+      </div>
+      <div class="system-storage-bar" style="--storage-used: ${usedPercent}%">
+        <span class="system-storage-used"></span>
+        <span class="system-storage-free"></span>
+      </div>
+      <div class="system-storage-legend">
+        <span><i class="legend-dot is-used"></i>${escapeHtml(`${formatPercent(usedPercent)} used`)}</span>
+        <span><i class="legend-dot is-free"></i>${escapeHtml(`${formatBytes(freeBytes)} free`)}</span>
+        <span>${escapeHtml(primary.mountPoint || "")}</span>
+      </div>
+    </article>
+  `;
+}
+
+function renderSystemSummaryCards(system) {
+  const cpu = system?.cpu;
+  const memory = system?.memory;
+  const gpuCount = system?.gpus?.length || 0;
+  const acceleratorCount = system?.accelerators?.length || 0;
+
+  return `
+    <div class="system-summary-grid">
+      <article class="system-summary-card">
+        <span>CPU</span>
+        <strong>${escapeHtml(formatPercent(cpu?.utilizationPercent))}</strong>
+        ${renderMetricBar(cpu?.utilizationPercent, "is-cpu")}
+        <em>${escapeHtml(cpu?.coreCount ? `${cpu.coreCount} cores` : "no CPU sample")}</em>
+      </article>
+      <article class="system-summary-card">
+        <span>Memory</span>
+        <strong>${escapeHtml(formatPercent(memory?.usedPercent))}</strong>
+        ${renderMetricBar(memory?.usedPercent, "is-memory")}
+        <em>${escapeHtml(memory ? `${formatBytes(memory.usedBytes)} of ${formatBytes(memory.totalBytes)}` : "not available")}</em>
+      </article>
+      <article class="system-summary-card">
+        <span>GPU</span>
+        <strong>${escapeHtml(String(gpuCount))}</strong>
+        <em>${escapeHtml(gpuCount === 1 ? "device found" : "devices found")}</em>
+      </article>
+      <article class="system-summary-card">
+        <span>Accelerators</span>
+        <strong>${escapeHtml(String(acceleratorCount))}</strong>
+        <em>${escapeHtml(acceleratorCount === 1 ? "device found" : "devices found")}</em>
+      </article>
+    </div>
+  `;
+}
+
+function renderCpuCoreGrid(cpu) {
+  const cores = Array.isArray(cpu?.cores) ? cpu.cores : [];
+
+  if (!cores.length) {
+    return `<div class="blank-state">CPU core metrics are not available</div>`;
+  }
+
+  return `
+    <div class="cpu-core-grid">
+      ${cores
+        .map(
+          (core) => `
+            <article class="cpu-core-card">
+              <span>${escapeHtml(core.label || `CPU ${Number(core.id || 0) + 1}`)}</span>
+              <strong>${escapeHtml(formatPercent(core.utilizationPercent))}</strong>
+              ${renderMetricBar(core.utilizationPercent, "is-cpu")}
+            </article>
+          `,
+        )
+        .join("")}
+    </div>
+  `;
+}
+
+function renderDeviceCard(device) {
+  const utilization = device?.utilizationPercent;
+  const memoryText =
+    Number.isFinite(Number(device?.memoryUsedBytes)) && Number.isFinite(Number(device?.memoryTotalBytes))
+      ? `${formatBytes(device.memoryUsedBytes)} of ${formatBytes(device.memoryTotalBytes)} memory`
+      : "";
+  const detailParts = [
+    device?.source,
+    Number.isFinite(Number(device?.cores)) ? `${device.cores} cores` : "",
+    memoryText,
+    Number.isFinite(Number(device?.temperatureC)) ? `${Math.round(device.temperatureC)}°C` : "",
+    Number.isFinite(Number(device?.powerW)) ? `${Math.round(device.powerW)} W` : "",
+    device?.architecture,
+    device?.details,
+  ].filter(Boolean);
+
+  return `
+    <article class="system-device-card">
+      <div class="system-device-head">
+        <strong>${escapeHtml(device?.name || "Device")}</strong>
+        <span>${escapeHtml(formatPercent(utilization))}</span>
+      </div>
+      ${renderMetricBar(utilization, "is-device")}
+      <p>${escapeHtml(detailParts.join(" · ") || "detected, but utilization is not exposed by this host")}</p>
+    </article>
+  `;
+}
+
+function renderDeviceSection(title, devices, emptyMessage) {
+  const entries = Array.isArray(devices) ? devices : [];
+
+  return `
+    <section class="system-section">
+      <div class="system-section-head">
+        <strong>${escapeHtml(title)}</strong>
+        <span>${escapeHtml(`${entries.length} detected`)}</span>
+      </div>
+      <div class="system-device-grid">
+        ${entries.length ? entries.map((device) => renderDeviceCard(device)).join("") : `<div class="blank-state">${escapeHtml(emptyMessage)}</div>`}
+      </div>
+    </section>
+  `;
+}
+
+function renderSystemWarnings(system) {
+  const warnings = Array.isArray(system?.warnings) ? system.warnings.filter(Boolean) : [];
+
+  if (!warnings.length) {
+    return "";
+  }
+
+  return `
+    <div class="system-warning-list">
+      ${warnings.map((warning) => `<span>${escapeHtml(warning)}</span>`).join("")}
+    </div>
+  `;
+}
+
+function renderSystemView() {
+  const system = state.systemMetrics;
+  const updatedAge = system?.checkedAt ? relativeTime(system.checkedAt) : "";
+  const updated = updatedAge ? (updatedAge === "live" ? "updated just now" : `updated ${updatedAge} ago`) : "waiting for first sample";
+
+  return `
+    <section class="dashboard-panel main-view system-view">
+      <div class="dashboard-toolbar">
+        <button class="icon-button hidden-desktop" type="button" id="open-sidebar">≡</button>
+        <div class="dashboard-copy">
+          <strong>System</strong>
+          <div class="terminal-meta">storage, CPU cores, GPUs, and accelerators on this machine</div>
+        </div>
+        <div class="dashboard-actions">
+          <button class="ghost-button toolbar-control" type="button" id="refresh-system" ${state.systemMetricsLoading ? "disabled" : ""}>
+            ${state.systemMetricsLoading ? "sampling..." : "refresh"}
+          </button>
+        </div>
+      </div>
+      <div class="dashboard-range">
+        <span class="dashboard-range-label">${escapeHtml(system?.hostname || "host")}</span>
+        <span>${escapeHtml(system ? `${system.platform || "unknown"} · uptime ${formatUptime(system.uptimeSeconds)}` : "sampling system metrics")}</span>
+        <span class="dashboard-updated">${escapeHtml(updated)}</span>
+      </div>
+      <div class="system-dashboard">
+        ${
+          state.systemMetricsError
+            ? `<div class="system-error-card">${escapeHtml(state.systemMetricsError)}</div>`
+            : ""
+        }
+        ${renderSystemStorageCard(system)}
+        ${renderSystemSummaryCards(system)}
+        <section class="system-section">
+          <div class="system-section-head">
+            <strong>CPU cores</strong>
+            <span>${escapeHtml(system?.cpu?.model || "")}</span>
+          </div>
+          ${renderCpuCoreGrid(system?.cpu)}
+        </section>
+        ${renderDeviceSection("GPUs", system?.gpus, "No GPU utilization source was found on this host.")}
+        ${renderDeviceSection("Accelerators", system?.accelerators, "No accelerator inventory was exposed by this host.")}
+        ${renderSystemWarnings(system)}
+      </div>
+    </section>
+  `;
+}
+
+function formatUptime(seconds) {
+  const totalSeconds = Math.max(0, Number(seconds || 0));
+  const days = Math.floor(totalSeconds / 86_400);
+  const hours = Math.floor((totalSeconds % 86_400) / 3_600);
+  const minutes = Math.floor((totalSeconds % 3_600) / 60);
+
+  if (days > 0) {
+    return `${days}d ${hours}h`;
+  }
+
+  if (hours > 0) {
+    return `${hours}h ${minutes}m`;
+  }
+
+  return `${minutes}m`;
+}
+
 function renderTerminalPanel(activeSession) {
   if (state.currentView === "knowledge-base") {
     return renderKnowledgeBaseView();
@@ -4104,6 +4367,10 @@ function renderTerminalPanel(activeSession) {
 
   if (state.currentView === "automations") {
     return renderAutomationsView();
+  }
+
+  if (state.currentView === "system") {
+    return renderSystemView();
   }
 
   return `
@@ -4401,6 +4668,7 @@ function renderShell() {
     search: "Search · Remote Vibes",
     plugins: "Plugins · Remote Vibes",
     automations: "Automations · Remote Vibes",
+    system: "System · Remote Vibes",
   };
   document.title = viewTitles[state.currentView] || "Remote Vibes";
 
@@ -6023,6 +6291,10 @@ async function openMainView(nextView) {
       renderShell();
     }
 
+    if (nextView === "system") {
+      await loadSystemMetrics({ forceRender: true });
+    }
+
     return;
   }
 
@@ -6245,6 +6517,9 @@ function bindShellEvents() {
     await applyFilesRoot("", { force: true });
   });
   document.querySelector("#refresh-ports")?.addEventListener("click", () => loadPorts());
+  document.querySelector("#refresh-system")?.addEventListener("click", () => {
+    void loadSystemMetrics({ forceRender: true });
+  });
   document.querySelector("#open-sidebar")?.addEventListener("click", () => setMobileSidebar("left"));
   document.querySelector("#close-left-sidebar")?.addEventListener("click", () => closeMobileSidebar());
   document.querySelector("[data-sidebar-scrim]")?.addEventListener("click", () => closeMobileSidebar());
@@ -6962,6 +7237,42 @@ async function loadSettingsStatus() {
   }
 }
 
+async function loadSystemMetrics({ forceRender = false } = {}) {
+  const requestId = Date.now();
+  state.systemMetricsLoading = true;
+  state.systemMetricsRequestId = requestId;
+
+  if (state.currentView === "system" && (forceRender || !state.systemMetrics)) {
+    renderShell();
+  }
+
+  try {
+    const payload = await fetchJson("/api/system", {
+      cache: "no-store",
+    });
+
+    if (state.systemMetricsRequestId !== requestId) {
+      return;
+    }
+
+    state.systemMetrics = payload.system || null;
+    state.systemMetricsError = "";
+  } catch (error) {
+    if (state.systemMetricsRequestId !== requestId) {
+      return;
+    }
+
+    state.systemMetricsError = error.message || "Could not load system metrics.";
+  } finally {
+    if (state.systemMetricsRequestId === requestId) {
+      state.systemMetricsLoading = false;
+      if (state.currentView === "system") {
+        renderShell();
+      }
+    }
+  }
+}
+
 async function loadFolderPicker(root, { target = state.folderPicker.target } = {}) {
   const nextRoot = normalizeWorkspaceRoot(root || state.defaultCwd || "/");
   const requestId = state.folderPicker.requestId + 1;
@@ -7202,6 +7513,9 @@ async function bootstrapApp() {
   }
 
   renderShell();
+  if (state.currentView === "system") {
+    void loadSystemMetrics({ forceRender: true });
+  }
   void loadUpdateStatus();
 
   if (state.updateTimer) {
@@ -7240,6 +7554,9 @@ async function bootstrapApp() {
   state.pollTimer = window.setInterval(() => {
     loadSessions();
     loadPorts();
+    if (state.currentView === "system") {
+      void loadSystemMetrics();
+    }
   }, 3000);
 }
 

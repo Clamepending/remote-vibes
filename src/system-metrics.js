@@ -1,0 +1,519 @@
+import { execFile as execFileCallback } from "node:child_process";
+import { readdir as readdirCallback, readFile as readFileCallback } from "node:fs/promises";
+import os from "node:os";
+import path from "node:path";
+import { promisify } from "node:util";
+
+const execFileAsync = promisify(execFileCallback);
+const DEFAULT_TIMEOUT_MS = 2_500;
+const DEFAULT_CPU_SAMPLE_MS = 140;
+const BYTES_PER_KIB = 1024;
+const MAX_VISIBLE_VOLUMES = 8;
+
+function clamp(value, min, max) {
+  return Math.min(max, Math.max(min, value));
+}
+
+function normalizeNumber(value) {
+  const number = Number(String(value ?? "").replace(/[^\d.-]/g, ""));
+  return Number.isFinite(number) ? number : null;
+}
+
+function sleep(ms) {
+  return new Promise((resolve) => {
+    setTimeout(resolve, ms);
+  });
+}
+
+async function runCommand(execFile, command, args, { timeoutMs = DEFAULT_TIMEOUT_MS } = {}) {
+  return execFile(command, args, {
+    maxBuffer: 1024 * 1024 * 8,
+    timeout: timeoutMs,
+  });
+}
+
+function parseDfOutput(stdout, platform = process.platform) {
+  return String(stdout ?? "")
+    .split(/\r?\n/)
+    .slice(1)
+    .map((line) => {
+      const match = line.match(/^(.+?)\s+(\d+)\s+(\d+)\s+(\d+)\s+(\d+)%\s+(.+)$/);
+      if (!match) {
+        return null;
+      }
+
+      const totalBytes = Number(match[2]) * BYTES_PER_KIB;
+      const reportedUsedBytes = Number(match[3]) * BYTES_PER_KIB;
+      const availableBytes = Number(match[4]) * BYTES_PER_KIB;
+      const usedBytes = Math.max(0, totalBytes - availableBytes);
+      const usedPercent = totalBytes > 0 ? clamp((usedBytes / totalBytes) * 100, 0, 100) : 0;
+      const capacityPercent = Number(match[5]);
+      const mountPoint = match[6].trim();
+
+      return {
+        filesystem: match[1].trim(),
+        mountPoint,
+        name: getVolumeName(mountPoint, platform),
+        totalBytes,
+        usedBytes,
+        reportedUsedBytes,
+        availableBytes,
+        usedPercent,
+        capacityPercent,
+      };
+    })
+    .filter(Boolean);
+}
+
+function getVolumeName(mountPoint, platform = process.platform) {
+  if (platform === "darwin") {
+    if (mountPoint === "/" || mountPoint === "/System/Volumes/Data") {
+      return "Macintosh HD";
+    }
+
+    if (mountPoint.startsWith("/Volumes/")) {
+      return path.basename(mountPoint);
+    }
+  }
+
+  if (mountPoint === "/") {
+    return platform === "darwin" ? "Macintosh HD" : "Root";
+  }
+
+  return path.basename(mountPoint) || mountPoint;
+}
+
+function isVisibleVolume(volume, primaryMountPoint) {
+  if (!volume?.mountPoint) {
+    return false;
+  }
+
+  return (
+    volume.mountPoint === primaryMountPoint ||
+    volume.mountPoint === "/" ||
+    volume.mountPoint.startsWith("/Volumes/") ||
+    volume.mountPoint.startsWith("/mnt/") ||
+    volume.mountPoint.startsWith("/media/")
+  );
+}
+
+function mergeVolumes(volumes) {
+  const byMount = new Map();
+  for (const volume of volumes) {
+    if (!volume?.mountPoint) {
+      continue;
+    }
+    byMount.set(volume.mountPoint, {
+      ...byMount.get(volume.mountPoint),
+      ...volume,
+    });
+  }
+  return [...byMount.values()];
+}
+
+async function readStorage({ cwd, execFile, platform, timeoutMs }) {
+  const warnings = [];
+  let volumes = [];
+  let primaryVolumes = [];
+
+  try {
+    const { stdout } = await runCommand(execFile, "df", ["-kP", "-l"], { timeoutMs });
+    volumes = parseDfOutput(stdout, platform);
+  } catch (error) {
+    warnings.push(`Could not list local volumes: ${error.message || "df failed"}`);
+    try {
+      const { stdout } = await runCommand(execFile, "df", ["-kP"], { timeoutMs });
+      volumes = parseDfOutput(stdout, platform);
+    } catch (fallbackError) {
+      warnings.push(`Could not list filesystems: ${fallbackError.message || "df failed"}`);
+    }
+  }
+
+  try {
+    const { stdout } = await runCommand(execFile, "df", ["-kP", cwd], { timeoutMs });
+    primaryVolumes = parseDfOutput(stdout, platform);
+  } catch (error) {
+    warnings.push(`Could not read workspace volume: ${error.message || "df failed"}`);
+  }
+
+  const primary = primaryVolumes[0] || volumes.find((volume) => volume.mountPoint === "/") || volumes[0] || null;
+  const mergedVolumes = mergeVolumes([...primaryVolumes, ...volumes])
+    .filter((volume) => isVisibleVolume(volume, primary?.mountPoint))
+    .sort((left, right) => {
+      if (left.mountPoint === primary?.mountPoint) {
+        return -1;
+      }
+      if (right.mountPoint === primary?.mountPoint) {
+        return 1;
+      }
+      return left.mountPoint.localeCompare(right.mountPoint);
+    })
+    .slice(0, MAX_VISIBLE_VOLUMES);
+
+  return {
+    primary,
+    volumes: mergedVolumes,
+    warnings,
+  };
+}
+
+function snapshotCpu(cpus) {
+  return cpus.map((cpu, index) => {
+    const times = cpu.times || {};
+    const idle = Number(times.idle || 0);
+    const total = Object.values(times).reduce((sum, value) => sum + Number(value || 0), 0);
+
+    return {
+      id: index,
+      model: cpu.model || `CPU ${index + 1}`,
+      speedMhz: Number(cpu.speed || 0),
+      idle,
+      total,
+    };
+  });
+}
+
+function calculateCpuUsage(before, after) {
+  const cores = after.map((current, index) => {
+    const previous = before[index] || current;
+    const totalDelta = Math.max(0, current.total - previous.total);
+    const idleDelta = Math.max(0, current.idle - previous.idle);
+    const utilizationPercent = totalDelta > 0 ? clamp(((totalDelta - idleDelta) / totalDelta) * 100, 0, 100) : 0;
+
+    return {
+      id: current.id,
+      label: `CPU ${current.id + 1}`,
+      model: current.model,
+      speedMhz: current.speedMhz,
+      utilizationPercent,
+    };
+  });
+
+  const totalDelta = after.reduce((sum, current, index) => {
+    const previous = before[index] || current;
+    return sum + Math.max(0, current.total - previous.total);
+  }, 0);
+  const idleDelta = after.reduce((sum, current, index) => {
+    const previous = before[index] || current;
+    return sum + Math.max(0, current.idle - previous.idle);
+  }, 0);
+
+  return {
+    cores,
+    utilizationPercent: totalDelta > 0 ? clamp(((totalDelta - idleDelta) / totalDelta) * 100, 0, 100) : 0,
+  };
+}
+
+async function readCpu({ cpus, sampleMs }) {
+  const first = snapshotCpu(cpus());
+  await sleep(sampleMs);
+  const second = snapshotCpu(cpus());
+  const usage = calculateCpuUsage(first, second);
+  const model = second.find((cpu) => cpu.model)?.model || "CPU";
+
+  return {
+    model,
+    coreCount: second.length,
+    loadAverage: os.loadavg(),
+    utilizationPercent: usage.utilizationPercent,
+    cores: usage.cores,
+  };
+}
+
+function readMemory({ totalmem, freemem }) {
+  const totalBytes = Number(totalmem() || 0);
+  const freeBytes = Number(freemem() || 0);
+  const usedBytes = Math.max(0, totalBytes - freeBytes);
+
+  return {
+    totalBytes,
+    freeBytes,
+    usedBytes,
+    usedPercent: totalBytes > 0 ? clamp((usedBytes / totalBytes) * 100, 0, 100) : 0,
+  };
+}
+
+function parseNvidiaCsv(stdout) {
+  return String(stdout ?? "")
+    .split(/\r?\n/)
+    .map((line) => line.trim())
+    .filter(Boolean)
+    .map((line) => {
+      const [
+        index,
+        name,
+        gpuUtilization,
+        memoryUtilization,
+        memoryUsedMb,
+        memoryTotalMb,
+        temperatureC,
+        powerDrawW,
+        powerLimitW,
+      ] = line.split(",").map((value) => value.trim());
+
+      return {
+        id: `nvidia-${index}`,
+        kind: "gpu",
+        name: name || `NVIDIA GPU ${index}`,
+        source: "nvidia-smi",
+        utilizationPercent: normalizeNumber(gpuUtilization),
+        memoryUtilizationPercent: normalizeNumber(memoryUtilization),
+        memoryUsedBytes:
+          normalizeNumber(memoryUsedMb) === null ? null : normalizeNumber(memoryUsedMb) * 1024 * 1024,
+        memoryTotalBytes:
+          normalizeNumber(memoryTotalMb) === null ? null : normalizeNumber(memoryTotalMb) * 1024 * 1024,
+        temperatureC: normalizeNumber(temperatureC),
+        powerW: normalizeNumber(powerDrawW),
+        powerLimitW: normalizeNumber(powerLimitW),
+      };
+    });
+}
+
+async function readNvidiaGpus({ execFile, timeoutMs }) {
+  try {
+    const { stdout } = await runCommand(
+      execFile,
+      "nvidia-smi",
+      [
+        "--query-gpu=index,name,utilization.gpu,utilization.memory,memory.used,memory.total,temperature.gpu,power.draw,power.limit",
+        "--format=csv,noheader,nounits",
+      ],
+      { timeoutMs },
+    );
+
+    return parseNvidiaCsv(stdout);
+  } catch {
+    return [];
+  }
+}
+
+async function readTextFile(readFile, filePath) {
+  try {
+    return String(await readFile(filePath, "utf8")).trim();
+  } catch {
+    return "";
+  }
+}
+
+function parseLinuxDeviceName({ card, vendor, uevent }) {
+  const driver = uevent.match(/^DRIVER=(.+)$/m)?.[1];
+  const pciId = uevent.match(/^PCI_ID=(.+)$/m)?.[1];
+  const vendorName =
+    vendor === "0x10de" ? "NVIDIA" : vendor === "0x1002" ? "AMD" : vendor === "0x8086" ? "Intel" : "";
+
+  return [vendorName, driver, card, pciId].filter(Boolean).join(" ") || card;
+}
+
+async function readLinuxDrmGpus({ readFile, readdir }) {
+  let cards = [];
+  try {
+    cards = await readdir("/sys/class/drm");
+  } catch {
+    return [];
+  }
+
+  const devices = [];
+  for (const card of cards.filter((entry) => /^card\d+$/.test(entry))) {
+    const deviceRoot = `/sys/class/drm/${card}/device`;
+    const busy = normalizeNumber(await readTextFile(readFile, `${deviceRoot}/gpu_busy_percent`));
+    const vendor = await readTextFile(readFile, `${deviceRoot}/vendor`);
+    const uevent = await readTextFile(readFile, `${deviceRoot}/uevent`);
+
+    if (busy === null && !vendor && !uevent) {
+      continue;
+    }
+
+    devices.push({
+      id: `drm-${card}`,
+      kind: "gpu",
+      name: parseLinuxDeviceName({ card, vendor, uevent }),
+      source: "linux-drm-sysfs",
+      utilizationPercent: busy,
+      vendor: vendor || "",
+    });
+  }
+
+  return devices;
+}
+
+function parseQuotedProperty(section, name) {
+  return section.match(new RegExp(`"${name}"\\s*=\\s*"([^"]+)"`))?.[1] || "";
+}
+
+function parseNumberProperty(section, name) {
+  const escapedName = name.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+  return normalizeNumber(section.match(new RegExp(`"${escapedName}"\\s*=\\s*([\\d.]+)`))?.[1]);
+}
+
+function parseMacGpuIoreg(stdout) {
+  return String(stdout ?? "")
+    .split(/\n(?=\+-o )/)
+    .filter((section) => section.includes("PerformanceStatistics"))
+    .map((section, index) => {
+      const name = parseQuotedProperty(section, "model") || parseQuotedProperty(section, "IONameMatched") || "Apple GPU";
+
+      return {
+        id: `apple-gpu-${index}`,
+        kind: "gpu",
+        name,
+        source: "ioreg",
+        utilizationPercent: parseNumberProperty(section, "Device Utilization %"),
+        rendererUtilizationPercent: parseNumberProperty(section, "Renderer Utilization %"),
+        tilerUtilizationPercent: parseNumberProperty(section, "Tiler Utilization %"),
+        memoryUsedBytes: parseNumberProperty(section, "In use system memory"),
+        memoryTotalBytes: parseNumberProperty(section, "Alloc system memory"),
+        cores: parseNumberProperty(section, "gpu-core-count"),
+      };
+    });
+}
+
+async function readMacGpus({ execFile, timeoutMs }) {
+  try {
+    const { stdout } = await runCommand(execFile, "ioreg", ["-r", "-c", "AGXAccelerator", "-d", "1"], {
+      timeoutMs,
+    });
+    const gpus = parseMacGpuIoreg(stdout);
+    if (gpus.length) {
+      return gpus;
+    }
+  } catch {
+    // Fall through to system_profiler discovery below.
+  }
+
+  try {
+    const { stdout } = await runCommand(execFile, "system_profiler", ["SPDisplaysDataType", "-json"], {
+      timeoutMs,
+    });
+    const payload = JSON.parse(stdout);
+    return (payload.SPDisplaysDataType || []).map((entry, index) => ({
+      id: `apple-display-gpu-${index}`,
+      kind: "gpu",
+      name: entry.sppci_model || entry._name || "Apple GPU",
+      source: "system_profiler",
+      utilizationPercent: null,
+      cores: normalizeNumber(entry.sppci_cores),
+    }));
+  } catch {
+    return [];
+  }
+}
+
+function parseMacAneIoreg(stdout) {
+  return String(stdout ?? "")
+    .split(/\n(?=\+-o )/)
+    .filter((section) => section.includes("H11ANE") || section.includes("ANEHAL"))
+    .map((section, index) => ({
+      id: `apple-ane-${index}`,
+      kind: "accelerator",
+      name: "Apple Neural Engine",
+      source: "ioreg",
+      utilizationPercent: null,
+      cores: parseNumberProperty(section, "ANEDevicePropertyNumANECores"),
+      architecture: parseQuotedProperty(section, "ANEDevicePropertyTypeANEArchitectureTypeStr"),
+      details: "utilization not exposed without privileged powermetrics",
+    }));
+}
+
+async function readMacAccelerators({ execFile, timeoutMs }) {
+  try {
+    const { stdout } = await runCommand(execFile, "ioreg", ["-r", "-c", "H11ANEIn", "-d", "1"], {
+      timeoutMs,
+    });
+    return parseMacAneIoreg(stdout);
+  } catch {
+    return [];
+  }
+}
+
+async function readLinuxAccelerators({ readFile, readdir }) {
+  let entries = [];
+  try {
+    entries = await readdir("/sys/class/accel");
+  } catch {
+    return [];
+  }
+
+  return Promise.all(
+    entries.map(async (entry) => {
+      const deviceRoot = `/sys/class/accel/${entry}/device`;
+      const vendor = await readTextFile(readFile, `${deviceRoot}/vendor`);
+      const uevent = await readTextFile(readFile, `${deviceRoot}/uevent`);
+      const driver = uevent.match(/^DRIVER=(.+)$/m)?.[1] || "";
+
+      return {
+        id: `accel-${entry}`,
+        kind: "accelerator",
+        name: [driver, entry].filter(Boolean).join(" ") || entry,
+        source: "linux-accel-sysfs",
+        utilizationPercent: null,
+        vendor,
+      };
+    }),
+  );
+}
+
+async function readDevices({ execFile, platform, readFile, readdir, timeoutMs }) {
+  const [nvidiaGpus, linuxDrmGpus, macGpus, macAccelerators, linuxAccelerators] = await Promise.all([
+    readNvidiaGpus({ execFile, timeoutMs }),
+    platform === "linux" ? readLinuxDrmGpus({ readFile, readdir }) : [],
+    platform === "darwin" ? readMacGpus({ execFile, timeoutMs }) : [],
+    platform === "darwin" ? readMacAccelerators({ execFile, timeoutMs }) : [],
+    platform === "linux" ? readLinuxAccelerators({ readFile, readdir }) : [],
+  ]);
+
+  const seenGpuIds = new Set();
+  const gpus = [...nvidiaGpus, ...linuxDrmGpus, ...macGpus].filter((device) => {
+    const key = `${device.source}:${device.id}`;
+    if (seenGpuIds.has(key)) {
+      return false;
+    }
+    seenGpuIds.add(key);
+    return true;
+  });
+
+  return {
+    accelerators: [...macAccelerators, ...linuxAccelerators],
+    gpus,
+  };
+}
+
+export async function collectSystemMetrics({
+  cwd = process.cwd(),
+  cpus = os.cpus,
+  execFile = execFileAsync,
+  freemem = os.freemem,
+  platform = process.platform,
+  readFile = readFileCallback,
+  readdir = readdirCallback,
+  sampleMs = DEFAULT_CPU_SAMPLE_MS,
+  timeoutMs = DEFAULT_TIMEOUT_MS,
+  totalmem = os.totalmem,
+} = {}) {
+  const checkedAt = new Date().toISOString();
+  const [storage, cpu, memory, devices] = await Promise.all([
+    readStorage({ cwd, execFile, platform, timeoutMs }),
+    readCpu({ cpus, sampleMs }),
+    Promise.resolve(readMemory({ totalmem, freemem })),
+    readDevices({ execFile, platform, readFile, readdir, timeoutMs }),
+  ]);
+
+  return {
+    checkedAt,
+    hostname: os.hostname(),
+    platform,
+    uptimeSeconds: os.uptime(),
+    storage,
+    cpu,
+    memory,
+    gpus: devices.gpus,
+    accelerators: devices.accelerators,
+    warnings: [...storage.warnings],
+  };
+}
+
+export const testInternals = {
+  parseDfOutput,
+  parseMacAneIoreg,
+  parseMacGpuIoreg,
+  parseNvidiaCsv,
+};

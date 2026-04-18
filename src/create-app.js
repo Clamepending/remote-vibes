@@ -17,6 +17,7 @@ import { SettingsStore } from "./settings-store.js";
 import { SessionManager } from "./session-manager.js";
 import { SleepPreventionService } from "./sleep-prevention.js";
 import { getRemoteVibesStateDir } from "./state-paths.js";
+import { collectSystemMetrics } from "./system-metrics.js";
 import { TailscaleServeManager } from "./tailscale-serve.js";
 import { UpdateManager } from "./update-manager.js";
 import { WikiBackupService } from "./wiki-backup.js";
@@ -249,6 +250,7 @@ export async function createRemoteVibesApp({
       enabled: settings.preventSleepEnabled,
     }),
   onTerminate = null,
+  systemMetricsProvider = collectSystemMetrics,
   updateManager = new UpdateManager({ cwd, stateDir, port }),
 } = {}) {
   const providers = Array.isArray(providerOverrides) ? providerOverrides : await detectProviders();
@@ -428,6 +430,16 @@ export async function createRemoteVibesApp({
     response.json({
       ports: await listNamedPorts(),
     });
+  });
+
+  app.get("/api/system", async (_request, response) => {
+    try {
+      response.json({
+        system: await systemMetricsProvider({ cwd }),
+      });
+    } catch (error) {
+      response.status(500).json({ error: error.message || "Could not read system metrics." });
+    }
   });
 
   app.patch("/api/ports/:port", async (request, response) => {

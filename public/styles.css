@@ -988,6 +988,227 @@ input[readonly][data-folder-picker-target] {
   grid-template-columns: repeat(2, minmax(0, 1fr));
 }
 
+.system-dashboard {
+  display: grid;
+  align-content: start;
+  gap: 12px;
+  min-height: 0;
+  overflow-y: auto;
+  padding-right: 2px;
+}
+
+.system-storage-card,
+.system-summary-card,
+.system-section,
+.system-error-card,
+.system-warning-list {
+  min-width: 0;
+  border: 1px solid rgba(255, 255, 255, 0.07);
+  background: rgba(255, 255, 255, 0.035);
+}
+
+.system-storage-card {
+  display: grid;
+  gap: 14px;
+  padding: 20px;
+  border-radius: 20px;
+  background:
+    radial-gradient(circle at 12% 0%, rgba(255, 69, 58, 0.2), transparent 34%),
+    linear-gradient(180deg, rgba(255, 255, 255, 0.055), rgba(255, 255, 255, 0.026));
+}
+
+.system-storage-head,
+.system-section-head,
+.system-device-head {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 12px;
+  min-width: 0;
+}
+
+.system-storage-head strong,
+.system-section-head strong,
+.system-device-head strong {
+  min-width: 0;
+  overflow: hidden;
+  color: var(--text);
+  white-space: nowrap;
+  text-overflow: ellipsis;
+}
+
+.system-storage-head span,
+.system-section-head span,
+.system-device-head span {
+  flex: 0 0 auto;
+  color: rgba(232, 236, 240, 0.7);
+  font-family: "IBM Plex Mono", monospace;
+  font-size: 0.78rem;
+}
+
+.system-storage-bar {
+  position: relative;
+  display: flex;
+  height: 42px;
+  overflow: hidden;
+  border-radius: 8px;
+  background: rgba(255, 255, 255, 0.12);
+}
+
+.system-storage-used {
+  flex: 0 0 var(--storage-used, 0%);
+  min-width: 6px;
+  background: linear-gradient(90deg, #ff453a, #ff7a59);
+}
+
+.system-storage-free {
+  flex: 1 1 auto;
+  background:
+    linear-gradient(90deg, rgba(255, 255, 255, 0.22), rgba(255, 255, 255, 0.12)),
+    rgba(255, 255, 255, 0.08);
+}
+
+.system-storage-legend {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 12px;
+  color: var(--muted);
+  font-size: 0.82rem;
+}
+
+.system-storage-legend span {
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+}
+
+.legend-dot {
+  width: 9px;
+  height: 9px;
+  border-radius: 999px;
+  background: rgba(255, 255, 255, 0.34);
+}
+
+.legend-dot.is-used {
+  background: #ff453a;
+}
+
+.legend-dot.is-free {
+  background: rgba(255, 255, 255, 0.38);
+}
+
+.system-summary-grid,
+.system-device-grid {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 10px;
+}
+
+.system-summary-card {
+  display: grid;
+  gap: 8px;
+  padding: 14px;
+  border-radius: 16px;
+}
+
+.system-summary-card span,
+.cpu-core-card span {
+  color: var(--muted);
+  font-family: "IBM Plex Mono", monospace;
+  font-size: 0.7rem;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+}
+
+.system-summary-card strong {
+  font-size: 1.35rem;
+}
+
+.system-summary-card em,
+.system-device-card p,
+.system-warning-list span {
+  color: var(--muted);
+  font-size: 0.78rem;
+  font-style: normal;
+  line-height: 1.45;
+}
+
+.metric-bar {
+  height: 7px;
+  overflow: hidden;
+  border-radius: 999px;
+  background: rgba(255, 255, 255, 0.09);
+}
+
+.metric-bar span {
+  display: block;
+  width: var(--metric-value, 0%);
+  height: 100%;
+  border-radius: inherit;
+  background: linear-gradient(90deg, #72ddf7, #6ae3c6);
+}
+
+.metric-bar.is-memory span {
+  background: linear-gradient(90deg, #ffd866, #ff9f0a);
+}
+
+.metric-bar.is-device span {
+  background: linear-gradient(90deg, #9cc7ff, #c7f464);
+}
+
+.system-section {
+  display: grid;
+  gap: 12px;
+  padding: 16px;
+  border-radius: 18px;
+}
+
+.cpu-core-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(96px, 1fr));
+  gap: 8px;
+}
+
+.cpu-core-card,
+.system-device-card {
+  display: grid;
+  gap: 8px;
+  min-width: 0;
+  padding: 12px;
+  border-radius: 14px;
+  background: rgba(8, 10, 12, 0.32);
+}
+
+.cpu-core-card strong {
+  font-family: "IBM Plex Mono", monospace;
+  font-size: 0.92rem;
+}
+
+.system-device-grid {
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+}
+
+.system-device-card p {
+  margin: 0;
+}
+
+.system-error-card,
+.system-warning-list {
+  display: grid;
+  gap: 8px;
+  padding: 12px 14px;
+  border-radius: 16px;
+}
+
+.system-error-card {
+  border-color: rgba(255, 134, 111, 0.32);
+  color: #ffb4a5;
+}
+
+.system-warning-list {
+  border-color: rgba(255, 216, 106, 0.24);
+}
+
 .run-distribution-card {
   gap: 14px;
 }
@@ -3052,7 +3273,9 @@ select:disabled {
 
   .plugins-layout,
   .plugin-grid,
-  .automation-grid {
+  .automation-grid,
+  .system-summary-grid,
+  .system-device-grid {
     grid-template-columns: minmax(0, 1fr);
   }
 
