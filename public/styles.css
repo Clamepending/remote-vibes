@@ -744,6 +744,10 @@ input[readonly][data-folder-picker-target] {
   grid-template-rows: auto minmax(0, 1fr);
 }
 
+.knowledge-base-column-list {
+  grid-template-rows: auto auto minmax(0, 1fr);
+}
+
 .knowledge-base-panel-head {
   display: flex;
   align-items: center;
