@@ -946,6 +946,97 @@ test("shell session streams websocket output and honors custom cwd", async () =>
   }
 });
 
+test("shell session keeps running while the browser websocket disconnects", async () => {
+  const { app, baseUrl } = await startApp();
+  let session = null;
+  let firstSocket = null;
+  let secondSocket = null;
+
+  try {
+    const createResponse = await fetch(`${baseUrl}/api/sessions`, {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify({
+        providerId: "shell",
+        name: "Disconnect Smoke",
+        cwd: process.cwd(),
+      }),
+    });
+
+    assert.equal(createResponse.status, 201);
+    ({ session } = await createResponse.json());
+
+    const websocketUrl = `${baseUrl.replace("http", "ws")}/ws?sessionId=${session.id}`;
+    const command =
+      "for i in 1 2 3 4 5; do printf 'RV_WS_KEEPALIVE_%s\\n' \"$i\"; sleep 0.2; done\r";
+
+    firstSocket = new WebSocket(websocketUrl);
+    await new Promise((resolve, reject) => {
+      let combined = "";
+      let sentCommand = false;
+      const timeout = setTimeout(() => {
+        reject(new Error("Timed out waiting for first websocket output."));
+      }, 8_000);
+
+      firstSocket.on("open", () => {
+        firstSocket.send(JSON.stringify({ type: "resize", cols: 100, rows: 30 }));
+      });
+
+      firstSocket.on("message", (chunk) => {
+        const payload = JSON.parse(String(chunk));
+        combined += payload.data || "";
+
+        if (!sentCommand) {
+          firstSocket.send(JSON.stringify({ type: "input", data: command }));
+          sentCommand = true;
+        }
+
+        if (combined.includes("RV_WS_KEEPALIVE_1")) {
+          clearTimeout(timeout);
+          resolve();
+        }
+      });
+    });
+
+    firstSocket.close();
+    await once(firstSocket, "close");
+    await new Promise((resolve) => setTimeout(resolve, 1_000));
+
+    secondSocket = new WebSocket(websocketUrl);
+    const reattachedOutput = await new Promise((resolve, reject) => {
+      const timeout = setTimeout(() => {
+        reject(new Error("Timed out waiting for reattached websocket output."));
+      }, 8_000);
+
+      secondSocket.on("message", (chunk) => {
+        const payload = JSON.parse(String(chunk));
+        const data = payload.data || "";
+
+        if (payload.type === "snapshot" && data.includes("RV_WS_KEEPALIVE_5")) {
+          clearTimeout(timeout);
+          resolve(data);
+        }
+      });
+    });
+
+    assert.match(reattachedOutput, /RV_WS_KEEPALIVE_5/);
+  } finally {
+    if (firstSocket && firstSocket.readyState < WebSocket.CLOSING) {
+      firstSocket.close();
+    }
+    if (secondSocket && secondSocket.readyState < WebSocket.CLOSING) {
+      secondSocket.close();
+      await once(secondSocket, "close");
+    }
+    if (session?.id) {
+      await fetch(`${baseUrl}/api/sessions/${session.id}`, { method: "DELETE" });
+    }
+    await app.close();
+  }
+});
+
 test("login shells inherit mailbox helpers and agent inbox env vars", async () => {
   const sessionId = "mailbox-helper-session";
   const env = buildSessionEnv(sessionId, "shell", process.cwd());

@@ -19,6 +19,8 @@ const FILE_IMAGE_MAX_ZOOM = 8;
 const FILE_IMAGE_ZOOM_STEP = 0.25;
 const SYSTEM_HISTORY_REFRESH_MS = 30_000;
 const SELECTION_REFRESH_RETRY_MS = 250;
+const TERMINAL_WEBSOCKET_RECONNECT_BASE_MS = 300;
+const TERMINAL_WEBSOCKET_RECONNECT_MAX_MS = 4_000;
 const SYSTEM_CHART_WIDTH = 560;
 const SYSTEM_CHART_HEIGHT = 150;
 const SYSTEM_HISTORY_RANGES = [
@@ -350,6 +352,9 @@ const state = {
   defaultCwd: "",
   defaultProviderId: "claude",
   websocket: null,
+  websocketReconnectTimer: null,
+  websocketReconnectAttempts: 0,
+  websocketReconnectSessionId: "",
   terminal: null,
   fitAddon: null,
   pollTimer: null,
@@ -9459,7 +9464,50 @@ function waitForUpdateRestart() {
   }, 2000);
 }
 
+function clearWebsocketReconnectTimer() {
+  if (!state.websocketReconnectTimer) {
+    return;
+  }
+
+  window.clearTimeout(state.websocketReconnectTimer);
+  state.websocketReconnectTimer = null;
+}
+
+function shouldReconnectTerminalSession(sessionId) {
+  return Boolean(
+    sessionId &&
+      state.currentView === "shell" &&
+      state.activeSessionId === sessionId &&
+      state.terminal &&
+      !state.updateApplying,
+  );
+}
+
+function scheduleTerminalWebsocketReconnect(sessionId) {
+  if (!shouldReconnectTerminalSession(sessionId)) {
+    return;
+  }
+
+  clearWebsocketReconnectTimer();
+  state.websocketReconnectAttempts += 1;
+  state.websocketReconnectSessionId = sessionId;
+  const delay = Math.min(
+    TERMINAL_WEBSOCKET_RECONNECT_BASE_MS * 2 ** Math.max(0, state.websocketReconnectAttempts - 1),
+    TERMINAL_WEBSOCKET_RECONNECT_MAX_MS,
+  );
+
+  state.websocketReconnectTimer = window.setTimeout(() => {
+    state.websocketReconnectTimer = null;
+    if (!shouldReconnectTerminalSession(sessionId)) {
+      return;
+    }
+
+    connectToSession(sessionId);
+  }, delay);
+}
+
 function closeWebsocket() {
+  clearWebsocketReconnectTimer();
   clearPendingTerminalOutput();
 
   if (state.websocket) {
@@ -9468,6 +9516,7 @@ function closeWebsocket() {
   }
 
   state.connectedSessionId = null;
+  state.websocketReconnectSessionId = "";
   state.terminalShowJumpToBottom = false;
   refreshTerminalJumpUi();
 }
@@ -9872,6 +9921,8 @@ function connectToSession(sessionId) {
       return;
     }
 
+    state.websocketReconnectAttempts = 0;
+    state.websocketReconnectSessionId = "";
     fitTerminalSoon();
     if (!isCoarsePointerDevice()) {
       state.terminal.focus();
@@ -9916,6 +9967,32 @@ function connectToSession(sessionId) {
 
     if (payload.type === "error") {
       state.terminal.writeln(`\r\n[remote-vibes] ${payload.message}`);
+      if (/session not found/i.test(payload.message || "")) {
+        closeWebsocket();
+        void loadSessions();
+      }
+    }
+  });
+
+  socket.addEventListener("close", () => {
+    if (state.websocket !== socket) {
+      return;
+    }
+
+    state.websocket = null;
+    state.connectedSessionId = null;
+    scheduleTerminalWebsocketReconnect(sessionId);
+  });
+
+  socket.addEventListener("error", () => {
+    if (state.websocket !== socket) {
+      return;
+    }
+
+    try {
+      socket.close();
+    } catch {
+      scheduleTerminalWebsocketReconnect(sessionId);
     }
   });
 }
