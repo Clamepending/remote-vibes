@@ -75,6 +75,12 @@ function nextVersion(currentVersion, requestedBump) {
   fail(`Unknown release bump "${requestedBump}". Use patch, minor, major, or an exact version.`);
 }
 
+function parsePorcelainPath(line) {
+  const match = String(line || "").match(/^[ MADRCU?!]{1,2}\s+(.+)$/);
+  const pathPart = (match?.[1] || String(line || "").slice(3)).trim();
+  return pathPart.includes(" -> ") ? pathPart.split(" -> ").at(-1) : pathPart;
+}
+
 function getGitHubSlug(remoteUrl) {
   const sshMatch = remoteUrl.match(/^git@github\.com:([^/]+\/[^/]+?)(?:\.git)?$/i);
   if (sshMatch) {
@@ -99,8 +105,7 @@ const dirtyTrackedLines = run("git", ["status", "--porcelain", "--untracked-file
   .split("\n")
   .filter(Boolean);
 const blockingDirtyTracked = dirtyTrackedLines.filter((line) => {
-  const pathPart = line.slice(3).trim();
-  const renameTarget = pathPart.includes(" -> ") ? pathPart.split(" -> ").at(-1) : pathPart;
+  const renameTarget = parsePorcelainPath(line);
   return !ignoredDirtyPaths.has(renameTarget);
 });
 
