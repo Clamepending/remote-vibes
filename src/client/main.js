@@ -3832,7 +3832,7 @@ function renderKnowledgeBaseView() {
               : ""
           }
           <button class="ghost-button toolbar-control" type="button" id="backup-wiki-now">backup now</button>
-          <button class="ghost-button toolbar-control" type="button" id="refresh-knowledge-base">refresh</button>
+          <button class="icon-button toolbar-control refresh-icon-button" type="button" id="refresh-knowledge-base" aria-label="Refresh knowledge base" ${tooltipAttributes("Refresh knowledge base")}>↻</button>
         </div>
       </div>
       <div class="knowledge-base-grid">
@@ -3898,7 +3898,7 @@ function renderKnowledgeBaseApp() {
             ${rawHref
               ? `<a class="ghost-button toolbar-control" href="${escapeHtml(rawHref)}" target="_blank" rel="noreferrer">raw</a>`
               : ""}
-            <button class="ghost-button toolbar-control" type="button" id="refresh-knowledge-base">refresh</button>
+            <button class="icon-button toolbar-control refresh-icon-button" type="button" id="refresh-knowledge-base" aria-label="Refresh knowledge base" ${tooltipAttributes("Refresh knowledge base")}>↻</button>
             <a class="ghost-button toolbar-control" href="${escapeHtml(getAppBaseUrl())}/">remote vibes</a>
           </div>
         </header>
@@ -5361,6 +5361,7 @@ function renderSystemView() {
   const system = state.systemMetrics;
   const updatedAge = system?.checkedAt ? relativeTime(system.checkedAt) : "";
   const updated = updatedAge ? (updatedAge === "live" ? "updated just now" : `updated ${updatedAge} ago`) : "waiting for first sample";
+  const refreshLabel = state.systemMetricsLoading ? "Sampling system metrics" : "Refresh system";
 
   return `
     <section class="dashboard-panel main-view system-view" ${renderMainViewAttributes(
@@ -5374,9 +5375,7 @@ function renderSystemView() {
           <div class="terminal-meta">storage, CPU cores, GPUs, and accelerators on this machine</div>
         </div>
         <div class="dashboard-actions">
-          <button class="ghost-button toolbar-control" type="button" id="refresh-system" ${state.systemMetricsLoading ? "disabled" : ""}>
-            ${state.systemMetricsLoading ? "sampling..." : "refresh"}
-          </button>
+          <button class="icon-button toolbar-control refresh-icon-button ${state.systemMetricsLoading ? "is-loading" : ""}" type="button" id="refresh-system" aria-label="${escapeHtml(refreshLabel)}" ${tooltipAttributes(refreshLabel)} ${state.systemMetricsLoading ? "disabled" : ""}>↻</button>
         </div>
       </div>
       <div class="dashboard-range">
@@ -6170,6 +6169,7 @@ function renderSwarmGraphView() {
   const graph = state.swarmGraph.data;
   const selectedSession = state.sessions.find((session) => session.id === state.swarmGraph.sessionId) || null;
   const title = selectedSession?.name || graph?.sessions?.[0]?.name || "Swarm graph";
+  const refreshLabel = state.swarmGraph.loading ? "Mapping swarm graph" : "Refresh swarm graph";
   const meta = graph
     ? `${graph.git?.isRepository ? "git" : "folder"} · ${graph.cwd || selectedSession?.cwd || state.defaultCwd}`
     : selectedSession
@@ -6189,9 +6189,7 @@ function renderSwarmGraphView() {
         </div>
         <div class="dashboard-actions">
           <button class="ghost-button toolbar-control" type="button" id="swarm-back-to-session">terminal</button>
-          <button class="ghost-button toolbar-control" type="button" id="refresh-swarm-graph" ${state.swarmGraph.loading || !state.swarmGraph.sessionId ? "disabled" : ""}>
-            ${state.swarmGraph.loading ? "mapping..." : "refresh"}
-          </button>
+          <button class="icon-button toolbar-control refresh-icon-button ${state.swarmGraph.loading ? "is-loading" : ""}" type="button" id="refresh-swarm-graph" aria-label="${escapeHtml(refreshLabel)}" ${tooltipAttributes(refreshLabel)} ${state.swarmGraph.loading || !state.swarmGraph.sessionId ? "disabled" : ""}>↻</button>
         </div>
       </div>
       ${

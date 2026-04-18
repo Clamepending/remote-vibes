@@ -4033,6 +4033,19 @@ input[readonly][data-folder-picker-target] {
   letter-spacing: 0.02em;
 }
 
+.refresh-icon-button {
+  width: 48px;
+  min-width: 48px;
+  min-height: 48px;
+  padding: 0;
+  font-size: 1.15rem;
+  line-height: 1;
+}
+
+.refresh-icon-button.is-loading {
+  animation: session-working-spin 900ms linear infinite;
+}
+
 .terminal-stack {
   display: grid;
   grid-template-columns: minmax(0, 1fr);
