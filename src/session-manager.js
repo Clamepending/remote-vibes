@@ -229,9 +229,11 @@ export function buildSessionEnv(
       : getLegacyWorkspaceStateDir(resolvedWorkspaceRoot));
   const resolvedWikiRootPath = wikiRootPath || path.join(resolvedStateDir, "wiki");
   const agentDir = path.join(resolvedWikiRootPath, "comms", "agents", sessionId);
+  const { NO_COLOR: _noColor, ...colorCapableEnv } = env;
 
   return {
-    ...env,
+    ...colorCapableEnv,
+    CLICOLOR: "1",
     COLORTERM: "truecolor",
     LANG: "en_US.UTF-8",
     LC_ALL: "en_US.UTF-8",

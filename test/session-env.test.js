@@ -44,3 +44,25 @@ test("buildSessionEnv exposes helper and common CLI directories on PATH", () => 
     process.env.PATH = originalPath;
   }
 });
+
+test("buildSessionEnv strips inherited NO_COLOR and enables terminal colors", () => {
+  const stateDir = path.join(rootDir, ".remote-vibes");
+  const env = buildSessionEnv(
+    "session-color",
+    "shell",
+    [],
+    rootDir,
+    stateDir,
+    {
+      NO_COLOR: "1",
+      PATH: "/usr/bin:/bin",
+      TERM: "dumb",
+    },
+    path.join(rootDir, "mac-brain"),
+  );
+
+  assert.equal(Object.hasOwn(env, "NO_COLOR"), false);
+  assert.equal(env.CLICOLOR, "1");
+  assert.equal(env.COLORTERM, "truecolor");
+  assert.equal(env.TERM, "xterm-256color");
+});
