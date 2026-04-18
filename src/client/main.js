@@ -164,10 +164,37 @@ const LIKELY_TEXT_FILENAMES = new Set([
   "readme",
   "readme.md",
 ]);
+const SESSION_READ_STORAGE_KEY = "remote-vibes-session-read-at-v1";
+
+function loadSessionReadState() {
+  try {
+    const parsed = JSON.parse(window.localStorage.getItem(SESSION_READ_STORAGE_KEY) || "{}");
+    if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) {
+      return {};
+    }
+
+    return Object.fromEntries(
+      Object.entries(parsed)
+        .map(([sessionId, timestamp]) => [sessionId, Number(timestamp)])
+        .filter(([sessionId, timestamp]) => sessionId && Number.isFinite(timestamp) && timestamp > 0),
+    );
+  } catch {
+    return {};
+  }
+}
+
+function saveSessionReadState() {
+  try {
+    window.localStorage.setItem(SESSION_READ_STORAGE_KEY, JSON.stringify(state.sessionReadAt));
+  } catch {
+    // Read state is a UI nicety; private browsing/storage failures should not block sessions.
+  }
+}
 
 const state = {
   providers: [],
   sessions: [],
+  sessionReadAt: loadSessionReadState(),
   ports: [],
   currentView: "shell",
   globalSearchQuery: "",
@@ -349,12 +376,77 @@ function clamp(value, min, max) {
   return Math.min(max, Math.max(min, value));
 }
 
-function isLive(session) {
-  if (session.status === "exited" || !session.lastOutputAt) {
+function timestampMs(timestamp) {
+  const value = Date.parse(timestamp || "");
+  return Number.isFinite(value) ? value : 0;
+}
+
+function getSessionReadAt(sessionId) {
+  return Number(state.sessionReadAt[sessionId] || 0);
+}
+
+function getSessionUnreadAt(session) {
+  return Math.max(
+    timestampMs(session?.activityCompletedAt),
+    timestampMs(session?.lastOutputAt),
+  );
+}
+
+function isSessionUnread(session) {
+  const unreadAt = getSessionUnreadAt(session);
+  return unreadAt > 0 && unreadAt > getSessionReadAt(session.id);
+}
+
+function markSessionRead(sessionOrId, { refresh = true } = {}) {
+  const session = typeof sessionOrId === "string"
+    ? state.sessions.find((entry) => entry.id === sessionOrId)
+    : sessionOrId;
+
+  if (!session?.id) {
     return false;
   }
 
-  return Date.now() - new Date(session.lastOutputAt).getTime() < 2500;
+  const readAt = Math.max(
+    getSessionUnreadAt(session),
+    timestampMs(session.updatedAt),
+    Date.now(),
+  );
+  if (readAt <= getSessionReadAt(session.id)) {
+    return false;
+  }
+
+  state.sessionReadAt = {
+    ...state.sessionReadAt,
+    [session.id]: readAt,
+  };
+  saveSessionReadState();
+
+  if (refresh) {
+    scheduleSessionsRefresh();
+  }
+
+  return true;
+}
+
+function shouldMarkSessionRead(sessionId) {
+  return (
+    sessionId === state.activeSessionId
+    && state.currentView === "shell"
+    && document.visibilityState !== "hidden"
+  );
+}
+
+function pruneSessionReadState() {
+  const knownSessionIds = new Set(state.sessions.map((session) => session.id));
+  const nextReadAt = Object.fromEntries(
+    Object.entries(state.sessionReadAt).filter(([sessionId]) => knownSessionIds.has(sessionId)),
+  );
+  if (Object.keys(nextReadAt).length === Object.keys(state.sessionReadAt).length) {
+    return;
+  }
+
+  state.sessionReadAt = nextReadAt;
+  saveSessionReadState();
 }
 
 function relativeTime(timestamp) {
@@ -382,12 +474,18 @@ function relativeTime(timestamp) {
 
 function getSessionLabel(session) {
   if (session.status === "exited") {
-    return { text: "x", className: "exited" };
+    return { text: "exited", className: "exited", title: "session exited" };
   }
 
-  return isLive(session)
-    ? { text: "live", className: "live" }
-    : { text: "idle", className: "idle" };
+  if (session.activityStatus === "working") {
+    return { text: "working", className: "working", title: "agent is working" };
+  }
+
+  if (isSessionUnread(session)) {
+    return { text: "done", className: "unread", title: "agent finished; unread" };
+  }
+
+  return { text: "read", className: "read", title: "read" };
 }
 
 function getPortDisplayName(port) {
@@ -3544,7 +3642,7 @@ function renderSessionCard(session) {
 
   return `
     <article class="session-card ${session.id === state.activeSessionId ? "is-active" : ""}" data-session-id="${session.id}">
-      <span class="session-activity-dot ${status.className}" aria-hidden="true"></span>
+      <span class="session-activity-dot ${status.className}" role="img" aria-label="${escapeHtml(status.title)}" title="${escapeHtml(status.title)}"></span>
       <div class="session-main">
         <div class="session-name">${escapeHtml(session.name)}</div>
         <div class="session-subtitle">${escapeHtml(session.providerLabel)}</div>
@@ -4439,6 +4537,8 @@ function bindSessionEvents() {
       if (state.currentView !== "shell") {
         setCurrentView("shell");
       }
+
+      markSessionRead(nextSessionId, { refresh: false });
 
       if (nextSessionId === state.activeSessionId) {
         renderShell();
@@ -6719,6 +6819,10 @@ function updateSession(session) {
     state.sessions[index] = session;
   }
 
+  if (shouldMarkSessionRead(session.id)) {
+    markSessionRead(session, { refresh: false });
+  }
+
   refreshToolbarUi();
   scheduleSessionsRefresh();
 }
@@ -6768,6 +6872,7 @@ async function loadSessions() {
     const previousActiveSessionId = state.activeSessionId;
     const payload = await fetchJson("/api/sessions");
     state.sessions = payload.sessions;
+    pruneSessionReadState();
 
     if (state.activeSessionId && !state.sessions.some((session) => session.id === state.activeSessionId)) {
       state.activeSessionId = state.sessions[0]?.id ?? null;
@@ -7058,6 +7163,7 @@ async function bootstrapApp() {
   const payload = await fetchJson("/api/state");
   state.providers = payload.providers;
   state.sessions = payload.sessions;
+  pruneSessionReadState();
   state.ports = payload.ports ?? [];
   state.defaultCwd = payload.cwd;
   state.defaultProviderId = payload.defaultProviderId;

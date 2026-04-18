@@ -226,6 +226,83 @@ test("custom session names are left alone after the first prompt", async () => {
   }
 });
 
+test("agent sessions expose working and done activity states", async () => {
+  const workspaceDir = await mkdtemp(path.join(os.tmpdir(), "remote-vibes-session-manager-"));
+  const userHomeDir = await mkdtemp(path.join(os.tmpdir(), "remote-vibes-session-home-"));
+  const pendingTimers = new Set();
+  const manager = new SessionManager({
+    cwd: workspaceDir,
+    providers: fakeAgentProviders,
+    persistSessions: false,
+    stateDir: path.join(workspaceDir, ".remote-vibes"),
+    userHomeDir,
+    sessionActivityIdleMs: 1,
+    setTimeoutFn: (callback) => {
+      const timer = { callback };
+      pendingTimers.add(timer);
+      return timer;
+    },
+    clearTimeoutFn: (timer) => {
+      pendingTimers.delete(timer);
+    },
+  });
+
+  const runNextTimer = () => {
+    const [timer] = Array.from(pendingTimers);
+    assert.ok(timer, "expected an activity timer");
+    pendingTimers.delete(timer);
+    timer.callback();
+  };
+
+  try {
+    const session = manager.buildSessionRecord({
+      id: "11111111-2222-4333-8444-activity0001",
+      providerId: "claude",
+      providerLabel: "Claude Code",
+      name: "Claude 1",
+      cwd: workspaceDir,
+      status: "running",
+    });
+
+    manager.trackSessionInputActivity(session, "please fix the status dot\r");
+    assert.equal(session.activityStatus, "working");
+    assert.match(session.lastPromptAt, /^\d{4}-\d{2}-\d{2}T/);
+    assert.equal(session.activityCompletedAt, null);
+
+    manager.trackSessionOutputActivity(session, "working...");
+    assert.equal(session.activityStatus, "working");
+
+    runNextTimer();
+    assert.equal(session.activityStatus, "done");
+    assert.match(session.activityCompletedAt, /^\d{4}-\d{2}-\d{2}T/);
+    assert.equal(manager.serializeSession(session).activityStatus, "done");
+  } finally {
+    await cleanupManager(manager, workspaceDir, userHomeDir);
+  }
+});
+
+test("shell sessions do not use agent activity states", async () => {
+  const { manager, workspaceDir, userHomeDir } = await createManager();
+
+  try {
+    const session = manager.buildSessionRecord({
+      id: "11111111-2222-4333-8444-activity0002",
+      providerId: "shell",
+      providerLabel: "Vanilla Shell",
+      name: "Shell 1",
+      cwd: workspaceDir,
+      status: "running",
+    });
+
+    manager.trackSessionInputActivity(session, "echo hi\r");
+    manager.trackSessionOutputActivity(session, "hi\r\n");
+    assert.equal(session.activityStatus, "idle");
+    assert.equal(session.lastPromptAt, null);
+  } finally {
+    await cleanupManager(manager, workspaceDir, userHomeDir);
+  }
+});
+
 test("Claude sessions use a fixed session id and resume it after restart", async () => {
   const { manager, workspaceDir, userHomeDir } = await createManager();
 

@@ -19,6 +19,7 @@ const SESSION_PERSIST_THROTTLE_MS = 180;
 const SESSION_NAME_MAX_LENGTH = 64;
 const SESSION_AUTO_NAME_MAX_WORDS = 6;
 const SESSION_AUTO_NAME_BUFFER_LIMIT = 240;
+const SESSION_ACTIVITY_IDLE_MS = Number(process.env.REMOTE_VIBES_SESSION_ACTIVITY_IDLE_MS || 15_000);
 const PROVIDER_SESSION_LIST_LIMIT = 50;
 const PROVIDER_SESSION_CAPTURE_ATTEMPTS = 16;
 const PROVIDER_SESSION_CAPTURE_INTERVAL_MS = 250;
@@ -127,6 +128,7 @@ function consumePromptInput(buffer, input) {
   const completedLines = [];
   let nextBuffer = String(buffer ?? "");
   let escapeSequenceLength = 0;
+  let interrupted = false;
 
   for (const character of String(input ?? "").replace(/\r\n/g, "\r")) {
     if (escapeSequenceLength > 0) {
@@ -139,6 +141,12 @@ function consumePromptInput(buffer, input) {
 
     if (character === "\u001b") {
       escapeSequenceLength = 1;
+      continue;
+    }
+
+    if (character === "\u0003") {
+      interrupted = true;
+      nextBuffer = "";
       continue;
     }
 
@@ -169,7 +177,16 @@ function consumePromptInput(buffer, input) {
   return {
     completedLines,
     buffer: nextBuffer,
+    interrupted,
   };
+}
+
+function isAgentActivitySession(session) {
+  return Boolean(session?.id && session?.providerId && session.providerId !== "shell");
+}
+
+function normalizeActivityStatus(value) {
+  return value === "working" || value === "done" ? value : "idle";
 }
 
 export function prependPathEntries(existingPath, entries) {
@@ -758,8 +775,11 @@ export class SessionManager {
     wikiRootPath = path.join(stateDir, "wiki"),
     agentRunStore = null,
     runIdleTimeoutMs = Number(process.env.REMOTE_VIBES_RUN_IDLE_MS || 15_000),
+    sessionActivityIdleMs = SESSION_ACTIVITY_IDLE_MS,
     env = process.env,
     userHomeDir = env?.HOME || os.homedir(),
+    setTimeoutFn = setTimeout,
+    clearTimeoutFn = clearTimeout,
   }) {
     this.cwd = cwd;
     this.providers = providers;
@@ -768,6 +788,9 @@ export class SessionManager {
     this.wikiRootPath = wikiRootPath;
     this.env = env && typeof env === "object" ? { ...env } : { ...process.env };
     this.userHomeDir = getProviderHomeDir(userHomeDir);
+    this.sessionActivityIdleMs = Math.max(500, Number(sessionActivityIdleMs) || SESSION_ACTIVITY_IDLE_MS);
+    this.setTimeoutFn = setTimeoutFn;
+    this.clearTimeoutFn = clearTimeoutFn;
     this.sessionStore = new SessionStore({
       enabled: persistSessions,
       stateDir,
@@ -780,6 +803,8 @@ export class SessionManager {
       ? new AgentRunTracker({
           store: agentRunStore,
           idleTimeoutMs: runIdleTimeoutMs,
+          setTimeoutFn,
+          clearTimeoutFn,
         })
       : null;
   }
@@ -1010,6 +1035,7 @@ export class SessionManager {
     session.restoreOnStartup = false;
     this.clearPendingMetaBroadcast(session);
     this.clearPendingProviderCaptureRetry(session);
+    this.clearSessionActivityTimer(session);
     session.clients.clear();
     this.queueAgentRunTracking(this.agentRunTracker?.handleSessionDelete(session));
 
@@ -1056,6 +1082,7 @@ export class SessionManager {
 
     this.queueAgentRunTracking(this.agentRunTracker?.handleInput(session, input));
     session.pty.write(input);
+    this.trackSessionInputActivity(session, input);
     this.maybeAutoRenameSessionFromInput(session, input);
     this.maybeRetryPendingProviderCaptureFromInput(session, input);
     session.updatedAt = new Date().toISOString();
@@ -1090,6 +1117,7 @@ export class SessionManager {
     for (const session of this.sessions.values()) {
       this.clearPendingMetaBroadcast(session);
       this.clearPendingProviderCaptureRetry(session);
+      this.clearSessionActivityTimer(session);
 
       for (const client of session.clients) {
         client.close();
@@ -1154,6 +1182,85 @@ export class SessionManager {
     }
 
     this.schedulePersist();
+  }
+
+  clearSessionActivityTimer(session) {
+    if (!session?.activityIdleTimer) {
+      return;
+    }
+
+    this.clearTimeoutFn(session.activityIdleTimer);
+    session.activityIdleTimer = null;
+  }
+
+  scheduleSessionActivityCompletion(session) {
+    if (!isAgentActivitySession(session) || session.activityStatus !== "working") {
+      this.clearSessionActivityTimer(session);
+      return;
+    }
+
+    this.clearSessionActivityTimer(session);
+    session.activityIdleTimer = this.setTimeoutFn(() => {
+      session.activityIdleTimer = null;
+      this.markSessionActivityDone(session);
+    }, this.sessionActivityIdleMs);
+  }
+
+  markSessionActivityWorking(session) {
+    if (!isAgentActivitySession(session)) {
+      return false;
+    }
+
+    const timestamp = new Date().toISOString();
+    session.activityStatus = "working";
+    session.lastPromptAt = timestamp;
+    session.activityStartedAt = timestamp;
+    session.activityCompletedAt = null;
+    session.updatedAt = timestamp;
+    this.scheduleSessionActivityCompletion(session);
+    this.scheduleSessionMetaBroadcast(session, { immediate: true });
+    this.schedulePersist();
+    return true;
+  }
+
+  markSessionActivityDone(session) {
+    if (!isAgentActivitySession(session) || session.activityStatus !== "working") {
+      return false;
+    }
+
+    this.clearSessionActivityTimer(session);
+    const timestamp = new Date().toISOString();
+    session.activityStatus = "done";
+    session.activityCompletedAt = timestamp;
+    session.updatedAt = timestamp;
+    this.scheduleSessionMetaBroadcast(session, { immediate: true });
+    this.schedulePersist();
+    return true;
+  }
+
+  trackSessionInputActivity(session, input) {
+    if (!isAgentActivitySession(session)) {
+      return;
+    }
+
+    const parsed = consumePromptInput(session.activityInputBuffer || "", input);
+    session.activityInputBuffer = parsed.buffer;
+
+    if (parsed.interrupted) {
+      this.markSessionActivityDone(session);
+    }
+
+    if (parsed.completedLines.length > 0) {
+      this.markSessionActivityWorking(session);
+    }
+  }
+
+  trackSessionOutputActivity(session) {
+    if (!isAgentActivitySession(session) || session.activityStatus !== "working") {
+      return;
+    }
+
+    this.scheduleSessionActivityCompletion(session);
   }
 
   queueAgentRunTracking(task) {
@@ -1222,6 +1329,10 @@ export class SessionManager {
       cols: session.cols,
       rows: session.rows,
       host: os.hostname(),
+      lastPromptAt: session.lastPromptAt,
+      activityStatus: session.activityStatus,
+      activityStartedAt: session.activityStartedAt,
+      activityCompletedAt: session.activityCompletedAt,
     };
   }
 
@@ -1235,6 +1346,10 @@ export class SessionManager {
     createdAt = new Date().toISOString(),
     updatedAt = createdAt,
     lastOutputAt = null,
+    lastPromptAt = null,
+    activityStatus = "idle",
+    activityStartedAt = null,
+    activityCompletedAt = null,
     status = "starting",
     exitCode = null,
     exitSignal = null,
@@ -1255,6 +1370,10 @@ export class SessionManager {
       createdAt,
       updatedAt,
       lastOutputAt,
+      lastPromptAt,
+      activityStatus: normalizeActivityStatus(activityStatus),
+      activityStartedAt,
+      activityCompletedAt,
       status,
       exitCode,
       exitSignal,
@@ -1269,6 +1388,8 @@ export class SessionManager {
         providerState && typeof providerState === "object" ? { ...providerState } : null,
       autoRenameEnabled: Boolean(autoRenameEnabled),
       autoRenameBuffer: "",
+      activityInputBuffer: "",
+      activityIdleTimer: null,
       pendingProviderCapture: null,
       providerCapturePromise: null,
       providerCaptureRetryTimer: null,
@@ -1800,6 +1921,7 @@ export class SessionManager {
     session.exitCode = null;
     session.exitSignal = null;
     session.restoreOnStartup = true;
+    session.activityInputBuffer = "";
     session.updatedAt = new Date().toISOString();
     const launchContextPromise = this.prepareProviderLaunch(session, provider, { restored });
 
@@ -1833,6 +1955,7 @@ export class SessionManager {
       session.updatedAt = new Date().toISOString();
       session.lastOutputAt = session.updatedAt;
       this.agentRunTracker?.handleOutput(session, chunk);
+      this.trackSessionOutputActivity(session);
       this.pushOutput(session, chunk);
       this.scheduleSessionMetaBroadcast(session);
     });
@@ -1840,6 +1963,7 @@ export class SessionManager {
     ptyProcess.onExit(({ exitCode, signal }) => {
       session.pty = null;
       this.clearPendingProviderCaptureRetry(session);
+      this.clearSessionActivityTimer(session);
 
       if (session.skipExitHandling) {
         this.agentRunTracker?.forgetSession(session.id);
@@ -1850,6 +1974,7 @@ export class SessionManager {
       session.exitCode = exitCode;
       session.exitSignal = signal ?? null;
       session.restoreOnStartup = false;
+      session.activityStatus = "idle";
       session.updatedAt = new Date().toISOString();
 
       this.pushOutput(
@@ -1881,6 +2006,10 @@ export class SessionManager {
       createdAt: snapshot.createdAt || new Date().toISOString(),
       updatedAt: snapshot.updatedAt || snapshot.createdAt || new Date().toISOString(),
       lastOutputAt: snapshot.lastOutputAt || null,
+      lastPromptAt: snapshot.lastPromptAt || null,
+      activityStatus: snapshot.activityStatus === "done" ? "done" : "idle",
+      activityStartedAt: snapshot.activityStartedAt || null,
+      activityCompletedAt: snapshot.activityCompletedAt || null,
       status: snapshot.status || "exited",
       exitCode: snapshot.exitCode ?? null,
       exitSignal: snapshot.exitSignal ?? null,
@@ -1930,6 +2059,7 @@ export class SessionManager {
     session.exitCode = null;
     session.exitSignal = null;
     session.restoreOnStartup = false;
+    session.activityStatus = "idle";
     session.updatedAt = new Date().toISOString();
     session.pty = null;
     this.pushOutput(session, buildPersistedExitMessage(message));
