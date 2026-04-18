@@ -1,11 +1,14 @@
+import { execFile } from "node:child_process";
 import os from "node:os";
 import path from "node:path";
-import { mkdir, readFile, rename, stat, writeFile } from "node:fs/promises";
+import { mkdir, readFile, realpath, rename, stat, writeFile } from "node:fs/promises";
 import { randomUUID } from "node:crypto";
+import { promisify } from "node:util";
 
 const SETTINGS_FILE_VERSION = 1;
 const SETTINGS_FILENAME = "settings.json";
 const DEFAULT_WIKI_BACKUP_INTERVAL_MS = 10 * 60 * 1000;
+const execFileAsync = promisify(execFile);
 
 function expandHomePath(value, homeDir = os.homedir()) {
   const rawValue = String(value || "").trim();
@@ -101,9 +104,10 @@ export class SettingsStore {
 
   buildDefaults() {
     return {
+      preventSleepEnabled: true,
       wikiGitBackupEnabled: true,
       wikiGitRemoteBranch: "main",
-      wikiGitRemoteEnabled: false,
+      wikiGitRemoteEnabled: true,
       wikiGitRemoteName: "origin",
       wikiGitRemoteUrl: "",
       wikiBackupIntervalMs: this.defaultBackupIntervalMs,
@@ -122,6 +126,10 @@ export class SettingsStore {
     const defaults = this.buildDefaults();
 
     return {
+      preventSleepEnabled: normalizeBoolean(
+        payload.preventSleepEnabled,
+        defaults.preventSleepEnabled,
+      ),
       wikiGitBackupEnabled: normalizeBoolean(
         payload.wikiGitBackupEnabled,
         defaults.wikiGitBackupEnabled,
@@ -158,6 +166,7 @@ export class SettingsStore {
 
     this.settings = this.normalizeSettings(payload);
     await this.ensureWikiDirectory();
+    await this.hydrateWikiGitRemoteFromRepository();
     await this.save();
   }
 
@@ -177,7 +186,81 @@ export class SettingsStore {
     });
   }
 
+  async readWikiGitRemoteUrl() {
+    try {
+      const { stdout = "" } = await execFileAsync("git", [
+        "-C",
+        this.settings.wikiPath,
+        "rev-parse",
+        "--show-toplevel",
+      ]);
+
+      const wikiRealPath = await realpath(this.settings.wikiPath);
+      if (path.resolve(stdout.trim()) !== path.resolve(wikiRealPath)) {
+        return "";
+      }
+    } catch {
+      return "";
+    }
+
+    const readRemoteUrl = async (remoteName) => {
+      const { stdout = "" } = await execFileAsync("git", [
+        "-C",
+        this.settings.wikiPath,
+        "remote",
+        "get-url",
+        remoteName,
+      ]);
+      return stdout.trim();
+    };
+
+    try {
+      const remoteUrl = await readRemoteUrl(this.settings.wikiGitRemoteName || "origin");
+      if (remoteUrl) {
+        return remoteUrl;
+      }
+    } catch {
+      // Missing remotes are normal for local-only wiki folders.
+    }
+
+    try {
+      const { stdout = "" } = await execFileAsync("git", [
+        "-C",
+        this.settings.wikiPath,
+        "remote",
+      ]);
+      const [firstRemoteName] = stdout
+        .split(/\r?\n/)
+        .map((entry) => entry.trim())
+        .filter(Boolean);
+
+      return firstRemoteName ? await readRemoteUrl(firstRemoteName) : "";
+    } catch {
+      return "";
+    }
+  }
+
+  async hydrateWikiGitRemoteFromRepository() {
+    if (this.settings.wikiGitRemoteUrl) {
+      return false;
+    }
+
+    const remoteUrl = await this.readWikiGitRemoteUrl();
+    if (!remoteUrl) {
+      return false;
+    }
+
+    this.settings = {
+      ...this.settings,
+      wikiGitRemoteEnabled: true,
+      wikiGitRemoteUrl: remoteUrl,
+    };
+    return true;
+  }
+
   async update(nextSettings = {}) {
+    const previousWikiPath = this.settings.wikiPath;
+    const previousRemoteUrl = this.settings.wikiGitRemoteUrl;
     const mergedSettings = { ...this.settings };
     for (const [key, value] of Object.entries(nextSettings)) {
       if (value !== undefined) {
@@ -187,16 +270,27 @@ export class SettingsStore {
 
     this.settings = this.normalizeSettings(mergedSettings);
     await this.ensureWikiDirectory();
+    const wikiPathChanged = path.resolve(previousWikiPath) !== path.resolve(this.settings.wikiPath);
+    const nextRemoteUrl =
+      nextSettings.wikiGitRemoteUrl === undefined
+        ? undefined
+        : String(nextSettings.wikiGitRemoteUrl || "").trim();
+    const remoteUrlChanged = nextRemoteUrl !== undefined && nextRemoteUrl !== previousRemoteUrl;
+    if (wikiPathChanged && !remoteUrlChanged) {
+      this.settings.wikiGitRemoteUrl = "";
+    }
+    await this.hydrateWikiGitRemoteFromRepository();
     await this.save();
     return this.getState();
   }
 
-  getState({ backupStatus = null } = {}) {
+  getState({ backupStatus = null, sleepStatus = null } = {}) {
     return {
       ...this.settings,
       wikiRelativePath: formatRelativePath(this.cwd, this.settings.wikiPath),
       wikiRelativeRoot: formatRelativePath(this.cwd, this.settings.wikiPath),
       wikiBackup: backupStatus,
+      sleepPrevention: sleepStatus,
     };
   }
 }

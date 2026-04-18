@@ -116,11 +116,13 @@ const state = {
   agentPromptTargets: [],
   agentPromptEditorOpen: false,
   settings: {
+    preventSleepEnabled: true,
+    sleepPrevention: null,
     wikiPath: "",
     wikiRelativeRoot: ".remote-vibes/wiki",
     wikiGitBackupEnabled: true,
     wikiGitRemoteBranch: "main",
-    wikiGitRemoteEnabled: false,
+    wikiGitRemoteEnabled: true,
     wikiGitRemoteName: "origin",
     wikiGitRemoteUrl: "",
     wikiBackupIntervalMs: 10 * 60 * 1000,
@@ -153,9 +155,13 @@ const state = {
     selectedNotePath: "",
     selectedNoteTitle: "",
     selectedNoteContent: "",
+    selectedNoteDraft: "",
+    selectedNoteEditing: false,
     selectedNoteLoading: false,
+    selectedNoteSaving: false,
     selectedNoteError: "",
     selectedNoteRequestId: 0,
+    searchQuery: "",
     noteCache: {},
     graphLayout: {
       width: KNOWLEDGE_BASE_GRAPH_WIDTH,
@@ -686,6 +692,10 @@ function getFolderPickerTitle() {
     return "choose wiki folder";
   }
 
+  if (state.folderPicker.target === "files") {
+    return "choose files folder";
+  }
+
   return "choose session folder";
 }
 
@@ -698,7 +708,37 @@ function getFolderPickerTargetInput() {
     return document.querySelector("#wiki-path-input");
   }
 
+  if (state.folderPicker.target === "files") {
+    return document.querySelector("#files-root-input");
+  }
+
   return document.querySelector("#session-cwd-input");
+}
+
+function getSleepPreventionStatusText() {
+  const sleep = state.settings.sleepPrevention;
+
+  if (!state.settings.preventSleepEnabled) {
+    return "sleep prevention disabled";
+  }
+
+  if (!sleep?.lastStatus || sleep.lastStatus === "idle") {
+    return "sleep prevention enabled";
+  }
+
+  if (sleep.lastStatus === "active") {
+    return "preventing sleep";
+  }
+
+  if (sleep.lastStatus === "unsupported") {
+    return sleep.lastMessage || "sleep prevention unsupported here";
+  }
+
+  if (sleep.lastStatus === "error") {
+    return sleep.lastMessage || "sleep prevention failed";
+  }
+
+  return sleep.lastMessage || sleep.lastStatus;
 }
 
 function getWikiBackupStatusText() {
@@ -757,12 +797,19 @@ function applyFolderPickerSelection() {
 
   if (state.folderPicker.target === "wiki") {
     state.settings.wikiPath = selectedPath || state.settings.wikiPath;
+  } else if (state.folderPicker.target === "files") {
+    state.filesRootOverride = normalizeWorkspaceRoot(selectedPath) || null;
+    syncFilesRoot({ force: true });
   } else {
     state.defaultCwd = selectedPath || state.defaultCwd;
   }
 
   state.folderPicker.open = false;
   renderShell();
+
+  if (state.folderPicker.target === "files") {
+    void refreshOpenFileTree({ force: true });
+  }
 }
 
 function maybeRedirectToPreferredOrigin() {
@@ -1038,6 +1085,34 @@ function getKnowledgeBaseNoteRawUrl(relativePath) {
   return `${getAppBaseUrl()}/api/files/content?${params.toString()}`;
 }
 
+function getKnowledgeBaseBackupRepoUrl() {
+  const remoteUrl = String(state.settings.wikiGitRemoteUrl || "").trim();
+  if (!remoteUrl) {
+    return "";
+  }
+
+  const githubSshMatch = remoteUrl.match(/^git@github\.com:([^/]+\/[^/]+?)(?:\.git)?$/i);
+  if (githubSshMatch) {
+    return `https://github.com/${githubSshMatch[1]}`;
+  }
+
+  try {
+    const parsedUrl = new URL(remoteUrl);
+    if (parsedUrl.hostname.toLowerCase() === "github.com") {
+      parsedUrl.username = "";
+      parsedUrl.password = "";
+      parsedUrl.pathname = parsedUrl.pathname.replace(/\.git$/i, "");
+      parsedUrl.search = "";
+      parsedUrl.hash = "";
+      return parsedUrl.toString().replace(/\/$/, "");
+    }
+  } catch {
+    // Non-browser git remotes are still useful in settings, just not as links.
+  }
+
+  return /^https?:\/\//i.test(remoteUrl) ? remoteUrl : "";
+}
+
 function getFileTextRequestParams(relativePath) {
   const params = new URLSearchParams();
 
@@ -1113,6 +1188,33 @@ function getKnowledgeBaseDefaultNotePath() {
 
 function getKnowledgeBaseSelectedNoteMeta() {
   return state.knowledgeBase.notes.find((note) => note.relativePath === state.knowledgeBase.selectedNotePath) || null;
+}
+
+function getKnowledgeBaseSearchQuery() {
+  return String(state.knowledgeBase.searchQuery || "").trim().toLowerCase();
+}
+
+function noteMatchesKnowledgeBaseSearch(note, query) {
+  if (!query) {
+    return true;
+  }
+
+  const haystack = [
+    note.title,
+    note.relativePath,
+    note.excerpt,
+    note.searchText,
+  ]
+    .filter(Boolean)
+    .join("\n")
+    .toLowerCase();
+
+  return haystack.includes(query);
+}
+
+function getFilteredKnowledgeBaseNotes() {
+  const query = getKnowledgeBaseSearchQuery();
+  return state.knowledgeBase.notes.filter((note) => noteMatchesKnowledgeBaseSearch(note, query));
 }
 
 function truncateKnowledgeBaseLabel(value, maxLength = 16) {
@@ -1583,7 +1685,10 @@ function applyKnowledgeBaseNoteState(payload) {
   state.knowledgeBase.selectedNotePath = normalizedPath;
   state.knowledgeBase.selectedNoteTitle = note.title || normalizedPath || "note";
   state.knowledgeBase.selectedNoteContent = note.content || "";
+  state.knowledgeBase.selectedNoteDraft = state.knowledgeBase.selectedNoteContent;
+  state.knowledgeBase.selectedNoteEditing = false;
   state.knowledgeBase.selectedNoteError = "";
+  state.knowledgeBase.selectedNoteSaving = false;
 
   if (normalizedPath) {
     state.knowledgeBase.noteCache[normalizedPath] = {
@@ -1614,8 +1719,11 @@ async function loadKnowledgeBaseNote(relativePath, { force = false } = {}) {
     state.knowledgeBase.selectedNotePath = "";
     state.knowledgeBase.selectedNoteTitle = "";
     state.knowledgeBase.selectedNoteContent = "";
+    state.knowledgeBase.selectedNoteDraft = "";
+    state.knowledgeBase.selectedNoteEditing = false;
     state.knowledgeBase.selectedNoteError = "";
     state.knowledgeBase.selectedNoteLoading = false;
+    state.knowledgeBase.selectedNoteSaving = false;
     return;
   }
 
@@ -1624,15 +1732,20 @@ async function loadKnowledgeBaseNote(relativePath, { force = false } = {}) {
     state.knowledgeBase.selectedNotePath = normalizedPath;
     state.knowledgeBase.selectedNoteTitle = cachedNote.title;
     state.knowledgeBase.selectedNoteContent = cachedNote.content;
+    state.knowledgeBase.selectedNoteDraft = cachedNote.content;
+    state.knowledgeBase.selectedNoteEditing = false;
     state.knowledgeBase.selectedNoteError = "";
     state.knowledgeBase.selectedNoteLoading = false;
+    state.knowledgeBase.selectedNoteSaving = false;
     return;
   }
 
   const requestId = state.knowledgeBase.selectedNoteRequestId + 1;
   state.knowledgeBase.selectedNoteRequestId = requestId;
   state.knowledgeBase.selectedNotePath = normalizedPath;
+  state.knowledgeBase.selectedNoteEditing = false;
   state.knowledgeBase.selectedNoteLoading = true;
+  state.knowledgeBase.selectedNoteSaving = false;
   state.knowledgeBase.selectedNoteError = "";
 
   try {
@@ -1855,6 +1968,9 @@ function renderKnowledgeBaseMarkdown(markdown, currentPath) {
 }
 
 function renderKnowledgeBaseNoteList() {
+  const notes = getFilteredKnowledgeBaseNotes();
+  const query = getKnowledgeBaseSearchQuery();
+
   if (state.knowledgeBase.loading && !state.knowledgeBase.notes.length) {
     return `<div class="blank-state">loading notes</div>`;
   }
@@ -1867,9 +1983,14 @@ function renderKnowledgeBaseNoteList() {
     return `<div class="blank-state">no markdown notes yet</div>`;
   }
 
-  return state.knowledgeBase.notes
+  if (!notes.length) {
+    return `<div class="blank-state">no notes match "${escapeHtml(state.knowledgeBase.searchQuery)}"</div>`;
+  }
+
+  return notes
     .map((note) => {
       const isActive = note.relativePath === state.knowledgeBase.selectedNotePath;
+      const matchLabel = query ? "matches search" : note.excerpt || "No preview yet.";
       return `
         <button
           class="knowledge-base-note-row ${isActive ? "is-active" : ""}"
@@ -1878,11 +1999,38 @@ function renderKnowledgeBaseNoteList() {
         >
           <span class="knowledge-base-note-title">${escapeHtml(note.title)}</span>
           <span class="knowledge-base-note-path">${escapeHtml(note.relativePath)}</span>
-          <span class="knowledge-base-note-excerpt">${escapeHtml(note.excerpt || "No preview yet.")}</span>
+          <span class="knowledge-base-note-excerpt">${escapeHtml(matchLabel)}</span>
         </button>
       `;
     })
     .join("");
+}
+
+function renderKnowledgeBaseSearchControls() {
+  return `
+    <div class="knowledge-base-search">
+      <input
+        class="knowledge-base-search-input"
+        id="knowledge-base-search"
+        type="search"
+        value="${escapeHtml(state.knowledgeBase.searchQuery || "")}"
+        placeholder="search notes"
+        autocomplete="off"
+        autocorrect="off"
+        autocapitalize="none"
+        spellcheck="false"
+      />
+      <span class="knowledge-base-search-count">${escapeHtml(getKnowledgeBaseSearchResultLabel())}</span>
+    </div>
+  `;
+}
+
+function getKnowledgeBaseSearchResultLabel() {
+  const notes = getFilteredKnowledgeBaseNotes();
+  const query = getKnowledgeBaseSearchQuery();
+  return query
+    ? `${notes.length} of ${state.knowledgeBase.notes.length} notes`
+    : `${state.knowledgeBase.notes.length} notes`;
 }
 
 function renderKnowledgeBaseGraph() {
@@ -2002,24 +2150,84 @@ function renderKnowledgeBaseGraph() {
   `;
 }
 
-function renderKnowledgeBaseView() {
-  const selectedNoteMeta = getKnowledgeBaseSelectedNoteMeta();
-  const selectedNotePath = state.knowledgeBase.selectedNotePath;
-  const rawHref = selectedNotePath ? getKnowledgeBaseNoteRawUrl(selectedNotePath) : "";
-
-  let noteBody = `<div class="blank-state">select a note to view it here</div>`;
-
+function renderKnowledgeBaseNoteBody(selectedNotePath) {
   if (state.knowledgeBase.selectedNoteLoading) {
-    noteBody = `<div class="blank-state">opening note...</div>`;
-  } else if (state.knowledgeBase.selectedNoteError) {
-    noteBody = `<div class="blank-state">${escapeHtml(state.knowledgeBase.selectedNoteError)}</div>`;
-  } else if (state.knowledgeBase.selectedNoteContent) {
-    noteBody = `
+    return `<div class="blank-state">opening note...</div>`;
+  }
+
+  if (state.knowledgeBase.selectedNoteError) {
+    return `<div class="blank-state">${escapeHtml(state.knowledgeBase.selectedNoteError)}</div>`;
+  }
+
+  if (state.knowledgeBase.selectedNoteEditing) {
+    const dirty = state.knowledgeBase.selectedNoteDraft !== state.knowledgeBase.selectedNoteContent;
+    return `
+      <div class="knowledge-base-editor">
+        <div class="file-editor-status" id="knowledge-base-edit-status">${escapeHtml(
+          state.knowledgeBase.selectedNoteSaving
+            ? "saving changes..."
+            : dirty
+              ? "unsaved changes"
+              : "saved",
+        )}</div>
+        <textarea
+          class="knowledge-base-editor-textarea"
+          id="knowledge-base-note-editor"
+          spellcheck="false"
+          autocomplete="off"
+          autocorrect="off"
+          autocapitalize="none"
+        >${escapeHtml(state.knowledgeBase.selectedNoteDraft)}</textarea>
+      </div>
+    `;
+  }
+
+  if (state.knowledgeBase.selectedNoteContent) {
+    return `
       <div class="knowledge-base-markdown">
         ${renderKnowledgeBaseMarkdown(state.knowledgeBase.selectedNoteContent, selectedNotePath)}
       </div>
     `;
   }
+
+  return `<div class="blank-state">select a note to view it here</div>`;
+}
+
+function renderKnowledgeBaseNoteActions(rawHref) {
+  const selectedNotePath = state.knowledgeBase.selectedNotePath;
+  if (!selectedNotePath) {
+    return rawHref
+      ? `<a class="ghost-button toolbar-control" href="${escapeHtml(rawHref)}" target="_blank" rel="noreferrer">raw</a>`
+      : "";
+  }
+
+  if (state.knowledgeBase.selectedNoteEditing) {
+    const dirty = state.knowledgeBase.selectedNoteDraft !== state.knowledgeBase.selectedNoteContent;
+    return `
+      <div class="knowledge-base-note-actions">
+        <button class="ghost-button toolbar-control" type="button" id="cancel-knowledge-base-edit" ${state.knowledgeBase.selectedNoteSaving ? "disabled" : ""}>cancel</button>
+        <button class="${dirty ? "primary-button" : "ghost-button"} toolbar-control" type="button" id="save-knowledge-base-note" ${(!dirty || state.knowledgeBase.selectedNoteSaving) ? "disabled" : ""}>${state.knowledgeBase.selectedNoteSaving ? "saving..." : dirty ? "save" : "saved"}</button>
+      </div>
+    `;
+  }
+
+  return `
+    <div class="knowledge-base-note-actions">
+      <button class="ghost-button toolbar-control" type="button" id="edit-knowledge-base-note">edit</button>
+      ${
+        rawHref
+          ? `<a class="ghost-button toolbar-control" href="${escapeHtml(rawHref)}" target="_blank" rel="noreferrer">raw</a>`
+          : ""
+      }
+    </div>
+  `;
+}
+
+function renderKnowledgeBaseView() {
+  const selectedNoteMeta = getKnowledgeBaseSelectedNoteMeta();
+  const selectedNotePath = state.knowledgeBase.selectedNotePath;
+  const rawHref = selectedNotePath ? getKnowledgeBaseNoteRawUrl(selectedNotePath) : "";
+  const backupRepoUrl = getKnowledgeBaseBackupRepoUrl();
 
   return `
     <section class="dashboard-panel knowledge-base-view">
@@ -2029,6 +2237,11 @@ function renderKnowledgeBaseView() {
           <div class="terminal-meta">obsidian-style markdown viewer for ${escapeHtml(state.knowledgeBase.relativeRoot)}</div>
         </div>
         <div class="dashboard-actions knowledge-base-toolbar-actions">
+          ${
+            backupRepoUrl
+              ? `<a class="ghost-button toolbar-control" href="${escapeHtml(backupRepoUrl)}" target="_blank" rel="noreferrer">view backup</a>`
+              : ""
+          }
           <button class="ghost-button toolbar-control" type="button" id="refresh-knowledge-base">refresh</button>
           <button class="ghost-button toolbar-control" type="button" id="back-to-shell">back</button>
         </div>
@@ -2045,9 +2258,10 @@ function renderKnowledgeBaseView() {
           <div class="knowledge-base-panel-head">
             <div>
               <strong>Markdown Notes</strong>
-              <div class="knowledge-base-panel-meta">browse linked pages</div>
+              <div class="knowledge-base-panel-meta">search titles, paths, and note text</div>
             </div>
           </div>
+          ${renderKnowledgeBaseSearchControls()}
           <div class="knowledge-base-note-list">
             ${renderKnowledgeBaseNoteList()}
           </div>
@@ -2062,14 +2276,10 @@ function renderKnowledgeBaseView() {
                 selectedNotePath || selectedNoteMeta?.relativePath || "No note selected",
               )}</div>
             </div>
-            ${
-              rawHref
-                ? `<a class="ghost-button toolbar-control" href="${escapeHtml(rawHref)}" target="_blank" rel="noreferrer">raw</a>`
-                : ""
-            }
+            ${renderKnowledgeBaseNoteActions(rawHref)}
           </div>
           <div class="knowledge-base-note-card">
-            ${noteBody}
+            ${renderKnowledgeBaseNoteBody(selectedNotePath)}
           </div>
         </section>
         <aside class="knowledge-base-column knowledge-base-column-graph">
@@ -2083,6 +2293,7 @@ function renderKnowledgeBaseView() {
 function renderKnowledgeBaseApp() {
   const selectedNotePath = state.knowledgeBase.selectedNotePath;
   const rawHref = selectedNotePath ? getKnowledgeBaseNoteRawUrl(selectedNotePath) : "";
+  const backupRepoUrl = getKnowledgeBaseBackupRepoUrl();
 
   document.title = selectedNotePath
     ? `${state.knowledgeBase.selectedNoteTitle || selectedNotePath} · Knowledge Base`
@@ -2100,6 +2311,9 @@ function renderKnowledgeBaseApp() {
             )}</div>
           </div>
           <div class="knowledge-base-app-actions">
+            ${backupRepoUrl
+              ? `<a class="ghost-button toolbar-control" href="${escapeHtml(backupRepoUrl)}" target="_blank" rel="noreferrer">view backup</a>`
+              : ""}
             ${rawHref
               ? `<a class="ghost-button toolbar-control" href="${escapeHtml(rawHref)}" target="_blank" rel="noreferrer">raw</a>`
               : ""}
@@ -2121,9 +2335,10 @@ function renderKnowledgeBaseApp() {
             <div class="knowledge-base-panel-head">
               <div>
                 <strong>Markdown Notes</strong>
-                <div class="knowledge-base-panel-meta">browse linked pages</div>
+                <div class="knowledge-base-panel-meta">search titles, paths, and note text</div>
               </div>
             </div>
+            ${renderKnowledgeBaseSearchControls()}
             <div class="knowledge-base-note-list">
               ${renderKnowledgeBaseNoteList()}
             </div>
@@ -2138,20 +2353,10 @@ function renderKnowledgeBaseApp() {
                   selectedNotePath || getKnowledgeBaseSelectedNoteMeta()?.relativePath || "No note selected",
                 )}</div>
               </div>
+              ${renderKnowledgeBaseNoteActions(rawHref)}
             </div>
             <div class="knowledge-base-note-card">
-              ${
-                state.knowledgeBase.selectedNoteLoading
-                  ? `<div class="blank-state">opening note...</div>`
-                  : state.knowledgeBase.selectedNoteError
-                    ? `<div class="blank-state">${escapeHtml(state.knowledgeBase.selectedNoteError)}</div>`
-                    : state.knowledgeBase.selectedNoteContent
-                      ? `<div class="knowledge-base-markdown">${renderKnowledgeBaseMarkdown(
-                          state.knowledgeBase.selectedNoteContent,
-                          selectedNotePath,
-                        )}</div>`
-                      : `<div class="blank-state">select a note to view it here</div>`
-              }
+              ${renderKnowledgeBaseNoteBody(selectedNotePath)}
             </div>
           </section>
           <aside class="knowledge-base-column knowledge-base-column-graph">
@@ -2607,6 +2812,8 @@ function renderShell() {
                 name="cwd"
                 value="${escapeHtml(state.defaultCwd || "")}"
                 placeholder="session folder"
+                readonly
+                data-folder-picker-target="session"
                 autocomplete="off"
                 autocorrect="off"
                 autocapitalize="none"
@@ -2661,6 +2868,8 @@ function renderShell() {
                   type="text"
                   value="${escapeHtml(state.settings.wikiPath || "")}"
                   placeholder="${escapeHtml(state.defaultCwd || "wiki folder")}"
+                  readonly
+                  data-folder-picker-target="wiki"
                   autocomplete="off"
                   autocorrect="off"
                   autocapitalize="none"
@@ -2672,6 +2881,11 @@ function renderShell() {
                 <input type="checkbox" name="wikiGitBackupEnabled" ${state.settings.wikiGitBackupEnabled ? "checked" : ""} />
                 <span>git backup every 10 min</span>
               </label>
+              <label class="checkbox-row">
+                <input type="checkbox" name="preventSleepEnabled" ${state.settings.preventSleepEnabled ? "checked" : ""} />
+                <span>prevent this computer from sleeping</span>
+              </label>
+              <div class="settings-status">${escapeHtml(getSleepPreventionStatusText())}</div>
               <label class="checkbox-row">
                 <input type="checkbox" name="wikiGitRemoteEnabled" ${state.settings.wikiGitRemoteEnabled ? "checked" : ""} />
                 <span>push backups to a private git remote</span>
@@ -2736,12 +2950,14 @@ function renderShell() {
                 type="text"
                 value="${escapeHtml(state.filesRoot || state.defaultCwd || "")}"
                 placeholder="${escapeHtml(state.defaultCwd || "workspace path")}"
+                readonly
+                data-folder-picker-target="files"
                 autocomplete="off"
                 autocorrect="off"
                 autocapitalize="none"
                 spellcheck="false"
               />
-              <button class="ghost-button file-root-submit" type="submit">set</button>
+              <button class="ghost-button file-root-submit" type="button" data-folder-picker-target="files">choose</button>
             </form>
             <div class="file-tree" id="files-tree">${renderFileTree()}</div>
           </section>
@@ -2788,12 +3004,14 @@ function renderShell() {
                 type="text"
                 value="${escapeHtml(state.filesRoot || state.defaultCwd || "")}"
                 placeholder="${escapeHtml(state.defaultCwd || "workspace path")}"
+                readonly
+                data-folder-picker-target="files"
                 autocomplete="off"
                 autocorrect="off"
                 autocapitalize="none"
                 spellcheck="false"
               />
-              <button class="ghost-button file-root-submit" type="submit">set</button>
+              <button class="ghost-button file-root-submit" type="button" data-folder-picker-target="files">choose</button>
             </form>
             <div class="file-browser-stack">
               <div class="file-tree" id="files-tree">${renderFileTree()}</div>
@@ -3268,7 +3486,7 @@ function bindKnowledgeBaseGraphInteractions() {
   startKnowledgeBaseGraphSimulation(0.22);
 }
 
-function bindKnowledgeBaseEvents() {
+function bindKnowledgeBaseNoteOpenEvents() {
   document.querySelectorAll("[data-kb-note]").forEach((button) => {
     button.onclick = async () => {
       const notePath = button.getAttribute("data-kb-note");
@@ -3281,6 +3499,54 @@ function bindKnowledgeBaseEvents() {
       const notePath = button.getAttribute("data-kb-open-note");
       await openKnowledgeBaseNote(notePath || "");
     };
+  });
+}
+
+function refreshKnowledgeBaseSearchUi() {
+  document.querySelectorAll(".knowledge-base-search-count").forEach((element) => {
+    element.textContent = getKnowledgeBaseSearchResultLabel();
+  });
+
+  document.querySelectorAll(".knowledge-base-note-list").forEach((element) => {
+    element.innerHTML = renderKnowledgeBaseNoteList();
+  });
+
+  bindKnowledgeBaseNoteOpenEvents();
+}
+
+function bindKnowledgeBaseEvents() {
+  bindKnowledgeBaseNoteOpenEvents();
+
+  document.querySelector("#knowledge-base-search")?.addEventListener("input", (event) => {
+    const input = event.currentTarget;
+    if (!(input instanceof HTMLInputElement)) {
+      return;
+    }
+
+    state.knowledgeBase.searchQuery = input.value;
+    refreshKnowledgeBaseSearchUi();
+  });
+
+  document.querySelector("#edit-knowledge-base-note")?.addEventListener("click", () => {
+    startKnowledgeBaseNoteEdit();
+  });
+
+  document.querySelector("#cancel-knowledge-base-edit")?.addEventListener("click", () => {
+    cancelKnowledgeBaseNoteEdit();
+  });
+
+  document.querySelector("#save-knowledge-base-note")?.addEventListener("click", async () => {
+    await saveKnowledgeBaseNote();
+  });
+
+  document.querySelector("#knowledge-base-note-editor")?.addEventListener("input", (event) => {
+    const textarea = event.currentTarget;
+    if (!(textarea instanceof HTMLTextAreaElement)) {
+      return;
+    }
+
+    state.knowledgeBase.selectedNoteDraft = textarea.value;
+    refreshKnowledgeBaseEditStateUi();
   });
 
   const refreshButton = document.querySelector("#refresh-knowledge-base");
@@ -3602,6 +3868,87 @@ async function saveOpenFile() {
   }
 }
 
+function startKnowledgeBaseNoteEdit() {
+  if (!state.knowledgeBase.selectedNotePath || state.knowledgeBase.selectedNoteLoading) {
+    return;
+  }
+
+  state.knowledgeBase.selectedNoteDraft = state.knowledgeBase.selectedNoteContent;
+  state.knowledgeBase.selectedNoteEditing = true;
+  state.knowledgeBase.selectedNoteSaving = false;
+  renderShell();
+}
+
+function cancelKnowledgeBaseNoteEdit() {
+  state.knowledgeBase.selectedNoteDraft = state.knowledgeBase.selectedNoteContent;
+  state.knowledgeBase.selectedNoteEditing = false;
+  state.knowledgeBase.selectedNoteSaving = false;
+  renderShell();
+}
+
+async function saveKnowledgeBaseNote() {
+  if (
+    !state.knowledgeBase.rootPath ||
+    !state.knowledgeBase.selectedNotePath ||
+    !state.knowledgeBase.selectedNoteEditing ||
+    state.knowledgeBase.selectedNoteSaving ||
+    state.knowledgeBase.selectedNoteDraft === state.knowledgeBase.selectedNoteContent
+  ) {
+    return;
+  }
+
+  const root = state.knowledgeBase.rootPath;
+  const relativePath = state.knowledgeBase.selectedNotePath;
+  state.knowledgeBase.selectedNoteSaving = true;
+  refreshKnowledgeBaseEditStateUi();
+
+  try {
+    await fetchJson("/api/files/text", {
+      method: "PUT",
+      body: JSON.stringify({
+        root,
+        path: relativePath,
+        content: state.knowledgeBase.selectedNoteDraft,
+      }),
+    });
+
+    if (state.knowledgeBase.rootPath !== root || state.knowledgeBase.selectedNotePath !== relativePath) {
+      return;
+    }
+
+    await loadKnowledgeBaseIndex();
+    await loadKnowledgeBaseNote(relativePath, { force: true });
+    updateRoute({ view: "knowledge-base", notePath: relativePath });
+    renderShell();
+  } catch (error) {
+    window.alert(error.message);
+  } finally {
+    state.knowledgeBase.selectedNoteSaving = false;
+    refreshKnowledgeBaseEditStateUi();
+  }
+}
+
+function refreshKnowledgeBaseEditStateUi() {
+  const status = document.querySelector("#knowledge-base-edit-status");
+  const saveButton = document.querySelector("#save-knowledge-base-note");
+  const dirty = state.knowledgeBase.selectedNoteDraft !== state.knowledgeBase.selectedNoteContent;
+
+  if (status) {
+    status.textContent = state.knowledgeBase.selectedNoteSaving
+      ? "saving changes..."
+      : dirty
+        ? "unsaved changes"
+        : "saved";
+  }
+
+  if (saveButton instanceof HTMLButtonElement) {
+    saveButton.disabled = !dirty || state.knowledgeBase.selectedNoteSaving;
+    saveButton.textContent = state.knowledgeBase.selectedNoteSaving ? "saving..." : dirty ? "save" : "saved";
+    saveButton.classList.toggle("primary-button", dirty);
+    saveButton.classList.toggle("ghost-button", !dirty);
+  }
+}
+
 async function loadFileTree(relativePath = "", { force = false } = {}) {
   const pathKey = normalizeFileTreePath(relativePath);
   const root = state.filesRoot;
@@ -3688,8 +4035,14 @@ function applyAgentPromptState(payload) {
 function applySettingsState(payload) {
   const settings = payload?.settings || payload || {};
   const backup = settings.wikiBackup || settings.backup || state.settings.wikiBackup;
+  const sleepPrevention = settings.sleepPrevention || settings.sleep || state.settings.sleepPrevention;
 
   state.settings = {
+    preventSleepEnabled:
+      settings.preventSleepEnabled === undefined
+        ? state.settings.preventSleepEnabled
+        : Boolean(settings.preventSleepEnabled),
+    sleepPrevention: sleepPrevention || null,
     wikiPath: settings.wikiPath || state.settings.wikiPath || "",
     wikiRelativeRoot:
       settings.wikiRelativeRoot ||
@@ -3744,13 +4097,17 @@ function bindShellEvents() {
       const input =
         target === "wiki"
           ? document.querySelector("#wiki-path-input")
-          : document.querySelector("#session-cwd-input");
+          : target === "files"
+            ? document.querySelector("#files-root-input")
+            : document.querySelector("#session-cwd-input");
       const initialPath =
         input instanceof HTMLInputElement && input.value.trim()
           ? input.value.trim()
           : target === "wiki"
             ? state.settings.wikiPath || state.defaultCwd
-            : state.defaultCwd;
+            : target === "files"
+              ? state.filesRoot || state.defaultCwd
+              : state.defaultCwd;
 
       await loadFolderPicker(initialPath, { target });
     });
@@ -4622,6 +4979,7 @@ async function saveSettingsFromForm(form) {
   const payload = await fetchJson("/api/settings", {
     method: "PATCH",
     body: JSON.stringify({
+      preventSleepEnabled: formData.get("preventSleepEnabled") === "on",
       wikiGitBackupEnabled: formData.get("wikiGitBackupEnabled") === "on",
       wikiGitRemoteBranch: String(formData.get("wikiGitRemoteBranch") || "main"),
       wikiGitRemoteEnabled: formData.get("wikiGitRemoteEnabled") === "on",

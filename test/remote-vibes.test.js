@@ -10,6 +10,7 @@ import { promisify } from "node:util";
 import { WebSocket } from "ws";
 import { createRemoteVibesApp } from "../src/create-app.js";
 import { buildSessionEnv } from "../src/session-manager.js";
+import { SleepPreventionService } from "../src/sleep-prevention.js";
 
 const execFileAsync = promisify(execFile);
 
@@ -34,6 +35,11 @@ async function startApp(options = {}) {
     cwd,
     stateDir,
     persistSessions: false,
+    sleepPreventionFactory: (settings) =>
+      new SleepPreventionService({
+        enabled: settings.preventSleepEnabled,
+        platform: "test",
+      }),
     ...options,
   });
 
@@ -117,7 +123,8 @@ async function waitForValue(check, expectedValue) {
 }
 
 test("state is available without authentication", async () => {
-  const { app, baseUrl } = await startApp();
+  const workspaceDir = await createTempWorkspace("remote-vibes-state-");
+  const { app, baseUrl } = await startApp({ cwd: workspaceDir });
 
   try {
     const response = await fetch(`${baseUrl}/api/state`);
@@ -140,8 +147,11 @@ test("state is available without authentication", async () => {
     assert.equal(state.agentPrompt.promptPath, ".remote-vibes/agent-prompt.md");
     assert.equal(state.agentPrompt.wikiRoot, ".remote-vibes/wiki");
     assert.ok(Array.isArray(state.agentPrompt.targets));
+    assert.equal(state.settings.preventSleepEnabled, true);
+    assert.equal(state.settings.sleepPrevention.enabled, true);
+    assert.equal(state.settings.sleepPrevention.lastStatus, "unsupported");
     assert.equal(state.settings.wikiGitBackupEnabled, true);
-    assert.equal(state.settings.wikiGitRemoteEnabled, false);
+    assert.equal(state.settings.wikiGitRemoteEnabled, true);
     assert.equal(state.settings.wikiGitRemoteBranch, "main");
     assert.equal(state.settings.wikiGitRemoteName, "origin");
     assert.equal(state.settings.wikiGitRemoteUrl, "");
@@ -153,6 +163,7 @@ test("state is available without authentication", async () => {
     assert.equal(gpuResponse.status, 404);
   } finally {
     await app.close();
+    await rm(workspaceDir, { recursive: true, force: true });
   }
 });
 
@@ -438,6 +449,10 @@ test("knowledge base api indexes markdown notes and linked note content", async 
       indexPayload.notes.map((note) => note.relativePath),
       ["index.md", "log.md", "topics/topic-a.md"],
     );
+    assert.match(
+      indexPayload.notes.find((note) => note.relativePath === "topics/topic-a.md").searchText,
+      /Source manifest/,
+    );
     assert.deepEqual(indexPayload.edges, [
       { source: "index.md", target: "log.md" },
       { source: "index.md", target: "topics/topic-a.md" },
@@ -477,6 +492,15 @@ test("settings api moves the wiki folder, refreshes agent instructions, and the 
     "utf8",
   );
   await writeFile(path.join(customWikiDir, "topics", "one.md"), "# One\n\nhello\n", "utf8");
+  await execFileAsync("git", ["-C", customWikiDir, "init", "-b", "main"]);
+  await execFileAsync("git", [
+    "-C",
+    customWikiDir,
+    "remote",
+    "add",
+    "origin",
+    "git@github.com:example/private-mac-brain.git",
+  ]);
 
   const { app, baseUrl } = await startApp({ cwd: workspaceDir });
 
@@ -487,6 +511,7 @@ test("settings api moves the wiki folder, refreshes agent instructions, and the 
         "Content-Type": "application/json",
       },
       body: JSON.stringify({
+        preventSleepEnabled: false,
         wikiGitBackupEnabled: false,
         wikiPath: customWikiDir,
       }),
@@ -496,7 +521,13 @@ test("settings api moves the wiki folder, refreshes agent instructions, and the 
     const settingsPayload = await settingsResponse.json();
     assert.equal(settingsPayload.settings.wikiPath, customWikiDir);
     assert.equal(settingsPayload.settings.wikiRelativeRoot, "mac-brain");
+    assert.equal(settingsPayload.settings.preventSleepEnabled, false);
+    assert.equal(settingsPayload.settings.sleepPrevention.lastStatus, "disabled");
     assert.equal(settingsPayload.settings.wikiGitBackupEnabled, false);
+    assert.equal(
+      settingsPayload.settings.wikiGitRemoteUrl,
+      "git@github.com:example/private-mac-brain.git",
+    );
     assert.equal(settingsPayload.agentPrompt.wikiRoot, "mac-brain");
 
     const managedAgents = await readFile(path.join(workspaceDir, "AGENTS.md"), "utf8");

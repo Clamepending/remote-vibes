@@ -10,6 +10,7 @@ import { fileURLToPath } from "node:url";
 import { promisify } from "node:util";
 import { WebSocket } from "ws";
 import { createRemoteVibesApp } from "../src/create-app.js";
+import { SleepPreventionService } from "../src/sleep-prevention.js";
 
 const execFile = promisify(execFileCallback);
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
@@ -201,6 +202,11 @@ async function startRemoteVibes(options = {}) {
     cwd: appCwd,
     stateDir: options.stateDir ?? path.join(appCwd, ".remote-vibes"),
     persistSessions: false,
+    sleepPreventionFactory: (settings) =>
+      new SleepPreventionService({
+        enabled: settings.preventSleepEnabled,
+        platform: "test",
+      }),
     ...options,
   });
 

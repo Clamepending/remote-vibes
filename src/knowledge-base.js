@@ -251,6 +251,7 @@ export async function listKnowledgeBase({ rootPath, relativeRoot = ".remote-vibe
         title: note.title,
         excerpt: note.excerpt,
         links: Array.from(new Set(links)),
+        searchText: stripMarkdown(note.content),
       };
     })
     .sort((left, right) => left.relativePath.localeCompare(right.relativePath));

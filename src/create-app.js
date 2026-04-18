@@ -15,6 +15,7 @@ import { PortAliasStore } from "./port-alias-store.js";
 import { listListeningPorts } from "./ports.js";
 import { SettingsStore } from "./settings-store.js";
 import { SessionManager } from "./session-manager.js";
+import { SleepPreventionService } from "./sleep-prevention.js";
 import { getRemoteVibesStateDir } from "./state-paths.js";
 import { TailscaleServeManager } from "./tailscale-serve.js";
 import { UpdateManager } from "./update-manager.js";
@@ -242,6 +243,10 @@ export async function createRemoteVibesApp({
   listPorts = listListeningPorts,
   accessUrlsProvider = getAccessUrls,
   tailscaleServeManager = new TailscaleServeManager(),
+  sleepPreventionFactory = (settings) =>
+    new SleepPreventionService({
+      enabled: settings.preventSleepEnabled,
+    }),
   onTerminate = null,
   updateManager = new UpdateManager({ cwd, stateDir, port }),
 } = {}) {
@@ -261,6 +266,7 @@ export async function createRemoteVibesApp({
     remoteUrl: settingsStore.settings.wikiGitRemoteUrl,
     wikiPath: settingsStore.settings.wikiPath,
   });
+  const sleepPreventionService = sleepPreventionFactory(settingsStore.settings);
   const sessionManager = new SessionManager({
     cwd,
     providers,
@@ -279,6 +285,7 @@ export async function createRemoteVibesApp({
   await sessionManager.initialize();
   await agentPromptStore.initialize();
   wikiBackupService.start();
+  sleepPreventionService.start();
   let exposedPort = null;
   let closePromise = null;
   let terminatePromise = null;
@@ -375,6 +382,7 @@ export async function createRemoteVibesApp({
   function getSettingsState() {
     return settingsStore.getState({
       backupStatus: wikiBackupService.getStatus(),
+      sleepStatus: sleepPreventionService.getStatus(),
     });
   }
 
@@ -536,6 +544,7 @@ export async function createRemoteVibesApp({
   app.patch("/api/settings", async (request, response) => {
     try {
       const settings = await settingsStore.update({
+        preventSleepEnabled: request.body?.preventSleepEnabled,
         wikiGitBackupEnabled: request.body?.wikiGitBackupEnabled,
         wikiGitRemoteBranch: request.body?.wikiGitRemoteBranch,
         wikiGitRemoteEnabled: request.body?.wikiGitRemoteEnabled,
@@ -557,6 +566,9 @@ export async function createRemoteVibesApp({
         wikiPath: settings.wikiPath,
       });
       wikiBackupService.start();
+      sleepPreventionService.setConfig({
+        enabled: settings.preventSleepEnabled,
+      });
       void wikiBackupService.runBackup({ reason: "settings" });
 
       response.json({
@@ -892,6 +904,7 @@ export async function createRemoteVibesApp({
       await sessionManager.shutdown({ preserveSessions: persistSessions });
       await removeServerInfo(stateDir);
       wikiBackupService.stop();
+      sleepPreventionService.stop();
       proxyServer.close();
       await new Promise((resolve) => websocketServer.close(resolve));
       await new Promise((resolve, reject) => {
