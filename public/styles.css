@@ -2911,8 +2911,10 @@ input[readonly][data-folder-picker-target] {
 }
 
 .session-project-toggle {
-  display: flex;
+  display: grid;
+  grid-template-columns: 18px minmax(0, 1fr);
   align-items: center;
+  gap: 8px;
   min-width: 0;
   min-height: 37px;
   padding: 5px 8px;
@@ -2931,6 +2933,27 @@ input[readonly][data-folder-picker-target] {
   color: rgba(222, 228, 235, 0.88);
 }
 
+.session-project-icon {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 18px;
+  height: 18px;
+  color: #d8c16e;
+}
+
+.session-project-icon svg {
+  width: 18px;
+  height: 18px;
+}
+
+.session-project-icon path {
+  fill: rgba(216, 193, 110, 0.82);
+  stroke: rgba(255, 236, 169, 0.5);
+  stroke-linejoin: round;
+  stroke-width: 0.7;
+}
+
 .session-project-copy {
   display: grid;
   min-width: 0;
@@ -2941,7 +2964,7 @@ input[readonly][data-folder-picker-target] {
   overflow: hidden;
   white-space: nowrap;
   text-overflow: ellipsis;
-  font-size: 1.02rem;
+  font-size: 1.08rem;
   font-weight: 800;
   letter-spacing: -0.018em;
   line-height: 1.1;
@@ -2986,16 +3009,14 @@ input[readonly][data-folder-picker-target] {
 .session-project-sessions {
   display: grid;
   gap: 1px;
-  padding-left: 31px;
   margin: 0;
 }
 
 .session-subagents {
   display: grid;
   gap: 1px;
-  margin: 0 0 2px 15px;
-  padding-left: 9px;
-  border-left: 1px solid rgba(222, 228, 235, 0.12);
+  margin: 0 0 2px;
+  padding-left: 0;
 }
 
 .session-card,
@@ -3027,7 +3048,7 @@ input[readonly][data-folder-picker-target] {
   align-items: center;
   gap: 7px;
   min-height: 28px;
-  padding: 3px 5px;
+  padding: 2px 6px;
   border-radius: 8px;
   color: rgba(222, 228, 235, 0.72);
   position: relative;
@@ -3038,7 +3059,7 @@ input[readonly][data-folder-picker-target] {
 }
 
 .session-subagent-card .session-name {
-  font-size: 0.75rem;
+  font-size: 0.72rem;
   font-weight: 650;
 }
 

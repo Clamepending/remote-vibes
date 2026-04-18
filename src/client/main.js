@@ -4361,6 +4361,12 @@ function renderSessionCards() {
               aria-expanded="${expanded ? "true" : "false"}"
               title="${escapeHtml(group.cwd || group.name)}"
             >
+              <span class="session-project-icon" aria-hidden="true">
+                <svg viewBox="0 0 18 18" focusable="false">
+                  <path d="M2.5 5.5h4l1.4 2h7.6v6.2a1.3 1.3 0 0 1-1.3 1.3H3.8a1.3 1.3 0 0 1-1.3-1.3V5.5Z" />
+                  <path d="M2.5 5.5V4.8a1.3 1.3 0 0 1 1.3-1.3h3l1.2 2" />
+                </svg>
+              </span>
               <span class="session-project-copy">
                 <span class="session-project-name">${escapeHtml(group.name)}</span>
               </span>
