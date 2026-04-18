@@ -1461,6 +1461,16 @@ input[readonly][data-folder-picker-target] {
   padding-left: 22px;
 }
 
+.knowledge-base-markdown :not(pre) > code {
+  padding: 2px 6px;
+  border: 1px solid rgba(255, 255, 255, 0.07);
+  border-radius: 7px;
+  background: rgba(255, 255, 255, 0.065);
+  color: #f0c674;
+  font-family: "IBM Plex Mono", monospace;
+  font-size: 0.86em;
+}
+
 .knowledge-base-rule {
   width: 100%;
   height: 1px;
@@ -1468,17 +1478,57 @@ input[readonly][data-folder-picker-target] {
   background: var(--line);
 }
 
-.knowledge-base-code {
+.knowledge-base-code,
+.file-code-preview {
   margin: 0;
   overflow-x: auto;
   padding: 14px;
   border: 1px solid rgba(255, 255, 255, 0.08);
   border-radius: 16px;
-  background: rgba(8, 10, 12, 0.84);
+  background:
+    linear-gradient(180deg, rgba(22, 25, 30, 0.96), rgba(10, 12, 15, 0.94)),
+    rgba(8, 10, 12, 0.84);
   color: #f8f4ee;
   font-family: "IBM Plex Mono", monospace;
   font-size: 0.8rem;
   line-height: 1.6;
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.035);
+  tab-size: 2;
+}
+
+.syntax-code code {
+  color: #dfe7ef;
+}
+
+.syntax-comment {
+  color: #708090;
+  font-style: italic;
+}
+
+.syntax-keyword {
+  color: #8fb9ff;
+  font-weight: 700;
+}
+
+.syntax-string {
+  color: #f0c674;
+}
+
+.syntax-number {
+  color: #d3a6ff;
+}
+
+.syntax-literal {
+  color: #ff9f99;
+  font-weight: 700;
+}
+
+.syntax-key {
+  color: #7fe0d4;
+}
+
+.syntax-tag {
+  color: #ffb07c;
 }
 
 .knowledge-base-blockquote {
@@ -1518,6 +1568,24 @@ input[readonly][data-folder-picker-target] {
   border: 1px solid rgba(255, 255, 255, 0.08);
   border-radius: 16px;
   background: rgba(8, 10, 12, 0.84);
+}
+
+.file-rendered-markdown {
+  min-height: 0;
+  overflow: auto;
+  padding: 14px;
+  border: 1px solid var(--line);
+  border-radius: 14px;
+  background:
+    radial-gradient(circle at top right, rgba(106, 227, 198, 0.055), transparent 34%),
+    rgba(8, 10, 12, 0.7);
+}
+
+.file-rendered-markdown .knowledge-base-markdown,
+.file-rendered-markdown {
+  display: grid;
+  gap: 14px;
+  line-height: 1.7;
 }
 
 .knowledge-base-graph-card {

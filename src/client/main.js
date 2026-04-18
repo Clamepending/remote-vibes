@@ -1459,6 +1459,182 @@ function isLikelyTextFile(fileName) {
   return !normalized.includes(".");
 }
 
+function getFileExtension(value) {
+  const normalized = String(value || "").trim().toLowerCase();
+  const dotIndex = normalized.lastIndexOf(".");
+  return dotIndex >= 0 ? normalized.slice(dotIndex) : "";
+}
+
+function isMarkdownFilePath(value) {
+  return [".md", ".markdown"].includes(getFileExtension(value));
+}
+
+function normalizeSyntaxLanguage(value) {
+  const normalized = String(value || "").trim().toLowerCase().replace(/^[.]+/, "");
+  const aliases = {
+    bash: "shell",
+    cjs: "javascript",
+    htm: "html",
+    js: "javascript",
+    jsx: "javascript",
+    md: "markdown",
+    mjs: "javascript",
+    ps1: "powershell",
+    py: "python",
+    rb: "ruby",
+    sh: "shell",
+    ts: "typescript",
+    tsx: "typescript",
+    yml: "yaml",
+  };
+
+  return aliases[normalized] || normalized || "text";
+}
+
+function getSyntaxLanguageForPath(value) {
+  const extension = getFileExtension(value);
+  const basename = getFileDisplayName(value).toLowerCase();
+
+  if (["dockerfile", "makefile"].includes(basename)) {
+    return basename;
+  }
+
+  return normalizeSyntaxLanguage(extension || basename);
+}
+
+function getSyntaxTokenKey(index) {
+  let value = Math.max(0, Number(index) || 0);
+  let key = "";
+
+  do {
+    key = String.fromCharCode(97 + (value % 26)) + key;
+    value = Math.floor(value / 26) - 1;
+  } while (value >= 0);
+
+  return key;
+}
+
+function restoreSyntaxTokens(output, tokens) {
+  return output.replace(/%%RV_SYNTAX_([a-z]+)%%/g, (_match, key) => tokens[key] || "");
+}
+
+function highlightCode(code, language = "text") {
+  const normalizedLanguage = normalizeSyntaxLanguage(language);
+  const tokens = [];
+  const stash = (html) => {
+    const key = getSyntaxTokenKey(Object.keys(tokens).length);
+    tokens[key] = html;
+    return `%%RV_SYNTAX_${key}%%`;
+  };
+  let output = escapeHtml(code);
+
+  const protect = (pattern, className) => {
+    output = output.replace(pattern, (match) => stash(`<span class="${className}">${match}</span>`));
+  };
+
+  protect(/(&quot;(?:\\.|[^"&])*?&quot;|'(?:\\.|[^'])*?'|`(?:\\.|[^`])*?`)/g, "syntax-string");
+  protect(/(&lt;!--[\s\S]*?--&gt;|\/\*[\s\S]*?\*\/|\/\/.*$|^\s*#.*$)/gm, "syntax-comment");
+
+  if (["html", "xml", "svg"].includes(normalizedLanguage)) {
+    protect(/(&lt;\/?)([a-zA-Z][\w:-]*)([^&]*?)(\/?&gt;)/g, "syntax-tag");
+  }
+
+  if (["json", "yaml", "toml"].includes(normalizedLanguage)) {
+    protect(/\b(true|false|null)\b/g, "syntax-literal");
+    protect(/\b-?\d+(?:\.\d+)?\b/g, "syntax-number");
+    output = output.replace(/(^|\s)([A-Za-z0-9_.-]+)(\s*:)/gm, (_match, lead, key, suffix) =>
+      `${lead}<span class="syntax-key">${key}</span>${suffix}`,
+    );
+  } else {
+    const keywordPattern =
+      /\b(async|await|break|case|catch|class|const|continue|def|default|do|elif|else|enum|export|extends|false|finally|for|from|func|function|go|if|import|in|interface|let|match|new|null|package|private|protected|public|return|self|static|struct|switch|this|throw|true|try|type|var|void|while|yield)\b/g;
+    protect(keywordPattern, "syntax-keyword");
+    protect(/\b-?\d+(?:\.\d+)?\b/g, "syntax-number");
+  }
+
+  return restoreSyntaxTokens(output, tokens);
+}
+
+function renderSyntaxCodeBlock(code, language = "text", className = "") {
+  const normalizedLanguage = normalizeSyntaxLanguage(language);
+  return `<pre class="${className} syntax-code language-${escapeHtml(normalizedLanguage)}"><code>${highlightCode(
+    code,
+    normalizedLanguage,
+  )}</code></pre>`;
+}
+
+function normalizeAbsolutePathForCompare(value) {
+  return String(value || "")
+    .trim()
+    .replaceAll("\\", "/")
+    .replace(/\/+$/, "");
+}
+
+function getAbsolutePathAliases(value) {
+  const normalized = normalizeAbsolutePathForCompare(value);
+  if (!normalized) {
+    return [];
+  }
+
+  const aliases = new Set([normalized]);
+  if (normalized === "/private/tmp") {
+    aliases.add("/tmp");
+  } else if (normalized.startsWith("/private/tmp/")) {
+    aliases.add(`/tmp/${normalized.slice("/private/tmp/".length)}`);
+  } else if (normalized === "/tmp") {
+    aliases.add("/private/tmp");
+  } else if (normalized.startsWith("/tmp/")) {
+    aliases.add(`/private/tmp/${normalized.slice("/tmp/".length)}`);
+  }
+
+  return Array.from(aliases);
+}
+
+function joinWorkspacePath(root, relativePath) {
+  const normalizedRoot = normalizeAbsolutePathForCompare(root);
+  const normalizedRelative = normalizeFileTreePath(relativePath);
+
+  if (!normalizedRoot) {
+    return "";
+  }
+
+  return normalizedRelative ? `${normalizedRoot}/${normalizedRelative}` : normalizedRoot;
+}
+
+function getKnowledgeBaseNotePathForWorkspaceFile(relativePath) {
+  const normalizedRelative = normalizeFileTreePath(relativePath);
+  if (!normalizedRelative || !isMarkdownFilePath(normalizedRelative)) {
+    return "";
+  }
+
+  const filesRoot = normalizeAbsolutePathForCompare(state.filesRoot || state.defaultCwd);
+  const wikiRoot = normalizeAbsolutePathForCompare(state.knowledgeBase.rootPath || state.settings.wikiPath);
+  const absoluteFilePath = joinWorkspacePath(filesRoot, normalizedRelative);
+
+  if (!filesRoot || !wikiRoot || !absoluteFilePath) {
+    return "";
+  }
+
+  for (const filePathAlias of getAbsolutePathAliases(absoluteFilePath)) {
+    for (const wikiRootAlias of getAbsolutePathAliases(wikiRoot)) {
+      if (filePathAlias === wikiRootAlias) {
+        return "";
+      }
+
+      if (filePathAlias.startsWith(`${wikiRootAlias}/`)) {
+        return normalizeFileTreePath(filePathAlias.slice(wikiRootAlias.length + 1));
+      }
+    }
+  }
+
+  return "";
+}
+
+function hasKnowledgeBaseNote(relativePath) {
+  const normalizedPath = normalizeFileTreePath(relativePath);
+  return state.knowledgeBase.notes.some((note) => note.relativePath === normalizedPath);
+}
+
 function getActiveOpenFileTab() {
   const activePath = normalizeFileTreePath(state.openFileRelativePath);
   return state.openFileTabs.find((tab) => tab.relativePath === activePath) || null;
@@ -1506,6 +1682,7 @@ function ensureOpenFileTab(relativePath, { mode = "text", name = "", url, extern
       draft: "",
       message: "",
       saving: false,
+      viewMode: "preview",
       requestId: 0,
       url: url || "",
       externalUrl: externalUrl || "",
@@ -2380,6 +2557,30 @@ async function openKnowledgeBaseNote(relativePath, { force = false } = {}) {
   renderShell();
 }
 
+async function selectKnowledgeBaseNoteForWorkspaceFile(relativePath, { openInKnowledgeBase = false } = {}) {
+  if (!isMarkdownFilePath(relativePath)) {
+    return false;
+  }
+
+  if (!state.knowledgeBase.notes.length && !state.knowledgeBase.loading && !state.knowledgeBase.error) {
+    await loadKnowledgeBaseIndex();
+  }
+
+  const notePath = getKnowledgeBaseNotePathForWorkspaceFile(relativePath);
+  if (!notePath || !hasKnowledgeBaseNote(notePath)) {
+    return false;
+  }
+
+  state.knowledgeBase.selectedNotePath = notePath;
+
+  if (openInKnowledgeBase || state.currentView === "knowledge-base") {
+    setCurrentView("knowledge-base", { notePath });
+    await openKnowledgeBaseNote(notePath);
+  }
+
+  return true;
+}
+
 function renderKnowledgeBaseInline(text, currentPath) {
   const tokens = [];
   const createToken = (html) => `%%KB_TOKEN_${tokens.push(html) - 1}%%`;
@@ -2465,7 +2666,9 @@ function renderKnowledgeBaseMarkdown(markdown, currentPath) {
       continue;
     }
 
-    if (/^```/.test(line)) {
+    const fenceMatch = line.match(/^```\s*([A-Za-z0-9_.+-]*)/);
+    if (fenceMatch) {
+      const language = normalizeSyntaxLanguage(fenceMatch[1] || "text");
       index += 1;
       const codeLines = [];
 
@@ -2478,7 +2681,7 @@ function renderKnowledgeBaseMarkdown(markdown, currentPath) {
         index += 1;
       }
 
-      html.push(`<pre class="knowledge-base-code"><code>${escapeHtml(codeLines.join("\n"))}</code></pre>`);
+      html.push(renderSyntaxCodeBlock(codeLines.join("\n"), language, "knowledge-base-code"));
       continue;
     }
 
@@ -3029,6 +3232,22 @@ function renderKnowledgeBaseApp() {
   `;
 }
 
+function renderFileTextPreview(activeTab) {
+  const content = activeTab?.content || "";
+  const language = getSyntaxLanguageForPath(state.openFileRelativePath);
+  const notePath = getKnowledgeBaseNotePathForWorkspaceFile(state.openFileRelativePath);
+
+  if (isMarkdownFilePath(state.openFileRelativePath)) {
+    return `
+      <div class="file-rendered-markdown knowledge-base-markdown">
+        ${renderKnowledgeBaseMarkdown(content, notePath || state.openFileRelativePath)}
+      </div>
+    `;
+  }
+
+  return renderSyntaxCodeBlock(content, language, "file-code-preview");
+}
+
 function renderOpenFilePanel() {
   if (!state.openFileRelativePath) {
     return `<div class="blank-state">no file selected</div>`;
@@ -3037,6 +3256,7 @@ function renderOpenFilePanel() {
   const activeTab = getActiveOpenFileTab();
   const rawHref = getFileContentUrl(state.openFileRelativePath);
   const dirty = isOpenFileDirty(activeTab);
+  const editing = activeTab?.viewMode === "edit" || dirty;
 
   if (state.openFileStatus === "web") {
     const previewUrl = activeTab?.url || "";
@@ -3147,20 +3367,29 @@ function renderOpenFilePanel() {
         <div class="file-editor-actions">
           <a class="ghost-button file-editor-open" href="${escapeHtml(rawHref)}" target="_blank" rel="noreferrer">raw</a>
           <button class="ghost-button file-editor-button" type="button" id="reload-open-file" ${state.openFileSaving ? "disabled" : ""}>reload</button>
+          ${
+            editing
+              ? `<button class="ghost-button file-editor-button" type="button" id="preview-open-file" ${dirty || state.openFileSaving ? "disabled" : ""}>preview</button>`
+              : `<button class="ghost-button file-editor-button" type="button" id="edit-open-file">edit</button>`
+          }
           <button class="${dirty ? "primary-button" : "ghost-button"} file-editor-button" type="button" id="save-open-file" ${(!dirty || state.openFileSaving) ? "disabled" : ""}>${state.openFileSaving ? "saving..." : dirty ? "save" : "saved"}</button>
         </div>
       </div>
       <div class="file-editor-status" id="open-file-status">${escapeHtml(
         state.openFileSaving ? "saving changes..." : dirty ? "unsaved changes" : "saved",
       )}</div>
-      <textarea
-        class="file-editor-textarea"
-        id="open-file-editor"
-        spellcheck="false"
-        autocomplete="off"
-        autocorrect="off"
-        autocapitalize="none"
-      >${escapeHtml(state.openFileDraft)}</textarea>
+      ${
+        editing
+          ? `<textarea
+              class="file-editor-textarea"
+              id="open-file-editor"
+              spellcheck="false"
+              autocomplete="off"
+              autocorrect="off"
+              autocapitalize="none"
+            >${escapeHtml(state.openFileDraft)}</textarea>`
+          : renderFileTextPreview(activeTab)
+      }
     </div>
   `;
 }
@@ -4926,9 +5155,22 @@ function refreshKnowledgeBaseUi() {
 }
 
 function bindFileTreeEvents() {
-  document.querySelectorAll("[data-file-toggle]").forEach((button) => {
-    button.addEventListener("click", () => {
-      const relativePath = normalizeFileTreePath(button.getAttribute("data-file-toggle"));
+  const filesTree = document.querySelector("#files-tree");
+  if (!(filesTree instanceof HTMLElement) || filesTree.dataset.fileTreeBound === "true") {
+    return;
+  }
+
+  filesTree.dataset.fileTreeBound = "true";
+  filesTree.addEventListener("click", async (event) => {
+    const target = event.target;
+    if (!(target instanceof Element)) {
+      return;
+    }
+
+    const toggleButton = target.closest("[data-file-toggle]");
+    if (toggleButton instanceof HTMLElement && filesTree.contains(toggleButton)) {
+      event.preventDefault();
+      const relativePath = normalizeFileTreePath(toggleButton.getAttribute("data-file-toggle"));
 
       if (!relativePath) {
         return;
@@ -4943,20 +5185,30 @@ function bindFileTreeEvents() {
       state.fileTreeExpanded.add(relativePath);
       refreshFileTreeUi();
       void loadFileTree(relativePath);
+      return;
+    }
+
+    const openButton = target.closest("[data-file-open]");
+    if (!(openButton instanceof HTMLElement) || !filesTree.contains(openButton)) {
+      return;
+    }
+
+    event.preventDefault();
+    const relativePath = normalizeFileTreePath(openButton.getAttribute("data-file-open"));
+    const openMode = openButton.getAttribute("data-file-open-mode");
+
+    if (!relativePath) {
+      return;
+    }
+
+    const openedInKnowledgeBase = await selectKnowledgeBaseNoteForWorkspaceFile(relativePath, {
+      openInKnowledgeBase: state.currentView === "knowledge-base",
     });
-  });
+    if (openedInKnowledgeBase && state.currentView === "knowledge-base") {
+      return;
+    }
 
-  document.querySelectorAll("[data-file-open]").forEach((button) => {
-    button.addEventListener("click", () => {
-      const relativePath = normalizeFileTreePath(button.getAttribute("data-file-open"));
-      const openMode = button.getAttribute("data-file-open-mode");
-
-      if (!relativePath) {
-        return;
-      }
-
-      void openWorkspaceFilePreview(relativePath, { mode: openMode });
-    });
+    void openWorkspaceFilePreview(relativePath, { mode: openMode });
   });
 }
 
@@ -5011,6 +5263,7 @@ function syncOpenFileEditorStateUi() {
   syncOpenFileStateFromTab();
   const status = document.querySelector("#open-file-status");
   const saveButton = document.querySelector("#save-open-file");
+  const previewButton = document.querySelector("#preview-open-file");
   const activeTab = getActiveOpenFileTab();
 
   if (status) {
@@ -5027,6 +5280,10 @@ function syncOpenFileEditorStateUi() {
     saveButton.textContent = activeTab?.saving ? "saving..." : dirty ? "save" : "saved";
     saveButton.classList.toggle("primary-button", dirty);
     saveButton.classList.toggle("ghost-button", !dirty);
+  }
+
+  if (previewButton instanceof HTMLButtonElement) {
+    previewButton.disabled = isOpenFileDirty(activeTab) || Boolean(activeTab?.saving);
   }
 }
 
@@ -5068,6 +5325,28 @@ function bindFileEditorEvents() {
     activeTab.draft = textarea.value;
     syncOpenFileStateFromTab(activeTab);
     syncOpenFileEditorStateUi();
+  });
+
+  document.querySelector("#edit-open-file")?.addEventListener("click", () => {
+    const activeTab = getActiveOpenFileTab();
+    if (!activeTab) {
+      return;
+    }
+
+    activeTab.viewMode = "edit";
+    syncOpenFileStateFromTab(activeTab);
+    refreshOpenFileUi();
+  });
+
+  document.querySelector("#preview-open-file")?.addEventListener("click", () => {
+    const activeTab = getActiveOpenFileTab();
+    if (!activeTab || isOpenFileDirty(activeTab)) {
+      return;
+    }
+
+    activeTab.viewMode = "preview";
+    syncOpenFileStateFromTab(activeTab);
+    refreshOpenFileUi();
   });
 
   document.querySelector("#save-open-file")?.addEventListener("click", async () => {
@@ -5745,6 +6024,7 @@ function bindShellEvents() {
 
   bindSessionEvents();
   bindPortEvents();
+  bindFileTreeEvents();
   bindSearchResultEvents();
   bindUpdateEvents();
   bindSystemToastEvents();
