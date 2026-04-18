@@ -215,6 +215,39 @@ textarea {
   color: var(--text);
 }
 
+.hover-tooltip {
+  position: fixed;
+  z-index: 10000;
+  max-width: min(260px, calc(100vw - 16px));
+  padding: 7px 9px;
+  border: 1px solid rgba(255, 255, 255, 0.11);
+  border-radius: 9px;
+  background: rgba(27, 26, 31, 0.96);
+  box-shadow: 0 14px 34px rgba(0, 0, 0, 0.34);
+  color: rgba(246, 247, 249, 0.94);
+  font-family: "IBM Plex Mono", monospace;
+  font-size: 0.68rem;
+  letter-spacing: 0.02em;
+  line-height: 1.25;
+  opacity: 0;
+  overflow: hidden;
+  pointer-events: none;
+  text-overflow: ellipsis;
+  transform: translateY(3px) scale(0.98);
+  transition: opacity 120ms ease, transform 120ms ease;
+  white-space: nowrap;
+}
+
+.hover-tooltip.is-measuring {
+  opacity: 0;
+  transform: none;
+}
+
+.hover-tooltip.is-visible {
+  opacity: 1;
+  transform: translateY(0) scale(1);
+}
+
 .primary-button {
   background: linear-gradient(180deg, #f0f0f2, #c9c9cf);
   color: #18181c;
@@ -2742,6 +2775,79 @@ input[readonly][data-folder-picker-target] {
   font-family: "IBM Plex Mono", monospace;
   font-size: 0.76rem;
   line-height: 1.5;
+}
+
+.line-number-editor {
+  --editor-font-size: 0.78rem;
+  --editor-line-height: 1.5;
+  --editor-pad-y: 12px;
+  display: grid;
+  grid-template-columns: minmax(42px, auto) minmax(0, 1fr);
+  min-height: 0;
+  overflow: hidden;
+  border: 1px solid var(--line);
+  border-radius: 14px;
+  background: rgba(8, 10, 12, 0.78);
+}
+
+.line-number-editor:focus-within {
+  border-color: rgba(225, 226, 230, 0.25);
+}
+
+.line-number-editor-prompt {
+  --editor-font-size: 0.84rem;
+  --editor-line-height: 1.62;
+  --editor-pad-y: 14px;
+  height: 100%;
+  border: 0;
+  border-radius: 0;
+  background: rgba(14, 14, 17, 0.58);
+}
+
+.line-number-editor-knowledge {
+  --editor-font-size: 0.82rem;
+  --editor-line-height: 1.65;
+  --editor-pad-y: 14px;
+  min-height: min(58vh, 680px);
+  resize: vertical;
+  background: rgba(255, 255, 255, 0.03);
+}
+
+.line-number-gutter {
+  min-width: 42px;
+  margin: 0;
+  padding: var(--editor-pad-y) 10px var(--editor-pad-y) 8px;
+  overflow: hidden;
+  border-right: 1px solid rgba(255, 255, 255, 0.06);
+  color: rgba(164, 162, 168, 0.62);
+  font-family: "IBM Plex Mono", monospace;
+  font-size: var(--editor-font-size);
+  line-height: var(--editor-line-height);
+  text-align: right;
+  user-select: none;
+  white-space: pre;
+}
+
+.line-number-editor textarea {
+  width: 100%;
+  height: 100%;
+  min-height: 0;
+  padding: var(--editor-pad-y) 12px;
+  border: 0;
+  border-radius: 0;
+  background: transparent;
+  color: var(--text);
+  font-family: "IBM Plex Mono", monospace;
+  font-size: var(--editor-font-size);
+  line-height: var(--editor-line-height);
+  outline: none;
+  overflow-wrap: normal;
+  resize: none;
+  white-space: pre;
+}
+
+.line-number-editor-knowledge textarea {
+  resize: none;
 }
 
 .file-image-preview {

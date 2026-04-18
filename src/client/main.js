@@ -378,6 +378,43 @@ function escapeHtml(value) {
     .replaceAll('"', "&quot;");
 }
 
+function tooltipAttributes(label, placement = "top") {
+  return `data-tooltip="${escapeHtml(label)}" data-tooltip-placement="${escapeHtml(placement)}"`;
+}
+
+function getEditorLineCount(value) {
+  return Math.max(1, String(value ?? "").split("\n").length);
+}
+
+function renderEditorLineNumbers(value) {
+  return Array.from({ length: getEditorLineCount(value) }, (_, index) => String(index + 1)).join("\n");
+}
+
+function renderLineNumberEditor({
+  id,
+  className,
+  value,
+  name = "",
+  variant = "default",
+  attributes = "",
+}) {
+  const nameAttribute = name ? ` name="${escapeHtml(name)}"` : "";
+
+  return `
+    <div class="line-number-editor line-number-editor-${escapeHtml(variant)}" data-line-number-editor>
+      <pre class="line-number-gutter" aria-hidden="true">${renderEditorLineNumbers(value)}</pre>
+      <textarea
+        class="${escapeHtml(className)}"
+        id="${escapeHtml(id)}"
+        ${nameAttribute}
+        wrap="off"
+        data-line-number-textarea
+        ${attributes}
+      >${escapeHtml(value)}</textarea>
+    </div>
+  `;
+}
+
 function clamp(value, min, max) {
   return Math.min(max, Math.max(min, value));
 }
@@ -687,6 +724,158 @@ function scheduleTerminalTextareaReset(delay = 0) {
 
 function isCoarsePointerDevice() {
   return window.matchMedia?.("(pointer: coarse)").matches ?? false;
+}
+
+const TOOLTIP_DELAY_MS = 700;
+let tooltipTimer = null;
+let tooltipTarget = null;
+
+function getHoverTooltipElement() {
+  let tooltip = document.querySelector("#hover-tooltip");
+  if (!tooltip) {
+    tooltip = document.createElement("div");
+    tooltip.id = "hover-tooltip";
+    tooltip.className = "hover-tooltip";
+    tooltip.setAttribute("role", "tooltip");
+    document.body.append(tooltip);
+  }
+
+  return tooltip;
+}
+
+function hideHoverTooltip() {
+  if (tooltipTimer) {
+    window.clearTimeout(tooltipTimer);
+    tooltipTimer = null;
+  }
+
+  tooltipTarget = null;
+  document.querySelector("#hover-tooltip")?.classList.remove("is-visible");
+}
+
+function positionHoverTooltip(target, tooltip) {
+  const placement = target.dataset.tooltipPlacement || "top";
+  const targetRect = target.getBoundingClientRect();
+  const tooltipRect = tooltip.getBoundingClientRect();
+  const viewportWidth = window.innerWidth;
+  const viewportHeight = window.innerHeight;
+  const margin = 8;
+  const gap = 10;
+
+  let left = targetRect.left + targetRect.width / 2 - tooltipRect.width / 2;
+  let top = targetRect.top - tooltipRect.height - gap;
+
+  if (placement === "bottom") {
+    top = targetRect.bottom + gap;
+  } else if (placement === "right") {
+    left = targetRect.right + gap;
+    top = targetRect.top + targetRect.height / 2 - tooltipRect.height / 2;
+  } else if (placement === "left") {
+    left = targetRect.left - tooltipRect.width - gap;
+    top = targetRect.top + targetRect.height / 2 - tooltipRect.height / 2;
+  }
+
+  if (top < margin) {
+    top = targetRect.bottom + gap;
+  }
+  if (top + tooltipRect.height > viewportHeight - margin) {
+    top = Math.max(margin, targetRect.top - tooltipRect.height - gap);
+  }
+
+  left = clamp(left, margin, Math.max(margin, viewportWidth - tooltipRect.width - margin));
+  top = clamp(top, margin, Math.max(margin, viewportHeight - tooltipRect.height - margin));
+
+  tooltip.style.left = `${Math.round(left)}px`;
+  tooltip.style.top = `${Math.round(top)}px`;
+}
+
+function showHoverTooltip(target) {
+  const label = target?.dataset?.tooltip?.trim();
+  if (!label || target.disabled || isCoarsePointerDevice()) {
+    return;
+  }
+
+  const tooltip = getHoverTooltipElement();
+  tooltip.textContent = label;
+  tooltip.classList.add("is-measuring");
+  tooltip.classList.remove("is-visible");
+  positionHoverTooltip(target, tooltip);
+  tooltip.classList.remove("is-measuring");
+  tooltip.classList.add("is-visible");
+}
+
+function scheduleHoverTooltip(target) {
+  hideHoverTooltip();
+  tooltipTarget = target;
+  tooltipTimer = window.setTimeout(() => {
+    tooltipTimer = null;
+    if (tooltipTarget === target) {
+      showHoverTooltip(target);
+    }
+  }, TOOLTIP_DELAY_MS);
+}
+
+function installDelayedTooltips() {
+  document.addEventListener("pointerover", (event) => {
+    const target = event.target instanceof Element ? event.target.closest("[data-tooltip]") : null;
+    if (target instanceof HTMLElement) {
+      scheduleHoverTooltip(target);
+    }
+  });
+
+  document.addEventListener("pointerout", (event) => {
+    const target = event.target instanceof Element ? event.target.closest("[data-tooltip]") : null;
+    const nextTarget = event.relatedTarget instanceof Node ? event.relatedTarget : null;
+    if (!target || (nextTarget && target.contains(nextTarget))) {
+      return;
+    }
+
+    hideHoverTooltip();
+  });
+
+  document.addEventListener("focusin", (event) => {
+    const target = event.target instanceof Element ? event.target.closest("[data-tooltip]") : null;
+    if (target instanceof HTMLElement) {
+      scheduleHoverTooltip(target);
+    }
+  });
+
+  document.addEventListener("focusout", hideHoverTooltip);
+  window.addEventListener("scroll", hideHoverTooltip, true);
+  window.addEventListener("resize", hideHoverTooltip);
+}
+
+function refreshLineNumberEditor(editor) {
+  const textarea = editor.querySelector("[data-line-number-textarea]");
+  const gutter = editor.querySelector(".line-number-gutter");
+  if (!(textarea instanceof HTMLTextAreaElement) || !(gutter instanceof HTMLElement)) {
+    return;
+  }
+
+  gutter.textContent = renderEditorLineNumbers(textarea.value);
+  gutter.scrollTop = textarea.scrollTop;
+}
+
+function bindLineNumberEditors(root = document) {
+  root.querySelectorAll("[data-line-number-editor]").forEach((editor) => {
+    const textarea = editor.querySelector("[data-line-number-textarea]");
+    const gutter = editor.querySelector(".line-number-gutter");
+    if (!(editor instanceof HTMLElement) || !(textarea instanceof HTMLTextAreaElement) || !(gutter instanceof HTMLElement)) {
+      return;
+    }
+
+    if (editor.dataset.lineNumberBound === "true") {
+      refreshLineNumberEditor(editor);
+      return;
+    }
+
+    editor.dataset.lineNumberBound = "true";
+    textarea.addEventListener("input", () => refreshLineNumberEditor(editor));
+    textarea.addEventListener("scroll", () => {
+      gutter.scrollTop = textarea.scrollTop;
+    });
+    refreshLineNumberEditor(editor);
+  });
 }
 
 function shouldUseCanvasRenderer() {
@@ -1298,7 +1487,7 @@ function renderSystemToasts() {
             <section class="system-toast is-${escapeHtml(toast.type)}">
               <div class="system-toast-head">
                 <strong>${escapeHtml(toast.title)}</strong>
-                <button class="icon-button system-toast-dismiss" type="button" aria-label="Dismiss" data-system-toast-dismiss="${escapeHtml(toast.key)}">×</button>
+                <button class="icon-button system-toast-dismiss" type="button" aria-label="Dismiss" ${tooltipAttributes("Dismiss")} data-system-toast-dismiss="${escapeHtml(toast.key)}">×</button>
               </div>
               <div class="system-toast-message">${escapeHtml(toast.message)}</div>
               <div class="system-toast-actions">${renderSystemToastActions(toast)}</div>
@@ -3143,14 +3332,18 @@ function renderKnowledgeBaseNoteBody(selectedNotePath) {
               ? "unsaved changes"
               : "saved",
         )}</div>
-        <textarea
-          class="knowledge-base-editor-textarea"
-          id="knowledge-base-note-editor"
-          spellcheck="false"
-          autocomplete="off"
-          autocorrect="off"
-          autocapitalize="none"
-        >${escapeHtml(state.knowledgeBase.selectedNoteDraft)}</textarea>
+        ${renderLineNumberEditor({
+          id: "knowledge-base-note-editor",
+          className: "knowledge-base-editor-textarea",
+          value: state.knowledgeBase.selectedNoteDraft,
+          variant: "knowledge",
+          attributes: `
+            spellcheck="false"
+            autocomplete="off"
+            autocorrect="off"
+            autocapitalize="none"
+          `,
+        })}
       </div>
     `;
   }
@@ -3284,7 +3477,7 @@ function renderKnowledgeBaseView() {
   return `
     <section class="dashboard-panel knowledge-base-view">
       <div class="dashboard-toolbar">
-        <button class="icon-button hidden-desktop" type="button" id="open-sidebar">≡</button>
+        <button class="icon-button hidden-desktop" type="button" id="open-sidebar" aria-label="Open sidebar" ${tooltipAttributes("Open sidebar")}>≡</button>
         <div class="dashboard-copy">
           <strong>Knowledge Base</strong>
           <div class="terminal-meta">obsidian-style markdown viewer for ${escapeHtml(state.knowledgeBase.relativeRoot)}</div>
@@ -3571,14 +3764,18 @@ function renderOpenFilePanel() {
       )}</div>
       ${
         editing
-          ? `<textarea
-              class="file-editor-textarea"
-              id="open-file-editor"
-              spellcheck="false"
-              autocomplete="off"
-              autocorrect="off"
-              autocapitalize="none"
-            >${escapeHtml(state.openFileDraft)}</textarea>`
+          ? renderLineNumberEditor({
+              id: "open-file-editor",
+              className: "file-editor-textarea",
+              value: state.openFileDraft,
+              variant: "file",
+              attributes: `
+                spellcheck="false"
+                autocomplete="off"
+                autocorrect="off"
+                autocapitalize="none"
+              `,
+            })
           : renderFileTextPreview(activeTab)
       }
     </div>
@@ -3600,7 +3797,7 @@ function renderOpenFileTabs() {
           <button class="file-preview-tab-label" type="button" data-file-tab="${escapeHtml(tab.relativePath)}">
             <span class="file-preview-tab-name">${escapeHtml(tab.name)}${dirty ? " *" : ""}</span>
           </button>
-          <button class="file-preview-tab-close" type="button" aria-label="Close ${escapeHtml(tab.name)}" data-close-file-tab="${escapeHtml(tab.relativePath)}">×</button>
+          <button class="file-preview-tab-close" type="button" aria-label="Close ${escapeHtml(tab.name)}" ${tooltipAttributes(`Close ${tab.name}`)} data-close-file-tab="${escapeHtml(tab.relativePath)}">×</button>
         </div>
       `;
     })
@@ -3614,7 +3811,7 @@ function renderFilePreviewPane() {
     <aside class="file-preview-pane ${open ? "is-open" : ""}" id="file-preview-pane" aria-hidden="${open ? "false" : "true"}">
       <div class="file-preview-tabs">
         <div class="file-preview-tab-strip">${renderOpenFileTabs()}</div>
-        <button class="icon-button file-preview-close-all" type="button" id="close-file-preview" aria-label="Close file preview">×</button>
+        <button class="icon-button file-preview-close-all" type="button" id="close-file-preview" aria-label="Close file preview" ${tooltipAttributes("Close file preview")}>×</button>
       </div>
       <div class="file-preview-body file-editor" id="file-editor">${renderOpenFilePanel()}</div>
     </aside>
@@ -3743,20 +3940,20 @@ function renderSessionCard(session) {
       </div>
       <span class="session-time">${relativeTime(session.lastOutputAt)}</span>
       <div class="session-actions">
-        <button class="session-action-button" type="button" aria-label="Fork session" title="Fork session" data-fork-session="${session.id}">
+        <button class="session-action-button" type="button" aria-label="Fork session" ${tooltipAttributes("Fork session")} data-fork-session="${session.id}">
           <svg viewBox="0 0 18 18" aria-hidden="true" focusable="false">
             <path d="M5 3.5v2.2a4.8 4.8 0 0 0 4.8 4.8H13" />
             <path d="M5 14.5v-2.2a4.8 4.8 0 0 1 4.8-4.8H13" />
             <path d="M12 5.5 14.5 8 12 10.5" />
           </svg>
         </button>
-        <button class="session-action-button" type="button" aria-label="Rename session" title="Rename session" data-rename-session="${session.id}">
+        <button class="session-action-button" type="button" aria-label="Rename session" ${tooltipAttributes("Rename session")} data-rename-session="${session.id}">
           <svg viewBox="0 0 18 18" aria-hidden="true" focusable="false">
             <path d="m4 12.8-.5 2.7 2.7-.5 7.7-7.7-2.2-2.2L4 12.8Z" />
             <path d="m10.8 6 2.2 2.2" />
           </svg>
         </button>
-        <button class="session-action-button session-delete-button" type="button" aria-label="Delete session" title="Delete session" data-delete-session="${session.id}">
+        <button class="session-action-button session-delete-button" type="button" aria-label="Delete session" ${tooltipAttributes("Delete session")} data-delete-session="${session.id}">
           <svg viewBox="0 0 18 18" aria-hidden="true" focusable="false">
             <path d="M4.5 6h9" />
             <path d="M7 6V4.5h4V6" />
@@ -3837,7 +4034,7 @@ function renderSessionCards() {
               type="button"
               data-create-session-in-cwd="${escapeHtml(group.cwd)}"
               aria-label="Create a new session in ${escapeHtml(group.name)}"
-              title="New session in this folder"
+              ${tooltipAttributes("New session in this folder")}
             >✎</button>
           </div>
           ${
@@ -3897,6 +4094,7 @@ function renderSidebarNav(providerOptions) {
       class="sidebar-nav-item ${state.currentView === item.view ? "is-active" : ""}"
       href="${escapeHtml(getMainViewUrl(item.view))}"
       data-open-main-view="${escapeHtml(item.view)}"
+      ${tooltipAttributes(item.label, "right")}
     >
       <span class="sidebar-nav-icon" aria-hidden="true">${escapeHtml(item.icon)}</span>
       <span class="sidebar-nav-copy">
@@ -3909,7 +4107,7 @@ function renderSidebarNav(providerOptions) {
   return `
     <div class="sidebar-nav-stack">
       <nav class="sidebar-nav sidebar-primary-nav" aria-label="Main views">
-        <button class="sidebar-nav-item sidebar-nav-button" type="button" data-folder-picker-target="session">
+        <button class="sidebar-nav-item sidebar-nav-button" type="button" data-folder-picker-target="session" ${tooltipAttributes("New chat", "right")}>
           <span class="sidebar-nav-icon" aria-hidden="true">+</span>
           <span class="sidebar-nav-copy">
             <span class="sidebar-nav-label">New chat</span>
@@ -3945,7 +4143,7 @@ function renderPortCards() {
 
       return `
         <article class="port-card">
-          <button class="port-link port-preview-trigger" type="button" data-open-port-preview="${portNumber}" aria-label="Preview ${escapeHtml(getPortDisplayName(port))}">
+          <button class="port-link port-preview-trigger" type="button" data-open-port-preview="${portNumber}" aria-label="Preview ${escapeHtml(getPortDisplayName(port))}" ${tooltipAttributes(`Preview ${getPortDisplayName(port)}`)}>
             <span class="port-number">${escapeHtml(getPortDisplayName(port))}</span>
             <span class="port-meta">${escapeHtml(getPortMeta(port))}</span>
             <span class="port-access-pill">${escapeHtml(getPortAccessHint(port))}</span>
@@ -4095,7 +4293,7 @@ function renderSearchView() {
   return `
     <section class="dashboard-panel main-view search-view">
       <div class="dashboard-toolbar">
-        <button class="icon-button hidden-desktop" type="button" id="open-sidebar">≡</button>
+        <button class="icon-button hidden-desktop" type="button" id="open-sidebar" aria-label="Open sidebar" ${tooltipAttributes("Open sidebar")}>≡</button>
         <div class="dashboard-copy">
           <strong>Search</strong>
           <div class="terminal-meta">jump across sessions, project folders, ports, and wiki notes</div>
@@ -4156,7 +4354,7 @@ function renderPluginsView() {
   return `
     <section class="dashboard-panel main-view plugins-view">
       <div class="dashboard-toolbar">
-        <button class="icon-button hidden-desktop" type="button" id="open-sidebar">≡</button>
+        <button class="icon-button hidden-desktop" type="button" id="open-sidebar" aria-label="Open sidebar" ${tooltipAttributes("Open sidebar")}>≡</button>
         <div class="dashboard-copy">
           <strong>Plugins</strong>
           <div class="terminal-meta">a Codex-style place for MCPs, integrations, and built-in Remote Vibes tools</div>
@@ -4194,7 +4392,7 @@ function renderAutomationsView() {
   return `
     <section class="dashboard-panel main-view automations-view">
       <div class="dashboard-toolbar">
-        <button class="icon-button hidden-desktop" type="button" id="open-sidebar">≡</button>
+        <button class="icon-button hidden-desktop" type="button" id="open-sidebar" aria-label="Open sidebar" ${tooltipAttributes("Open sidebar")}>≡</button>
         <div class="dashboard-copy">
           <strong>Automations</strong>
           <div class="terminal-meta">scheduled Remote Vibes helpers live here as this grows</div>
@@ -4390,7 +4588,7 @@ function renderSystemView() {
   return `
     <section class="dashboard-panel main-view system-view">
       <div class="dashboard-toolbar">
-        <button class="icon-button hidden-desktop" type="button" id="open-sidebar">≡</button>
+        <button class="icon-button hidden-desktop" type="button" id="open-sidebar" aria-label="Open sidebar" ${tooltipAttributes("Open sidebar")}>≡</button>
         <div class="dashboard-copy">
           <strong>System</strong>
           <div class="terminal-meta">storage, CPU cores, GPUs, and accelerators on this machine</div>
@@ -4474,7 +4672,7 @@ function renderTerminalPanel(activeSession) {
   return `
     <section class="terminal-panel">
       <div class="terminal-toolbar">
-        <button class="icon-button hidden-desktop" type="button" id="open-sidebar">≡</button>
+        <button class="icon-button hidden-desktop" type="button" id="open-sidebar" aria-label="Open sidebar" ${tooltipAttributes("Open sidebar")}>≡</button>
         <div class="terminal-copy">
           <strong id="toolbar-title">${escapeHtml(activeSession ? activeSession.name : "new session")}</strong>
           <div class="terminal-meta" id="toolbar-meta">${escapeHtml(
@@ -4482,19 +4680,19 @@ function renderTerminalPanel(activeSession) {
           )}</div>
         </div>
         <div class="toolbar-actions">
-          <button class="icon-button" type="button" id="refresh-sessions" aria-label="Refresh sessions">↻</button>
-          <button class="ghost-button toolbar-control" type="button" id="tab-button" data-terminal-control aria-label="Send Tab" ${activeSession ? "" : "disabled"}>tab</button>
-          <button class="ghost-button toolbar-control" type="button" id="shift-tab-button" data-terminal-control aria-label="Send Shift Tab" ${activeSession ? "" : "disabled"}>⇧⇥</button>
-          <button class="ghost-button toolbar-control" type="button" id="ctrl-p-button" data-terminal-control aria-label="Send Control P" ${activeSession ? "" : "disabled"}>^P</button>
-          <button class="ghost-button toolbar-control" type="button" id="ctrl-t-button" data-terminal-control aria-label="Send Control T" ${activeSession ? "" : "disabled"}>^T</button>
-          <button class="ghost-button toolbar-control" type="button" id="ctrl-c-button" data-terminal-control aria-label="Send Control C" ${activeSession ? "" : "disabled"}>^C</button>
+          <button class="icon-button" type="button" id="refresh-sessions" aria-label="Refresh sessions" ${tooltipAttributes("Refresh sessions")}>↻</button>
+          <button class="ghost-button toolbar-control" type="button" id="tab-button" data-terminal-control aria-label="Send Tab" ${tooltipAttributes("Send Tab")} ${activeSession ? "" : "disabled"}>tab</button>
+          <button class="ghost-button toolbar-control" type="button" id="shift-tab-button" data-terminal-control aria-label="Send Shift Tab" ${tooltipAttributes("Send Shift Tab")} ${activeSession ? "" : "disabled"}>⇧⇥</button>
+          <button class="ghost-button toolbar-control" type="button" id="ctrl-p-button" data-terminal-control aria-label="Send Control P" ${tooltipAttributes("Send Control P")} ${activeSession ? "" : "disabled"}>^P</button>
+          <button class="ghost-button toolbar-control" type="button" id="ctrl-t-button" data-terminal-control aria-label="Send Control T" ${tooltipAttributes("Send Control T")} ${activeSession ? "" : "disabled"}>^T</button>
+          <button class="ghost-button toolbar-control" type="button" id="ctrl-c-button" data-terminal-control aria-label="Send Control C" ${tooltipAttributes("Send Control C")} ${activeSession ? "" : "disabled"}>^C</button>
         </div>
       </div>
 
       <div class="workspace-split ${state.openFileTabs.length ? "has-file-preview" : ""}" id="workspace-split">
         <div class="terminal-stack">
           <div class="terminal-mount" id="terminal-mount"></div>
-          <button class="jump-bottom-button ${activeSession && state.terminalShowJumpToBottom ? "is-visible" : ""}" type="button" id="jump-to-bottom" aria-label="Jump to bottom" ${activeSession ? "" : "disabled"}>
+          <button class="jump-bottom-button ${activeSession && state.terminalShowJumpToBottom ? "is-visible" : ""}" type="button" id="jump-to-bottom" aria-label="Jump to bottom" ${tooltipAttributes("Jump to bottom")} ${activeSession ? "" : "disabled"}>
             bottom
           </button>
           <div class="empty-state ${activeSession ? "hidden" : ""}" id="empty-state">
@@ -4546,7 +4744,7 @@ function renderAgentPromptView() {
   return `
     <section class="dashboard-panel agent-prompt-view">
       <div class="dashboard-toolbar">
-        <button class="icon-button hidden-desktop" type="button" id="open-sidebar">≡</button>
+        <button class="icon-button hidden-desktop" type="button" id="open-sidebar" aria-label="Open sidebar" ${tooltipAttributes("Open sidebar")}>≡</button>
         <div class="dashboard-copy">
           <strong>Agent Prompt</strong>
           <div class="terminal-meta">shared instructions injected into Codex, Claude, Gemini, and OpenCode sessions</div>
@@ -4569,13 +4767,18 @@ function renderAgentPromptView() {
             </div>
             <button class="primary-button toolbar-control" type="submit">save prompt</button>
           </div>
-          <textarea
-            class="prompt-textarea agent-prompt-textarea"
-            name="prompt"
-            spellcheck="false"
-            autocapitalize="none"
-            autocorrect="off"
-          >${escapeHtml(state.agentPrompt)}</textarea>
+          ${renderLineNumberEditor({
+            id: "agent-prompt-textarea",
+            className: "prompt-textarea agent-prompt-textarea",
+            name: "prompt",
+            value: state.agentPrompt,
+            variant: "prompt",
+            attributes: `
+              spellcheck="false"
+              autocapitalize="none"
+              autocorrect="off"
+            `,
+          })}
         </form>
         <aside class="agent-prompt-target-card">
           <div class="agent-prompt-card-head">
@@ -4683,7 +4886,7 @@ function renderFolderPickerModal() {
       <section class="prompt-modal folder-picker-modal">
         <div class="section-head">
           <span>${escapeHtml(getFolderPickerTitle())}</span>
-          <button class="icon-button" type="button" data-close-folder-picker>×</button>
+          <button class="icon-button" type="button" aria-label="Close folder picker" ${tooltipAttributes("Close folder picker")} data-close-folder-picker>×</button>
         </div>
         <div class="folder-picker-path" title="${escapeHtml(currentPath)}">${escapeHtml(currentPath)}</div>
         <div class="folder-picker-actions">
@@ -4779,7 +4982,7 @@ function renderShell() {
       <button class="sidebar-scrim ${state.mobileSidebar ? "is-open" : ""}" type="button" aria-label="Close sidebars" data-sidebar-scrim></button>
       <aside class="sidebar sidebar-left ${state.mobileSidebar === "left" ? "is-open" : ""}" data-sidebar-panel="left">
         <div class="sidebar-mobile-actions">
-          <button class="icon-button hidden-desktop" type="button" id="close-left-sidebar">×</button>
+          <button class="icon-button hidden-desktop" type="button" id="close-left-sidebar" aria-label="Close sidebar" ${tooltipAttributes("Close sidebar")}>×</button>
         </div>
 
         <div class="sidebar-body">
@@ -4791,7 +4994,7 @@ function renderShell() {
             <div class="section-head">
               <span>Threads</span>
               <div class="section-actions">
-                <button class="icon-button sidebar-head-button" type="button" data-folder-picker-target="session" aria-label="Add project" title="Add project">+</button>
+                <button class="icon-button sidebar-head-button" type="button" data-folder-picker-target="session" aria-label="Add project" ${tooltipAttributes("Add project")}>+</button>
               </div>
             </div>
             <div class="list-shell" id="sessions-list">${renderSessionCards()}</div>
@@ -4801,8 +5004,8 @@ function renderShell() {
             <div class="section-head">
               <span>files</span>
               <div class="section-actions">
-                <button class="ghost-button files-root-reset" type="button" id="auto-files-root" ${state.filesRootOverride ? "" : "disabled"}>auto</button>
-                <button class="icon-button" type="button" id="refresh-files">↻</button>
+                <button class="ghost-button files-root-reset" type="button" id="auto-files-root" aria-label="Use automatic files root" ${tooltipAttributes("Use automatic files root")} ${state.filesRootOverride ? "" : "disabled"}>auto</button>
+                <button class="icon-button" type="button" id="refresh-files" aria-label="Refresh files" ${tooltipAttributes("Refresh files")}>↻</button>
               </div>
             </div>
             <form class="file-root-form" id="files-root-form">
@@ -4828,7 +5031,7 @@ function renderShell() {
           <section class="sidebar-section">
             <div class="section-head">
               <span>ports</span>
-              <button class="icon-button" type="button" id="refresh-ports">↻</button>
+              <button class="icon-button" type="button" id="refresh-ports" aria-label="Refresh ports" ${tooltipAttributes("Refresh ports")}>↻</button>
             </div>
             <div class="list-shell" id="ports-list">${renderPortCards()}</div>
           </section>
@@ -5759,6 +5962,8 @@ function syncOpenFileEditorStateUi() {
 }
 
 function bindFileEditorEvents() {
+  bindLineNumberEditors();
+
   document.querySelectorAll("[data-file-tab]").forEach((button) => {
     button.addEventListener("click", () => {
       activateOpenFileTab(button.getAttribute("data-file-tab"));
@@ -6411,6 +6616,8 @@ async function openMainView(nextView) {
 }
 
 function bindShellEvents() {
+  bindLineNumberEditors();
+
   document.querySelectorAll("[data-open-main-view]").forEach((link) => {
     link.addEventListener("click", (event) => {
       event.preventDefault();
@@ -7564,6 +7771,7 @@ function renderFileEditorPage() {
 async function bootstrapApp() {
   try {
     installTerminalDisposalGuard();
+    installDelayedTooltips();
 
     if ("virtualKeyboard" in navigator) {
       navigator.virtualKeyboard.overlaysContent = false;
