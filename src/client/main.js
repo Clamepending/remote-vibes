@@ -6447,6 +6447,22 @@ function bindFileTreeEvents() {
   }
 
   filesTree.dataset.fileTreeBound = "true";
+  filesTree.addEventListener("pointerdown", (event) => {
+    const target = event.target;
+    if (!(target instanceof Element)) {
+      return;
+    }
+
+    const fileControl = target.closest("[data-file-toggle], [data-file-open]");
+    if (!(fileControl instanceof HTMLElement) || !filesTree.contains(fileControl)) {
+      return;
+    }
+
+    if (document.querySelector("#terminal-mount")?.contains(document.activeElement)) {
+      // Sidebar tree redraws should not make xterm blur/redraw while an agent is running.
+      event.preventDefault();
+    }
+  });
   filesTree.addEventListener("click", async (event) => {
     const target = event.target;
     if (!(target instanceof Element)) {
@@ -6456,6 +6472,7 @@ function bindFileTreeEvents() {
     const toggleButton = target.closest("[data-file-toggle]");
     if (toggleButton instanceof HTMLElement && filesTree.contains(toggleButton)) {
       event.preventDefault();
+      event.stopPropagation();
       const relativePath = normalizeFileTreePath(toggleButton.getAttribute("data-file-toggle"));
 
       if (!relativePath) {
@@ -6480,6 +6497,7 @@ function bindFileTreeEvents() {
     }
 
     event.preventDefault();
+    event.stopPropagation();
     const relativePath = normalizeFileTreePath(openButton.getAttribute("data-file-open"));
     const openMode = openButton.getAttribute("data-file-open-mode");
 
@@ -7839,6 +7857,20 @@ function setupTerminalInteractions(mount) {
 function mountTerminal() {
   const mount = document.querySelector("#terminal-mount");
   if (!mount) {
+    return;
+  }
+
+  if (state.terminal && mount.querySelector(".xterm")) {
+    observeTerminalMount(mount);
+    applyTerminalDisplayProfile(mount);
+    setupTerminalInteractions(mount);
+    fitTerminalSoon();
+
+    if (state.activeSessionId) {
+      connectToSession(state.activeSessionId);
+    }
+
+    syncTerminalScrollState();
     return;
   }
 
