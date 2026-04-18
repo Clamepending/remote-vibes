@@ -5012,7 +5012,7 @@ function renderChartSeries(series, seriesIndex, totalPoints) {
   `;
 }
 
-function renderUtilizationLineChart({ emptyMessage, series, subtitle, title }) {
+function renderUtilizationLineChart({ emptyMessage, series, showLegendValues = true, subtitle, title }) {
   const activeSeries = series.filter((entry) => entry.values.some((value) => getFiniteMetricPercent(value) !== null));
   const totalPoints = Math.max(1, ...activeSeries.map((entry) => entry.values.length));
   const visibleLegend = activeSeries.slice(0, 16);
@@ -5047,7 +5047,8 @@ function renderUtilizationLineChart({ emptyMessage, series, subtitle, title }) {
                   const latestValue = getLatestSeriesValue(entry);
                   return `
                     <span class="system-chart-chip" style="--chart-color: ${escapeHtml(color)}">
-                      <i></i>${escapeHtml(entry.label)} <strong>${escapeHtml(formatPercent(latestValue))}</strong>
+                      <i></i>${escapeHtml(entry.label)}
+                      ${showLegendValues ? `<strong>${escapeHtml(formatPercent(latestValue))}</strong>` : ""}
                     </span>
                   `;
                 })
@@ -5102,6 +5103,7 @@ function renderSystemUtilizationCharts(system) {
           title: "CPU core history",
           subtitle: state.systemHistoryLoading ? "loading history..." : sampleText,
           series: buildCpuCoreChartSeries(history),
+          showLegendValues: false,
           emptyMessage: "CPU core history starts after the first sample.",
         })}
         ${renderUtilizationLineChart({
