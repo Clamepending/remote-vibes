@@ -94,9 +94,22 @@ if (!allowNonMain && currentBranch !== "main") {
   fail(`Releases should be cut from main. Current branch is "${currentBranch || "detached"}".`);
 }
 
-const dirtyTracked = run("git", ["status", "--porcelain", "--untracked-files=no"], { capture: true });
-if (dirtyTracked) {
+const ignoredDirtyPaths = new Set(["AGENTS.md", "CLAUDE.md", "GEMINI.md"]);
+const dirtyTrackedLines = run("git", ["status", "--porcelain", "--untracked-files=no"], { capture: true })
+  .split("\n")
+  .filter(Boolean);
+const blockingDirtyTracked = dirtyTrackedLines.filter((line) => {
+  const pathPart = line.slice(3).trim();
+  const renameTarget = pathPart.includes(" -> ") ? pathPart.split(" -> ").at(-1) : pathPart;
+  return !ignoredDirtyPaths.has(renameTarget);
+});
+
+if (blockingDirtyTracked.length > 0) {
   fail("Tracked changes are present. Commit or stash them before cutting a release.");
+}
+
+if (dirtyTrackedLines.length > 0) {
+  log("Ignoring managed prompt file churn while cutting the release.");
 }
 
 const packagePath = path.join(rootDir, "package.json");

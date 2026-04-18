@@ -694,6 +694,64 @@ test("folder browser api lists selectable folders and supports parent navigation
   }
 });
 
+test("remote vibes api header keeps folder picker requests out of proxied apps", async () => {
+  const workspaceDir = await createTempWorkspace("remote-vibes-folder-picker-referrer-");
+  const proxyTarget = http.createServer((_request, response) => {
+    response.writeHead(404, { "Content-Type": "application/json" });
+    response.end(JSON.stringify({ error: "proxied app handled this request" }));
+  });
+  proxyTarget.listen(0, "127.0.0.1");
+  await once(proxyTarget, "listening");
+  const proxyAddress = proxyTarget.address();
+  const proxyPort = typeof proxyAddress === "object" && proxyAddress ? proxyAddress.port : 0;
+  const { app, baseUrl } = await startApp({ cwd: workspaceDir });
+  const proxiedReferrer = `${baseUrl}/proxy/${proxyPort}/`;
+
+  try {
+    const accidentalProxyResponse = await fetch(
+      `${baseUrl}/api/folders?root=${encodeURIComponent(workspaceDir)}`,
+      {
+        headers: {
+          referer: proxiedReferrer,
+        },
+      },
+    );
+    assert.equal(accidentalProxyResponse.status, 404);
+    assert.equal((await accidentalProxyResponse.json()).error, "proxied app handled this request");
+
+    const listResponse = await fetch(`${baseUrl}/api/folders?root=${encodeURIComponent(workspaceDir)}`, {
+      headers: {
+        referer: proxiedReferrer,
+        "X-Remote-Vibes-API": "1",
+      },
+    });
+    assert.equal(listResponse.status, 200);
+    assert.equal((await listResponse.json()).currentPath, await realpath(workspaceDir));
+
+    const createResponse = await fetch(`${baseUrl}/api/folders`, {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        referer: proxiedReferrer,
+        "X-Remote-Vibes-API": "1",
+      },
+      body: JSON.stringify({
+        root: workspaceDir,
+        name: "created-from-session-picker",
+      }),
+    });
+    assert.equal(createResponse.status, 201);
+    assert.equal(
+      (await createResponse.json()).folder.path,
+      await realpath(path.join(workspaceDir, "created-from-session-picker")),
+    );
+  } finally {
+    await app.close();
+    await new Promise((resolve) => proxyTarget.close(resolve));
+    await rm(workspaceDir, { recursive: true, force: true });
+  }
+});
+
 test("shell session streams websocket output and honors custom cwd", async () => {
   const { app, baseUrl } = await startApp();
 

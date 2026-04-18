@@ -617,12 +617,15 @@ function queueTerminalOutput(chunk, { scrollToBottom = false } = {}) {
 }
 
 async function fetchJson(url, options = {}) {
+  const { headers = {}, ...fetchOptions } = options;
   const response = await fetch(url, {
+    ...fetchOptions,
     headers: {
       "Content-Type": "application/json",
-      ...(options.headers || {}),
+      "X-Remote-Vibes-API": "1",
+      ...headers,
     },
-    ...options,
+    referrerPolicy: fetchOptions.referrerPolicy || "no-referrer",
   });
 
   const isJson = response.headers.get("content-type")?.includes("application/json");
@@ -2890,7 +2893,13 @@ function renderShell() {
 
           <form class="session-form session-launcher" id="session-form">
             <select id="session-provider-select" name="providerId" aria-label="Session CLI">${providerOptions}</select>
-            <button class="primary-button session-folder-button" type="button" data-folder-picker-target="session">choose folder</button>
+            <button
+              class="primary-button session-folder-button"
+              type="button"
+              data-folder-picker-target="session"
+              aria-label="Create session from folder"
+              title="Create session from folder"
+            >+</button>
           </form>
 
           <section class="sidebar-section">

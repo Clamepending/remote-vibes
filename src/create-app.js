@@ -393,6 +393,11 @@ export async function createRemoteVibesApp({
   app.use(express.json());
 
   app.use((request, response, next) => {
+    if (request.path.startsWith("/api/") && request.get("X-Remote-Vibes-API") === "1") {
+      next();
+      return;
+    }
+
     const proxiedPort = getPortFromReferrer(request);
 
     if (!proxiedPort || getPortFromProxyPath(request.path)) {
