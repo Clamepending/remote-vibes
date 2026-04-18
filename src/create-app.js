@@ -285,6 +285,9 @@ export async function createRemoteVibesApp({
   await sessionManager.initialize();
   await agentPromptStore.initialize();
   wikiBackupService.start();
+  if (settingsStore.settings.wikiGitRemoteEnabled && settingsStore.settings.wikiGitRemoteUrl) {
+    void wikiBackupService.runBackup({ reason: "startup" });
+  }
   sleepPreventionService.start();
   let exposedPort = null;
   let closePromise = null;

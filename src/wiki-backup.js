@@ -67,6 +67,9 @@ export class WikiBackupService {
     this.lastStatus = "idle";
     this.lastMessage = "";
     this.lastCommit = "";
+    this.lastPullAt = null;
+    this.lastPullMessage = "";
+    this.lastPullStatus = remoteEnabled ? "idle" : "disabled";
     this.lastPushAt = null;
     this.lastPushMessage = "";
     this.lastPushStatus = remoteEnabled ? "idle" : "disabled";
@@ -85,6 +88,9 @@ export class WikiBackupService {
       intervalMs: this.intervalMs,
       lastCommit: this.lastCommit,
       lastMessage: this.lastMessage,
+      lastPullAt: this.lastPullAt,
+      lastPullMessage: this.lastPullMessage,
+      lastPullStatus: this.lastPullStatus,
       lastPushAt: this.lastPushAt,
       lastPushMessage: this.lastPushMessage,
       lastPushStatus: this.lastPushStatus,
@@ -116,6 +122,8 @@ export class WikiBackupService {
     this.remoteName = normalizeGitRemoteName(remoteName);
     this.remoteUrl = String(remoteUrl || "").trim();
     if (!this.remoteEnabled) {
+      this.lastPullStatus = "disabled";
+      this.lastPullMessage = "Private remote pull is disabled.";
       this.lastPushStatus = "disabled";
       this.lastPushMessage = "Private remote push is disabled.";
     }
@@ -209,6 +217,80 @@ export class WikiBackupService {
     }
   }
 
+  async refreshLastCommit() {
+    try {
+      const { stdout = "" } = await this.git(["rev-parse", "--short", "HEAD"]);
+      this.lastCommit = stdout.trim();
+    } catch {
+      this.lastCommit = "";
+    }
+  }
+
+  async pullRemoteBackup({ timestamp } = {}) {
+    const pullTimestamp = timestamp || this.now().toISOString();
+
+    if (!this.remoteEnabled) {
+      this.lastPullAt = pullTimestamp;
+      this.lastPullStatus = "disabled";
+      this.lastPullMessage = "Private remote pull is disabled.";
+      return false;
+    }
+
+    if (!this.remoteUrl) {
+      this.lastPullAt = pullTimestamp;
+      this.lastPullStatus = "skipped";
+      this.lastPullMessage = "Private remote pull is enabled, but no remote URL is configured.";
+      return false;
+    }
+
+    try {
+      await this.ensureRemote();
+
+      if (!(await this.hasHeadCommit())) {
+        await this.git(["fetch", this.remoteName, this.remoteBranch]);
+        await this.git(["checkout", "-B", this.remoteBranch, "FETCH_HEAD"]);
+        await this.refreshLastCommit();
+        this.lastPullAt = pullTimestamp;
+        this.lastPullStatus = "pulled";
+        this.lastPullMessage = `Pulled wiki backup from ${this.remoteName}/${this.remoteBranch}.`;
+        return true;
+      }
+
+      const { stdout = "", stderr = "" } = await this.git([
+        "pull",
+        "--rebase",
+        "--autostash",
+        this.remoteName,
+        this.remoteBranch,
+      ]);
+      await this.refreshLastCommit();
+      this.lastPullAt = pullTimestamp;
+
+      if (/Already up to date\./i.test(`${stdout}\n${stderr}`)) {
+        this.lastPullStatus = "current";
+        this.lastPullMessage = `Wiki backup is already current with ${this.remoteName}/${this.remoteBranch}.`;
+        return false;
+      }
+
+      this.lastPullStatus = "pulled";
+      this.lastPullMessage = `Pulled wiki backup from ${this.remoteName}/${this.remoteBranch}.`;
+      return true;
+    } catch (error) {
+      const message = getErrorMessage(error);
+      if (/could(?:n't| not) find remote ref|couldn't find remote ref|could not find remote ref|couldn't find remote ref/i.test(message)) {
+        this.lastPullAt = pullTimestamp;
+        this.lastPullStatus = "skipped";
+        this.lastPullMessage = `Remote branch ${this.remoteName}/${this.remoteBranch} does not exist yet.`;
+        return false;
+      }
+
+      this.lastPullAt = pullTimestamp;
+      this.lastPullStatus = "error";
+      this.lastPullMessage = message;
+      throw error;
+    }
+  }
+
   async pushRemoteBackup({ timestamp } = {}) {
     const pushTimestamp = timestamp || this.now().toISOString();
 
@@ -262,21 +344,29 @@ export class WikiBackupService {
       await this.git(["add", "-A"]);
       const { stdout = "" } = await this.git(["status", "--porcelain"]);
       const timestamp = this.now().toISOString();
+      let committedChanges = false;
 
-      if (!stdout.trim()) {
+      if (stdout.trim()) {
+        await this.git(["commit", "-m", `Remote Vibes wiki backup ${timestamp}`]);
+        committedChanges = true;
+      }
+
+      await this.pullRemoteBackup({ timestamp });
+      await this.refreshLastCommit();
+
+      if (!committedChanges) {
         this.lastRunAt = timestamp;
         this.lastStatus = "clean";
-        this.lastMessage = "No wiki changes to back up.";
+        this.lastMessage =
+          this.lastPullStatus === "pulled"
+            ? "Pulled the latest wiki backup."
+            : "No wiki changes to back up.";
         await this.pushRemoteBackup({ timestamp });
         return this.getStatus();
       }
 
-      await this.git(["commit", "-m", `Remote Vibes wiki backup ${timestamp}`]);
-      const { stdout: commitStdout = "" } = await this.git(["rev-parse", "--short", "HEAD"]);
-
       this.lastRunAt = timestamp;
       this.lastStatus = "committed";
-      this.lastCommit = commitStdout.trim();
       this.lastMessage = reason === "scheduled" ? "Scheduled wiki backup committed." : "Wiki backup committed.";
       await this.pushRemoteBackup({ timestamp });
       return this.getStatus();

@@ -115,6 +115,51 @@ test("wiki backup pushes existing clean commits when a private remote is added l
   }
 });
 
+test("wiki backup pulls new commits from a configured private remote", async () => {
+  const rootDir = await mkdtemp(path.join(os.tmpdir(), "remote-vibes-wiki-backup-pull-"));
+  const remoteDir = path.join(rootDir, "private-wiki.git");
+  const seedDir = path.join(rootDir, "seed");
+  const wikiDir = path.join(rootDir, "wiki");
+
+  try {
+    await execFileAsync("git", ["init", "--bare", remoteDir]);
+    await gitBare(remoteDir, ["symbolic-ref", "HEAD", "refs/heads/main"]);
+    await execFileAsync("git", ["clone", remoteDir, seedDir]);
+    await git(seedDir, ["checkout", "-b", "main"]);
+    await git(seedDir, ["config", "user.name", "Remote Vibes Test"]);
+    await git(seedDir, ["config", "user.email", "test@example.com"]);
+    await writeFile(path.join(seedDir, "index.md"), "# Private Wiki\n", "utf8");
+    await git(seedDir, ["add", "index.md"]);
+    await git(seedDir, ["commit", "-m", "Initial wiki"]);
+    await git(seedDir, ["push", "-u", "origin", "main"]);
+
+    await execFileAsync("git", ["clone", remoteDir, wikiDir]);
+    await git(wikiDir, ["config", "user.name", "Remote Vibes Test"]);
+    await git(wikiDir, ["config", "user.email", "test@example.com"]);
+
+    await writeFile(path.join(seedDir, "log.md"), "# Remote log\n", "utf8");
+    await git(seedDir, ["add", "log.md"]);
+    await git(seedDir, ["commit", "-m", "Remote update"]);
+    await git(seedDir, ["push"]);
+
+    const backup = new WikiBackupService({
+      wikiPath: wikiDir,
+      enabled: true,
+      remoteBranch: "main",
+      remoteEnabled: true,
+      remoteUrl: remoteDir,
+    });
+    const status = await backup.runBackup();
+
+    assert.equal(status.lastStatus, "clean");
+    assert.equal(status.lastPullStatus, "pulled");
+    assert.equal(status.lastPushStatus, "pushed");
+    assert.equal(await readFile(path.join(wikiDir, "log.md"), "utf8"), "# Remote log\n");
+  } finally {
+    await rm(rootDir, { recursive: true, force: true });
+  }
+});
+
 test("disabled wiki backup does not initialize git", async () => {
   const wikiDir = await mkdtemp(path.join(os.tmpdir(), "remote-vibes-wiki-backup-disabled-"));
 

@@ -757,6 +757,14 @@ function getWikiBackupStatusText() {
     return backup.lastPushMessage || "private remote push failed";
   }
 
+  if (remoteEnabled && backup?.lastPullStatus === "error") {
+    return backup.lastPullMessage || "private remote pull failed";
+  }
+
+  if (remoteEnabled && backup?.lastPullStatus === "pulled" && backup?.lastPushStatus === "pushed") {
+    return "wiki pulled + pushed";
+  }
+
   if (remoteEnabled && backup?.lastPushStatus === "pushed") {
     const remoteLabel = `${backup.remoteName || state.settings.wikiGitRemoteName || "origin"}/${
       backup.remoteBranch || state.settings.wikiGitRemoteBranch || "main"
