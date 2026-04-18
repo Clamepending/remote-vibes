@@ -5424,7 +5424,8 @@ function renderFolderPickerEntries() {
 
   const rootPath = state.folderPicker.root || getFolderPickerCurrentPath();
   const rootSelected = !state.folderPicker.path;
-  const rootChildren = renderFolderPickerTreeNodes("", 1);
+  const rootExpanded = state.folderPicker.treeExpanded.has("");
+  const rootChildren = rootExpanded ? renderFolderPickerTreeNodes("", 1) : "";
 
   return `
     <div class="file-node folder-picker-node">
@@ -5435,11 +5436,11 @@ function renderFolderPickerEntries() {
         data-folder-picker-path="${escapeHtml(rootPath)}"
         style="--depth:0"
       >
-        <span class="file-caret">▾</span>
-        <span class="file-icon file-icon-folder is-open" aria-hidden="true"></span>
+        <span class="file-caret">${rootExpanded ? "▾" : "▸"}</span>
+        <span class="file-icon file-icon-folder ${rootExpanded ? "is-open" : ""}" aria-hidden="true"></span>
         <span class="file-label">${escapeHtml(getWorkspacePathLeafName(rootPath))}</span>
       </button>
-      <div class="file-children" style="--depth:0">${rootChildren}</div>
+      ${rootChildren ? `<div class="file-children" style="--depth:0">${rootChildren}</div>` : ""}
     </div>
   `;
 }
@@ -8376,14 +8377,21 @@ async function loadFolderPicker(root, { target = state.folderPicker.target } = {
 async function selectFolderPickerPath(relativePath = "", absolutePath = "") {
   const pathKey = normalizeFileTreePath(relativePath);
   const nextPath = normalizeWorkspaceRoot(absolutePath || getFolderPickerAbsolutePath(pathKey));
+  const wasExpanded = state.folderPicker.treeExpanded.has(pathKey);
 
   state.folderPicker.currentPath = nextPath || state.folderPicker.root;
   state.folderPicker.path = pathKey;
   state.folderPicker.parentPath = getWorkspaceParentPath(state.folderPicker.currentPath);
-  state.folderPicker.treeExpanded.add(pathKey);
+  if (wasExpanded) {
+    state.folderPicker.treeExpanded.delete(pathKey);
+  } else {
+    state.folderPicker.treeExpanded.add(pathKey);
+  }
   renderShell();
 
-  await loadFolderPickerTreePath(pathKey);
+  if (!wasExpanded) {
+    await loadFolderPickerTreePath(pathKey);
+  }
 }
 
 async function loadFolderPickerTreePath(relativePath = "", { force = false } = {}) {
