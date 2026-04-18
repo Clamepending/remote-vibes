@@ -6282,14 +6282,14 @@ function bindKnowledgeBaseNoteOpenEvents() {
   document.querySelectorAll("[data-kb-note]").forEach((button) => {
     button.onclick = async () => {
       const notePath = button.getAttribute("data-kb-note");
-      await openKnowledgeBaseNote(notePath || "");
+      await openKnowledgeBaseNote(notePath || "", { focusGraph: true });
     };
   });
 
   document.querySelectorAll("[data-kb-open-note]").forEach((button) => {
     button.onclick = async () => {
       const notePath = button.getAttribute("data-kb-open-note");
-      await openKnowledgeBaseNote(notePath || "");
+      await openKnowledgeBaseNote(notePath || "", { focusGraph: true });
     };
   });
 }
