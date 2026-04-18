@@ -291,12 +291,17 @@ textarea {
   padding: 2px 0;
 }
 
+.sidebar-nav-stack {
+  display: grid;
+  gap: 0;
+}
+
 .sidebar-primary-nav {
   padding-top: 0;
 }
 
 .sidebar-workspace-nav {
-  padding-top: 4px;
+  padding-top: 1px;
   border-top: 1px solid rgba(255, 255, 255, 0.055);
 }
 

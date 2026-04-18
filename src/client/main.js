@@ -3871,22 +3871,24 @@ function renderSidebarNav(providerOptions) {
   `;
 
   return `
-    <nav class="sidebar-nav sidebar-primary-nav" aria-label="Main views">
-      <button class="sidebar-nav-item sidebar-nav-button" type="button" data-folder-picker-target="session">
-        <span class="sidebar-nav-icon" aria-hidden="true">+</span>
-        <span class="sidebar-nav-copy">
-          <span class="sidebar-nav-label">New chat</span>
-          <span class="sidebar-nav-meta">${escapeHtml(`${getSelectedProviderLabel()} · choose folder`)}</span>
-        </span>
-      </button>
-      <form class="session-form session-launcher" id="session-form">
-        <select id="session-provider-select" name="providerId" aria-label="Session CLI">${providerOptions}</select>
-      </form>
-      ${primaryItems.map(renderItem).join("")}
-    </nav>
-    <nav class="sidebar-nav sidebar-workspace-nav" aria-label="Workspace views">
-      ${workspaceItems.map(renderItem).join("")}
-    </nav>
+    <div class="sidebar-nav-stack">
+      <nav class="sidebar-nav sidebar-primary-nav" aria-label="Main views">
+        <button class="sidebar-nav-item sidebar-nav-button" type="button" data-folder-picker-target="session">
+          <span class="sidebar-nav-icon" aria-hidden="true">+</span>
+          <span class="sidebar-nav-copy">
+            <span class="sidebar-nav-label">New chat</span>
+            <span class="sidebar-nav-meta">${escapeHtml(`${getSelectedProviderLabel()} · choose folder`)}</span>
+          </span>
+        </button>
+        <form class="session-form session-launcher" id="session-form">
+          <select id="session-provider-select" name="providerId" aria-label="Session CLI">${providerOptions}</select>
+        </form>
+        ${primaryItems.map(renderItem).join("")}
+      </nav>
+      <nav class="sidebar-nav sidebar-workspace-nav" aria-label="Workspace views">
+        ${workspaceItems.map(renderItem).join("")}
+      </nav>
+    </div>
   `;
 }
 
