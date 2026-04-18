@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { EventEmitter } from "node:events";
-import { readFile, mkdtemp, rm } from "node:fs/promises";
+import { readFile, mkdtemp, rm, writeFile } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import test from "node:test";
@@ -121,8 +121,9 @@ test("AgentMail WebSocket listener subscribes and queues incoming email into an 
   assert.match(createdSessions[0].name, /^email: Can you help/);
   assert.equal(writes.length, 1);
   assert.equal(writes[0].sessionId, "session-1");
-  assert.match(writes[0].input, /rv-agentmail-reply --inbox-id "agent@example.com"/);
+  assert.match(writes[0].input, /bin\/rv-agentmail-reply' --inbox-id 'agent@example.com'/);
   assert.match(writes[0].input, /Hello from email/);
+  assert.ok(writes[0].input.endsWith("\r\r"), "Claude prompts need a second Enter after pasted blocks");
 
   socket.emit(
     "message",
@@ -234,6 +235,7 @@ test("AgentMail polling backfills unread inbox messages and persists processed i
     assert.equal(writes.length, 1);
     assert.match(writes[0].input, /simple greeting or test email/);
     assert.match(writes[0].input, /Missed while offline/);
+    assert.ok(writes[0].input.endsWith("\r\r"));
     assert.equal(service.getStatus().lastStatus, "prompt-sent-startup");
     assert.ok(service.getStatus().lastPromptSentAt);
     assert.equal(service.getStatus().lastPollSeen, 1);
@@ -268,6 +270,77 @@ test("AgentMail polling backfills unread inbox messages and persists processed i
     assert.equal(secondPoll.length, 0);
     assert.equal(createdSessions.length, 1, "processed messages should not relaunch after restart");
     assert.equal(writes.length, 1, "processed messages should not be re-prompted after restart");
+  } finally {
+    await rm(stateDir, { recursive: true, force: true });
+  }
+});
+
+test("AgentMail reconnect reloads processed message ids from disk", async () => {
+  FakeSocket.instances = [];
+  const stateDir = await mkdtemp(path.join(os.tmpdir(), "remote-vibes-agentmail-reload-"));
+  const processedPath = path.join(stateDir, "agentmail-processed.json");
+  const message = {
+    from: "person@example.com",
+    inbox_id: "agent@example.com",
+    labels: ["received", "unread"],
+    message_id: "<reload-message@example.com>",
+    subject: "Reload cache",
+    text: "This should process only after the disk cache changes.",
+    to: ["agent@example.com"],
+  };
+  const createdSessions = [];
+  const writes = [];
+  const fetchImpl = createFetch([
+    { body: { count: 1, messages: [message] } },
+    { body: { count: 1, messages: [message] } },
+  ]);
+
+  try {
+    await writeFile(
+      processedPath,
+      `${JSON.stringify({ savedAt: new Date().toISOString(), messageIds: ["<reload-message@example.com>"] }, null, 2)}\n`,
+    );
+
+    const service = new AgentMailService({
+      fetchImpl,
+      pollIntervalMs: 0,
+      promptDelayMs: 0,
+      sessionManager: {
+        createSession(input) {
+          const session = { id: `session-${createdSessions.length + 1}`, ...input };
+          createdSessions.push(session);
+          return session;
+        },
+        write(sessionId, input) {
+          writes.push({ input, sessionId });
+          return true;
+        },
+      },
+      setTimeoutImpl(callback) {
+        callback();
+        return 1;
+      },
+      settings: {
+        agentMailApiKey: "am_test",
+        agentMailEnabled: true,
+        agentMailInboxId: "agent@example.com",
+        agentMailProviderId: "claude",
+      },
+      stateDir,
+      WebSocketImpl: FakeSocket,
+    });
+
+    const firstPoll = await service.pollInboxOnce({ reason: "first" });
+    assert.equal(firstPoll.length, 0);
+    assert.equal(createdSessions.length, 0);
+
+    await writeFile(processedPath, `${JSON.stringify({ savedAt: new Date().toISOString(), messageIds: [] }, null, 2)}\n`);
+    service.restart(service.settings);
+
+    const secondPoll = await service.pollInboxOnce({ reason: "second" });
+    assert.equal(secondPoll.length, 1);
+    assert.equal(createdSessions.length, 1);
+    assert.equal(writes.length, 1);
   } finally {
     await rm(stateDir, { recursive: true, force: true });
   }
@@ -354,6 +427,7 @@ test("AgentMail waits for the agent UI to settle before injecting the email prom
   assert.equal(writes.length, 1);
   assert.equal(writes[0].sessionId, "session-ready-test");
   assert.match(writes[0].input, /Wait for Claude/);
+  assert.ok(writes[0].input.endsWith("\r\r"));
   assert.equal(service.getStatus().lastStatus, "prompt-sent-startup");
 });
 

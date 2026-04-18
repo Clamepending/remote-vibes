@@ -42,6 +42,10 @@ function encodePathSegment(value) {
   return encodeURIComponent(String(value || ""));
 }
 
+function shellQuote(value) {
+  return `'${String(value || "").replace(/'/g, "'\\''")}'`;
+}
+
 function normalizeEmailAddress(value) {
   const raw = String(value || "").trim().toLowerCase();
   const match = raw.match(/<([^>]+)>/);
@@ -126,6 +130,7 @@ function providerHasReadyHint(providerId, buffer) {
 }
 
 function buildEmailPrompt({ message, replyCommand = "rv-agentmail-reply" }) {
+  const replyCommandWord = shellQuote(replyCommand);
   const inboxId = message?.inbox_id || message?.inboxId || "";
   const messageId = message?.message_id || message?.messageId || "";
   const threadId = message?.thread_id || message?.threadId || "";
@@ -141,12 +146,12 @@ function buildEmailPrompt({ message, replyCommand = "rv-agentmail-reply" }) {
     "You are the Remote Vibes email agent. A new AgentMail email arrived and needs triage.",
     "",
     "Decide whether a reply is appropriate. If no reply is needed, briefly explain why in this session.",
-    `If a reply is needed, send it with ${replyCommand} exactly once. Prefer plain text and keep it concise.`,
+    `If a reply is needed, send it with ${replyCommandWord} exactly once. Prefer plain text and keep it concise.`,
     "If this is a simple greeting or test email, send a short friendly acknowledgement so the sender can verify the loop works.",
     "",
     "Reply command template:",
     "```sh",
-    `${replyCommand} --inbox-id ${JSON.stringify(inboxId)} --message-id ${JSON.stringify(messageId)} <<'REMOTE_VIBES_EMAIL_REPLY'`,
+    `${replyCommandWord} --inbox-id ${shellQuote(inboxId)} --message-id ${shellQuote(messageId)} <<'REMOTE_VIBES_EMAIL_REPLY'`,
     "Your reply text here.",
     "REMOTE_VIBES_EMAIL_REPLY",
     "```",
@@ -323,7 +328,15 @@ export class AgentMailService {
   restart(settings = this.settings) {
     this.stop();
     this.setSettings(settings);
+    this.resetProcessedMessageCache();
     this.start();
+  }
+
+  resetProcessedMessageCache() {
+    this.processedLoaded = false;
+    this.processedLoadPromise = null;
+    this.processedMessageIds = [];
+    this.processedMessageSet = new Set();
   }
 
   connectWebSocket(config) {
@@ -624,7 +637,7 @@ export class AgentMailService {
       this.status.lastStatus = source === "websocket" ? "queued" : `queued-${source}`;
       this.status.processedCount += 1;
 
-      const prompt = buildEmailPrompt({ message });
+      const prompt = buildEmailPrompt({ message, replyCommand: this.getReplyCommand() });
       this.queuePromptForSession(session.id, prompt, {
         providerId: config.providerId,
         source,
@@ -638,10 +651,15 @@ export class AgentMailService {
     }
   }
 
+  getReplyCommand() {
+    return path.join(this.cwd, "bin", "rv-agentmail-reply");
+  }
+
   queuePromptForSession(sessionId, prompt, { providerId = "", source = "websocket" } = {}) {
     const startedAt = this.now();
     const writePrompt = () => {
-      const ok = this.sessionManager.write(sessionId, `${prompt}\r`);
+      const terminator = providerId === "claude" ? "\r\r" : "\r";
+      const ok = this.sessionManager.write(sessionId, `${prompt}${terminator}`);
       if (!ok) {
         this.status.lastError = "Email agent session exited before Remote Vibes could send the prompt.";
         this.status.lastStatus = "error";
