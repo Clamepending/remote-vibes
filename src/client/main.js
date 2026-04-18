@@ -114,7 +114,6 @@ const state = {
   agentPromptPath: "",
   agentPromptWikiRoot: ".remote-vibes/wiki",
   agentPromptTargets: [],
-  agentPromptEditorOpen: false,
   settings: {
     preventSleepEnabled: true,
     sleepPrevention: null,
@@ -238,6 +237,15 @@ function getRouteState() {
       root,
       path: "",
       notePath: normalizeFileTreePath(url.searchParams.get("note") || ""),
+    };
+  }
+
+  if (explicitView === "agent-prompt") {
+    return {
+      view: "agent-prompt",
+      root,
+      path: "",
+      notePath: "",
     };
   }
 
@@ -714,6 +722,12 @@ function getKnowledgeBaseUrl(notePath = "") {
   return url.toString();
 }
 
+function getAgentPromptUrl() {
+  const url = new URL(`${getAppBaseUrl()}/`);
+  url.searchParams.set("view", "agent-prompt");
+  return url.toString();
+}
+
 function getShellUrl() {
   const url = new URL(window.location.href);
   url.searchParams.delete("view");
@@ -1105,6 +1119,7 @@ async function createSessionInFolder(cwd, { providerId = getSelectedSessionProvi
   state.sessions = [payload.session, ...state.sessions];
   state.activeSessionId = payload.session.id;
   expandSessionProject(payload.session.cwd);
+  setCurrentView("shell");
   renderShell();
   connectToSession(payload.session.id);
   closeMobileSidebar();
@@ -1583,6 +1598,11 @@ function updateRoute({
       url.searchParams.delete("note");
     }
 
+    url.searchParams.delete("path");
+    url.hash = "";
+  } else if (view === "agent-prompt") {
+    url.searchParams.set("view", "agent-prompt");
+    url.searchParams.delete("note");
     url.searchParams.delete("path");
     url.hash = "";
   } else if (view === "file") {
@@ -2654,6 +2674,85 @@ function renderKnowledgeBaseNoteActions(rawHref) {
   `;
 }
 
+function renderKnowledgeSettingsForm() {
+  return `
+    <details class="knowledge-settings-card">
+      <summary>
+        <span>Knowledge and backup settings</span>
+        <span id="wiki-backup-status">${escapeHtml(getWikiBackupStatusText())}</span>
+      </summary>
+      <form class="settings-form knowledge-settings-form" id="settings-form">
+        <label class="field-label" for="wiki-path-input">wiki folder</label>
+        <div class="folder-input-row">
+          <input
+            class="file-root-input"
+            id="wiki-path-input"
+            name="wikiPath"
+            type="text"
+            value="${escapeHtml(state.settings.wikiPath || "")}"
+            placeholder="${escapeHtml(state.defaultCwd || "wiki folder")}"
+            readonly
+            data-folder-picker-target="wiki"
+            autocomplete="off"
+            autocorrect="off"
+            autocapitalize="none"
+            spellcheck="false"
+          />
+          <button class="ghost-button folder-browse-button" type="button" data-folder-picker-target="wiki">choose</button>
+        </div>
+        <div class="knowledge-settings-options">
+          <label class="checkbox-row">
+            <input type="checkbox" name="wikiGitBackupEnabled" ${state.settings.wikiGitBackupEnabled ? "checked" : ""} />
+            <span id="wiki-backup-interval-label">${escapeHtml(formatWikiBackupIntervalLabel())}</span>
+          </label>
+          <label class="checkbox-row">
+            <input type="checkbox" name="preventSleepEnabled" ${state.settings.preventSleepEnabled ? "checked" : ""} />
+            <span>prevent this computer from sleeping</span>
+          </label>
+          <label class="checkbox-row">
+            <input type="checkbox" name="wikiGitRemoteEnabled" ${state.settings.wikiGitRemoteEnabled ? "checked" : ""} />
+            <span>push backups to a private git remote</span>
+          </label>
+        </div>
+        <div class="settings-status">${escapeHtml(getSleepPreventionStatusText())}</div>
+        <div class="knowledge-settings-remote-grid">
+          <label class="field-label" for="wiki-git-remote-url">private remote URL</label>
+          <input
+            class="file-root-input"
+            id="wiki-git-remote-url"
+            name="wikiGitRemoteUrl"
+            type="text"
+            value="${escapeHtml(state.settings.wikiGitRemoteUrl || "")}"
+            placeholder="git@github.com:you/private-mac-brain.git"
+            autocomplete="off"
+            autocorrect="off"
+            autocapitalize="none"
+            spellcheck="false"
+          />
+          <label class="field-label" for="wiki-git-remote-branch">remote branch</label>
+          <input
+            class="file-root-input"
+            id="wiki-git-remote-branch"
+            name="wikiGitRemoteBranch"
+            type="text"
+            value="${escapeHtml(state.settings.wikiGitRemoteBranch || "main")}"
+            placeholder="main"
+            autocomplete="off"
+            autocorrect="off"
+            autocapitalize="none"
+            spellcheck="false"
+          />
+        </div>
+        <input type="hidden" name="wikiGitRemoteName" value="${escapeHtml(state.settings.wikiGitRemoteName || "origin")}" />
+        <div class="knowledge-settings-actions">
+          <button class="primary-button settings-save-button" type="submit">save settings</button>
+          <div class="settings-status" id="wiki-backup-settings-status">${escapeHtml(getWikiBackupStatusText())}</div>
+        </div>
+      </form>
+    </details>
+  `;
+}
+
 function renderKnowledgeBaseView() {
   const selectedNoteMeta = getKnowledgeBaseSelectedNoteMeta();
   const selectedNotePath = state.knowledgeBase.selectedNotePath;
@@ -2663,6 +2762,7 @@ function renderKnowledgeBaseView() {
   return `
     <section class="dashboard-panel knowledge-base-view">
       <div class="dashboard-toolbar">
+        <button class="icon-button hidden-desktop" type="button" id="open-sidebar">≡</button>
         <div class="dashboard-copy">
           <strong>Knowledge Base</strong>
           <div class="terminal-meta">obsidian-style markdown viewer for ${escapeHtml(state.knowledgeBase.relativeRoot)}</div>
@@ -2673,8 +2773,8 @@ function renderKnowledgeBaseView() {
               ? `<a class="ghost-button toolbar-control" href="${escapeHtml(backupRepoUrl)}" target="_blank" rel="noreferrer">view backup</a>`
               : ""
           }
+          <button class="ghost-button toolbar-control" type="button" id="backup-wiki-now">backup now</button>
           <button class="ghost-button toolbar-control" type="button" id="refresh-knowledge-base">refresh</button>
-          <button class="ghost-button toolbar-control" type="button" id="back-to-shell">back</button>
         </div>
       </div>
       <div class="dashboard-range knowledge-base-summary">
@@ -2684,6 +2784,7 @@ function renderKnowledgeBaseView() {
           `${state.knowledgeBase.notes.length} notes`,
         )}</span>
       </div>
+      ${renderKnowledgeSettingsForm()}
       <div class="knowledge-base-grid">
         <aside class="knowledge-base-column knowledge-base-column-list">
           <div class="knowledge-base-panel-head">
@@ -3121,6 +3222,51 @@ function renderSessionCards() {
     .join("");
 }
 
+function renderSidebarNav(activeSession) {
+  const shellActive = state.currentView === "shell";
+  const knowledgeBaseActive = state.currentView === "knowledge-base";
+  const agentPromptActive = state.currentView === "agent-prompt";
+  const wikiLabel = state.settings.wikiRelativeRoot || state.agentPromptWikiRoot || "wiki";
+
+  return `
+    <nav class="sidebar-nav" aria-label="Main views">
+      <a
+        class="sidebar-nav-item ${shellActive ? "is-active" : ""}"
+        href="${escapeHtml(getShellUrl())}"
+        data-open-main-view="shell"
+      >
+        <span class="sidebar-nav-icon" aria-hidden="true">▸</span>
+        <span class="sidebar-nav-copy">
+          <span class="sidebar-nav-label">Terminal</span>
+          <span class="sidebar-nav-meta">${escapeHtml(activeSession ? activeSession.name : "session workspace")}</span>
+        </span>
+      </a>
+      <a
+        class="sidebar-nav-item ${knowledgeBaseActive ? "is-active" : ""}"
+        href="${escapeHtml(getKnowledgeBaseUrl(state.knowledgeBase.selectedNotePath || ""))}"
+        data-open-main-view="knowledge-base"
+      >
+        <span class="sidebar-nav-icon" aria-hidden="true">◇</span>
+        <span class="sidebar-nav-copy">
+          <span class="sidebar-nav-label">Knowledge Base</span>
+          <span class="sidebar-nav-meta">${escapeHtml(`${state.knowledgeBase.notes.length} notes · ${wikiLabel}`)}</span>
+        </span>
+      </a>
+      <a
+        class="sidebar-nav-item ${agentPromptActive ? "is-active" : ""}"
+        href="${escapeHtml(getAgentPromptUrl())}"
+        data-open-main-view="agent-prompt"
+      >
+        <span class="sidebar-nav-icon" aria-hidden="true">✎</span>
+        <span class="sidebar-nav-copy">
+          <span class="sidebar-nav-label">Agent Prompt</span>
+          <span class="sidebar-nav-meta">${escapeHtml(getAgentPromptTargetSummary())}</span>
+        </span>
+      </a>
+    </nav>
+  `;
+}
+
 function renderPortCards() {
   if (!state.ports.length) {
     return `<div class="blank-state">no ports</div>`;
@@ -3157,6 +3303,10 @@ function renderPortCards() {
 function renderTerminalPanel(activeSession) {
   if (state.currentView === "knowledge-base") {
     return renderKnowledgeBaseView();
+  }
+
+  if (state.currentView === "agent-prompt") {
+    return renderAgentPromptView();
   }
 
   return `
@@ -3212,38 +3362,70 @@ function renderAgentPromptTargets() {
     .join("");
 }
 
-function renderAgentPromptModal() {
-  if (!state.agentPromptEditorOpen) {
-    return "";
+function getAgentPromptTargetSummary() {
+  if (!state.agentPromptTargets.length) {
+    return "no managed files";
   }
 
+  const conflictCount = state.agentPromptTargets.filter((target) => target.status === "conflict").length;
+  if (conflictCount > 0) {
+    return `${conflictCount} conflict${conflictCount === 1 ? "" : "s"}`;
+  }
+
+  const syncedCount = state.agentPromptTargets.filter((target) => target.status === "synced").length;
+  if (syncedCount === state.agentPromptTargets.length) {
+    return `${syncedCount} synced`;
+  }
+
+  return `${state.agentPromptTargets.length} managed`;
+}
+
+function renderAgentPromptView() {
   return `
-    <div class="prompt-modal-shell" data-prompt-modal>
-      <button class="sidebar-scrim is-open" type="button" aria-label="Close prompt editor" data-close-prompt></button>
-      <section class="prompt-modal">
-        <div class="section-head">
-          <span>agent prompt</span>
-          <button class="icon-button" type="button" data-close-prompt>×</button>
+    <section class="dashboard-panel agent-prompt-view">
+      <div class="dashboard-toolbar">
+        <button class="icon-button hidden-desktop" type="button" id="open-sidebar">≡</button>
+        <div class="dashboard-copy">
+          <strong>Agent Prompt</strong>
+          <div class="terminal-meta">shared instructions injected into Codex, Claude, Gemini, and OpenCode sessions</div>
         </div>
-        <div class="prompt-modal-copy">
-          <div>source: ${escapeHtml(state.agentPromptPath || ".remote-vibes/agent-prompt.md")}</div>
-          <div>wiki root: ${escapeHtml(state.agentPromptWikiRoot)}</div>
+        <div class="dashboard-actions agent-prompt-toolbar-actions">
+          <a class="ghost-button toolbar-control" href="${escapeHtml(getAgentPromptUrl())}" target="_blank" rel="noreferrer">open tab</a>
         </div>
-        <form class="prompt-form" id="agent-prompt-form">
+      </div>
+      <div class="dashboard-range agent-prompt-summary">
+        <span class="dashboard-range-label">source</span>
+        <span class="agent-prompt-source">${escapeHtml(state.agentPromptPath || ".remote-vibes/agent-prompt.md")}</span>
+        <span class="dashboard-updated">${escapeHtml(getAgentPromptTargetSummary())}</span>
+      </div>
+      <div class="agent-prompt-grid">
+        <form class="agent-prompt-editor-card" id="agent-prompt-form">
+          <div class="agent-prompt-card-head">
+            <div>
+              <strong>Prompt</strong>
+              <div class="knowledge-base-panel-meta">wiki root: ${escapeHtml(state.agentPromptWikiRoot)}</div>
+            </div>
+            <button class="primary-button toolbar-control" type="submit">save prompt</button>
+          </div>
           <textarea
-            class="prompt-textarea"
+            class="prompt-textarea agent-prompt-textarea"
             name="prompt"
             spellcheck="false"
             autocapitalize="none"
             autocorrect="off"
           >${escapeHtml(state.agentPrompt)}</textarea>
-          <div class="inline-form">
-            <button class="ghost-button" type="button" data-close-prompt>close</button>
-            <button class="primary-button" type="submit">save</button>
-          </div>
         </form>
-      </section>
-    </div>
+        <aside class="agent-prompt-target-card">
+          <div class="agent-prompt-card-head">
+            <div>
+              <strong>Managed Files</strong>
+              <div class="knowledge-base-panel-meta">where the prompt is synced for agents</div>
+            </div>
+          </div>
+          <div class="agent-prompt-target-list" id="agent-prompt-targets">${renderAgentPromptTargets()}</div>
+        </aside>
+      </div>
+    </section>
   `;
 }
 
@@ -3414,18 +3596,14 @@ function renderUpdateBanner() {
 }
 
 function renderShell() {
-  if (state.currentView === "knowledge-base") {
-    app.innerHTML = renderKnowledgeBaseApp();
-    disposeTerminal();
-    refreshKnowledgeBaseUi();
-    return;
-  }
-
-  document.title = "Remote Vibes";
-
   teardownKnowledgeBaseGraphInteractions();
   syncFilesRoot();
-  document.title = "Remote Vibes";
+  document.title =
+    state.currentView === "knowledge-base"
+      ? "Knowledge Base · Remote Vibes"
+      : state.currentView === "agent-prompt"
+        ? "Agent Prompt · Remote Vibes"
+        : "Remote Vibes";
 
   const providerOptions = renderProviderOptions(state.defaultProviderId);
 
@@ -3453,107 +3631,13 @@ function renderShell() {
             >+</button>
           </form>
 
+          ${renderSidebarNav(activeSession)}
+
           <section class="sidebar-section">
             <div class="section-head">
               <span>sessions</span>
             </div>
             <div class="list-shell" id="sessions-list">${renderSessionCards()}</div>
-          </section>
-
-          <section class="sidebar-section knowledge-settings-section">
-            <div class="section-head">
-              <span>knowledge base</span>
-              <div class="section-actions">
-                <a
-                  class="ghost-button"
-                  id="open-knowledge-base"
-                  href="${escapeHtml(getKnowledgeBaseUrl(state.knowledgeBase.selectedNotePath || ""))}"
-                  target="_blank"
-                  rel="noreferrer"
-                >
-                  view
-                </a>
-                <button class="ghost-button" type="button" id="backup-wiki-now">backup now</button>
-              </div>
-            </div>
-            <div class="prompt-copy">
-              <div>obsidian-style view for ${escapeHtml(state.settings.wikiRelativeRoot || state.agentPromptWikiRoot)}</div>
-              <div id="wiki-backup-status">${escapeHtml(getWikiBackupStatusText())}</div>
-            </div>
-            <form class="settings-form" id="settings-form">
-              <label class="field-label" for="wiki-path-input">wiki folder</label>
-              <div class="folder-input-row">
-                <input
-                  class="file-root-input"
-                  id="wiki-path-input"
-                  name="wikiPath"
-                  type="text"
-                  value="${escapeHtml(state.settings.wikiPath || "")}"
-                  placeholder="${escapeHtml(state.defaultCwd || "wiki folder")}"
-                  readonly
-                  data-folder-picker-target="wiki"
-                  autocomplete="off"
-                  autocorrect="off"
-                  autocapitalize="none"
-                  spellcheck="false"
-                />
-                <button class="ghost-button folder-browse-button" type="button" data-folder-picker-target="wiki">choose</button>
-              </div>
-              <label class="checkbox-row">
-                <input type="checkbox" name="wikiGitBackupEnabled" ${state.settings.wikiGitBackupEnabled ? "checked" : ""} />
-                <span id="wiki-backup-interval-label">${escapeHtml(formatWikiBackupIntervalLabel())}</span>
-              </label>
-              <label class="checkbox-row">
-                <input type="checkbox" name="preventSleepEnabled" ${state.settings.preventSleepEnabled ? "checked" : ""} />
-                <span>prevent this computer from sleeping</span>
-              </label>
-              <div class="settings-status">${escapeHtml(getSleepPreventionStatusText())}</div>
-              <label class="checkbox-row">
-                <input type="checkbox" name="wikiGitRemoteEnabled" ${state.settings.wikiGitRemoteEnabled ? "checked" : ""} />
-                <span>push backups to a private git remote</span>
-              </label>
-              <label class="field-label" for="wiki-git-remote-url">private remote URL</label>
-              <input
-                class="file-root-input"
-                id="wiki-git-remote-url"
-                name="wikiGitRemoteUrl"
-                type="text"
-                value="${escapeHtml(state.settings.wikiGitRemoteUrl || "")}"
-                placeholder="git@github.com:you/private-mac-brain.git"
-                autocomplete="off"
-                autocorrect="off"
-                autocapitalize="none"
-                spellcheck="false"
-              />
-              <label class="field-label" for="wiki-git-remote-branch">remote branch</label>
-              <input
-                class="file-root-input"
-                id="wiki-git-remote-branch"
-                name="wikiGitRemoteBranch"
-                type="text"
-                value="${escapeHtml(state.settings.wikiGitRemoteBranch || "main")}"
-                placeholder="main"
-                autocomplete="off"
-                autocorrect="off"
-                autocapitalize="none"
-                spellcheck="false"
-              />
-              <input type="hidden" name="wikiGitRemoteName" value="${escapeHtml(state.settings.wikiGitRemoteName || "origin")}" />
-              <button class="primary-button settings-save-button" type="submit">save settings</button>
-              <div class="settings-status" id="wiki-backup-settings-status">${escapeHtml(getWikiBackupStatusText())}</div>
-            </form>
-          </section>
-
-          <section class="sidebar-section">
-            <div class="section-head">
-              <span>agent prompt</span>
-              <button class="ghost-button" type="button" id="edit-agent-prompt">edit</button>
-            </div>
-            <div class="prompt-copy">
-              <div>source: ${escapeHtml(state.agentPromptPath || ".remote-vibes/agent-prompt.md")}</div>
-              <div>wiki root: ${escapeHtml(state.agentPromptWikiRoot)}</div>
-            </div>
-            <div class="list-shell" id="agent-prompt-targets">${renderAgentPromptTargets()}</div>
           </section>
 
           <section class="sidebar-section">
@@ -3602,7 +3686,6 @@ function renderShell() {
       </aside>
 
       ${renderTerminalPanel(activeSession)}
-      ${renderAgentPromptModal()}
       ${renderFolderPickerModal()}
       ${renderSystemToasts()}
     </main>
@@ -3740,6 +3823,7 @@ function bindSessionEvents() {
         state.sessions = [payload.session, ...state.sessions.filter((session) => session.id !== payload.session.id)];
         state.activeSessionId = payload.session.id;
         expandSessionProject(payload.session.cwd);
+        setCurrentView("shell");
         renderShell();
         connectToSession(payload.session.id);
         closeMobileSidebar();
@@ -4958,11 +5042,57 @@ function setCurrentView(nextView, { notePath = state.knowledgeBase.selectedNoteP
     return;
   }
 
+  if (nextView === "agent-prompt") {
+    state.currentView = "agent-prompt";
+    updateRoute({ view: "agent-prompt" });
+    return;
+  }
+
   state.currentView = "shell";
   updateRoute({ view: state.currentView });
 }
 
+async function openMainView(nextView) {
+  if (nextView === "knowledge-base") {
+    setCurrentView("knowledge-base");
+    closeMobileSidebar();
+    renderShell();
+
+    if (!state.knowledgeBase.notes.length && !state.knowledgeBase.loading) {
+      await loadKnowledgeBaseIndex();
+    }
+
+    await ensureKnowledgeBaseSelectionLoaded();
+    updateRoute({ view: "knowledge-base", notePath: state.knowledgeBase.selectedNotePath });
+    renderShell();
+    return;
+  }
+
+  if (nextView === "agent-prompt") {
+    setCurrentView("agent-prompt");
+    closeMobileSidebar();
+    renderShell();
+    return;
+  }
+
+  setCurrentView("shell");
+  closeMobileSidebar();
+  renderShell();
+
+  if (state.activeSessionId) {
+    connectToSession(state.activeSessionId);
+  }
+}
+
 function bindShellEvents() {
+  document.querySelectorAll("[data-open-main-view]").forEach((link) => {
+    link.addEventListener("click", (event) => {
+      event.preventDefault();
+      const nextView = link.getAttribute("data-open-main-view") || "shell";
+      void openMainView(nextView);
+    });
+  });
+
   document.querySelector("#session-provider-select")?.addEventListener("change", () => {
     state.defaultProviderId = getSelectedSessionProviderId();
   });
@@ -5057,16 +5187,6 @@ function bindShellEvents() {
   }
 
   document.querySelector("#refresh-sessions")?.addEventListener("click", () => loadSessions());
-  document.querySelector("#edit-agent-prompt")?.addEventListener("click", () => {
-    state.agentPromptEditorOpen = true;
-    renderShell();
-  });
-  document.querySelectorAll("[data-close-prompt]").forEach((element) => {
-    element.addEventListener("click", () => {
-      state.agentPromptEditorOpen = false;
-      renderShell();
-    });
-  });
   document.querySelector("#agent-prompt-form")?.addEventListener("submit", async (event) => {
     event.preventDefault();
     const formData = new FormData(event.currentTarget);
@@ -5080,7 +5200,6 @@ function bindShellEvents() {
       });
 
       applyAgentPromptState(payload);
-      state.agentPromptEditorOpen = false;
       renderShell();
     } catch (error) {
       window.alert(error.message);
@@ -5755,6 +5874,7 @@ async function loadSessions() {
     }
 
     if (state.currentView !== "shell") {
+      refreshSessionsList();
       return;
     }
 

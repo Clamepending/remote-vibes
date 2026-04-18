@@ -267,6 +267,77 @@ textarea {
   align-items: center;
 }
 
+.sidebar-nav {
+  display: grid;
+  gap: 4px;
+  padding: 2px 0;
+}
+
+.sidebar-nav-item {
+  display: grid;
+  grid-template-columns: 24px minmax(0, 1fr);
+  align-items: center;
+  gap: 10px;
+  min-height: 46px;
+  padding: 8px 10px;
+  border: 1px solid transparent;
+  border-radius: 13px;
+  color: rgba(232, 236, 240, 0.84);
+  text-decoration: none;
+  transition: background 140ms ease, border-color 140ms ease, color 140ms ease;
+}
+
+.sidebar-nav-item:hover {
+  border-color: rgba(255, 255, 255, 0.06);
+  background: rgba(255, 255, 255, 0.055);
+}
+
+.sidebar-nav-item.is-active {
+  border-color: rgba(255, 255, 255, 0.08);
+  background: rgba(120, 126, 150, 0.22);
+  color: #f4f7fb;
+}
+
+.sidebar-nav-icon {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 24px;
+  height: 24px;
+  border-radius: 8px;
+  color: rgba(232, 236, 240, 0.66);
+  font-family: "IBM Plex Mono", monospace;
+  font-size: 0.86rem;
+}
+
+.sidebar-nav-item.is-active .sidebar-nav-icon {
+  color: var(--accent);
+}
+
+.sidebar-nav-copy {
+  display: grid;
+  min-width: 0;
+  gap: 2px;
+}
+
+.sidebar-nav-label,
+.sidebar-nav-meta {
+  overflow: hidden;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+}
+
+.sidebar-nav-label {
+  font-weight: 700;
+  letter-spacing: 0.01em;
+}
+
+.sidebar-nav-meta {
+  color: var(--muted);
+  font-family: "IBM Plex Mono", monospace;
+  font-size: 0.68rem;
+}
+
 .session-folder-button {
   position: relative;
   min-width: 42px;
@@ -395,15 +466,6 @@ input[readonly][data-folder-picker-target] {
 
 .folder-picker-tree-status {
   min-height: 27px;
-}
-
-.knowledge-settings-section .section-head {
-  align-items: flex-start;
-}
-
-.knowledge-settings-section .section-actions {
-  flex-wrap: wrap;
-  justify-content: flex-end;
 }
 
 .section-head {
@@ -581,16 +643,6 @@ input[readonly][data-folder-picker-target] {
   width: 100%;
 }
 
-.prompt-copy,
-.prompt-modal-copy {
-  display: grid;
-  gap: 4px;
-  color: var(--muted);
-  font-family: "IBM Plex Mono", monospace;
-  font-size: 0.72rem;
-  line-height: 1.5;
-}
-
 .dashboard-panel {
   display: grid;
   grid-template-rows: auto auto minmax(0, 1fr);
@@ -744,9 +796,89 @@ input[readonly][data-folder-picker-target] {
 
 .knowledge-base-view {
   display: grid;
+  grid-template-rows: auto auto auto minmax(0, 1fr);
   gap: 12px;
   min-height: 0;
   overflow: hidden;
+}
+
+.knowledge-settings-card {
+  min-width: 0;
+  border: 1px solid var(--line);
+  border-radius: 18px;
+  background: rgba(24, 29, 33, 0.62);
+  overflow: hidden;
+}
+
+.knowledge-settings-card summary {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  min-height: 44px;
+  padding: 0 14px;
+  color: rgba(232, 236, 240, 0.9);
+  cursor: pointer;
+  font-family: "IBM Plex Mono", monospace;
+  font-size: 0.76rem;
+  letter-spacing: 0.04em;
+  list-style: none;
+  text-transform: uppercase;
+}
+
+.knowledge-settings-card summary::-webkit-details-marker {
+  display: none;
+}
+
+.knowledge-settings-card summary::before {
+  content: "▸";
+  color: var(--muted);
+  margin-right: 2px;
+}
+
+.knowledge-settings-card[open] summary {
+  border-bottom: 1px solid var(--line);
+}
+
+.knowledge-settings-card[open] summary::before {
+  content: "▾";
+}
+
+.knowledge-settings-card summary span:first-child {
+  min-width: 0;
+  overflow: hidden;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+}
+
+.knowledge-settings-card #wiki-backup-status {
+  color: var(--muted);
+  font-size: 0.7rem;
+  text-transform: none;
+}
+
+.knowledge-settings-form {
+  padding: 14px;
+}
+
+.knowledge-settings-options {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 10px;
+}
+
+.knowledge-settings-remote-grid {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr) auto minmax(110px, 160px);
+  align-items: center;
+  gap: 8px;
+}
+
+.knowledge-settings-actions {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
 }
 
 .knowledge-base-app {
@@ -1210,6 +1342,90 @@ input[readonly][data-folder-picker-target] {
 .prompt-target-conflict {
   border: 1px solid rgba(255, 127, 121, 0.24);
   color: #ffb1ac;
+}
+
+.agent-prompt-view {
+  grid-template-rows: auto auto minmax(0, 1fr);
+}
+
+.agent-prompt-toolbar-actions {
+  display: inline-flex;
+  gap: 8px;
+}
+
+.agent-prompt-summary {
+  justify-content: space-between;
+}
+
+.agent-prompt-source {
+  min-width: 0;
+  overflow: hidden;
+  color: var(--text);
+  font-family: "IBM Plex Mono", monospace;
+  font-size: 0.78rem;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.agent-prompt-grid {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(260px, 340px);
+  gap: 12px;
+  min-height: 0;
+  overflow: hidden;
+}
+
+.agent-prompt-editor-card,
+.agent-prompt-target-card {
+  display: grid;
+  min-height: 0;
+  overflow: hidden;
+  border: 1px solid var(--line);
+  border-radius: 18px;
+  background: rgba(24, 29, 33, 0.74);
+  backdrop-filter: blur(16px);
+}
+
+.agent-prompt-editor-card {
+  grid-template-rows: auto minmax(0, 1fr);
+}
+
+.agent-prompt-target-card {
+  grid-template-rows: auto minmax(0, 1fr);
+}
+
+.agent-prompt-card-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 14px 16px 12px;
+  border-bottom: 1px solid rgba(255, 255, 255, 0.06);
+}
+
+.agent-prompt-card-head strong {
+  font-family: "IBM Plex Mono", monospace;
+}
+
+.agent-prompt-textarea {
+  height: 100%;
+  min-height: 0;
+  border: 0;
+  border-radius: 0;
+  background: rgba(8, 10, 12, 0.5);
+  font-family: "IBM Plex Mono", monospace;
+  font-size: 0.84rem;
+  line-height: 1.62;
+  resize: none;
+}
+
+.agent-prompt-target-list {
+  display: grid;
+  align-content: start;
+  gap: 8px;
+  min-height: 0;
+  overflow-y: auto;
+  padding: 12px;
 }
 
 .prompt-modal-shell {
@@ -2227,6 +2443,30 @@ select:disabled {
     min-height: 320px;
   }
 
+  .knowledge-settings-options,
+  .knowledge-settings-remote-grid,
+  .agent-prompt-grid {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  .knowledge-settings-actions {
+    align-items: stretch;
+    flex-direction: column;
+  }
+
+  .agent-prompt-grid {
+    overflow-y: auto;
+    padding-right: 2px;
+  }
+
+  .agent-prompt-editor-card {
+    min-height: 520px;
+  }
+
+  .agent-prompt-target-card {
+    min-height: 260px;
+  }
+
   .app-shell {
     grid-template-columns: minmax(0, 1fr);
   }
@@ -2416,6 +2656,15 @@ select:disabled {
   }
 
   .knowledge-base-toolbar-actions > * {
+    flex: 1 1 0;
+  }
+
+  .agent-prompt-toolbar-actions,
+  .knowledge-settings-card summary {
+    width: 100%;
+  }
+
+  .agent-prompt-toolbar-actions > * {
     flex: 1 1 0;
   }
 
