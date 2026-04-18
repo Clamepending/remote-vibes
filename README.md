@@ -23,6 +23,17 @@ Run this on the Raspberry Pi. It installs `curl` if needed, then the installer h
 bash -c 'command -v curl >/dev/null || (sudo apt-get update && sudo apt-get install -y curl ca-certificates); bash <(curl -fsSL https://gist.githubusercontent.com/Clamepending/b40db6fc8775b843e6fc06a2b5857604/raw/install.sh)'
 ```
 
+## Claude Code Install
+
+Claude Code's native installer is the recommended path. Remote Vibes prefers the native `~/.local/bin/claude` binary over older npm/Homebrew shims when both are present.
+
+```bash
+curl -fsSL https://claude.ai/install.sh | bash
+npm uninstall -g @anthropic-ai/claude-code 2>/dev/null || true
+[ -x /opt/homebrew/bin/npm ] && /opt/homebrew/bin/npm uninstall -g @anthropic-ai/claude-code || true
+[ -x /usr/local/bin/npm ] && /usr/local/bin/npm uninstall -g @anthropic-ai/claude-code || true
+```
+
 ## Details...
 
 Use that gist URL directly. The repo `raw.githubusercontent.com/.../install.sh` link can get rate-limited.

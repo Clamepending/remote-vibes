@@ -62,6 +62,47 @@ test("detectProviders promotes a hinted executable into the launch command", asy
   }
 });
 
+test("resolveProviderCommand prefers Claude native path hints over PATH shims", async () => {
+  const tempDir = await mkdtemp(path.join(os.tmpdir(), "remote-vibes-provider-native-"));
+  const nativeBinDir = path.join(tempDir, ".local", "bin");
+  const pathShimDir = path.join(tempDir, "path-bin");
+  const nativeClaudePath = path.join(nativeBinDir, "claude");
+  const pathShimClaudePath = path.join(pathShimDir, "claude");
+
+  try {
+    await mkdir(nativeBinDir, { recursive: true });
+    await mkdir(pathShimDir, { recursive: true });
+    await writeFile(nativeClaudePath, "#!/usr/bin/env bash\nprintf 'native claude\\n'\n", "utf8");
+    await writeFile(pathShimClaudePath, "#!/usr/bin/env bash\nprintf 'path shim claude\\n'\n", "utf8");
+    await chmod(nativeClaudePath, 0o755);
+    await chmod(pathShimClaudePath, 0o755);
+
+    const result = await resolveProviderCommand(
+      {
+        id: "claude",
+        label: "Claude Code",
+        command: "claude",
+        launchCommand: "claude",
+        verifyArgs: ["--version"],
+        preferPathHints: true,
+        pathHints: ["~/.local/bin/claude"],
+      },
+      {
+        HOME: tempDir,
+        PATH: `${pathShimDir}:/usr/bin:/bin`,
+        SHELL: "/bin/zsh",
+      },
+    );
+
+    assert.deepEqual(result, {
+      available: true,
+      resolvedCommand: nativeClaudePath,
+    });
+  } finally {
+    await rm(tempDir, { recursive: true, force: true });
+  }
+});
+
 test("resolveProviderCommand falls back to a globally installed npm package bin", async () => {
   const tempDir = await mkdtemp(path.join(os.tmpdir(), "remote-vibes-provider-npm-"));
   const fakeNpmRoot = path.join(tempDir, "npm-root");
@@ -174,7 +215,9 @@ test("providerDefinitions includes Claude path hints for common installs", () =>
 
   assert.ok(provider);
   assert.deepEqual(provider.pathHints, [
+    "~/.local/bin/claude",
     "/opt/homebrew/bin/claude",
     "/usr/local/bin/claude",
   ]);
+  assert.equal(provider.preferPathHints, true);
 });

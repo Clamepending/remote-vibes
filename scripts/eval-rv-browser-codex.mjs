@@ -177,7 +177,7 @@ async function startDemoServer() {
 async function assertProviderAvailable(provider) {
   const providerPathHints = {
     codex: ["/Applications/Codex.app/Contents/Resources/codex"],
-    claude: ["/opt/homebrew/bin/claude", "/usr/local/bin/claude"],
+    claude: [path.join(os.homedir(), ".local/bin/claude"), "/opt/homebrew/bin/claude", "/usr/local/bin/claude"],
   };
 
   for (const candidate of providerPathHints[provider] || []) {

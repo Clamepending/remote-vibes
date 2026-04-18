@@ -14,11 +14,13 @@ export const providerDefinitions = [
     launchCommand: "claude",
     defaultName: "Claude",
     verifyArgs: ["--version"],
+    preferPathHints: true,
     npmPackage: {
       name: "@anthropic-ai/claude-code",
       bin: "claude",
     },
     pathHints: [
+      "~/.local/bin/claude",
       "/opt/homebrew/bin/claude",
       "/usr/local/bin/claude",
     ],
@@ -76,11 +78,34 @@ async function findCommandInShell(command, env = process.env) {
   }
 }
 
-async function findCommandInHints(pathHints = []) {
+function expandPathHint(hint, env = process.env) {
+  const value = String(hint || "").trim();
+  if (!value) {
+    return "";
+  }
+
+  if (value === "~") {
+    return env.HOME || process.env.HOME || "";
+  }
+
+  if (value.startsWith("~/")) {
+    const homeDir = env.HOME || process.env.HOME || "";
+    return homeDir ? path.join(homeDir, value.slice(2)) : "";
+  }
+
+  return value;
+}
+
+async function findCommandInHints(pathHints = [], env = process.env) {
   for (const hint of pathHints) {
+    const expandedHint = expandPathHint(hint, env);
+    if (!expandedHint) {
+      continue;
+    }
+
     try {
-      await access(hint, fsConstants.X_OK);
-      return hint;
+      await access(expandedHint, fsConstants.X_OK);
+      return expandedHint;
     } catch {
       // Ignore missing or non-executable hints.
     }
@@ -154,6 +179,16 @@ export async function resolveProviderCommand(provider, env = process.env) {
     };
   }
 
+  if (provider.preferPathHints) {
+    const hintedCommand = await findCommandInHints(provider.pathHints, env);
+    if (hintedCommand && await verifyResolvedCommand(provider, hintedCommand, env)) {
+      return {
+        available: true,
+        resolvedCommand: hintedCommand,
+      };
+    }
+  }
+
   const shellResolved = await findCommandInShell(provider.command, env);
   if (shellResolved && await verifyResolvedCommand(provider, shellResolved, env)) {
     return {
@@ -162,12 +197,14 @@ export async function resolveProviderCommand(provider, env = process.env) {
     };
   }
 
-  const hintedCommand = await findCommandInHints(provider.pathHints);
-  if (hintedCommand && await verifyResolvedCommand(provider, hintedCommand, env)) {
-    return {
-      available: true,
-      resolvedCommand: hintedCommand,
-    };
+  if (!provider.preferPathHints) {
+    const hintedCommand = await findCommandInHints(provider.pathHints, env);
+    if (hintedCommand && await verifyResolvedCommand(provider, hintedCommand, env)) {
+      return {
+        available: true,
+        resolvedCommand: hintedCommand,
+      };
+    }
   }
 
   const npmPackageCommand = await resolveNpmPackageCommand(provider.npmPackage, env);
@@ -188,7 +225,7 @@ export async function detectProviders(definitions = providerDefinitions, env = p
   try {
     const detected = await Promise.all(
       definitions.map(async (provider) => {
-        const { pathHints, ...providerConfig } = provider;
+        const { pathHints, preferPathHints, ...providerConfig } = provider;
         const { available, resolvedCommand } = await resolveProviderCommand(provider, env);
         return {
           ...providerConfig,

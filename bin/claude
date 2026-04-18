@@ -30,6 +30,7 @@ find_real_claude() {
 
   for candidate in \
     "${REMOTE_VIBES_REAL_CLAUDE_COMMAND:-}" \
+    "${HOME:-}/.local/bin/claude" \
     /opt/homebrew/bin/claude \
     /usr/local/bin/claude \
     "$(command -v claude 2>/dev/null || true)"; do
