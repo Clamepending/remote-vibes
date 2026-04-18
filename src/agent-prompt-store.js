@@ -186,6 +186,12 @@ Message body
 `);
 }
 
+const WIKI_PLACEHOLDER_PATTERN = /\{\{\s*WIKI\s*\}\}/g;
+
+function substitutePromptPlaceholders(prompt, { wikiRootLabel = ".remote-vibes/wiki" } = {}) {
+  return String(prompt ?? "").replace(WIKI_PLACEHOLDER_PATTERN, wikiRootLabel);
+}
+
 function ensureBuiltInPromptSections(prompt, options = {}) {
   const normalized = stripBuiltInPromptSections(prompt);
 
@@ -318,7 +324,10 @@ export class AgentPromptStore {
 
   async syncManagedFiles() {
     const sourcePath = path.relative(this.cwd, this.promptFilePath) || PROMPT_FILENAME;
-    const rendered = renderManagedFile(this.prompt, sourcePath);
+    const expanded = substitutePromptPlaceholders(this.prompt, {
+      wikiRootLabel: this.getWikiRootLabel(),
+    });
+    const rendered = renderManagedFile(expanded, sourcePath);
 
     return Promise.all(
       TARGET_FILES.map(async ({ filename, label }) => ({

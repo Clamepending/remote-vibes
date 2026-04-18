@@ -607,6 +607,66 @@ test("settings api moves the wiki folder, refreshes agent instructions, and the 
   }
 });
 
+test("{{WIKI}} placeholder stays in source but expands in managed files and tracks wiki path changes", async () => {
+  const workspaceDir = await createTempWorkspace("remote-vibes-wiki-placeholder-");
+  const customWikiDir = path.join(workspaceDir, "mac-brain");
+  await mkdir(customWikiDir, { recursive: true });
+
+  const { app, baseUrl } = await startApp({ cwd: workspaceDir });
+
+  try {
+    const customPrompt =
+      "# Custom Prompt\n\n" +
+      "Notes live in `{{WIKI}}/experiments/`.\n" +
+      "Log updates at `{{WIKI}}/log.md`.\n";
+
+    const updateResponse = await fetch(`${baseUrl}/api/agent-prompt`, {
+      method: "PUT",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ prompt: customPrompt }),
+    });
+    assert.equal(updateResponse.status, 200);
+
+    const defaultSource = await readFile(
+      path.join(workspaceDir, ".remote-vibes", "agent-prompt.md"),
+      "utf8",
+    );
+    assert.match(defaultSource, /`\{\{WIKI\}\}\/experiments\/`/);
+    assert.match(defaultSource, /`\{\{WIKI\}\}\/log\.md`/);
+
+    const defaultManaged = await readFile(path.join(workspaceDir, "CLAUDE.md"), "utf8");
+    assert.ok(!defaultManaged.includes("{{WIKI}}"), "managed file should not contain raw placeholders");
+    assert.match(defaultManaged, /`\.remote-vibes\/wiki\/experiments\/`/);
+    assert.match(defaultManaged, /`\.remote-vibes\/wiki\/log\.md`/);
+
+    const moveResponse = await fetch(`${baseUrl}/api/settings`, {
+      method: "PATCH",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        preventSleepEnabled: false,
+        wikiGitBackupEnabled: false,
+        wikiPath: customWikiDir,
+      }),
+    });
+    assert.equal(moveResponse.status, 200);
+
+    const movedSource = await readFile(
+      path.join(workspaceDir, ".remote-vibes", "agent-prompt.md"),
+      "utf8",
+    );
+    assert.match(movedSource, /`\{\{WIKI\}\}\/experiments\/`/);
+    assert.match(movedSource, /`\{\{WIKI\}\}\/log\.md`/);
+
+    const movedManaged = await readFile(path.join(workspaceDir, "CLAUDE.md"), "utf8");
+    assert.ok(!movedManaged.includes("{{WIKI}}"), "managed file should not contain raw placeholders after wiki move");
+    assert.match(movedManaged, /`mac-brain\/experiments\/`/);
+    assert.match(movedManaged, /`mac-brain\/log\.md`/);
+  } finally {
+    await app.close();
+    await rm(workspaceDir, { recursive: true, force: true });
+  }
+});
+
 test("wiki backup endpoint initializes git and commits wiki changes", async () => {
   const workspaceDir = await createTempWorkspace("remote-vibes-wiki-backup-");
   const { app, baseUrl } = await startApp({ cwd: workspaceDir });
