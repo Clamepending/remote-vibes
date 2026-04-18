@@ -1337,27 +1337,55 @@ input[readonly][data-folder-picker-target] {
 }
 
 .swarm-canvas {
+  display: grid;
+  grid-template-rows: minmax(0, 1fr);
   min-width: 0;
   min-height: 0;
-  overflow: auto;
+  overflow: hidden;
   border-radius: 22px;
   background:
     radial-gradient(circle at 12% 10%, rgba(242, 138, 104, 0.08), transparent 30%),
     linear-gradient(180deg, rgba(255, 255, 255, 0.04), rgba(255, 255, 255, 0.018));
 }
 
+.swarm-graph-scroller {
+  display: grid;
+  align-content: start;
+  gap: 8px;
+  min-width: 0;
+  min-height: 0;
+  overflow: auto;
+  padding: 8px;
+  scrollbar-width: thin;
+}
+
 .swarm-graph-svg {
   display: block;
-  width: 100%;
-  min-width: 760px;
+  width: 1010px;
+  max-width: none;
   height: auto;
   min-height: 420px;
 }
 
+.swarm-graph-note {
+  position: sticky;
+  left: 8px;
+  width: fit-content;
+  max-width: calc(100% - 16px);
+  padding: 6px 9px;
+  border: 1px solid rgba(255, 255, 255, 0.07);
+  border-radius: 999px;
+  background: rgba(17, 17, 20, 0.78);
+  color: rgba(232, 236, 240, 0.62);
+  font-family: "IBM Plex Mono", monospace;
+  font-size: 0.68rem;
+}
+
 .swarm-edge {
   fill: none;
-  stroke: rgba(190, 195, 204, 0.22);
-  stroke-width: 1.6;
+  stroke: rgba(190, 195, 204, 0.18);
+  stroke-width: 1.35;
+  vector-effect: non-scaling-stroke;
 }
 
 .swarm-edge-fork,
@@ -1366,7 +1394,7 @@ input[readonly][data-folder-picker-target] {
 }
 
 .swarm-edge-touch {
-  stroke: rgba(125, 189, 255, 0.26);
+  stroke: rgba(125, 189, 255, 0.2);
 }
 
 #swarm-arrow path {
@@ -1402,6 +1430,12 @@ input[readonly][data-folder-picker-target] {
 .swarm-node-path rect {
   fill: rgba(154, 214, 127, 0.09);
   stroke: rgba(154, 214, 127, 0.24);
+}
+
+.swarm-node-path-summary rect {
+  fill: rgba(154, 214, 127, 0.06);
+  stroke: rgba(154, 214, 127, 0.28);
+  stroke-dasharray: 5 5;
 }
 
 .swarm-node.is-focus rect {
@@ -1561,8 +1595,14 @@ input[readonly][data-folder-picker-target] {
 
 .system-storage-used {
   flex: 0 0 var(--storage-used, 0%);
-  min-width: 6px;
+  min-width: var(--storage-used-min, 0);
   background: linear-gradient(90deg, #ff453a, #ff7a59);
+}
+
+.system-storage-wiki {
+  flex: 0 0 var(--storage-wiki, 0%);
+  min-width: var(--storage-wiki-min, 0);
+  background: linear-gradient(90deg, #ff9f0a, #ffd60a);
 }
 
 .system-storage-free {
@@ -1612,11 +1652,7 @@ input[readonly][data-folder-picker-target] {
 }
 
 .legend-dot.is-wiki {
-  background: #d8d9de;
-}
-
-.system-wiki-storage-card .system-storage-used {
-  background: linear-gradient(90deg, #aeb4c0, #f4f4f5);
+  background: #ffb02e;
 }
 
 .system-summary-grid,

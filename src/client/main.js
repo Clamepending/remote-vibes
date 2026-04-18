@@ -5058,6 +5058,25 @@ function renderSystemStorageCard(system) {
   const freeBytes = Number(primary.availableBytes || 0);
   const usedBytes = Number(primary.usedBytes || 0);
   const totalBytes = Number(primary.totalBytes || 0);
+  const wiki = system?.wikiStorage;
+  const wikiBytes = wiki?.exists ? Number(wiki.bytes || 0) : 0;
+  const wikiPercent = totalBytes > 0 ? clamp((wikiBytes / totalBytes) * 100, 0, usedPercent) : 0;
+  const otherUsedPercent = clamp(usedPercent - wikiPercent, 0, 100);
+  const wikiPercentLabel =
+    wikiPercent > 0 && wikiPercent < 0.01
+      ? "<0.01%"
+      : `${wikiPercent.toFixed(wikiPercent < 1 ? 2 : 1)}%`;
+  const wikiLegend = wiki
+    ? wiki.exists
+      ? `${formatBytes(wikiBytes)} Knowledge Base (${wikiPercentLabel})`
+      : "Knowledge Base folder missing"
+    : "";
+  const wikiDetailParts = [
+    wiki?.path || "",
+    wiki?.source ? `measured by ${wiki.source}` : "",
+    wiki?.warning || "",
+    wiki?.error || "",
+  ].filter(Boolean);
 
   return `
     <article class="system-storage-card">
@@ -5065,57 +5084,16 @@ function renderSystemStorageCard(system) {
         <strong>${escapeHtml(primary.name || primary.mountPoint || "Storage")}</strong>
         <span>${escapeHtml(`${formatBytes(usedBytes)} of ${formatBytes(totalBytes)} used`)}</span>
       </div>
-      <div class="system-storage-bar" style="--storage-used: ${usedPercent}%">
-        <span class="system-storage-used"></span>
+      <div class="system-storage-bar" style="--storage-used: ${otherUsedPercent}%; --storage-wiki: ${wikiPercent}%; --storage-wiki-min: ${wikiBytes > 0 ? "4px" : "0px"}">
+        <span class="system-storage-used" title="Other used storage"></span>
+        ${wiki ? `<span class="system-storage-wiki" title="${escapeHtml(wikiLegend)}"></span>` : ""}
         <span class="system-storage-free"></span>
       </div>
       <div class="system-storage-legend">
-        <span><i class="legend-dot is-used"></i>${escapeHtml(`${formatPercent(usedPercent)} used`)}</span>
+        <span><i class="legend-dot is-used"></i>${escapeHtml(`${formatPercent(otherUsedPercent)} other used`)}</span>
+        ${wikiLegend ? `<span title="${escapeHtml(wikiDetailParts.join(" · "))}"><i class="legend-dot is-wiki"></i>${escapeHtml(wikiLegend)}</span>` : ""}
         <span><i class="legend-dot is-free"></i>${escapeHtml(`${formatBytes(freeBytes)} free`)}</span>
         <span>${escapeHtml(primary.mountPoint || "")}</span>
-      </div>
-    </article>
-  `;
-}
-
-function renderWikiStorageCard(system) {
-  const wiki = system?.wikiStorage;
-  if (!wiki) {
-    return "";
-  }
-
-  const primary = system?.storage?.primary;
-  const wikiBytes = Number(wiki.bytes || 0);
-  const volumeBytes = Number(primary?.totalBytes || 0);
-  const rawPercent = volumeBytes > 0 ? clamp((wikiBytes / volumeBytes) * 100, 0, 100) : null;
-  const visiblePercent = rawPercent && rawPercent > 0 ? Math.max(rawPercent, 1) : 0;
-  const countParts = [
-    Number.isFinite(Number(wiki.fileCount)) ? `${wiki.fileCount} files` : "",
-    Number.isFinite(Number(wiki.directoryCount)) ? `${wiki.directoryCount} folders` : "",
-    wiki.truncated ? "partial count" : "",
-  ].filter(Boolean);
-  const detailParts = [
-    wiki.exists ? `${formatBytes(wikiBytes)} in wiki folder` : "folder not found",
-    rawPercent === null ? "" : `${rawPercent < 0.01 && rawPercent > 0 ? "<0.01" : rawPercent.toFixed(rawPercent < 1 ? 2 : 1)}% of ${primary?.name || "disk"}`,
-    wiki.source ? `measured by ${wiki.source}` : "",
-    countParts.join(" · "),
-  ].filter(Boolean);
-
-  return `
-    <article class="system-storage-card system-wiki-storage-card">
-      <div class="system-storage-head">
-        <strong>Knowledge base storage</strong>
-        <span>${escapeHtml(wiki.exists ? formatBytes(wikiBytes) : "missing")}</span>
-      </div>
-      <div class="system-storage-path" title="${escapeHtml(wiki.path || "")}">${escapeHtml(wiki.path || "no wiki folder configured")}</div>
-      <div class="system-storage-bar" style="--storage-used: ${visiblePercent}%">
-        <span class="system-storage-used"></span>
-        <span class="system-storage-free"></span>
-      </div>
-      <div class="system-storage-legend">
-        <span><i class="legend-dot is-wiki"></i>${escapeHtml(detailParts.join(" · "))}</span>
-        ${wiki.warning ? `<span>${escapeHtml(wiki.warning)}</span>` : ""}
-        ${wiki.error ? `<span>${escapeHtml(wiki.error)}</span>` : ""}
       </div>
     </article>
   `;
@@ -5268,7 +5246,6 @@ function renderSystemView() {
             : ""
         }
         ${renderSystemStorageCard(system)}
-        ${renderWikiStorageCard(system)}
         ${renderSystemSummaryCards(system)}
         ${renderSystemUtilizationCharts(system)}
         <section class="system-section">
@@ -5311,11 +5288,100 @@ function getSwarmNodeTypeOrder(type) {
   return 4;
 }
 
+function getSwarmNodeSize(type) {
+  if (type === "path" || type === "path-summary") {
+    return { width: 178, height: 48 };
+  }
+  if (type === "subagent") {
+    return { width: 178, height: 54 };
+  }
+  if (type === "session") {
+    return { width: 168, height: 54 };
+  }
+  if (type === "worktree") {
+    return { width: 166, height: 50 };
+  }
+  return { width: 166, height: 50 };
+}
+
+function getSwarmNodeColumnX(order) {
+  return [54, 222, 396, 586, 776][order] ?? 776;
+}
+
+function rankSwarmPathNodes(pathNodes, edges) {
+  const touchCounts = new Map();
+  const originalIndexes = new Map(pathNodes.map((node, index) => [node.id, index]));
+  for (const edge of edges) {
+    if (edge?.type === "touch" && edge?.to) {
+      touchCounts.set(edge.to, (touchCounts.get(edge.to) || 0) + 1);
+    }
+  }
+
+  return [...pathNodes].sort((left, right) => {
+    const countDelta = (touchCounts.get(right.id) || 0) - (touchCounts.get(left.id) || 0);
+    if (countDelta) {
+      return countDelta;
+    }
+
+    return (originalIndexes.get(left.id) || 0) - (originalIndexes.get(right.id) || 0);
+  });
+}
+
+function prepareSwarmGraphForDisplay(graph) {
+  const nodes = Array.isArray(graph?.nodes) ? graph.nodes : [];
+  const edges = Array.isArray(graph?.edges) ? graph.edges : [];
+  const pathNodes = nodes.filter((node) => node.type === "path");
+  const visiblePathLimit = 18;
+
+  if (pathNodes.length <= visiblePathLimit) {
+    return { nodes, edges, hiddenPathCount: 0, visiblePathCount: pathNodes.length };
+  }
+
+  const visiblePathNodes = rankSwarmPathNodes(pathNodes, edges).slice(0, visiblePathLimit);
+  const visibleIds = new Set(nodes.filter((node) => node.type !== "path").map((node) => node.id));
+  visiblePathNodes.forEach((node) => visibleIds.add(node.id));
+
+  const hiddenPathCount = pathNodes.length - visiblePathNodes.length;
+  const summaryNode = {
+    id: "path-summary:hidden",
+    type: "path-summary",
+    label: `${hiddenPathCount} more paths`,
+    meta: "open the side panel",
+    status: "path",
+  };
+  visibleIds.add(summaryNode.id);
+
+  const summarySources = new Set();
+  const displayEdges = [];
+  for (const edge of edges) {
+    if (visibleIds.has(edge?.from) && visibleIds.has(edge?.to)) {
+      displayEdges.push(edge);
+      continue;
+    }
+
+    if (edge?.type === "touch" && visibleIds.has(edge.from) && !visibleIds.has(edge.to)) {
+      summarySources.add(edge.from);
+    }
+  }
+
+  for (const sourceId of summarySources) {
+    displayEdges.push({
+      from: sourceId,
+      to: summaryNode.id,
+      type: "touch",
+    });
+  }
+
+  return {
+    nodes: [...nodes.filter((node) => node.type !== "path"), ...visiblePathNodes, summaryNode],
+    edges: displayEdges,
+    hiddenPathCount,
+    visiblePathCount: visiblePathNodes.length,
+  };
+}
+
 function layoutSwarmGraph(graph) {
   const nodes = Array.isArray(graph?.nodes) ? graph.nodes : [];
-  const columns = [80, 250, 430, 625, 805];
-  const nodeWidth = 150;
-  const nodeHeight = 54;
   const verticalGap = 22;
   const groups = new Map();
 
@@ -5327,40 +5393,100 @@ function layoutSwarmGraph(graph) {
     groups.get(order).push(node);
   }
 
-  const maxGroupSize = Math.max(1, ...Array.from(groups.values()).map((entries) => entries.length));
-  const height = Math.max(420, 120 + maxGroupSize * (nodeHeight + verticalGap));
+  const groupHeights = Array.from(groups.values()).map((entries) =>
+    entries.reduce((total, node) => total + getSwarmNodeSize(node.type).height, 0) +
+    Math.max(0, entries.length - 1) * verticalGap,
+  );
+  const maxGroupHeight = Math.max(1, ...groupHeights);
+  const height = Math.max(420, 96 + maxGroupHeight);
   const positions = new Map();
 
   for (const [order, entries] of groups.entries()) {
-    const totalHeight = entries.length * nodeHeight + Math.max(0, entries.length - 1) * verticalGap;
+    const totalHeight =
+      entries.reduce((total, node) => total + getSwarmNodeSize(node.type).height, 0) +
+      Math.max(0, entries.length - 1) * verticalGap;
     const startY = Math.max(42, Math.round((height - totalHeight) / 2));
+    let y = startY;
     entries.forEach((node, index) => {
+      const { width, height: nodeHeight } = getSwarmNodeSize(node.type);
       positions.set(node.id, {
-        x: columns[order] || columns.at(-1),
-        y: startY + index * (nodeHeight + verticalGap),
-        width: nodeWidth,
+        x: getSwarmNodeColumnX(order),
+        y,
+        width,
         height: nodeHeight,
       });
+      y += nodeHeight + (index === entries.length - 1 ? 0 : verticalGap);
     });
   }
 
   return {
-    width: 980,
+    width: 1010,
     height,
     positions,
   };
 }
 
+function getSwarmStackOffset(index, count, maxOffset) {
+  if (count <= 1) {
+    return 0;
+  }
+
+  const rawOffset = (index - (count - 1) / 2) * 5;
+  return Math.max(-maxOffset, Math.min(maxOffset, rawOffset));
+}
+
+function getSwarmEdgePorts(edges, positions) {
+  const outgoing = new Map();
+  const incoming = new Map();
+
+  edges.forEach((edge, index) => {
+    if (!positions.has(edge.from) || !positions.has(edge.to)) {
+      return;
+    }
+
+    if (!outgoing.has(edge.from)) {
+      outgoing.set(edge.from, []);
+    }
+    if (!incoming.has(edge.to)) {
+      incoming.set(edge.to, []);
+    }
+    outgoing.get(edge.from).push(index);
+    incoming.get(edge.to).push(index);
+  });
+
+  const startOffsets = new Map();
+  const endOffsets = new Map();
+
+  for (const [nodeId, edgeIndexes] of outgoing.entries()) {
+    const position = positions.get(nodeId);
+    const maxOffset = Math.max(8, position.height * 0.34);
+    edgeIndexes.forEach((edgeIndex, index) => {
+      startOffsets.set(edgeIndex, getSwarmStackOffset(index, edgeIndexes.length, maxOffset));
+    });
+  }
+
+  for (const [nodeId, edgeIndexes] of incoming.entries()) {
+    const position = positions.get(nodeId);
+    const maxOffset = Math.max(8, position.height * 0.34);
+    edgeIndexes.forEach((edgeIndex, index) => {
+      endOffsets.set(edgeIndex, getSwarmStackOffset(index, edgeIndexes.length, maxOffset));
+    });
+  }
+
+  return { startOffsets, endOffsets };
+}
+
 function renderSwarmGraphSvg(graph) {
-  const nodes = Array.isArray(graph?.nodes) ? graph.nodes : [];
-  const edges = Array.isArray(graph?.edges) ? graph.edges : [];
+  const displayGraph = prepareSwarmGraphForDisplay(graph);
+  const { nodes, edges } = displayGraph;
   if (!nodes.length) {
     return `<div class="blank-state">no graph data yet</div>`;
   }
 
-  const layout = layoutSwarmGraph(graph);
+  const layout = layoutSwarmGraph(displayGraph);
+  const edgePorts = getSwarmEdgePorts(edges, layout.positions);
   const edgeMarkup = edges
-    .map((edge) => {
+    .map((edge, index) => {
       const from = layout.positions.get(edge.from);
       const to = layout.positions.get(edge.to);
       if (!from || !to) {
@@ -5368,43 +5494,65 @@ function renderSwarmGraphSvg(graph) {
       }
 
       const startX = from.x + from.width;
-      const startY = from.y + from.height / 2;
+      const startY = from.y + from.height / 2 + (edgePorts.startOffsets.get(index) || 0);
       const endX = to.x;
-      const endY = to.y + to.height / 2;
+      const endY = to.y + to.height / 2 + (edgePorts.endOffsets.get(index) || 0);
       const midX = Math.round((startX + endX) / 2);
-      return `<path class="swarm-edge swarm-edge-${escapeHtml(edge.type || "link")}" d="M ${startX} ${startY} C ${midX} ${startY}, ${midX} ${endY}, ${endX} ${endY}" marker-end="url(#swarm-arrow)" />`;
+      const laneOffset = ((index % 5) - 2) * 7;
+      return `<path class="swarm-edge swarm-edge-${escapeHtml(edge.type || "link")}" d="M ${startX} ${startY} C ${midX + laneOffset} ${startY}, ${midX + laneOffset} ${endY}, ${endX} ${endY}" marker-end="url(#swarm-arrow)" />`;
     })
     .join("");
 
-  const nodeMarkup = nodes
-    .map((node) => {
+  const clipMarkup = nodes
+    .map((node, index) => {
       const position = layout.positions.get(node.id);
       if (!position) {
         return "";
       }
 
-      const label = truncateSwarmLabel(node.label || node.id, node.type === "path" ? 24 : 22);
-      const meta = truncateSwarmLabel(node.meta || node.path || "", 26);
+      return `<clipPath id="swarm-node-clip-${index}"><rect x="${position.x + 12}" y="${position.y + 7}" width="${Math.max(1, position.width - 24)}" height="${Math.max(1, position.height - 14)}" rx="6"></rect></clipPath>`;
+    })
+    .join("");
+
+  const nodeMarkup = nodes
+    .map((node, index) => {
+      const position = layout.positions.get(node.id);
+      if (!position) {
+        return "";
+      }
+
+      const label = truncateSwarmLabel(node.label || node.id, node.type === "path" ? 23 : 22);
+      const meta = truncateSwarmLabel(node.meta || node.path || "", node.type === "path" ? 24 : 25);
       return `
         <g class="swarm-node swarm-node-${escapeHtml(node.type || "unknown")} ${node.focus ? "is-focus" : ""} swarm-status-${escapeHtml(node.status || "idle")}">
           <rect x="${position.x}" y="${position.y}" width="${position.width}" height="${position.height}" rx="15"></rect>
-          <text class="swarm-node-label" x="${position.x + 15}" y="${position.y + 23}">${escapeHtml(label)}</text>
-          <text class="swarm-node-meta" x="${position.x + 15}" y="${position.y + 41}">${escapeHtml(meta)}</text>
+          <g clip-path="url(#swarm-node-clip-${index})">
+            <text class="swarm-node-label" x="${position.x + 15}" y="${position.y + 22}">${escapeHtml(label)}</text>
+            <text class="swarm-node-meta" x="${position.x + 15}" y="${position.y + 39}">${escapeHtml(meta)}</text>
+          </g>
         </g>
       `;
     })
     .join("");
+  const hiddenSummary =
+    displayGraph.hiddenPathCount > 0
+      ? `<div class="swarm-graph-note">showing ${displayGraph.visiblePathCount} touched paths · ${displayGraph.hiddenPathCount} more in the side panel</div>`
+      : "";
 
   return `
-    <svg class="swarm-graph-svg" viewBox="0 0 ${layout.width} ${layout.height}" role="img" aria-label="Agent swarm graph">
-      <defs>
+    <div class="swarm-graph-scroller">
+      <svg class="swarm-graph-svg" viewBox="0 0 ${layout.width} ${layout.height}" role="img" aria-label="Agent swarm graph">
+        <defs>
         <marker id="swarm-arrow" markerWidth="8" markerHeight="8" refX="7" refY="4" orient="auto">
           <path d="M 0 0 L 8 4 L 0 8 z"></path>
         </marker>
-      </defs>
-      ${edgeMarkup}
-      ${nodeMarkup}
-    </svg>
+          ${clipMarkup}
+        </defs>
+        ${edgeMarkup}
+        ${nodeMarkup}
+      </svg>
+      ${hiddenSummary}
+    </div>
   `;
 }
 
