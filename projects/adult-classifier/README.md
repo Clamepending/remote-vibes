@@ -36,12 +36,12 @@ Noise estimate comes from n=5 seeds per variant; "beats beyond noise" = `variant
 
 | move | result doc | branch | agent | started |
 |------|-----------|--------|-------|---------|
+| model-diversification | [model-diversification.md](results/model-diversification.md) | [r/model-diversification](https://github.com/Clamepending/adult-classifier/tree/r/model-diversification) | 0 | 2026-04-20 |
 
 ## QUEUE
 
 | move | starting-point | why |
 |------|----------------|-----|
-| model-diversification | [r/gradient-boosted-trees@7250242](https://github.com/Clamepending/adult-classifier/tree/r/gradient-boosted-trees) | Try a second tree family (RandomForest or ExtraTrees) — check if gains live across inductive biases rather than within HistGBT. |
 
 ## LOG
 
