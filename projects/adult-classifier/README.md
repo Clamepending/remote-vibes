@@ -36,12 +36,12 @@ Noise estimate comes from n=5 seeds per variant; "beats beyond noise" = `variant
 
 | move | result doc | branch | agent | started |
 |------|-----------|--------|-------|---------|
+| gbt-hparam-tune | [gbt-hparam-tune.md](results/gbt-hparam-tune.md) | [r/gbt-hparam-tune](https://github.com/Clamepending/adult-classifier/tree/r/gbt-hparam-tune) | 0 | 2026-04-20 |
 
 ## QUEUE
 
 | move | starting-point | why |
 |------|----------------|-----|
-| gbt-hparam-tune | [r/gradient-boosted-trees@7250242](https://github.com/Clamepending/adult-classifier/tree/r/gradient-boosted-trees) | Small random search over GBT hyperparameters. Incremental; may be within noise. |
 | gbt-fe-ablation | [r/feature-engineering@ca199d2](https://github.com/Clamepending/adult-classifier/tree/r/feature-engineering) | Confirm the five derived features don't help via one-feature-at-a-time drop test (orthogonality / ablation analog of horror's V5). |
 | model-diversification | [r/gradient-boosted-trees@7250242](https://github.com/Clamepending/adult-classifier/tree/r/gradient-boosted-trees) | Try a second tree family (RandomForest or ExtraTrees) — check if gains live across inductive biases rather than within HistGBT. |
 
