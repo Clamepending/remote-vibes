@@ -28,12 +28,12 @@ https://github.com/Clamepending/ogbench-cube-simple
 
 | move | result doc | branch | agent | started |
 |------|-----------|--------|-------|---------|
+| bc-baseline | [results/bc-baseline.md](results/bc-baseline.md) | https://github.com/Clamepending/ogbench-cube-simple/tree/r/bc-baseline | 0 | 2026-04-20 |
 
 ## QUEUE
 
 | move | starting-point | why |
 |------|----------------|-----|
-| bc-baseline | https://github.com/Clamepending/ogbench-cube-simple/tree/main | Anchor the leaderboard. BC is the minimum-viable offline policy; its number sets the noise floor and lets every later move argue "better than imitation". |
 | td3bc | https://github.com/Clamepending/ogbench-cube-simple/tree/main | Classical offline-RL baseline with BC-regularized Q-learning. Strong default on D4RL-style tasks; the obvious next move after BC. |
 | iql | https://github.com/Clamepending/ogbench-cube-simple/tree/main | Implicit Q-Learning — avoids explicit actor-critic adversarial dynamics and tends to be stable on sparse-reward cube tasks. Orthogonal mechanism to TD3+BC, worth running even if TD3+BC wins. |
 | bc-capacity-sweep | https://github.com/Clamepending/ogbench-cube-simple/tree/main | If BC is under-parameterized (256×3 MLP) the "BC floor" is artificially low. One cheap move that bounds how much of our gap is pure-imitation vs. true-offline-RL gain. |
