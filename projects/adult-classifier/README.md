@@ -25,7 +25,7 @@ Noise estimate comes from n=5 seeds per variant; "beats beyond noise" = `variant
 
 | rank | result | branch | commit | score / verdict |
 |------|--------|--------|--------|-----------------|
-| — | — | — | — | *(empty at seed time)* |
+| 1 | [baseline](results/baseline.md) | [r/baseline](https://github.com/Clamepending/adult-classifier/tree/r/baseline) | [2d355fc](https://github.com/Clamepending/adult-classifier/commit/2d355fc) | val_auc = 0.9072 ± 0.00254 (n=5); admission threshold for challengers: AUC > 0.9123 |
 
 ## INSIGHTS
 
@@ -35,7 +35,6 @@ Noise estimate comes from n=5 seeds per variant; "beats beyond noise" = `variant
 
 | move | result doc | branch | agent | started |
 |------|-----------|--------|-------|---------|
-| baseline | [baseline.md](results/baseline.md) | [r/baseline](https://github.com/Clamepending/adult-classifier/tree/r/baseline) | 0 | 2026-04-20 |
 
 ## QUEUE
 
@@ -49,4 +48,5 @@ Noise estimate comes from n=5 seeds per variant; "beats beyond noise" = `variant
 
 | date | event | slug or ref | one-line summary | link |
 |------|-------|-------------|-------------------|------|
+| 2026-04-20 | resolved | baseline | logreg + onehot + scaled numerics: val_auc=0.9072±0.00254 (n=5); noise floor set, admission threshold 0.9123 | [baseline.md](results/baseline.md) |
 | 2026-04-20 | review | seed | project seeded as quantitative protocol pressure-test (Adult binary classification, val_auc ranking, 4 moves queued) | [README](./README.md) |
