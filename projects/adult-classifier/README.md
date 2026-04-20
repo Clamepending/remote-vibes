@@ -37,12 +37,13 @@ Noise estimate comes from n=5 seeds per variant; "beats beyond noise" = `variant
 
 | move | result doc | branch | agent | started |
 |------|-----------|--------|-------|---------|
+| stack-rf-histgbt | [stack-rf-histgbt.md](results/stack-rf-histgbt.md) | [r/stack-rf-histgbt](https://github.com/Clamepending/adult-classifier/tree/r/stack-rf-histgbt) | 0 | 2026-04-20 |
 
 ## QUEUE
 
 | move | starting-point | why |
 |------|----------------|-----|
-| stack-rf-histgbt | [r/model-diversification@b264e2e](https://github.com/Clamepending/adult-classifier/tree/r/model-diversification) | RF and HistGBT differ enough in inductive bias that a stacking ensemble could plausibly gain 0.001–0.003 AUC — likely at the noise boundary, good protocol test. |
+| *(empty — review mode on completion)* | — | — |
 
 ## LOG
 
