@@ -74,4 +74,65 @@ When I added `gbt-fe-ablation` during FE resolve with starting-point `r/feature-
 
 - **Commit-message format** `r/<slug> cycle N: <change> -> <metric>. qual: <one line>.` worked but is long. The convention of putting quantitative metrics in the subject line means you can read `git log` as a protocol summary, which is nice — preserve this.
 - **`Insights touched` optional section** — not used in this quantitative project because no cross-move insight crystallized yet. That's fine; the section is still worth having because the horror + haiku projects demonstrated it does carry weight when insights exist.
-- **Review mode** is what I'm about to enter when the queue empties. Writing this now so I can compare "how the protocol feels during work" to "how it feels in review."
+
+### 7. `falsified` vs `resolved` needs a tie-breaker when the two decisions diverge (from stack-rf-histgbt)
+
+Stacking was the first move where the *hypothesis* and the *leaderboard decision* pointed in different directions:
+
+- Hypothesis: "stacking yields Δ > +0.001 vs rank 1." → Actual Δ = −0.00063. **Falsified.**
+- Leaderboard: "beats rank 2 RF by +0.00989 beyond-noise." → **Admits at rank 2.**
+
+So the LOG event is simultaneously "falsified" (hypothesis) and "resolved → admitted" (leaderboard). The protocol says the event column is one of `{resolved, abandoned, falsified, evicted, pivot, …}` — singular. I tagged it `falsified` because that's the honest science-question tag, but that hides the leaderboard action. A reader scanning the LOG would miss that the leaderboard updated.
+
+**Fix options:**
+- (a) allow a compound event like `falsified+admitted` when both apply.
+- (b) add a rule: "admission always dominates — if the move admits to the leaderboard, tag it `resolved`; mention `falsified` in the one-line summary." Simpler but loses signal.
+- (c) separate the LOG into two columns: `hypothesis_outcome` and `leaderboard_action`. Most informative but adds width.
+
+I'd pick (a): compound events are rare but clean when needed. The one-liner summary remains the final word.
+
+### 8. Review mode on a single-agent run: the "converse with the human" step is a synchronization point, not a turn
+
+The protocol says review mode writes a 4-part message and then "converses" with the human, with QUEUE edits / GOAL revisions gated on "explicit human approval." In an autonomous or overnight run, there's no human in the loop at that moment. Two options:
+
+- (a) treat review mode as a hard stop: write the message, commit, wait for a human turn.
+- (b) let the agent continue in a "self-review" mode where it edits QUEUE / seeds new moves without human approval, as long as it explicitly logs the decision as `self-review` rather than `review`.
+
+I used (a) for this run — stopped at review, did not add new QUEUE rows unilaterally. But that means a nightly run will always stall at the first review mode until someone shows up. For truly unattended operation, (b) needs to be legitimized with guardrails (e.g., "self-review cannot change GOAL, SUCCESS CRITERIA, or RANKING CRITERION without a human; it can add QUEUE rows from pre-declared follow-up candidates in the most recent result doc").
+
+### 9. Success-criteria satisfaction as an implicit termination signal
+
+All four of this project's SUCCESS CRITERIA were met by move 4 (stack-rf-histgbt resolve):
+
+- ✓ pipeline beats baseline by ≥ 2× baseline noise — rank 1 beats baseline by 4.3× (~0.0218 vs 0.00507 margin)
+- ✓ orthogonality/ablation move — gbt-fe-ablation
+- ✓ admission hinging on "beats beyond noise" — multiple boundary cases (FE within-noise rejected; stack-rf-histgbt within-noise of rank 1 but beyond-noise vs rank 2)
+- ✓ no data leakage — `fnlwgt` is logged-but-ignored; the train/val split is stratified and seeded identically
+
+The protocol doesn't currently have an "all success criteria met" termination rule. It should. Without one, review mode's default disposition is "here are three more candidate moves" — biased toward continuing. A criterion-satisfaction check would let review mode say "project terminates" as a first-class outcome.
+
+**Fix:** add to the protocol's review-mode template:
+
+> **0. Success-criteria check** — for each item in SUCCESS CRITERIA, mark met / not-met with one-line evidence. If all are met, the default recommendation is to terminate (with human approval); otherwise the default is to continue with more moves.
+
+## Post-run summary (written after Review mode)
+
+**What the protocol got right on a quantitative project:**
+
+1. **Branch-per-move + per-cycle commits on GitHub** made the project self-auditable. Any claim in the wiki resolves to a SHA-pinned commit URL; the code repo's `git log --all --graph` is a parallel project history.
+2. **The noise-estimate-based admission rule** fired cleanly five times and produced two canonical behaviors: rejecting a within-noise challenger (FE Δ=−0.00007, hparam-tune Δ=+0.00023, stack-vs-rank-1 Δ=−0.00063) and admitting via mid-leaderboard displacement (RF beats baseline but not rank 1; stack-rf-histgbt beats RF but not rank 1).
+3. **Per-move numeric priors + falsifiers** kept hypothesis calibration honest. The stack move was a clean falsification — the prior was wrong in direction, and the doc says so.
+4. **QUEUE cap 5** never bound on this project (the natural width was 1–2 at any time). But it did force me to think "is this a new move or a sub-variant of an existing move?" — e.g., FE-ablation was correctly shaped as one move with parallel sub-configs, not 5 separate moves.
+
+**Where the protocol rubbed:**
+
+- `score / verdict` cell cramped 3 facts into one cell (see #5).
+- Ablation moves don't fit "cycles chain linearly" — bent the rule, documented as #3.
+- Starting-point placeholders pre-SHA were ambiguous (see #2, #6).
+- `falsified` vs `resolved` compound outcomes have no clean tag (see #7).
+- Review mode assumes human-in-the-loop; unattended runs stall (see #8).
+- No termination rule for "all success criteria met" (see #9).
+
+**Net:** the protocol is ~90% ready for quantitative projects. Fixes #1 and #9 are load-bearing (without them, quantitative admissions are on shaky ground and the project never formally ends). The rest are quality-of-life.
+
+- **Review mode** is what I just entered when the queue emptied. The 4-part message structure was the right shape; the "converse with the human" step is the pinch point for autonomous operation (see #8).

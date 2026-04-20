@@ -49,6 +49,7 @@ Noise estimate comes from n=5 seeds per variant; "beats beyond noise" = `variant
 
 | date | event | slug or ref | one-line summary | link |
 |------|-------|-------------|-------------------|------|
+| 2026-04-20 | review | terminal | QUEUE empty after 6 resolved moves; all 4 success criteria met; tree-ensemble ceiling on Adult confirmed saturated (4 approaches within-noise of rank 1); recommend termination or pivot to different error source (neural net / calibrated LR with interactions) | [README](./README.md) |
 | 2026-04-20 | falsified | stack-rf-histgbt | StackingClassifier(RF+HistGBT, LR meta): val_auc=0.9284±0.00203, Δ vs rank 1 = -0.00063 (within-noise, stacking-helps falsified); but +0.0099 vs rank 2 RF beyond-noise — admits rank 2, RF drops to rank 3, baseline to rank 4 | [stack-rf-histgbt.md](results/stack-rf-histgbt.md) |
 | 2026-04-20 | resolved | model-diversification | RandomForest n_estimators=500: val_auc=0.9185±0.00242, -0.0105 vs rank 1, +0.0113 vs baseline — admits rank 2, baseline evicted to rank 3 | [model-diversification.md](results/model-diversification.md) |
 | 2026-04-20 | resolved | gbt-fe-ablation | drop-one ablation 5 feats × 5 seeds: 3/5 drops bit-identical (tree ignored them); max |Δ|=0.00012; confirms FE null | [gbt-fe-ablation.md](results/gbt-fe-ablation.md) |
