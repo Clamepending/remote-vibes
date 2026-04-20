@@ -36,12 +36,12 @@ Noise estimate comes from n=5 seeds per variant; "beats beyond noise" = `variant
 
 | move | result doc | branch | agent | started |
 |------|-----------|--------|-------|---------|
+| feature-engineering | [feature-engineering.md](results/feature-engineering.md) | [r/feature-engineering](https://github.com/Clamepending/adult-classifier/tree/r/feature-engineering) | 0 | 2026-04-20 |
 
 ## QUEUE
 
 | move | starting-point | why |
 |------|----------------|-----|
-| feature-engineering | *(rank 1 at time of move)* | Add interaction features + target encoding on top of the rank-1 pipeline. Likely noise-boundary result — good admission-rule stress test. |
 | gbt-hparam-tune | *(rank 1 at time of move)* | Small random search over GBT hyperparameters. Incremental; may be within noise. |
 
 ## LOG
