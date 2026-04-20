@@ -36,7 +36,6 @@ Noise estimate comes from n=5 seeds per variant; "beats beyond noise" = `variant
 
 | move | result doc | branch | agent | started |
 |------|-----------|--------|-------|---------|
-| gbt-fe-ablation | [gbt-fe-ablation.md](results/gbt-fe-ablation.md) | [r/gbt-fe-ablation](https://github.com/Clamepending/adult-classifier/tree/r/gbt-fe-ablation) | 0 | 2026-04-20 |
 
 ## QUEUE
 
@@ -48,6 +47,7 @@ Noise estimate comes from n=5 seeds per variant; "beats beyond noise" = `variant
 
 | date | event | slug or ref | one-line summary | link |
 |------|-------|-------------|-------------------|------|
+| 2026-04-20 | resolved | gbt-fe-ablation | drop-one ablation 5 feats × 5 seeds: 3/5 drops bit-identical (tree ignored them); max |Δ|=0.00012; confirms FE null | [gbt-fe-ablation.md](results/gbt-fe-ablation.md) |
 | 2026-04-20 | resolved | gbt-hparam-tune | RandomizedSearchCV n_iter=12: val_auc=0.9293±0.00166, Δ vs rank 1 = +0.00023 — within-noise, does not admit | [gbt-hparam-tune.md](results/gbt-hparam-tune.md) |
 | 2026-04-20 | resolved | feature-engineering | 5 hand-crafted features on HistGBT: val_auc=0.9290±0.00171, Δ vs rank 1 = -0.00007 — within-noise, first non-admission | [feature-engineering.md](results/feature-engineering.md) |
 | 2026-04-20 | resolved | gradient-boosted-trees | HistGBT + native cats: val_auc=0.9290±0.00195 (+0.0218, 4.3× margin); admits rank 1 beyond noise | [gradient-boosted-trees.md](results/gradient-boosted-trees.md) |
