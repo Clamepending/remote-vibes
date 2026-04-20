@@ -35,12 +35,12 @@ Noise estimate comes from n=5 seeds per variant; "beats beyond noise" = `variant
 
 | move | result doc | branch | agent | started |
 |------|-----------|--------|-------|---------|
+| gradient-boosted-trees | [gradient-boosted-trees.md](results/gradient-boosted-trees.md) | [r/gradient-boosted-trees](https://github.com/Clamepending/adult-classifier/tree/r/gradient-boosted-trees) | 0 | 2026-04-20 |
 
 ## QUEUE
 
 | move | starting-point | why |
 |------|----------------|-----|
-| gradient-boosted-trees | [main@1f69f2a](https://github.com/Clamepending/adult-classifier/tree/main) | Swap model family to HistGradientBoosting with the same raw features. Biggest expected gain; sets the real ceiling to beat. |
 | feature-engineering | *(rank 1 at time of move)* | Add interaction features + target encoding on top of the rank-1 pipeline. Likely noise-boundary result — good admission-rule stress test. |
 | gbt-hparam-tune | *(rank 1 at time of move)* | Small random search over GBT hyperparameters. Incremental; may be within noise. |
 
