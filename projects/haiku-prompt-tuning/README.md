@@ -24,7 +24,8 @@ https://github.com/Clamepending/haiku-prompt-tuning
 | rank | result | branch | commit | score / verdict |
 |------|--------|--------|--------|-----------------|
 | 1 | [ban-only](results/ban-only.md) | [r/ban-only](https://github.com/Clamepending/haiku-prompt-tuning/tree/r/ban-only) | [187e4b2](https://github.com/Clamepending/haiku-prompt-tuning/commit/187e4b2) | 5/6 "Rust..." opener (new attractor); 5/6 concrete image, 0/6 abstract closer, 0/6 meta-leak — craft better than baseline but strong rust/decay mode collapse |
-| 2 | [baseline](results/baseline.md) | [r/baseline](https://github.com/Clamepending/haiku-prompt-tuning/tree/r/baseline) | [12fd65e](https://github.com/Clamepending/haiku-prompt-tuning/commit/12fd65e) | 5/6 "Silent..." opener + 4/6 abstract closer + 1/6 meta-leak; Zen-pastiche attractor, hit rate ~1/6 |
+| 2 | [positive-only](results/positive-only.md) | [r/positive-only](https://github.com/Clamepending/haiku-prompt-tuning/tree/r/positive-only) | [7a4c0f5](https://github.com/Clamepending/haiku-prompt-tuning/commit/7a4c0f5) | 4/6 mountain/hill opener, 6/6 small-creature+petal formula, 1/6 asterisk meta-leak; classical-pastoral attractor, incomparable to rust |
+| 3 | [baseline](results/baseline.md) | [r/baseline](https://github.com/Clamepending/haiku-prompt-tuning/tree/r/baseline) | [12fd65e](https://github.com/Clamepending/haiku-prompt-tuning/commit/12fd65e) | 5/6 "Silent..." opener + 4/6 abstract closer + 1/6 meta-leak; Zen-pastiche attractor, hit rate ~1/6 |
 
 ## INSIGHTS
 
@@ -39,13 +40,13 @@ https://github.com/Clamepending/haiku-prompt-tuning
 
 | move | starting-point | why |
 |------|----------------|-----|
-| positive-only | [main@42ba2d6](https://github.com/Clamepending/haiku-prompt-tuning/tree/main) | "Concrete image, present tense, no sentiment" positive framing only, no bans. Tests positive-only-collapse. |
 | composite | [main@42ba2d6](https://github.com/Clamepending/haiku-prompt-tuning/tree/main) | Bans + positive + "output only three lines." Tests whether the compose-pattern reproduces. |
 
 ## LOG
 
 | date | event | slug or ref | one-line summary | link |
 |------|-------|-------------|-------------------|------|
+| 2026-04-19 | resolved | positive-only | positive-only routes to classical-pastoral attractor (mountain+insect+petal); third distinct attractor confirmed | [positive-only.md](results/positive-only.md) |
 | 2026-04-19 | resolved | ban-only | ban-only routes to rust/industrial-decay attractor (5/6 "Rust..." opener); banned forms absent; craft > baseline, variety < baseline | [ban-only.md](results/ban-only.md) |
 | 2026-04-19 | resolved | baseline | baseline collapses to Zen-pastiche attractor: 5/6 "Silent..." opener, 4/6 abstract closer, 1/6 meta-leak, hit rate ~1/6 | [baseline.md](results/baseline.md) |
 | 2026-04-19 | review | seed | project seeded to test attractor-naming generalization on haiku; 4 moves queued (baseline / ban-only / positive-only / composite) | [README](./README.md) |
