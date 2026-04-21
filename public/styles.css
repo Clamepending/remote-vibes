@@ -3698,8 +3698,8 @@ input[readonly][data-folder-picker-target] {
   display: grid;
   grid-template-rows: minmax(0, 1fr);
   min-height: 0;
-  padding: 0 12px 12px;
-  border-radius: 8px;
+  padding: 0;
+  border-radius: 8px 8px 0 0;
   background:
     radial-gradient(circle at 50% 50%, rgba(246, 246, 248, 0.035), transparent 38%),
     rgba(8, 11, 13, 0.84);

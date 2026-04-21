@@ -991,10 +991,12 @@ test("knowledge base graph keeps dense replay inside the viewport", async (t) =>
           clippedCircles: -1,
           clippedCirclesAgainstFrame: -1,
           clippedVisibleLabelsAgainstFrame: -1,
+          graphFrameCornerRadii: {},
           minCircleFrameGutter: -1,
           minVisibleLabelFrameGutter: -1,
           scale: 0,
           svgExtendsPastFrame: true,
+          svgFrameGaps: {},
           transform: "",
         };
       }
@@ -1044,6 +1046,7 @@ test("knowledge base graph keeps dense replay inside the viewport", async (t) =>
       }).length;
       const clippedCirclesAgainstFrame = circles.filter((circle) => isOutsideBox(circle, frameBox)).length;
       const clippedVisibleLabelsAgainstFrame = visibleLabels.filter((label) => isOutsideBox(label, frameBox)).length;
+      const frameStyle = window.getComputedStyle(frame);
 
       const transform = viewport?.getAttribute("transform") || "";
       const scaleMatch = transform.match(/scale\(([0-9.]+)\)/);
@@ -1052,6 +1055,10 @@ test("knowledge base graph keeps dense replay inside the viewport", async (t) =>
         clippedCircles,
         clippedCirclesAgainstFrame,
         clippedVisibleLabelsAgainstFrame,
+        graphFrameCornerRadii: {
+          bottomLeft: frameStyle.borderBottomLeftRadius,
+          bottomRight: frameStyle.borderBottomRightRadius,
+        },
         minCircleFrameGutter: getMinimumFrameGutter(circles),
         minVisibleLabelFrameGutter: getMinimumFrameGutter(visibleLabels),
         scale: Number.parseFloat(scaleMatch?.[1] || "0"),
@@ -1060,6 +1067,12 @@ test("knowledge base graph keeps dense replay inside the viewport", async (t) =>
           svgBox.right > frameBox.right + 1 ||
           svgBox.top < frameBox.top - 1 ||
           svgBox.bottom > frameBox.bottom + 1,
+        svgFrameGaps: {
+          bottom: frameBox.bottom - svgBox.bottom,
+          left: svgBox.left - frameBox.left,
+          right: frameBox.right - svgBox.right,
+          top: svgBox.top - frameBox.top,
+        },
         transform,
       };
     });
@@ -1099,6 +1112,11 @@ test("knowledge base graph keeps dense replay inside the viewport", async (t) =>
 
   const assertGraphHasFrameGutter = (graphState, phase) => {
     assert.equal(graphState.svgExtendsPastFrame, false, `${phase}: graph SVG should fit inside the outer frame`);
+    for (const [side, gap] of Object.entries(graphState.svgFrameGaps || {})) {
+      assert.ok(Math.abs(gap) <= 1, `${phase}: graph SVG should be flush to ${side} frame edge, saw ${gap}px`);
+    }
+    assert.equal(graphState.graphFrameCornerRadii?.bottomLeft, "0px", `${phase}: lower graph edge should meet legend`);
+    assert.equal(graphState.graphFrameCornerRadii?.bottomRight, "0px", `${phase}: lower graph edge should meet legend`);
     assert.equal(graphState.clippedCircles, 0, `${phase}: circles should fit inside the SVG viewport`);
     assert.equal(
       graphState.clippedCirclesAgainstFrame,
