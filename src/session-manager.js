@@ -1,4 +1,4 @@
-import { execFile } from "node:child_process";
+import { execFile, execFileSync } from "node:child_process";
 import os from "node:os";
 import { readFileSync, readdirSync, realpathSync, rmSync, statSync } from "node:fs";
 import { open, readFile, readdir } from "node:fs/promises";
@@ -30,6 +30,32 @@ const CODEX_SESSION_INDEX_LIMIT = 100;
 const CODEX_SESSION_META_READ_LIMIT = 8192;
 const CLAUDE_SUBAGENT_TRANSCRIPT_READ_LIMIT = 1_000_000;
 const CLAUDE_SKIP_PERMISSIONS_ARG = "--dangerously-skip-permissions";
+const PERSISTENT_TERMINAL_PROVIDER_IDS = new Set(["claude", "codex", "gemini", "opencode", "shell"]);
+const IDLE_TERMINAL_COMMANDS = new Set(["bash", "csh", "dash", "fish", "ksh", "login", "sh", "tcsh", "zsh"]);
+const TMUX_SESSION_ENV_KEYS = new Set([
+  "CODEX_HOME",
+  "HOME",
+  "LANG",
+  "LC_ALL",
+  "LOGNAME",
+  "MKL_NUM_THREADS",
+  "NUMEXPR_NUM_THREADS",
+  "OMP_NUM_THREADS",
+  "OPENBLAS_NUM_THREADS",
+  "PATH",
+  "RAYON_NUM_THREADS",
+  "SHELL",
+  "USER",
+  "VECLIB_MAXIMUM_THREADS",
+]);
+const RESOURCE_THREAD_ENV_KEYS = [
+  "OMP_NUM_THREADS",
+  "OPENBLAS_NUM_THREADS",
+  "MKL_NUM_THREADS",
+  "NUMEXPR_NUM_THREADS",
+  "VECLIB_MAXIMUM_THREADS",
+  "RAYON_NUM_THREADS",
+];
 const SWARM_GRAPH_MAX_RELATED_SESSIONS = 16;
 const SWARM_GRAPH_MAX_PATHS = 18;
 const SWARM_GRAPH_GIT_TIMEOUT_MS = 2_500;
@@ -47,6 +73,49 @@ function getShellArgs(shellPath) {
   }
 
   return ["-i", "-l"];
+}
+
+function isDisabledFlag(value) {
+  return /^(?:0|false|no|off)$/i.test(String(value ?? "").trim());
+}
+
+function getTmuxCommand(env = process.env) {
+  return env?.REMOTE_VIBES_TMUX_COMMAND || "tmux";
+}
+
+function getTmuxSessionName(session) {
+  const safeId = String(session?.id || randomUUID()).replace(/[^A-Za-z0-9_-]/g, "-");
+  return `remote-vibes-${safeId}`.slice(0, 80);
+}
+
+function getTmuxEnvironmentArgs(env = process.env) {
+  const args = [];
+  const entries = Object.entries(env || {}).filter(([key, value]) => (
+    value != null &&
+    value !== "" &&
+    /^[A-Za-z_][A-Za-z0-9_]*$/.test(key) &&
+    (TMUX_SESSION_ENV_KEYS.has(key) || key.startsWith("REMOTE_VIBES_"))
+  ));
+
+  for (const [key, value] of entries) {
+    args.push("-e", `${key}=${String(value)}`);
+  }
+
+  return args;
+}
+
+function removeTerminalProviderState(providerState) {
+  if (!providerState || typeof providerState !== "object") {
+    return null;
+  }
+
+  const {
+    terminalBackend: _terminalBackend,
+    tmuxSessionName: _tmuxSessionName,
+    ...rest
+  } = providerState;
+
+  return Object.keys(rest).length > 0 ? rest : null;
 }
 
 function trimBuffer(buffer) {
@@ -229,6 +298,40 @@ function getManagedProviderLaunchCommand(provider) {
   return provider.launchCommand || provider.command || null;
 }
 
+function getDefaultAgentThreadLimit(env) {
+  if (isDisabledFlag(env?.REMOTE_VIBES_AGENT_THREAD_LIMIT)) {
+    return null;
+  }
+
+  const configuredLimit = Number(env?.REMOTE_VIBES_AGENT_THREAD_LIMIT);
+  if (Number.isInteger(configuredLimit) && configuredLimit > 0) {
+    return String(configuredLimit);
+  }
+
+  const totalMemoryGiB = os.totalmem() / (1024 ** 3);
+  if (totalMemoryGiB > 6) {
+    return null;
+  }
+
+  const availableCores = typeof os.availableParallelism === "function"
+    ? os.availableParallelism()
+    : os.cpus().length;
+  return String(Math.max(1, Math.min(2, availableCores || 1)));
+}
+
+function buildResourceLimitEnv(env) {
+  const threadLimit = getDefaultAgentThreadLimit(env);
+  if (!threadLimit) {
+    return {};
+  }
+
+  return Object.fromEntries(
+    RESOURCE_THREAD_ENV_KEYS
+      .filter((key) => env?.[key] == null || env[key] === "")
+      .map((key) => [key, threadLimit]),
+  );
+}
+
 export function buildSessionEnv(
   sessionId,
   providerId,
@@ -254,6 +357,7 @@ export function buildSessionEnv(
 
   return {
     ...colorCapableEnv,
+    ...buildResourceLimitEnv(colorCapableEnv),
     CLICOLOR: "1",
     COLORTERM: "truecolor",
     LANG: "en_US.UTF-8",
@@ -783,7 +887,7 @@ async function collectGitSwarmInfo(cwd) {
       worktrees: worktrees.map((worktree) => ({
         ...worktree,
         name: path.basename(worktree.path) || worktree.path,
-        current: normalizedCwd === worktree.path || normalizedCwd.startsWith(`${worktree.path}${path.sep}`),
+        current: isPathInside(worktree.path, normalizedCwd),
         headShort: String(worktree.head || "").slice(0, 7),
       })),
     };
@@ -801,9 +905,19 @@ async function collectGitSwarmInfo(cwd) {
 }
 
 function isPathInside(parentPath, childPath) {
-  const normalizedParent = path.resolve(parentPath);
-  const normalizedChild = path.resolve(childPath);
+  const normalizedParent = normalizeComparablePath(parentPath);
+  const normalizedChild = normalizeComparablePath(childPath);
   return normalizedChild === normalizedParent || normalizedChild.startsWith(`${normalizedParent}${path.sep}`);
+}
+
+function normalizeComparablePath(value) {
+  const resolvedPath = path.resolve(value);
+
+  try {
+    return realpathSync.native ? realpathSync.native(resolvedPath) : realpathSync(resolvedPath);
+  } catch {
+    return resolvedPath;
+  }
 }
 
 function getWorktreeForCwd(gitInfo, cwd) {
@@ -1156,6 +1270,7 @@ export class SessionManager {
     agentRunStore = null,
     runIdleTimeoutMs = Number(process.env.REMOTE_VIBES_RUN_IDLE_MS || 15_000),
     sessionActivityIdleMs = SESSION_ACTIVITY_IDLE_MS,
+    persistentTerminals = true,
     env = process.env,
     userHomeDir = env?.HOME || os.homedir(),
     setTimeoutFn = setTimeout,
@@ -1167,6 +1282,8 @@ export class SessionManager {
     this.stateDir = stateDir;
     this.wikiRootPath = wikiRootPath;
     this.env = env && typeof env === "object" ? { ...env } : { ...process.env };
+    this.persistentTerminals = Boolean(persistentTerminals);
+    this.tmuxAvailable = null;
     this.userHomeDir = getProviderHomeDir(userHomeDir);
     this.sessionActivityIdleMs = Math.max(500, Number(sessionActivityIdleMs) || SESSION_ACTIVITY_IDLE_MS);
     this.setTimeoutFn = setTimeoutFn;
@@ -1246,24 +1363,38 @@ export class SessionManager {
       return null;
     }
 
-    const git = await collectGitSwarmInfo(focusSession.cwd);
-    const focusCwd = resolveCwd(focusSession.cwd, this.cwd);
-    const focusForkParentId = focusSession.providerState?.forkedFromSessionId || null;
+    return this.buildSwarmGraph(focusSession.cwd, { focusSession });
+  }
+
+  async getProjectSwarmGraph(cwd) {
+    this.consumePendingRenameRequests();
+    return this.buildSwarmGraph(cwd);
+  }
+
+  async buildSwarmGraph(cwd, { focusSession = null } = {}) {
+    const git = await collectGitSwarmInfo(cwd);
+    const focusCwd = resolveCwd(cwd, this.cwd);
+    const focusForkParentId = focusSession?.providerState?.forkedFromSessionId || null;
     const relatedSessions = Array.from(this.sessions.values())
       .filter((session) => {
         const sessionCwd = resolveCwd(session.cwd, this.cwd);
-        return (
-          session.id === focusSession.id
-          || sessionCwd === focusCwd
-          || session.providerState?.forkedFromSessionId === focusSession.id
-          || session.id === focusForkParentId
-        );
+
+        if (focusSession) {
+          return (
+            session.id === focusSession.id
+            || sessionCwd === focusCwd
+            || session.providerState?.forkedFromSessionId === focusSession.id
+            || session.id === focusForkParentId
+          );
+        }
+
+        return sessionCwd === focusCwd || (git.worktrees || []).some((worktree) => isPathInside(worktree.path, sessionCwd));
       })
       .sort((left, right) => {
-        if (left.id === focusSession.id) {
+        if (focusSession && left.id === focusSession.id) {
           return -1;
         }
-        if (right.id === focusSession.id) {
+        if (focusSession && right.id === focusSession.id) {
           return 1;
         }
         return String(right.createdAt || "").localeCompare(String(left.createdAt || ""));
@@ -1323,7 +1454,7 @@ export class SessionManager {
         meta: [session.providerLabel, path.basename(session.cwd || "")].filter(Boolean).join(" · "),
         path: session.cwd,
         status: session.activityStatus || session.status,
-        focus: session.id === focusSession.id,
+        focus: Boolean(focusSession && session.id === focusSession.id),
       });
 
       const forkParentInGraph = forkParentId && serializedSessions.some((entry) => entry.id === forkParentId);
@@ -1368,8 +1499,8 @@ export class SessionManager {
 
     return {
       generatedAt: new Date().toISOString(),
-      sessionId: focusSession.id,
-      cwd: focusSession.cwd,
+      sessionId: focusSession?.id || null,
+      cwd: focusCwd,
       git,
       sessions: serializedSessions,
       nodes,
@@ -1380,6 +1511,190 @@ export class SessionManager {
   getSession(sessionId) {
     this.consumePendingRenameRequests();
     return this.sessions.get(sessionId) ?? null;
+  }
+
+  buildSessionEnvironment(session, providerId = session.providerId) {
+    return buildSessionEnv(
+      session.id,
+      providerId,
+      this.providers,
+      this.cwd,
+      this.stateDir,
+      this.env,
+      this.wikiRootPath,
+    );
+  }
+
+  isTmuxAvailable(env) {
+    if (this.tmuxAvailable !== null) {
+      return this.tmuxAvailable;
+    }
+
+    const command = getTmuxCommand(env);
+    try {
+      execFileSync(command, ["-V"], {
+        env,
+        stdio: "ignore",
+        timeout: 1_500,
+      });
+      this.tmuxAvailable = true;
+    } catch {
+      this.tmuxAvailable = false;
+    }
+
+    return this.tmuxAvailable;
+  }
+
+  tmuxSessionExists(sessionName, env) {
+    if (!sessionName || !this.isTmuxAvailable(env)) {
+      return false;
+    }
+
+    try {
+      execFileSync(getTmuxCommand(env), ["has-session", "-t", sessionName], {
+        env,
+        stdio: "ignore",
+        timeout: 1_500,
+      });
+      return true;
+    } catch {
+      return false;
+    }
+  }
+
+  tmuxSessionHasForegroundProvider(sessionName, env) {
+    if (!sessionName || !this.isTmuxAvailable(env)) {
+      return false;
+    }
+
+    try {
+      const output = execFileSync(getTmuxCommand(env), [
+        "list-panes",
+        "-t",
+        sessionName,
+        "-F",
+        "#{pane_current_command}",
+      ], {
+        encoding: "utf8",
+        env,
+        timeout: 1_500,
+      });
+      const commands = output
+        .split("\n")
+        .map((entry) => entry.trim())
+        .filter(Boolean);
+
+      return commands.some((command) => !IDLE_TERMINAL_COMMANDS.has(path.basename(command)));
+    } catch {
+      return false;
+    }
+  }
+
+  killTmuxSessionByName(sessionName, env) {
+    if (!sessionName || !this.isTmuxAvailable(env)) {
+      return;
+    }
+
+    try {
+      execFileSync(getTmuxCommand(env), ["kill-session", "-t", sessionName], {
+        env,
+        stdio: "ignore",
+        timeout: 1_500,
+      });
+    } catch {
+      // The tmux session may already be gone; cleanup should remain best effort.
+    }
+  }
+
+  detachTmuxSessionClients(sessionName, env) {
+    if (!sessionName || !this.isTmuxAvailable(env)) {
+      return;
+    }
+
+    try {
+      execFileSync(getTmuxCommand(env), ["detach-client", "-s", sessionName], {
+        env,
+        stdio: "ignore",
+        timeout: 1_500,
+      });
+    } catch {
+      // The tmux client may already be detached. Preserving the session matters
+      // more than forcing cleanup during server shutdown.
+    }
+  }
+
+  shouldUsePersistentTerminal(provider, env) {
+    if (
+      !this.persistentTerminals ||
+      isDisabledFlag(this.env.REMOTE_VIBES_PERSISTENT_TERMINALS) ||
+      isDisabledFlag(this.env.REMOTE_VIBES_PERSISTENT_TERMINAL) ||
+      !PERSISTENT_TERMINAL_PROVIDER_IDS.has(provider.id)
+    ) {
+      return false;
+    }
+
+    if (provider.id !== "shell" && !provider.launchCommand) {
+      return false;
+    }
+
+    return this.isTmuxAvailable(env);
+  }
+
+  getTerminalLaunch(session, provider, env, sessionCwd) {
+    if (!this.shouldUsePersistentTerminal(provider, env)) {
+      return {
+        args: getShellArgs(session.shell),
+        attachedExisting: false,
+        backend: null,
+        command: session.shell,
+        tmuxSessionName: null,
+      };
+    }
+
+    const tmuxSessionName = session.providerState?.tmuxSessionName || getTmuxSessionName(session);
+    const attachedExisting = this.tmuxSessionExists(tmuxSessionName, env);
+    const providerRunning = attachedExisting
+      ? this.tmuxSessionHasForegroundProvider(tmuxSessionName, env)
+      : false;
+
+    const tmuxEnvironmentArgs = attachedExisting ? [] : getTmuxEnvironmentArgs(env);
+    return {
+      args: attachedExisting
+        ? ["attach-session", "-t", tmuxSessionName]
+        : [
+            "new-session",
+            ...tmuxEnvironmentArgs,
+            "-s",
+            tmuxSessionName,
+            "-c",
+            sessionCwd,
+            ";",
+            "set-option",
+            "-t",
+            tmuxSessionName,
+            "status",
+            "off",
+          ],
+      attachedExisting,
+      backend: "tmux",
+      command: getTmuxCommand(env),
+      providerRunning,
+      tmuxSessionName,
+    };
+  }
+
+  killPersistentTerminal(session) {
+    const tmuxSessionName = session?.providerState?.tmuxSessionName || session?.tmuxSessionName;
+    if (!tmuxSessionName) {
+      return;
+    }
+
+    const env = this.buildSessionEnvironment(session);
+    if (!this.isTmuxAvailable(env)) {
+      return;
+    }
+
+    this.killTmuxSessionByName(tmuxSessionName, env);
   }
 
   listAgentProcessRoots() {
@@ -1549,18 +1864,19 @@ export class SessionManager {
       return null;
     }
 
+    const sourceProviderState = removeTerminalProviderState(sourceSession.providerState);
     const sourceProviderSessionId =
-      sourceSession.providerState?.sessionId ||
+      sourceProviderState?.sessionId ||
       (sourceSession.providerId === "claude" ? sourceSession.id : null);
 
     if (!sourceProviderSessionId) {
-      return sourceSession.providerState
-        ? { ...sourceSession.providerState, forkedFromSessionId: sourceSession.id }
+      return sourceProviderState
+        ? { ...sourceProviderState, forkedFromSessionId: sourceSession.id }
         : null;
     }
 
     return {
-      ...(sourceSession.providerState || {}),
+      ...(sourceProviderState || {}),
       sessionId: sourceProviderSessionId,
       forkedFromSessionId: sourceSession.id,
     };
@@ -1585,6 +1901,8 @@ export class SessionManager {
     this.clearSessionActivityTimer(session);
     session.clients.clear();
     this.queueAgentRunTracking(this.agentRunTracker?.handleSessionDelete(session));
+
+    this.killPersistentTerminal(session);
 
     if (session.status !== "exited" && session.pty) {
       session.pty.kill();
@@ -1683,6 +2001,10 @@ export class SessionManager {
 
       for (const session of this.sessions.values()) {
         if (session.status !== "exited" && session.pty) {
+          if (session.providerState?.terminalBackend === "tmux") {
+            this.detachTmuxSessionClients(session.providerState.tmuxSessionName, session.env || this.env);
+          }
+
           session.pty.kill();
         }
 
@@ -2447,18 +2769,12 @@ export class SessionManager {
   startSession(session, provider, { restored = false } = {}) {
     const sessionCwd = resolveCwd(session.cwd, this.cwd);
     session.cwd = sessionCwd;
+    const sessionEnv = this.buildSessionEnvironment(session, provider.id);
+    const terminalLaunch = this.getTerminalLaunch(session, provider, sessionEnv, sessionCwd);
 
-    const ptyProcess = pty.spawn(session.shell, getShellArgs(session.shell), {
+    const ptyProcess = pty.spawn(terminalLaunch.command, terminalLaunch.args, {
       cwd: sessionCwd,
-      env: buildSessionEnv(
-        session.id,
-        provider.id,
-        this.providers,
-        this.cwd,
-        this.stateDir,
-        this.env,
-        this.wikiRootPath,
-      ),
+      env: sessionEnv,
       name: "xterm-256color",
       cols: session.cols,
       rows: session.rows,
@@ -2471,6 +2787,12 @@ export class SessionManager {
     session.restoreOnStartup = true;
     session.activityInputBuffer = "";
     session.updatedAt = new Date().toISOString();
+    if (terminalLaunch.backend === "tmux") {
+      this.updateProviderState(session, {
+        terminalBackend: "tmux",
+        tmuxSessionName: terminalLaunch.tmuxSessionName,
+      });
+    }
     const launchContextPromise = this.prepareProviderLaunch(session, provider, { restored });
 
     const bannerLines = restored
@@ -2478,23 +2800,37 @@ export class SessionManager {
           "",
           `\u001b[1;36m[remote-vibes]\u001b[0m session restored after restart`,
           `\u001b[1;36m[remote-vibes]\u001b[0m cwd: ${sessionCwd}`,
+          terminalLaunch.backend === "tmux"
+            ? `\u001b[1;36m[remote-vibes]\u001b[0m persistent terminal: ${terminalLaunch.attachedExisting ? "reattached" : "created"} ${terminalLaunch.tmuxSessionName}`
+            : null,
           provider.launchCommand
-            ? `\u001b[1;36m[remote-vibes]\u001b[0m relaunching: ${provider.launchCommand}`
+            ? terminalLaunch.attachedExisting
+              ? terminalLaunch.providerRunning
+                ? `\u001b[1;36m[remote-vibes]\u001b[0m provider is still running inside the persistent terminal`
+                : `\u001b[1;36m[remote-vibes]\u001b[0m persistent terminal reattached without relaunching, so shell jobs and monitors survive`
+              : `\u001b[1;36m[remote-vibes]\u001b[0m relaunching: ${provider.launchCommand}`
             : `\u001b[1;36m[remote-vibes]\u001b[0m vanilla shell restored`,
           "",
-        ]
+        ].filter(Boolean)
       : [
           `\u001b[1;36m[remote-vibes]\u001b[0m ${provider.label} session ready`,
           `\u001b[1;36m[remote-vibes]\u001b[0m cwd: ${sessionCwd}`,
+          terminalLaunch.backend === "tmux"
+            ? `\u001b[1;36m[remote-vibes]\u001b[0m persistent terminal: ${terminalLaunch.attachedExisting ? "reattached" : "created"} ${terminalLaunch.tmuxSessionName}`
+            : null,
           '\u001b[1;36m[remote-vibes]\u001b[0m browser skill: export PWCLI="${PWCLI:-rv-playwright}"; "$PWCLI" open http://127.0.0.1:4173',
           '\u001b[1;36m[remote-vibes]\u001b[0m inspect UI: "$PWCLI" snapshot; use fresh refs with click/fill/type/press',
           '\u001b[1;36m[remote-vibes]\u001b[0m save artifacts: "$PWCLI" screenshot --filename output/playwright/current.png',
           '\u001b[1;36m[remote-vibes]\u001b[0m visual fallback: rv-browser describe-file results/chart.png --prompt "What should improve?"',
           provider.launchCommand
-            ? `\u001b[1;36m[remote-vibes]\u001b[0m launching: ${provider.launchCommand}`
+            ? terminalLaunch.attachedExisting
+              ? terminalLaunch.providerRunning
+                ? `\u001b[1;36m[remote-vibes]\u001b[0m provider is already running inside the persistent terminal`
+                : `\u001b[1;36m[remote-vibes]\u001b[0m persistent terminal reattached without launching, so shell jobs and monitors survive`
+              : `\u001b[1;36m[remote-vibes]\u001b[0m launching: ${provider.launchCommand}`
             : `\u001b[1;36m[remote-vibes]\u001b[0m vanilla shell active`,
           "",
-        ];
+        ].filter(Boolean);
 
     this.pushOutput(session, bannerLines.join("\r\n"));
 
@@ -2517,6 +2853,31 @@ export class SessionManager {
         return;
       }
 
+      const tmuxSessionName = session.providerState?.tmuxSessionName;
+      if (session.providerState?.terminalBackend === "tmux" && this.tmuxSessionExists(tmuxSessionName, sessionEnv)) {
+        session.status = "running";
+        session.exitCode = null;
+        session.exitSignal = null;
+        session.restoreOnStartup = true;
+        session.updatedAt = new Date().toISOString();
+        this.pushOutput(
+          session,
+          `\r\n\u001b[1;36m[remote-vibes]\u001b[0m persistent terminal detached; reattaching ${tmuxSessionName}\r\n`,
+        );
+        this.scheduleSessionMetaBroadcast(session, { immediate: true });
+        this.schedulePersist({ immediate: true });
+        setTimeout(() => {
+          if (session.status === "running" && !session.pty && this.sessions.get(session.id) === session) {
+            try {
+              this.startSession(session, provider, { restored: true });
+            } catch (error) {
+              this.markSessionRestoreFailure(session, `could not reattach persistent terminal: ${error.message}`);
+            }
+          }
+        }, STARTUP_DELAY_MS);
+        return;
+      }
+
       session.status = "exited";
       session.exitCode = exitCode;
       session.exitSignal = signal ?? null;
@@ -2533,7 +2894,7 @@ export class SessionManager {
       this.schedulePersist({ immediate: true });
     });
 
-    if (provider.launchCommand) {
+    if (provider.launchCommand && !terminalLaunch.attachedExisting) {
       setTimeout(() => {
         if (session.status === "running" && session.pty === ptyProcess) {
           void this.launchProvider(session, provider, ptyProcess, launchContextPromise);
@@ -2636,7 +2997,9 @@ export class SessionManager {
         this.persistTimer = null;
       }
 
-      void this.persistNow();
+      void this.persistNow().catch((error) => {
+        console.warn("[remote-vibes] failed to persist sessions", error);
+      });
       return;
     }
 
@@ -2646,7 +3009,9 @@ export class SessionManager {
 
     this.persistTimer = setTimeout(() => {
       this.persistTimer = null;
-      void this.persistNow();
+      void this.persistNow().catch((error) => {
+        console.warn("[remote-vibes] failed to persist sessions", error);
+      });
     }, SESSION_PERSIST_THROTTLE_MS);
   }
 
@@ -2655,9 +3020,15 @@ export class SessionManager {
       return;
     }
 
-    const sessions = Array.from(this.sessions.values())
-      .map((session) => this.serializePersistedSession(session))
-      .sort((left, right) => right.createdAt.localeCompare(left.createdAt));
+    let sessions;
+    try {
+      sessions = Array.from(this.sessions.values())
+        .map((session) => this.serializePersistedSession(session))
+        .sort((left, right) => right.createdAt.localeCompare(left.createdAt));
+    } catch (error) {
+      console.warn("[remote-vibes] failed to serialize sessions", error);
+      return;
+    }
 
     this.persistPromise = this.persistPromise
       .catch(() => {})

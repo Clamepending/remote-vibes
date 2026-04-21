@@ -14,13 +14,13 @@ const RANGE_MS = {
 const PROVIDER_USAGE_WINDOWS = [
   {
     id: "5h",
-    label: "5 hour local usage",
+    label: "Last 5h observed activity",
     windowMs: 5 * HOUR_MS,
     targetRunMs: 5 * HOUR_MS,
   },
   {
     id: "7d",
-    label: "Weekly local usage",
+    label: "Last 7d observed activity",
     windowMs: 7 * DAY_MS,
     targetRunMs: 40 * HOUR_MS,
   },
@@ -359,7 +359,7 @@ export class AgentRunStore {
           label: provider.label,
           available: provider.available !== false,
           quotaAvailable: false,
-          quotaReason: "Provider quota is not exposed by the installed CLI; bars show Remote Vibes local activity.",
+          quotaReason: "Not account quota; Remote Vibes only sees local session activity.",
           sessionCount: sessionsForProvider.length,
           runningSessionCount: sessionsForProvider.filter((session) => session.status === "running").length,
           workingSessionCount: sessionsForProvider.filter((session) => session.activityStatus === "working").length,
@@ -370,9 +370,9 @@ export class AgentRunStore {
     return {
       checkedAt: new Date(now).toISOString(),
       source: "remote-vibes-local",
-      sourceLabel: "Remote Vibes local activity",
+      sourceLabel: "Local activity only",
       quotaAvailable: false,
-      quotaReason: "Claude Code and Codex do not expose remaining plan usage through their local CLIs.",
+      quotaReason: "This is not Anthropic/OpenAI account usage. Claude Code and Codex do not expose remaining plan quota through their local CLIs, so these cards only summarize work Remote Vibes observed locally.",
       providers: entries,
     };
   }

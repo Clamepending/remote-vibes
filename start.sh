@@ -577,13 +577,12 @@ migrate_legacy_runtime_dir
 migrate_home_checkout_to_app
 ensure_remote_vibes_settings_repo
 ensure_mac_brain_wiki
-stop_existing_server
 
 if workspace_cwd="$(probe_running_remote_vibes_workspace)"; then
   if [ "$workspace_cwd" = "$ROOT_DIR" ]; then
     running_state_dir="$(probe_running_remote_vibes_state_dir || true)"
 
-    if [ "$running_state_dir" = "$RUNTIME_DIR" ]; then
+    if [ "$running_state_dir" = "$RUNTIME_DIR" ] && [ "${REMOTE_VIBES_FORCE_RESTART:-0}" != "1" ]; then
       log "Remote Vibes is already running for this workspace at $(healthcheck_url)"
       exit 0
     fi
@@ -599,6 +598,8 @@ if workspace_cwd="$(probe_running_remote_vibes_workspace)"; then
     fail_for_foreign_workspace "$workspace_cwd"
   fi
 fi
+
+stop_existing_server
 
 ensure_dependencies_installed
 node scripts/build-client.mjs

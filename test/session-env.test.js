@@ -71,3 +71,26 @@ test("buildSessionEnv strips inherited NO_COLOR and enables terminal colors", ()
   assert.equal(env.COLORTERM, "truecolor");
   assert.equal(env.TERM, "xterm-256color");
 });
+
+test("buildSessionEnv can cap native math thread pools for low-power hosts", () => {
+  const stateDir = path.join(rootDir, ".remote-vibes");
+  const env = buildSessionEnv(
+    "session-threads",
+    "shell",
+    [],
+    rootDir,
+    stateDir,
+    {
+      PATH: "/usr/bin:/bin",
+      REMOTE_VIBES_AGENT_THREAD_LIMIT: "2",
+    },
+    path.join(rootDir, "mac-brain"),
+  );
+
+  assert.equal(env.OMP_NUM_THREADS, "2");
+  assert.equal(env.OPENBLAS_NUM_THREADS, "2");
+  assert.equal(env.MKL_NUM_THREADS, "2");
+  assert.equal(env.NUMEXPR_NUM_THREADS, "2");
+  assert.equal(env.VECLIB_MAXIMUM_THREADS, "2");
+  assert.equal(env.RAYON_NUM_THREADS, "2");
+});

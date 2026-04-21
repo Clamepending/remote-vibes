@@ -37,6 +37,7 @@ async function startApp(options = {}) {
     cwd,
     stateDir,
     persistSessions: false,
+    persistentTerminals: false,
     sleepPreventionFactory: (settings) =>
       new SleepPreventionService({
         enabled: settings.preventSleepEnabled,
@@ -524,6 +525,66 @@ test("knowledge base api indexes markdown notes and linked note content", async 
     assert.equal(invalidNoteResponse.status, 400);
     assert.match((await invalidNoteResponse.json()).error, /escapes the knowledge base root/i);
   } finally {
+    await app.close();
+    await rm(workspaceDir, { recursive: true, force: true });
+  }
+});
+
+test("knowledge base markdown viewer renders GitHub-style tables", async (t) => {
+  const executablePath = await resolveBrowserExecutablePath({ env: process.env });
+  if (!executablePath) {
+    t.skip("No local Chromium/Chrome executable is available for the markdown table smoke.");
+    return;
+  }
+
+  const workspaceDir = await createTempWorkspace("remote-vibes-markdown-table-");
+  const wikiDir = path.join(workspaceDir, ".remote-vibes", "wiki");
+  await mkdir(wikiDir, { recursive: true });
+  await writeFile(path.join(wikiDir, "index.md"), "# Wiki Index\n\nSee [[leaderboard]].\n", "utf8");
+  await writeFile(
+    path.join(wikiDir, "leaderboard.md"),
+    [
+      "# Experiment Scores",
+      "",
+      "LEADERBOARD",
+      "| rank | result | branch | commit | score |",
+      "|------|--------|--------|--------|------:|",
+      "| 1 | **iql** | [branch](https://github.com/Clamepending/ogbench-cube/tree/r/iql) | `abc123` | 0.42 |",
+      "| 2 | bc | main | `def456` | 0.31 |",
+      "",
+    ].join("\n"),
+    "utf8",
+  );
+
+  const { app, baseUrl } = await startApp({ cwd: workspaceDir });
+  let browser = null;
+
+  try {
+    browser = await chromium.launch({ executablePath, headless: true });
+    const page = await browser.newPage();
+    await page.goto(`${baseUrl}/?view=knowledge-base&note=leaderboard.md`, { waitUntil: "domcontentloaded" });
+    await page.waitForSelector(".knowledge-base-table", { timeout: 10_000 });
+
+    const rendered = await page.evaluate(() => {
+      const table = document.querySelector(".knowledge-base-table");
+      return {
+        headers: Array.from(table.querySelectorAll("thead th"), (cell) => cell.textContent.trim()),
+        rows: Array.from(table.querySelectorAll("tbody tr"), (row) =>
+          Array.from(row.querySelectorAll("td"), (cell) => cell.textContent.trim()),
+        ),
+        linkHref: table.querySelector("tbody a")?.getAttribute("href") || "",
+        codeText: table.querySelector("tbody code")?.textContent || "",
+        paragraphText: document.querySelector(".knowledge-base-markdown")?.textContent || "",
+      };
+    });
+
+    assert.deepEqual(rendered.headers, ["rank", "result", "branch", "commit", "score"]);
+    assert.deepEqual(rendered.rows[0], ["1", "iql", "branch", "abc123", "0.42"]);
+    assert.equal(rendered.linkHref, "https://github.com/Clamepending/ogbench-cube/tree/r/iql");
+    assert.equal(rendered.codeText, "abc123");
+    assert.doesNotMatch(rendered.paragraphText, /\|------\|/);
+  } finally {
+    await browser?.close().catch(() => {});
     await app.close();
     await rm(workspaceDir, { recursive: true, force: true });
   }
@@ -1117,6 +1178,36 @@ test("mobile terminal keeps history scroll anchored while the keyboard viewport 
       null,
       { timeout: 10_000 },
     );
+
+    const wheelScroll = await page.evaluate(() => {
+      const viewport = document.querySelector("#terminal-mount .xterm-viewport");
+      const style = window.getComputedStyle(viewport);
+
+      viewport.scrollTop = viewport.scrollHeight;
+      const before = viewport.scrollTop;
+      const event = new WheelEvent("wheel", {
+        bubbles: true,
+        cancelable: true,
+        deltaY: -240,
+      });
+      const dispatched = viewport.dispatchEvent(event);
+
+      return {
+        after: viewport.scrollTop,
+        before,
+        defaultPrevented: event.defaultPrevented,
+        dispatched,
+        overflowY: style.overflowY,
+      };
+    });
+
+    assert.match(wheelScroll.overflowY, /auto|scroll|overlay/);
+    assert.ok(
+      wheelScroll.after < wheelScroll.before,
+      `terminal wheel did not scroll history from ${wheelScroll.before} to ${wheelScroll.after}`,
+    );
+    assert.equal(wheelScroll.defaultPrevented, true);
+    assert.equal(wheelScroll.dispatched, false);
 
     const initial = await page.evaluate(() => {
       const viewport = document.querySelector("#terminal-mount .xterm-viewport");

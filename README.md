@@ -2,26 +2,10 @@
 
 ## Quickstart
 
-Minimal browser terminal to vibe code on your server/cluster via your phone/laptop on the go.
+Minimal browser terminal to vibe code on your server/cluster/Mac/Raspberry Pi via your phone/laptop on the go.
 
-1. Install [Tailscale](https://tailscale.com/download) on your server/cluster and phone/laptop.
-2. Sign into the same account on both.
-3. Run this on the server/cluster:
-
-```bash
-bash <(curl -fsSL https://gist.githubusercontent.com/Clamepending/b40db6fc8775b843e6fc06a2b5857604/raw/install.sh)
-```
-
-4. Open the Tailscale URL printed in the terminal on your phone/laptop.
-5. When a new GitHub Release is available, Remote Vibes shows an update-and-restart button in the app. You can also run the install command again to update.
-
-## Raspberry Pi Quickstart
-
-Run this on the Raspberry Pi. It installs `curl` if needed, then the installer handles git, build tools, Node.js 22.x, Remote Vibes, and startup. Coding agents like Claude, Codex, Gemini, or OpenCode are still installed separately.
-
-```bash
-bash -c 'command -v curl >/dev/null || (sudo apt-get update && sudo apt-get install -y curl ca-certificates); bash <(curl -fsSL https://gist.githubusercontent.com/Clamepending/b40db6fc8775b843e6fc06a2b5857604/raw/install.sh)'
-```
+1. On the machine you want to control, run `curl -fsSL https://gist.githubusercontent.com/Clamepending/b40db6fc8775b843e6fc06a2b5857604/raw/install.sh | bash`
+2. Install the [Tailscale app](https://tailscale.com/download) on your laptop/phone, sign into the same account, then open the Tailscale URL or scan the QR printed by step 1.
 
 ## Claude Code Install
 
@@ -36,11 +20,13 @@ npm uninstall -g @anthropic-ai/claude-code 2>/dev/null || true
 
 ## Details...
 
-Use that gist URL directly. The repo `raw.githubusercontent.com/.../install.sh` link can get rate-limited.
+Use that gist URL directly. The repo `raw.githubusercontent.com/.../install.sh` link can get rate-limited. If a very minimal machine does not have `curl` yet, install `curl` first and rerun the quickstart command.
+
+The installer handles Tailscale, git, build tools, Node.js 22.x, Remote Vibes, and startup on supported macOS/Linux/Raspberry Pi systems. Coding agents like Claude, Codex, Gemini, or OpenCode are still installed separately.
 
 By default, the installer uses the latest GitHub Release when one exists, then falls back to `main` while the project is still bootstrapping. Set `REMOTE_VIBES_UPDATE_CHANNEL=branch` or `REMOTE_VIBES_REF=<branch-or-tag>` before running the installer if you intentionally want a dev checkout.
 
-The install command now launches Remote Vibes as a background server, so it keeps running even after the SSH session or terminal closes. The app checkout lives under `~/.remote-vibes/app`, and settings, logs, session history, and the managed pid live under `~/.remote-vibes/`.
+The install command now launches Remote Vibes as a background server, so it keeps running even after the SSH session or terminal closes. The app checkout lives under `~/.remote-vibes/app`, and settings, logs, session history, and the managed pid live under `~/.remote-vibes/`. On Linux installs, `tmux` is installed too; coding-agent terminals use it when available so Remote Vibes restarts can reattach to live agent work instead of merely replaying a transcript.
 
 New sessions can be started by choosing a folder from the browser, then picking the agent provider. The knowledge base folder is configurable in the sidebar settings; by default, Remote Vibes keeps local git backups of the wiki every 10 minutes. To back that wiki up off-machine, create a private Git repo, paste its SSH or credential-helper remote URL into the sidebar's private remote backup field, enable remote push, and Remote Vibes will push wiki backup commits there on each backup run.
 
@@ -123,4 +109,4 @@ tips:
 </p>
 
 
-Sessions are saved, so restarts don't erase your sessions. The file explorer lets you see image files by tapping on them (useful for graphs).
+Sessions are saved, and coding-agent sessions use persistent `tmux` terminals when available, so restarts are much less likely to interrupt in-progress agent work. The file explorer lets you see image files by tapping on them (useful for graphs).

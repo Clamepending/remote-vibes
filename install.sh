@@ -13,6 +13,14 @@ REPO_URL="${REMOTE_VIBES_REPO_URL:-}"
 UPDATE_CHANNEL="${REMOTE_VIBES_UPDATE_CHANNEL:-release}"
 SKIP_RUN="${REMOTE_VIBES_SKIP_RUN:-0}"
 INSTALL_SYSTEM_DEPS="${REMOTE_VIBES_INSTALL_SYSTEM_DEPS:-1}"
+INSTALL_TAILSCALE="${REMOTE_VIBES_INSTALL_TAILSCALE:-1}"
+INSTALL_SERVICE="${REMOTE_VIBES_INSTALL_SERVICE:-1}"
+TAILSCALE_UP="${REMOTE_VIBES_TAILSCALE_UP:-1}"
+TAILSCALE_COMMAND="${REMOTE_VIBES_TAILSCALE_COMMAND:-tailscale}"
+TAILSCALE_AUTHKEY="${REMOTE_VIBES_TAILSCALE_AUTHKEY:-}"
+TAILSCALE_USE_SUDO="${REMOTE_VIBES_TAILSCALE_USE_SUDO:-1}"
+SERVICE_NAME="${REMOTE_VIBES_SERVICE_NAME:-remote-vibes}"
+SYSTEMD_SERVICE_DIR="${REMOTE_VIBES_SYSTEMD_SERVICE_DIR:-/etc/systemd/system}"
 NODE_MAJOR="${REMOTE_VIBES_NODE_MAJOR:-22}"
 MIN_NODE_MAJOR=20
 APT_UPDATED=0
@@ -29,6 +37,14 @@ fail() {
 
 has_command() {
   command -v "$1" >/dev/null 2>&1
+}
+
+is_macos() {
+  [ "$(uname -s)" = "Darwin" ]
+}
+
+is_linux() {
+  [ "$(uname -s)" = "Linux" ]
 }
 
 is_root() {
@@ -61,6 +77,20 @@ run_as_root_preserving_env() {
   fi
 
   fail "Missing sudo. Re-run as root, or install sudo first."
+}
+
+try_run_as_root() {
+  if is_root; then
+    "$@"
+    return
+  fi
+
+  if has_command sudo; then
+    sudo "$@"
+    return
+  fi
+
+  return 1
 }
 
 can_install_with_apt() {
@@ -100,16 +130,76 @@ node_is_supported() {
   [ -n "$major" ] && [ "$major" -ge "$MIN_NODE_MAJOR" ]
 }
 
+latest_macos_node_pkg_url() {
+  local filename
+  filename="$(
+    curl -fsSL "https://nodejs.org/dist/latest-v${NODE_MAJOR}.x/SHASUMS256.txt" |
+      awk '/ node-v.*\.pkg$/ { print $2; exit }'
+  )"
+
+  if [ -z "$filename" ]; then
+    return 1
+  fi
+
+  printf 'https://nodejs.org/dist/latest-v%s.x/%s\n' "$NODE_MAJOR" "$filename"
+}
+
+install_macos_node() {
+  local pkg_url temp_dir pkg_path
+
+  if ! has_command curl; then
+    fail "Missing curl. Install curl first, then rerun this installer."
+  fi
+
+  if ! has_command installer; then
+    fail "Missing macOS installer command. Install Node.js ${NODE_MAJOR}.x from https://nodejs.org/, then rerun this installer."
+  fi
+
+  pkg_url="$(latest_macos_node_pkg_url)"
+  if [ -z "$pkg_url" ]; then
+    fail "Could not find the latest Node.js ${NODE_MAJOR}.x macOS package. Install Node.js from https://nodejs.org/, then rerun this installer."
+  fi
+
+  temp_dir="$(mktemp -d)"
+  pkg_path="$temp_dir/node.pkg"
+  log "Installing Node.js ${NODE_MAJOR}.x for macOS from $pkg_url"
+
+  if ! curl -fsSL "$pkg_url" -o "$pkg_path"; then
+    rm -rf "$temp_dir"
+    fail "Failed to download Node.js macOS package."
+  fi
+
+  if ! run_as_root installer -pkg "$pkg_path" -target /; then
+    rm -rf "$temp_dir"
+    fail "Failed to install Node.js macOS package."
+  fi
+
+  rm -rf "$temp_dir"
+
+  case ":$PATH:" in
+    *:/usr/local/bin:*) ;;
+    *)
+      PATH="/usr/local/bin:$PATH"
+      export PATH
+      ;;
+  esac
+}
+
 ensure_base_packages() {
   if ! can_install_with_apt; then
     return
   fi
 
   log "Installing base packages"
-  apt_install ca-certificates curl git bash python3 make g++ lsof
+  apt_install ca-certificates curl git bash python3 make g++ lsof tmux
 }
 
 install_nodesource_node() {
+  if is_macos; then
+    install_macos_node
+    return
+  fi
+
   if ! can_install_with_apt; then
     fail "Missing Node.js >=${MIN_NODE_MAJOR} and npm. Install Node.js ${NODE_MAJOR}.x or rerun on a Debian/Raspberry Pi OS system with apt-get."
   fi
@@ -148,6 +238,260 @@ ensure_node() {
   fi
 
   log "Using Node $(node -v) and npm $(npm -v)"
+}
+
+tailscale_app_cli() {
+  local candidate
+
+  for candidate in \
+    "/Applications/Tailscale.app/Contents/MacOS/Tailscale" \
+    "$HOME/Applications/Tailscale.app/Contents/MacOS/Tailscale"; do
+    if [ -x "$candidate" ]; then
+      printf '%s\n' "$candidate"
+      return 0
+    fi
+  done
+
+  return 1
+}
+
+refresh_tailscale_command() {
+  local resolved
+
+  if [ -x "$TAILSCALE_COMMAND" ]; then
+    return 0
+  fi
+
+  if resolved="$(command -v "$TAILSCALE_COMMAND" 2>/dev/null)" && [ -n "$resolved" ]; then
+    TAILSCALE_COMMAND="$resolved"
+    return 0
+  fi
+
+  if resolved="$(command -v tailscale 2>/dev/null)" && [ -n "$resolved" ]; then
+    TAILSCALE_COMMAND="$resolved"
+    return 0
+  fi
+
+  if resolved="$(tailscale_app_cli 2>/dev/null)" && [ -n "$resolved" ]; then
+    TAILSCALE_COMMAND="$resolved"
+    return 0
+  fi
+
+  return 1
+}
+
+latest_macos_tailscale_pkg_url() {
+  curl -fsSL https://pkgs.tailscale.com/stable/ |
+    sed -n 's/.*href="\([^"]*Tailscale-[^"]*-macos\.pkg\)".*/\1/p' |
+    head -n 1 |
+    while IFS= read -r href; do
+      case "$href" in
+        http*) printf '%s\n' "$href" ;;
+        /*) printf 'https://pkgs.tailscale.com%s\n' "$href" ;;
+        *) printf 'https://pkgs.tailscale.com/stable/%s\n' "$href" ;;
+      esac
+    done
+}
+
+install_tailscale_linux() {
+  if ! has_command curl; then
+    fail "Missing curl. Install curl, or rerun the README quickstart command that bootstraps curl first."
+  fi
+
+  log "Installing Tailscale for Linux"
+  if is_root; then
+    curl -fsSL https://tailscale.com/install.sh | sh
+  elif has_command sudo; then
+    curl -fsSL https://tailscale.com/install.sh | sudo sh
+  else
+    fail "Missing sudo. Re-run as root, or install Tailscale manually first."
+  fi
+}
+
+install_tailscale_macos() {
+  local pkg_url temp_dir pkg_path
+
+  if ! has_command curl; then
+    fail "Missing curl. Install curl first, then rerun the installer."
+  fi
+
+  if ! has_command installer; then
+    fail "Missing macOS installer command. Install Tailscale from https://tailscale.com/download/mac, then rerun this installer."
+  fi
+
+  pkg_url="$(latest_macos_tailscale_pkg_url)"
+  if [ -z "$pkg_url" ]; then
+    fail "Could not find the latest macOS Tailscale package. Install Tailscale from https://tailscale.com/download/mac, then rerun this installer."
+  fi
+
+  temp_dir="$(mktemp -d)"
+  pkg_path="$temp_dir/tailscale.pkg"
+  log "Installing Tailscale for macOS from $pkg_url"
+
+  if ! curl -fsSL "$pkg_url" -o "$pkg_path"; then
+    rm -rf "$temp_dir"
+    fail "Failed to download Tailscale macOS package."
+  fi
+
+  if ! run_as_root installer -pkg "$pkg_path" -target /; then
+    rm -rf "$temp_dir"
+    fail "Failed to install Tailscale macOS package."
+  fi
+
+  rm -rf "$temp_dir"
+
+  if has_command open; then
+    open -a Tailscale >/dev/null 2>&1 || true
+  fi
+}
+
+install_tailscale() {
+  if is_linux; then
+    install_tailscale_linux
+    return
+  fi
+
+  if is_macos; then
+    install_tailscale_macos
+    return
+  fi
+
+  fail "Automatic Tailscale install is supported on Linux and macOS only. Install Tailscale manually, then rerun this installer."
+}
+
+run_tailscale_up() {
+  if is_linux && [ "$TAILSCALE_USE_SUDO" != "0" ]; then
+    if [ -n "$TAILSCALE_AUTHKEY" ]; then
+      run_as_root "$TAILSCALE_COMMAND" up --auth-key "$TAILSCALE_AUTHKEY"
+    else
+      run_as_root "$TAILSCALE_COMMAND" up
+    fi
+    return
+  fi
+
+  if [ -n "$TAILSCALE_AUTHKEY" ]; then
+    "$TAILSCALE_COMMAND" up --auth-key "$TAILSCALE_AUTHKEY"
+  else
+    "$TAILSCALE_COMMAND" up
+  fi
+}
+
+ensure_tailscale() {
+  local ip_address
+
+  if [ "$INSTALL_TAILSCALE" = "0" ]; then
+    log "Skipping Tailscale setup because REMOTE_VIBES_INSTALL_TAILSCALE=0"
+    return
+  fi
+
+  if ! refresh_tailscale_command; then
+    install_tailscale
+    if ! refresh_tailscale_command; then
+      fail "Tailscale installed, but the tailscale command was not found. Open a new shell and rerun this installer."
+    fi
+  fi
+
+  log "Using Tailscale command: $TAILSCALE_COMMAND"
+
+  if "$TAILSCALE_COMMAND" ip -4 >/dev/null 2>&1; then
+    ip_address="$("$TAILSCALE_COMMAND" ip -4 2>/dev/null | head -n 1 || true)"
+    log "Tailscale is already connected${ip_address:+ at $ip_address}"
+    return
+  fi
+
+  if [ "$TAILSCALE_UP" = "0" ]; then
+    log "Skipping Tailscale login because REMOTE_VIBES_TAILSCALE_UP=0"
+    return
+  fi
+
+  log "Starting Tailscale. Follow the login URL printed below if prompted."
+  run_tailscale_up
+
+  if ! "$TAILSCALE_COMMAND" ip -4 >/dev/null 2>&1; then
+    fail "Tailscale is installed but not connected yet. Finish Tailscale sign-in, then rerun this installer."
+  fi
+
+  ip_address="$("$TAILSCALE_COMMAND" ip -4 2>/dev/null | head -n 1 || true)"
+  log "Tailscale connected${ip_address:+ at $ip_address}"
+}
+
+systemd_is_running() {
+  [ -d /run/systemd/system ] || [ "$(ps -p 1 -o comm= 2>/dev/null | head -n 1)" = "systemd" ]
+}
+
+install_systemd_service() {
+  local service_user state_dir wiki_dir port service_file temp_file
+
+  if [ "$INSTALL_SERVICE" = "0" ]; then
+    log "Skipping service install because REMOTE_VIBES_INSTALL_SERVICE=0"
+    return
+  fi
+
+  if ! is_linux; then
+    return
+  fi
+
+  if ! has_command systemctl || ! systemd_is_running; then
+    log "Skipping service install because systemd is not available"
+    return
+  fi
+
+  if ! is_root && ! has_command sudo; then
+    log "Skipping service install because sudo is not available"
+    return
+  fi
+
+  service_user="$(id -un)"
+  state_dir="${REMOTE_VIBES_STATE_DIR:-$HOME/.remote-vibes}"
+  wiki_dir="${REMOTE_VIBES_WIKI_DIR:-$HOME/mac-brain}"
+  port="${REMOTE_VIBES_PORT:-4123}"
+  service_file="$SYSTEMD_SERVICE_DIR/${SERVICE_NAME}.service"
+  temp_file="$(mktemp)"
+
+  cat >"$temp_file" <<EOF
+[Unit]
+Description=Remote Vibes
+After=network-online.target tailscaled.service
+Wants=network-online.target
+
+[Service]
+Type=forking
+User=$service_user
+WorkingDirectory=$INSTALL_DIR
+Environment=REMOTE_VIBES_STATE_DIR=$state_dir
+Environment=REMOTE_VIBES_WIKI_DIR=$wiki_dir
+Environment=REMOTE_VIBES_PORT=$port
+ExecStart=$INSTALL_DIR/start.sh
+PIDFile=$state_dir/server.pid
+Restart=always
+RestartSec=5
+KillMode=process
+TimeoutStartSec=60
+
+[Install]
+WantedBy=multi-user.target
+EOF
+
+  log "Installing systemd service $SERVICE_NAME.service"
+  if ! try_run_as_root install -m 0644 "$temp_file" "$service_file"; then
+    rm -f "$temp_file"
+    log "Could not install systemd service; Remote Vibes is still running for this session"
+    return
+  fi
+
+  rm -f "$temp_file"
+
+  if ! try_run_as_root systemctl daemon-reload; then
+    log "Could not reload systemd; Remote Vibes is still running for this session"
+    return
+  fi
+
+  if ! try_run_as_root systemctl enable --now "${SERVICE_NAME}.service"; then
+    log "Could not enable systemd service; Remote Vibes is still running for this session"
+    return
+  fi
+
+  log "Enabled ${SERVICE_NAME}.service for reboot and crash recovery"
 }
 
 resolve_repo_url() {
@@ -289,6 +633,7 @@ update_repo() {
 main() {
   ensure_base_packages
   ensure_node
+  ensure_tailscale
   ensure_command git
   ensure_command bash
 
@@ -317,7 +662,8 @@ main() {
     return
   fi
 
-  exec "$INSTALL_DIR/start.sh"
+  "$INSTALL_DIR/start.sh"
+  install_systemd_service
 }
 
 main "$@"

@@ -3,7 +3,7 @@ import { execFile } from "node:child_process";
 import os from "node:os";
 import path from "node:path";
 import test from "node:test";
-import { chmod, mkdir, mkdtemp, rm, symlink, writeFile } from "node:fs/promises";
+import { chmod, mkdir, mkdtemp, readFile, realpath, rm, symlink, writeFile } from "node:fs/promises";
 import { promisify } from "node:util";
 import { SessionManager } from "../src/session-manager.js";
 
@@ -52,15 +52,17 @@ const fakeAgentProviders = [
   },
 ];
 
-async function createManager({ cwd } = {}) {
+async function createManager({ cwd, ...managerOptions } = {}) {
   const workspaceDir = cwd || await mkdtemp(path.join(os.tmpdir(), "remote-vibes-session-manager-"));
   const userHomeDir = await mkdtemp(path.join(os.tmpdir(), "remote-vibes-session-home-"));
   const manager = new SessionManager({
     cwd: workspaceDir,
     providers: fakeAgentProviders,
+    persistentTerminals: false,
     persistSessions: false,
     stateDir: path.join(workspaceDir, ".remote-vibes"),
     userHomeDir,
+    ...managerOptions,
   });
 
   await manager.initialize();
@@ -380,6 +382,411 @@ test("Claude sessions use a fixed session id and resume it after restart", async
   }
 });
 
+test("agent sessions reattach to persistent tmux terminals after manager restart", async () => {
+  const workspaceDir = await mkdtemp(path.join(os.tmpdir(), "remote-vibes-tmux-workspace-"));
+  const userHomeDir = await mkdtemp(path.join(os.tmpdir(), "remote-vibes-tmux-home-"));
+  const stateDir = path.join(workspaceDir, ".remote-vibes");
+  const fakeTmuxPath = path.join(userHomeDir, "fake-tmux");
+  const tmuxStatePath = path.join(userHomeDir, "tmux-session-alive");
+  const tmuxProviderPath = path.join(userHomeDir, "tmux-provider-alive");
+  const tmuxLogPath = path.join(userHomeDir, "tmux.log");
+  let firstManager = null;
+  let secondManager = null;
+
+  const waitForLog = async (predicate) => {
+    for (let attempt = 0; attempt < 30; attempt += 1) {
+      let contents = "";
+      try {
+        contents = await readFile(tmuxLogPath, "utf8");
+      } catch {
+        contents = "";
+      }
+
+      if (predicate(contents)) {
+        return contents;
+      }
+
+      await new Promise((resolve) => setTimeout(resolve, 50));
+    }
+
+    return readFile(tmuxLogPath, "utf8");
+  };
+
+  await createExecutableScript(
+    fakeTmuxPath,
+    `#!/bin/sh
+STATE_FILE=${shellQuote(tmuxStatePath)}
+PROVIDER_FILE=${shellQuote(tmuxProviderPath)}
+LOG_FILE=${shellQuote(tmuxLogPath)}
+printf 'args:%s\\n' "$*" >> "$LOG_FILE"
+case "$1" in
+  -V)
+    printf 'tmux 3.4\\n'
+    exit 0
+    ;;
+  has-session)
+    [ -f "$STATE_FILE" ]
+    exit $?
+    ;;
+  list-panes)
+    if [ -f "$PROVIDER_FILE" ]; then
+      printf 'claude\\n'
+    else
+      printf 'zsh\\n'
+    fi
+    exit 0
+    ;;
+  new-session)
+    : > "$STATE_FILE"
+    while IFS= read -r line; do
+      : > "$PROVIDER_FILE"
+      printf 'stdin:%s\\n' "$line" >> "$LOG_FILE"
+    done
+    ;;
+  attach-session)
+    while IFS= read -r line; do
+      : > "$PROVIDER_FILE"
+      printf 'attach-stdin:%s\\n' "$line" >> "$LOG_FILE"
+    done
+    ;;
+  detach-client)
+    exit 0
+    ;;
+  kill-session)
+    rm -f "$STATE_FILE"
+    rm -f "$PROVIDER_FILE"
+    exit 0
+    ;;
+esac
+exit 0
+`,
+  );
+
+  const managerOptions = {
+    cwd: workspaceDir,
+    env: {
+      ...process.env,
+      REMOTE_VIBES_TMUX_COMMAND: fakeTmuxPath,
+    },
+    persistentTerminals: true,
+    persistSessions: true,
+    providers: fakeAgentProviders,
+    stateDir,
+    userHomeDir,
+  };
+
+  try {
+    firstManager = new SessionManager(managerOptions);
+    await firstManager.initialize();
+    firstManager.createSession({
+      providerId: "claude",
+      cwd: workspaceDir,
+      name: "Persistent Claude",
+    });
+
+    const firstLog = await waitForLog((contents) =>
+      contents.includes("args:new-session") && contents.includes("stdin:"),
+    );
+    assert.match(firstLog, /args:new-session/);
+    assert.match(firstLog, /stdin:.*--session-id/);
+
+    await firstManager.shutdown({ preserveSessions: true });
+    const shutdownLog = await waitForLog((contents) => contents.includes("args:detach-client"));
+    assert.match(shutdownLog, /args:detach-client -s remote-vibes-/);
+
+    secondManager = new SessionManager(managerOptions);
+    await secondManager.initialize();
+
+    const secondLog = await waitForLog((contents) => contents.includes("args:attach-session"));
+    assert.match(secondLog, /args:attach-session/);
+    assert.equal((secondLog.match(/^stdin:/gm) || []).length, 1, "restored attach must not relaunch provider");
+    assert.equal((secondLog.match(/^attach-stdin:/gm) || []).length, 0, "restored attach should not write a new command");
+  } finally {
+    await secondManager?.shutdown({ preserveSessions: false });
+    await firstManager?.shutdown({ preserveSessions: false });
+    await rm(workspaceDir, { recursive: true, force: true });
+    await rm(userHomeDir, { recursive: true, force: true });
+  }
+});
+
+test("shell sessions reattach to persistent tmux terminals after manager restart", async () => {
+  const workspaceDir = await mkdtemp(path.join(os.tmpdir(), "remote-vibes-shell-tmux-workspace-"));
+  const userHomeDir = await mkdtemp(path.join(os.tmpdir(), "remote-vibes-shell-tmux-home-"));
+  const stateDir = path.join(workspaceDir, ".remote-vibes");
+  const fakeTmuxPath = path.join(userHomeDir, "fake-tmux");
+  const tmuxStatePath = path.join(userHomeDir, "tmux-session-alive");
+  const tmuxLogPath = path.join(userHomeDir, "tmux.log");
+  let firstManager = null;
+  let secondManager = null;
+
+  const waitForLog = async (predicate) => {
+    for (let attempt = 0; attempt < 30; attempt += 1) {
+      let contents = "";
+      try {
+        contents = await readFile(tmuxLogPath, "utf8");
+      } catch {
+        contents = "";
+      }
+
+      if (predicate(contents)) {
+        return contents;
+      }
+
+      await new Promise((resolve) => setTimeout(resolve, 50));
+    }
+
+    return readFile(tmuxLogPath, "utf8");
+  };
+
+  await createExecutableScript(
+    fakeTmuxPath,
+    `#!/bin/sh
+STATE_FILE=${shellQuote(tmuxStatePath)}
+LOG_FILE=${shellQuote(tmuxLogPath)}
+printf 'args:%s\\n' "$*" >> "$LOG_FILE"
+case "$1" in
+  -V)
+    printf 'tmux 3.4\\n'
+    exit 0
+    ;;
+  has-session)
+    [ -f "$STATE_FILE" ]
+    exit $?
+    ;;
+  list-panes)
+    printf 'zsh\\n'
+    exit 0
+    ;;
+  new-session)
+    : > "$STATE_FILE"
+    while IFS= read -r line; do
+      printf 'stdin:%s\\n' "$line" >> "$LOG_FILE"
+    done
+    ;;
+  attach-session)
+    while IFS= read -r line; do
+      printf 'attach-stdin:%s\\n' "$line" >> "$LOG_FILE"
+    done
+    ;;
+  detach-client)
+    exit 0
+    ;;
+  kill-session)
+    rm -f "$STATE_FILE"
+    exit 0
+    ;;
+esac
+exit 0
+`,
+  );
+
+  const managerOptions = {
+    cwd: workspaceDir,
+    env: {
+      ...process.env,
+      REMOTE_VIBES_TMUX_COMMAND: fakeTmuxPath,
+    },
+    persistentTerminals: true,
+    persistSessions: true,
+    providers: fakeAgentProviders,
+    stateDir,
+    userHomeDir,
+  };
+
+  try {
+    firstManager = new SessionManager(managerOptions);
+    await firstManager.initialize();
+    firstManager.createSession({
+      providerId: "shell",
+      cwd: workspaceDir,
+      name: "Persistent shell",
+    });
+
+    const firstLog = await waitForLog((contents) => contents.includes("args:new-session"));
+    assert.match(firstLog, /args:new-session/);
+    assert.doesNotMatch(firstLog, /stdin:/);
+
+    await firstManager.shutdown({ preserveSessions: true });
+    const shutdownLog = await waitForLog((contents) => contents.includes("args:detach-client"));
+    assert.match(shutdownLog, /args:detach-client -s remote-vibes-/);
+
+    secondManager = new SessionManager(managerOptions);
+    await secondManager.initialize();
+
+    const secondLog = await waitForLog((contents) => contents.includes("args:attach-session"));
+    assert.match(secondLog, /args:attach-session/);
+    assert.doesNotMatch(secondLog, /attach-stdin:/);
+  } finally {
+    await secondManager?.shutdown({ preserveSessions: false });
+    await firstManager?.shutdown({ preserveSessions: false });
+    await rm(workspaceDir, { recursive: true, force: true });
+    await rm(userHomeDir, { recursive: true, force: true });
+  }
+});
+
+test("agent sessions preserve idle persistent tmux terminals after manager restart", async () => {
+  const workspaceDir = await mkdtemp(path.join(os.tmpdir(), "remote-vibes-idle-tmux-workspace-"));
+  const userHomeDir = await mkdtemp(path.join(os.tmpdir(), "remote-vibes-idle-tmux-home-"));
+  const stateDir = path.join(workspaceDir, ".remote-vibes");
+  const fakeTmuxPath = path.join(userHomeDir, "fake-tmux");
+  const tmuxStatePath = path.join(userHomeDir, "tmux-session-alive");
+  const tmuxProviderPath = path.join(userHomeDir, "tmux-provider-alive");
+  const tmuxLogPath = path.join(userHomeDir, "tmux.log");
+  const tmuxSessionName = "remote-vibes-idle-claude";
+  let manager = null;
+
+  const waitForLog = async (predicate) => {
+    for (let attempt = 0; attempt < 30; attempt += 1) {
+      let contents = "";
+      try {
+        contents = await readFile(tmuxLogPath, "utf8");
+      } catch {
+        contents = "";
+      }
+
+      if (predicate(contents)) {
+        return contents;
+      }
+
+      await new Promise((resolve) => setTimeout(resolve, 50));
+    }
+
+    return readFile(tmuxLogPath, "utf8");
+  };
+
+  await createExecutableScript(
+    fakeTmuxPath,
+    `#!/bin/sh
+STATE_FILE=${shellQuote(tmuxStatePath)}
+PROVIDER_FILE=${shellQuote(tmuxProviderPath)}
+LOG_FILE=${shellQuote(tmuxLogPath)}
+printf 'args:%s\\n' "$*" >> "$LOG_FILE"
+case "$1" in
+  -V)
+    printf 'tmux 3.4\\n'
+    exit 0
+    ;;
+  has-session)
+    [ -f "$STATE_FILE" ]
+    exit $?
+    ;;
+  list-panes)
+    if [ -f "$PROVIDER_FILE" ]; then
+      printf 'claude\\n'
+    else
+      printf 'zsh\\n'
+    fi
+    exit 0
+    ;;
+  attach-session)
+    while IFS= read -r line; do
+      : > "$PROVIDER_FILE"
+      printf 'attach-stdin:%s\\n' "$line" >> "$LOG_FILE"
+    done
+    ;;
+  new-session)
+    : > "$STATE_FILE"
+    while IFS= read -r line; do
+      : > "$PROVIDER_FILE"
+      printf 'stdin:%s\\n' "$line" >> "$LOG_FILE"
+    done
+    ;;
+  kill-session)
+    rm -f "$STATE_FILE" "$PROVIDER_FILE"
+    exit 0
+    ;;
+esac
+exit 0
+`,
+  );
+
+  try {
+    await mkdir(stateDir, { recursive: true });
+    await writeFile(
+      path.join(stateDir, "sessions.json"),
+      `${JSON.stringify({
+        version: 1,
+        savedAt: new Date().toISOString(),
+        sessions: [
+          {
+            id: "22222222-3333-4444-8555-666666666666",
+            providerId: "claude",
+            providerLabel: "Claude Code",
+            name: "Idle Claude",
+            cwd: workspaceDir,
+            shell: "/bin/zsh",
+            createdAt: new Date().toISOString(),
+            updatedAt: new Date().toISOString(),
+            status: "running",
+            restoreOnStartup: true,
+            providerState: {
+              sessionId: "claude-session-to-resume",
+              terminalBackend: "tmux",
+              tmuxSessionName,
+            },
+          },
+        ],
+      })}\n`,
+      "utf8",
+    );
+    await writeFile(tmuxStatePath, "alive\n", "utf8");
+
+    manager = new SessionManager({
+      cwd: workspaceDir,
+      env: {
+        ...process.env,
+        REMOTE_VIBES_TMUX_COMMAND: fakeTmuxPath,
+      },
+      persistentTerminals: true,
+      persistSessions: true,
+      providers: fakeAgentProviders,
+      stateDir,
+      userHomeDir,
+    });
+    await manager.initialize();
+
+    const logContents = await waitForLog((contents) =>
+      contents.includes("args:list-panes") &&
+      contents.includes("args:attach-session"),
+    );
+    assert.match(logContents, /args:list-panes/);
+    assert.match(logContents, /args:attach-session -t remote-vibes-idle-claude/);
+    assert.doesNotMatch(logContents, /args:kill-session/);
+    assert.doesNotMatch(logContents, /args:new-session/);
+    assert.doesNotMatch(logContents, /stdin:.*--resume' 'claude-session-to-resume'/);
+  } finally {
+    await manager?.shutdown({ preserveSessions: false });
+    await rm(workspaceDir, { recursive: true, force: true });
+    await rm(userHomeDir, { recursive: true, force: true });
+  }
+});
+
+test("forked sessions reuse provider memory without inheriting the parent's tmux terminal", async () => {
+  const { manager, workspaceDir, userHomeDir } = await createManager();
+
+  try {
+    const sourceSession = manager.buildSessionRecord({
+      id: "11111111-2222-4333-8444-forktmux0001",
+      providerId: "claude",
+      providerLabel: "Claude Code",
+      name: "Parent",
+      cwd: workspaceDir,
+      providerState: {
+        sessionId: "claude-session-123",
+        terminalBackend: "tmux",
+        tmuxSessionName: "remote-vibes-parent",
+      },
+    });
+
+    assert.deepEqual(manager.getForkProviderState(sourceSession), {
+      sessionId: "claude-session-123",
+      forkedFromSessionId: sourceSession.id,
+    });
+  } finally {
+    await cleanupManager(manager, workspaceDir, userHomeDir);
+  }
+});
+
 test("Claude sessions expose completed subagents from Claude sidechain transcripts", async () => {
   const { manager, workspaceDir, userHomeDir } = await createManager();
 
@@ -507,6 +914,49 @@ test("session swarm graph includes git worktree, fork, subagent, and touched pat
         (edge) => edge.type === "fork" && edge.from === `session:${parentSession.id}` && edge.to === `session:${forkSession.id}`,
       ),
     );
+  } finally {
+    await cleanupManager(manager, workspaceDir, userHomeDir);
+  }
+});
+
+test("project swarm graph is keyed by repository folder instead of a focus session", async () => {
+  const { manager, workspaceDir, userHomeDir } = await createManager();
+
+  try {
+    await execFileAsync("git", ["init", "-b", "main"], { cwd: workspaceDir });
+    await execFileAsync("git", ["config", "user.name", "Remote Vibes Test"], { cwd: workspaceDir });
+    await execFileAsync("git", ["config", "user.email", "test@example.com"], { cwd: workspaceDir });
+    await writeFile(path.join(workspaceDir, "README.md"), "# Swarm\n", "utf8");
+    await execFileAsync("git", ["add", "README.md"], { cwd: workspaceDir });
+    await execFileAsync("git", ["commit", "-m", "Initial"], { cwd: workspaceDir });
+
+    const nestedProjectDir = path.join(workspaceDir, "packages", "app");
+    await mkdir(nestedProjectDir, { recursive: true });
+
+    const rootSession = manager.buildSessionRecord({
+      id: "44444444-5555-4666-8777-888888888888",
+      providerId: "claude",
+      providerLabel: "Claude Code",
+      name: "Root repo work",
+      cwd: workspaceDir,
+    });
+    const nestedSession = manager.buildSessionRecord({
+      id: "55555555-6666-4777-8888-999999999999",
+      providerId: "codex",
+      providerLabel: "Codex",
+      name: "Nested repo work",
+      cwd: nestedProjectDir,
+    });
+    manager.sessions.set(rootSession.id, rootSession);
+    manager.sessions.set(nestedSession.id, nestedSession);
+
+    const graph = await manager.getProjectSwarmGraph(nestedProjectDir);
+    assert.equal(graph.sessionId, null);
+    assert.equal(graph.cwd, nestedProjectDir);
+    assert.equal(graph.git.root, await realpath(workspaceDir));
+    assert.ok(graph.nodes.some((node) => node.id === `session:${rootSession.id}`));
+    assert.ok(graph.nodes.some((node) => node.id === `session:${nestedSession.id}`));
+    assert.equal(graph.nodes.some((node) => node.focus), false);
   } finally {
     await cleanupManager(manager, workspaceDir, userHomeDir);
   }

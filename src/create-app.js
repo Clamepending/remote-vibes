@@ -8,7 +8,14 @@ import { fileURLToPath } from "node:url";
 import { promisify } from "node:util";
 import express from "express";
 import { WebSocketServer } from "ws";
-import { buildPortUrlFromBase, getTailscaleUrl, pickPreferredUrl } from "./access-url.js";
+import {
+  buildPortUrlFromBase,
+  getTailscaleDnsNameFromStatus,
+  getTailscaleHttpsUrlFromServeStatus,
+  getTailscaleUrl,
+  hasTailscaleHttpsRootServe,
+  pickPreferredUrl,
+} from "./access-url.js";
 import { AgentMailService } from "./agentmail-service.js";
 import { AgentPromptStore } from "./agent-prompt-store.js";
 import { AgentRunStore } from "./agent-run-store.js";
@@ -37,6 +44,7 @@ const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const publicDir = path.resolve(__dirname, "..", "public");
 const execFileAsync = promisify(execFile);
 const SERVER_INFO_FILENAME = "server.json";
+const TAILSCALE_HTTPS_SERVE_ENABLED = process.env.REMOTE_VIBES_TAILSCALE_HTTPS !== "0";
 
 function normalizePort(value) {
   const port = Number(value);
@@ -185,7 +193,101 @@ async function getAccessUrls(host, port) {
     // Ignore missing Tailscale or lookup failures.
   }
 
+  const tailscaleHttpsUrl = await getTailscaleHttpsServeUrl(port);
+  if (tailscaleHttpsUrl && !urls.some((entry) => entry.url === tailscaleHttpsUrl)) {
+    urls.push({ label: "Tailscale HTTPS", url: tailscaleHttpsUrl });
+  }
+
   return urls;
+}
+
+async function runTailscaleCommand(args) {
+  const { stdout } = await execFileAsync(process.env.SHELL || "/bin/zsh", [
+    "-lc",
+    "command -v tailscale >/dev/null 2>&1 || exit 127; exec tailscale \"$@\"",
+    "tailscale",
+    ...args,
+  ]);
+  return stdout;
+}
+
+async function readTailscaleStatusJson() {
+  const stdout = await runTailscaleCommand(["status", "--json"]);
+  return JSON.parse(stdout || "{}");
+}
+
+async function readTailscaleServeStatusJson() {
+  const stdout = await runTailscaleCommand(["serve", "status", "--json"]);
+  return JSON.parse(stdout || "{}");
+}
+
+async function getTailscaleHttpsServeUrl(port) {
+  if (!TAILSCALE_HTTPS_SERVE_ENABLED) {
+    return "";
+  }
+
+  try {
+    const status = await readTailscaleStatusJson();
+    const dnsName = getTailscaleDnsNameFromStatus(status);
+    if (!dnsName) {
+      return "";
+    }
+
+    let serveStatus = {};
+    try {
+      serveStatus = await readTailscaleServeStatusJson();
+    } catch {
+      serveStatus = {};
+    }
+
+    const configuredUrl = getTailscaleHttpsUrlFromServeStatus(serveStatus, port, dnsName);
+    if (configuredUrl) {
+      return (await probeTailscaleHttpsUrl(configuredUrl)) ? configuredUrl : "";
+    }
+
+    if (hasTailscaleHttpsRootServe(serveStatus, dnsName)) {
+      return "";
+    }
+
+    try {
+      await runTailscaleCommand(["serve", "--bg", "--yes", String(port)]);
+    } catch {
+      try {
+        await runTailscaleCommand(["serve", "--bg", String(port)]);
+      } catch {
+        return "";
+      }
+    }
+
+    serveStatus = await readTailscaleServeStatusJson();
+    const nextUrl = getTailscaleHttpsUrlFromServeStatus(serveStatus, port, dnsName);
+    return nextUrl && (await probeTailscaleHttpsUrl(nextUrl)) ? nextUrl : "";
+  } catch {
+    return "";
+  }
+}
+
+async function probeTailscaleHttpsUrl(baseUrl) {
+  let probeUrl;
+  try {
+    probeUrl = new URL("/api/state", baseUrl);
+  } catch {
+    return false;
+  }
+
+  const controller = new AbortController();
+  const timeout = setTimeout(() => controller.abort(), 2500);
+
+  try {
+    const response = await fetch(probeUrl, {
+      signal: controller.signal,
+    });
+    return response.ok;
+  } catch {
+    return false;
+  } finally {
+    clearTimeout(timeout);
+  }
 }
 
 function normalizeHost(value) {
@@ -1044,7 +1146,16 @@ export async function createRemoteVibesApp({
     proxyHttpRequest(request, response, proxyServer, proxyPort, true);
   });
 
-  app.use(express.static(publicDir));
+  app.use(
+    express.static(publicDir, {
+      setHeaders(response, filePath) {
+        const basename = path.basename(filePath);
+        if (["index.html", "app.js", "styles.css"].includes(basename)) {
+          response.setHeader("Cache-Control", "no-store");
+        }
+      },
+    }),
+  );
 
   const server = await new Promise((resolve, reject) => {
     const nextServer = app.listen(port, host, () => resolve(nextServer));

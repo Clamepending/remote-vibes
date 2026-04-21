@@ -11,6 +11,7 @@ const KNOWLEDGE_BASE_GRAPH_MAX_SCALE = 2.8;
 const KNOWLEDGE_BASE_GRAPH_FIT_PADDING = 72;
 const KNOWLEDGE_BASE_GRAPH_FOCUS_SCALE = 1.65;
 const KNOWLEDGE_BASE_GRAPH_DRAG_SLOP_PX = 6;
+const KNOWLEDGE_BASE_GRAPH_PROJECT_PREFIX = "project:";
 const PORT_PREVIEW_TAB_PREFIX = "port:";
 const ROUTED_MAIN_VIEWS = new Set(["search", "plugins", "automations", "system", "swarm"]);
 const SESSION_WORKING_SPINNER_MS = 900;
@@ -18,6 +19,7 @@ const FILE_IMAGE_MIN_ZOOM = 1;
 const FILE_IMAGE_MAX_ZOOM = 8;
 const FILE_IMAGE_ZOOM_STEP = 0.25;
 const SYSTEM_HISTORY_REFRESH_MS = 30_000;
+const PORTS_BACKGROUND_REFRESH_MS = 30_000;
 const SELECTION_REFRESH_RETRY_MS = 250;
 const MOBILE_KEYBOARD_RESIZE_THRESHOLD_PX = 80;
 const MOBILE_KEYBOARD_SETTLE_MS = 650;
@@ -158,6 +160,38 @@ const KNOWLEDGE_BASE_GRAPH_COLOR_PALETTE = [
     connectedStroke: "rgba(246, 138, 182, 0.94)",
     edge: "rgba(246, 138, 182, 0.2)",
   },
+  {
+    fill: "rgba(190, 155, 255, 0.62)",
+    stroke: "rgba(190, 155, 255, 0.9)",
+    label: "#ece2ff",
+    connectedFill: "rgba(190, 155, 255, 0.8)",
+    connectedStroke: "rgba(190, 155, 255, 0.96)",
+    edge: "rgba(190, 155, 255, 0.2)",
+  },
+  {
+    fill: "rgba(96, 210, 255, 0.6)",
+    stroke: "rgba(96, 210, 255, 0.88)",
+    label: "#d7f5ff",
+    connectedFill: "rgba(96, 210, 255, 0.78)",
+    connectedStroke: "rgba(96, 210, 255, 0.96)",
+    edge: "rgba(96, 210, 255, 0.2)",
+  },
+  {
+    fill: "rgba(255, 126, 146, 0.62)",
+    stroke: "rgba(255, 126, 146, 0.9)",
+    label: "#ffe0e6",
+    connectedFill: "rgba(255, 126, 146, 0.8)",
+    connectedStroke: "rgba(255, 126, 146, 0.96)",
+    edge: "rgba(255, 126, 146, 0.2)",
+  },
+  {
+    fill: "rgba(201, 226, 90, 0.6)",
+    stroke: "rgba(201, 226, 90, 0.88)",
+    label: "#f5ffd0",
+    connectedFill: "rgba(201, 226, 90, 0.78)",
+    connectedStroke: "rgba(201, 226, 90, 0.96)",
+    edge: "rgba(201, 226, 90, 0.2)",
+  },
 ];
 const LIKELY_TEXT_EXTENSIONS = new Set([
   ".c",
@@ -239,6 +273,7 @@ const state = {
   deferredSelectableRefreshes: new Set(),
   deferredSelectableRefreshTimer: null,
   ports: [],
+  portsLoadedAt: 0,
   currentView: "shell",
   globalSearchQuery: "",
   pluginSearchQuery: "",
@@ -1249,6 +1284,19 @@ function scrollTerminalToBottom() {
   window.requestAnimationFrame(() => {
     syncTerminalScrollState();
   });
+}
+
+function getTerminalWheelDeltaY(event, viewport) {
+  if (event.deltaMode === 1) {
+    const lineHeight = Number.parseFloat(window.getComputedStyle(viewport).lineHeight);
+    return event.deltaY * (Number.isFinite(lineHeight) && lineHeight > 0 ? lineHeight : 18);
+  }
+
+  if (event.deltaMode === 2) {
+    return event.deltaY * viewport.clientHeight;
+  }
+
+  return event.deltaY;
 }
 
 function buildTerminalLinkHandler() {
@@ -2722,6 +2770,25 @@ function hashString(value) {
   return hash;
 }
 
+function isKnowledgeBaseProjectGroup(groupKey) {
+  return String(groupKey || "").startsWith(KNOWLEDGE_BASE_GRAPH_PROJECT_PREFIX);
+}
+
+function buildKnowledgeBaseProjectColor(groupKey) {
+  const hue = hashString(groupKey) % 360;
+  const fill = `hsla(${hue}, 72%, 64%, 0.62)`;
+  const stroke = `hsla(${hue}, 78%, 70%, 0.9)`;
+  const label = `hsl(${hue}, 85%, 88%)`;
+  return {
+    fill,
+    stroke,
+    label,
+    connectedFill: `hsla(${hue}, 78%, 66%, 0.82)`,
+    connectedStroke: `hsla(${hue}, 86%, 74%, 0.98)`,
+    edge: `hsla(${hue}, 78%, 66%, 0.22)`,
+  };
+}
+
 function getKnowledgeBaseGraphGroupKey(relativePath) {
   const normalizedPath = normalizeFileTreePath(relativePath);
 
@@ -2738,6 +2805,10 @@ function getKnowledgeBaseGraphGroupKey(relativePath) {
   }
 
   const segments = normalizedPath.split("/").filter(Boolean);
+  if (segments[0] === "projects" && segments[1]) {
+    return `${KNOWLEDGE_BASE_GRAPH_PROJECT_PREFIX}${segments[1]}`;
+  }
+
   if (segments.length > 1) {
     return segments[0];
   }
@@ -2747,6 +2818,10 @@ function getKnowledgeBaseGraphGroupKey(relativePath) {
 
 function getKnowledgeBaseGraphColor(groupKey) {
   const normalizedKey = String(groupKey || "root").toLowerCase();
+  if (isKnowledgeBaseProjectGroup(normalizedKey)) {
+    return buildKnowledgeBaseProjectColor(normalizedKey);
+  }
+
   const knownPalette = {
     index: KNOWLEDGE_BASE_GRAPH_COLOR_PALETTE[0],
     log: KNOWLEDGE_BASE_GRAPH_COLOR_PALETTE[2],
@@ -2766,6 +2841,10 @@ function getKnowledgeBaseGraphColor(groupKey) {
 
 function getKnowledgeBaseGraphGroupLabel(groupKey) {
   const normalizedKey = String(groupKey || "root").toLowerCase();
+  if (isKnowledgeBaseProjectGroup(normalizedKey)) {
+    return normalizedKey.slice(KNOWLEDGE_BASE_GRAPH_PROJECT_PREFIX.length);
+  }
+
   const labels = {
     index: "index",
     log: "log",
@@ -2773,6 +2852,17 @@ function getKnowledgeBaseGraphGroupLabel(groupKey) {
   };
 
   return labels[normalizedKey] || normalizedKey;
+}
+
+function getKnowledgeBaseGraphGroupSortRank(groupKey) {
+  const normalizedKey = String(groupKey || "root").toLowerCase();
+  if (isKnowledgeBaseProjectGroup(normalizedKey)) {
+    return 20;
+  }
+
+  const knownOrder = ["index", "log", "root", "topics", "experiments", "procedures", "entities"];
+  const knownIndex = knownOrder.indexOf(normalizedKey);
+  return knownIndex === -1 ? 40 : knownIndex;
 }
 
 function renderKnowledgeBaseGraphLegend(layout) {
@@ -2794,14 +2884,12 @@ function renderKnowledgeBaseGraphLegend(layout) {
     return "";
   }
 
-  const knownOrder = ["index", "log", "root", "topics", "experiments", "procedures", "entities"];
   const orderedGroups = [...groups.values()].sort((left, right) => {
-    const leftIndex = knownOrder.indexOf(left.key);
-    const rightIndex = knownOrder.indexOf(right.key);
+    const leftRank = getKnowledgeBaseGraphGroupSortRank(left.key);
+    const rightRank = getKnowledgeBaseGraphGroupSortRank(right.key);
 
-    if (leftIndex !== -1 || rightIndex !== -1) {
-      return (leftIndex === -1 ? Number.MAX_SAFE_INTEGER : leftIndex) -
-        (rightIndex === -1 ? Number.MAX_SAFE_INTEGER : rightIndex);
+    if (leftRank !== rightRank) {
+      return leftRank - rightRank;
     }
 
     return left.label.localeCompare(right.label);
@@ -2848,6 +2936,7 @@ function createEmptyKnowledgeBaseGraphLayout(previousLayout = null) {
     height: KNOWLEDGE_BASE_GRAPH_HEIGHT,
     nodes: [],
     edges: [],
+    groupAnchors: {},
     scale: previousLayout?.scale ?? 1,
     offsetX: previousLayout?.offsetX ?? 0,
     offsetY: previousLayout?.offsetY ?? 0,
@@ -3102,13 +3191,15 @@ function scheduleKnowledgeBaseGraphFrame() {
 
     const centerX = layout.width / 2;
     const centerY = layout.height / 2;
-    const damping = layout.dragState ? 0.72 : 0.84;
-    const baseAlpha = layout.dragState ? 0.2 : 0.085;
+    const damping = layout.dragState ? 0.72 : 0.82;
+    const baseAlpha = layout.dragState ? 0.22 : 0.1;
     const alpha = Math.max(layout.alpha || 0, baseAlpha);
 
     for (const node of layout.nodes) {
-      node.fx = (centerX - node.x) * 0.0054;
-      node.fy = (centerY - node.y) * 0.0054;
+      const anchor = layout.groupAnchors?.[node.groupKey] || { x: centerX, y: centerY };
+      const anchorStrength = isKnowledgeBaseProjectGroup(node.groupKey) ? 0.010 : 0.007;
+      node.fx = (anchor.x - node.x) * anchorStrength + (centerX - node.x) * 0.0012;
+      node.fy = (anchor.y - node.y) * anchorStrength + (centerY - node.y) * 0.0012;
     }
 
     for (let leftIndex = 0; leftIndex < layout.nodes.length; leftIndex += 1) {
@@ -3120,11 +3211,12 @@ function scheduleKnowledgeBaseGraphFrame() {
         const deltaY = right.y - left.y;
         const distanceSquared = Math.max(deltaX * deltaX + deltaY * deltaY, 1);
         const distance = Math.sqrt(distanceSquared);
-        const minimumDistance = left.radius + right.radius + 16;
-        let repulsion = (1650 + minimumDistance * 96) / distanceSquared;
+        const sameGroup = left.groupKey && left.groupKey === right.groupKey;
+        const minimumDistance = left.radius + right.radius + (sameGroup ? 30 : 58);
+        let repulsion = ((sameGroup ? 2600 : 5000) + minimumDistance * (sameGroup ? 135 : 210)) / distanceSquared;
 
         if (distance < minimumDistance) {
-          repulsion += (minimumDistance - distance) * 0.085;
+          repulsion += (minimumDistance - distance) * (sameGroup ? 0.13 : 0.2);
         }
 
         const forceX = (deltaX / distance) * repulsion;
@@ -3169,23 +3261,14 @@ function scheduleKnowledgeBaseGraphFrame() {
 
       node.vx = (node.vx + node.fx * alpha) * damping;
       node.vy = (node.vy + node.fy * alpha) * damping;
+      const velocity = Math.hypot(node.vx, node.vy);
+      const maxNodeVelocity = layout.dragState ? 18 : 12;
+      if (velocity > maxNodeVelocity) {
+        node.vx = (node.vx / velocity) * maxNodeVelocity;
+        node.vy = (node.vy / velocity) * maxNodeVelocity;
+      }
       node.x += node.vx;
       node.y += node.vy;
-
-      const minX = node.radius + 10;
-      const maxX = layout.width - node.radius - 10;
-      const minY = node.radius + 10;
-      const maxY = layout.height - node.radius - 10;
-
-      if (node.x < minX || node.x > maxX) {
-        node.x = clamp(node.x, minX, maxX);
-        node.vx *= -0.28;
-      }
-
-      if (node.y < minY || node.y > maxY) {
-        node.y = clamp(node.y, minY, maxY);
-        node.vy *= -0.28;
-      }
 
       maxVelocity = Math.max(maxVelocity, Math.abs(node.vx) + Math.abs(node.vy));
     }
@@ -3225,20 +3308,53 @@ function createKnowledgeBaseGraphLayout(notes, edges) {
 
   const centerX = width / 2;
   const centerY = height / 2;
-  const baseRadius = Math.min(width, height) * 0.34;
   const previousNodes = new Map((previousLayout?.nodes || []).map((node) => [node.relativePath, node]));
+  const groupKeys = Array.from(new Set(notes.map((note) => getKnowledgeBaseGraphGroupKey(note.relativePath)))).sort((left, right) => {
+    const leftRank = getKnowledgeBaseGraphGroupSortRank(left);
+    const rightRank = getKnowledgeBaseGraphGroupSortRank(right);
+
+    if (leftRank !== rightRank) {
+      return leftRank - rightRank;
+    }
+
+    return getKnowledgeBaseGraphGroupLabel(left).localeCompare(getKnowledgeBaseGraphGroupLabel(right));
+  });
+  const groupAnchors = {};
+  const projectGroupKeys = groupKeys.filter(isKnowledgeBaseProjectGroup);
+  const nonProjectGroupKeys = groupKeys.filter((groupKey) => !isKnowledgeBaseProjectGroup(groupKey));
+  const projectAnchorRadius = Math.min(width, height) * (projectGroupKeys.length > 3 ? 0.46 : 0.38);
+  const nonProjectAnchorRadius = Math.min(width, height) * 0.18;
+
+  projectGroupKeys.forEach((groupKey, index) => {
+    const angle = -Math.PI / 2 + (Math.PI * 2 * index) / Math.max(projectGroupKeys.length, 1);
+    groupAnchors[groupKey] = {
+      x: centerX + Math.cos(angle) * projectAnchorRadius,
+      y: centerY + Math.sin(angle) * projectAnchorRadius,
+    };
+  });
+
+  nonProjectGroupKeys.forEach((groupKey, index) => {
+    const angle = Math.PI / 2 + (Math.PI * 2 * index) / Math.max(nonProjectGroupKeys.length, 1);
+    groupAnchors[groupKey] = {
+      x: centerX + Math.cos(angle) * nonProjectAnchorRadius,
+      y: centerY + Math.sin(angle) * nonProjectAnchorRadius,
+    };
+  });
+
   const nodes = notes.map((note, index) => {
     const angle = (Math.PI * 2 * index) / Math.max(notes.length, 1);
     const previousNode = previousNodes.get(note.relativePath);
     const groupKey = getKnowledgeBaseGraphGroupKey(note.relativePath);
+    const anchor = groupAnchors[groupKey] || { x: centerX, y: centerY };
+    const localRadius = 26 + (index % 7) * 7;
 
     return {
       relativePath: note.relativePath,
       title: note.title,
       groupKey,
       color: getKnowledgeBaseGraphColor(groupKey),
-      x: previousNode?.x ?? centerX + Math.cos(angle) * baseRadius,
-      y: previousNode?.y ?? centerY + Math.sin(angle) * baseRadius,
+      x: previousNode?.x ?? anchor.x + Math.cos(angle) * localRadius,
+      y: previousNode?.y ?? anchor.y + Math.sin(angle) * localRadius,
       vx: previousNode?.vx ?? 0,
       vy: previousNode?.vy ?? 0,
       fx: 0,
@@ -3287,10 +3403,11 @@ function createKnowledgeBaseGraphLayout(notes, edges) {
       return {
         ...edge,
         edgeColor: sameGroup ? source?.color?.edge : "rgba(255, 255, 255, 0.08)",
-        distance: 50 + ((source?.radius || 10) + (target?.radius || 10)) * 2.8,
-        strength: 0.010 + 0.00045 * Math.min((source?.degree || 0) + (target?.degree || 0), 12),
+        distance: (sameGroup ? 78 : 150) + ((source?.radius || 10) + (target?.radius || 10)) * (sameGroup ? 3.2 : 4.4),
+        strength: (sameGroup ? 0.008 : 0.0035) + 0.00028 * Math.min((source?.degree || 0) + (target?.degree || 0), 12),
       };
     }),
+    groupAnchors,
     scale: previousLayout?.scale ?? 1,
     offsetX: previousLayout?.offsetX ?? 0,
     offsetY: previousLayout?.offsetY ?? 0,
@@ -3540,6 +3657,121 @@ function renderKnowledgeBaseInline(text, currentPath) {
   return output.replace(/%%KB_TOKEN_(\d+)%%/g, (_match, index) => tokens[Number(index)] || "");
 }
 
+function splitMarkdownTableRow(line) {
+  const trimmed = String(line || "").trim();
+  if (!trimmed.includes("|")) {
+    return [];
+  }
+
+  const source = trimmed.replace(/^\|/, "").replace(/\|\s*$/, "");
+  const cells = [];
+  let cell = "";
+  let escaping = false;
+
+  for (const character of source) {
+    if (escaping) {
+      cell += character === "|" ? "|" : `\\${character}`;
+      escaping = false;
+      continue;
+    }
+
+    if (character === "\\") {
+      escaping = true;
+      continue;
+    }
+
+    if (character === "|") {
+      cells.push(cell.trim());
+      cell = "";
+      continue;
+    }
+
+    cell += character;
+  }
+
+  if (escaping) {
+    cell += "\\";
+  }
+
+  cells.push(cell.trim());
+  return cells;
+}
+
+function isMarkdownTableRow(line) {
+  return splitMarkdownTableRow(line).length >= 2;
+}
+
+function isMarkdownTableDivider(line) {
+  const cells = splitMarkdownTableRow(line);
+  return cells.length >= 2 && cells.every((cell) => /^:?-{3,}:?$/.test(cell.replace(/\s+/g, "")));
+}
+
+function isMarkdownTableStart(lines, index) {
+  return isMarkdownTableRow(lines[index]) && isMarkdownTableDivider(lines[index + 1] || "");
+}
+
+function getMarkdownTableAlignment(dividerCell) {
+  const trimmed = String(dividerCell || "").replace(/\s+/g, "");
+  const left = trimmed.startsWith(":");
+  const right = trimmed.endsWith(":");
+
+  if (left && right) {
+    return "center";
+  }
+
+  return right ? "right" : left ? "left" : "";
+}
+
+function normalizeMarkdownTableCells(cells, columnCount) {
+  return Array.from({ length: columnCount }, (_value, index) => cells[index] || "");
+}
+
+function renderKnowledgeBaseTableCell(tagName, value, alignment, currentPath) {
+  const className = alignment ? ` class="is-${alignment}"` : "";
+  return `<${tagName}${className}>${renderKnowledgeBaseInline(value, currentPath)}</${tagName}>`;
+}
+
+function renderKnowledgeBaseMarkdownTable(lines, startIndex, currentPath) {
+  const headerCells = splitMarkdownTableRow(lines[startIndex]);
+  const dividerCells = splitMarkdownTableRow(lines[startIndex + 1]);
+  const columnCount = Math.max(headerCells.length, dividerCells.length);
+  const normalizedHeaders = normalizeMarkdownTableCells(headerCells, columnCount);
+  const alignments = normalizeMarkdownTableCells(dividerCells, columnCount).map(getMarkdownTableAlignment);
+  const rows = [];
+  let index = startIndex + 2;
+
+  while (index < lines.length && isMarkdownTableRow(lines[index]) && !isMarkdownTableDivider(lines[index])) {
+    rows.push(normalizeMarkdownTableCells(splitMarkdownTableRow(lines[index]), columnCount));
+    index += 1;
+  }
+
+  const head = normalizedHeaders
+    .map((cell, columnIndex) => renderKnowledgeBaseTableCell("th", cell, alignments[columnIndex], currentPath))
+    .join("");
+  const body = rows
+    .map(
+      (row) =>
+        `<tr>${row
+          .map((cell, columnIndex) =>
+            renderKnowledgeBaseTableCell("td", cell, alignments[columnIndex], currentPath),
+          )
+          .join("")}</tr>`,
+    )
+    .join("");
+
+  return {
+    html: `
+      <div class="knowledge-base-table-scroll" role="region" aria-label="Markdown table" tabindex="0">
+        <table class="knowledge-base-table">
+          <thead><tr>${head}</tr></thead>
+          ${body ? `<tbody>${body}</tbody>` : ""}
+        </table>
+      </div>
+    `,
+    nextIndex: index,
+  };
+}
+
 function renderKnowledgeBaseMarkdown(markdown, currentPath) {
   const lines = String(markdown || "").replace(/\r\n/g, "\n").split("\n");
   const html = [];
@@ -3550,6 +3782,7 @@ function renderKnowledgeBaseMarkdown(markdown, currentPath) {
     !line.trim() ||
     /^```/.test(line) ||
     /^#{1,6}\s+/.test(line) ||
+    isMarkdownTableRow(line) ||
     /^>\s?/.test(line) ||
     isListLine(line) ||
     /^([-*_]){3,}\s*$/.test(line.trim());
@@ -3578,6 +3811,13 @@ function renderKnowledgeBaseMarkdown(markdown, currentPath) {
       }
 
       html.push(renderSyntaxCodeBlock(codeLines.join("\n"), language, "knowledge-base-code"));
+      continue;
+    }
+
+    if (isMarkdownTableStart(lines, index)) {
+      const table = renderKnowledgeBaseMarkdownTable(lines, index, currentPath);
+      html.push(table.html);
+      index = table.nextIndex;
       continue;
     }
 
@@ -5636,7 +5876,6 @@ function renderDeviceSection(title, devices, emptyMessage) {
 }
 
 function renderAgentUsageWindow(window) {
-  const remainingPercent = getMetricPercent(window?.remainingPercent);
   const usedPercent = getMetricPercent(window?.usedPercent);
   const runCount = Number(window?.runCount || 0);
   const activeRunCount = Number(window?.activeRunCount || 0);
@@ -5645,21 +5884,21 @@ function renderAgentUsageWindow(window) {
   const usedText = formatDurationMs(window?.totalRunMs);
   const detailParts = runCount
     ? [
-        `${usedText} used`,
+        `${usedText} observed`,
         activeRunCount ? `${activeRunCount} active` : "",
         `${runCount} ${runCount === 1 ? "activity" : "activities"}`,
         sessionCount ? `${sessionCount} ${sessionCount === 1 ? "session" : "sessions"}` : "",
-        `${formatCompactPercent(usedPercent)} of ${targetText} local target`,
+        `${formatCompactPercent(usedPercent)} of ${targetText} local reference`,
       ].filter(Boolean)
-    : [`no completed runs in this window`, `${targetText} local target`];
+    : [`no completed runs in this window`, `${targetText} local reference`];
 
   return `
     <div class="agent-usage-window">
       <div class="agent-usage-window-head">
         <span>${escapeHtml(window?.label || "Local usage")}</span>
-        <strong>${escapeHtml(`${formatCompactPercent(remainingPercent)} headroom`)}</strong>
+        <strong>${escapeHtml(`${formatCompactPercent(usedPercent)} observed`)}</strong>
       </div>
-      ${renderMetricBar(remainingPercent, "is-agent-usage")}
+      ${renderMetricBar(usedPercent, "is-agent-usage")}
       <p>${escapeHtml(detailParts.join(" · "))}</p>
     </div>
   `;
@@ -5677,10 +5916,10 @@ function renderAgentUsageSection(system) {
     <section class="system-section system-agent-usage-section">
       <div class="system-section-head">
         <strong>Agent usage</strong>
-        <span>${escapeHtml(usage.sourceLabel || "Remote Vibes local activity")}</span>
+        <span>${escapeHtml(usage.sourceLabel || "Local activity only")}</span>
       </div>
       <div class="agent-usage-note">${escapeHtml(
-        usage.quotaReason || "Provider quota is not exposed locally; these bars show Remote Vibes activity.",
+        usage.quotaReason || "Not account quota; these bars only show activity observed by Remote Vibes.",
       )}</div>
       <div class="system-agent-usage-grid">
         ${providers
@@ -5702,7 +5941,7 @@ function renderAgentUsageSection(system) {
                     <strong>${escapeHtml(provider.label || provider.id || "Agent")}</strong>
                     <span>${escapeHtml(runningText)}</span>
                   </div>
-                  <em>${escapeHtml(provider.quotaAvailable ? "quota" : "local")}</em>
+                  <em>${escapeHtml(provider.quotaAvailable ? "quota" : "not quota")}</em>
                 </div>
                 <div class="agent-usage-window-list">
                   ${(Array.isArray(provider.windows) ? provider.windows : []).map(renderAgentUsageWindow).join("")}
@@ -8021,16 +8260,8 @@ function bindKnowledgeBaseGraphInteractions() {
           event.clientY - layout.dragState.startClientY,
         ) >= KNOWLEDGE_BASE_GRAPH_DRAG_SLOP_PX;
 
-      layout.dragState.node.x = clamp(
-        worldPoint.x + layout.dragState.pointerOffsetX,
-        layout.dragState.node.radius + 10,
-        layout.width - layout.dragState.node.radius - 10,
-      );
-      layout.dragState.node.y = clamp(
-        worldPoint.y + layout.dragState.pointerOffsetY,
-        layout.dragState.node.radius + 10,
-        layout.height - layout.dragState.node.radius - 10,
-      );
+      layout.dragState.node.x = worldPoint.x + layout.dragState.pointerOffsetX;
+      layout.dragState.node.y = worldPoint.y + layout.dragState.pointerOffsetY;
       layout.dragState.node.vx = 0;
       layout.dragState.node.vy = 0;
       syncKnowledgeBaseGraphDom();
@@ -10100,6 +10331,29 @@ function setupTerminalInteractions(mount) {
     });
   };
 
+  const handleViewportWheel = (event) => {
+    if (event.ctrlKey || event.metaKey || event.shiftKey || !event.deltaY) {
+      return;
+    }
+
+    const maxScrollTop = Math.max(0, viewport.scrollHeight - viewport.clientHeight);
+    if (maxScrollTop <= 0) {
+      return;
+    }
+
+    const previousScrollTop = viewport.scrollTop;
+    const nextScrollTop = clamp(previousScrollTop + getTerminalWheelDeltaY(event, viewport), 0, maxScrollTop);
+    if (nextScrollTop === previousScrollTop) {
+      return;
+    }
+
+    event.preventDefault();
+    event.stopPropagation();
+    event.stopImmediatePropagation?.();
+    viewport.scrollTop = nextScrollTop;
+    syncTerminalScrollState();
+  };
+
   const handleBeforeInput = (event) => {
     const currentValue = helperTextarea?.value || "";
 
@@ -10161,6 +10415,7 @@ function setupTerminalInteractions(mount) {
 
   mount.addEventListener("pointerdown", handlePointerDown);
   viewport.addEventListener("scroll", handleViewportScroll, { passive: true });
+  viewport.addEventListener("wheel", handleViewportWheel, { capture: true, passive: false });
   viewport.addEventListener("touchstart", handleTouchStart, { capture: true, passive: true });
   viewport.addEventListener("touchmove", handleTouchMove, { capture: true, passive: true });
   viewport.addEventListener("touchend", handleTouchEnd, { capture: true, passive: true });
@@ -10174,6 +10429,7 @@ function setupTerminalInteractions(mount) {
   state.terminalInteractionCleanup = () => {
     mount.removeEventListener("pointerdown", handlePointerDown);
     viewport.removeEventListener("scroll", handleViewportScroll);
+    viewport.removeEventListener("wheel", handleViewportWheel, true);
     viewport.removeEventListener("touchstart", handleTouchStart, true);
     viewport.removeEventListener("touchmove", handleTouchMove, true);
     viewport.removeEventListener("touchend", handleTouchEnd, true);
@@ -10539,6 +10795,7 @@ async function loadPorts() {
   try {
     const payload = await fetchJson("/api/ports");
     state.ports = payload.ports;
+    state.portsLoadedAt = Date.now();
     syncOpenPortPreviewTabs();
     refreshShellUi({ sessions: false, ports: true, files: false });
   } catch (error) {
@@ -10952,6 +11209,7 @@ async function bootstrapApp() {
   state.sessions = payload.sessions;
   pruneSessionReadState();
   state.ports = payload.ports ?? [];
+  state.portsLoadedAt = Date.now();
   state.defaultCwd = payload.cwd;
   state.defaultProviderId = payload.defaultProviderId;
   applySettingsState(payload.settings);
@@ -11029,7 +11287,9 @@ async function bootstrapApp() {
 
   state.pollTimer = window.setInterval(() => {
     loadSessions();
-    loadPorts();
+    if (Date.now() - state.portsLoadedAt > PORTS_BACKGROUND_REFRESH_MS) {
+      loadPorts();
+    }
     if (state.currentView === "system") {
       void loadSystemMetrics();
     }

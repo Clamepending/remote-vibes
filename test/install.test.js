@@ -87,6 +87,16 @@ function escapeRegExp(value) {
   return String(value).replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
 }
 
+function installTestEnv(overrides = {}) {
+  return {
+    ...process.env,
+    REMOTE_VIBES_INSTALL_SYSTEM_DEPS: "0",
+    REMOTE_VIBES_INSTALL_TAILSCALE: "0",
+    REMOTE_VIBES_INSTALL_SERVICE: "0",
+    ...overrides,
+  };
+}
+
 test("install.sh clones and updates a checkout in one command", async () => {
   const { tempRoot, repoDir } = await createSourceRepo();
   const installRoot = await mkdtemp(path.join(os.tmpdir(), "remote-vibes-install-"));
@@ -94,12 +104,11 @@ test("install.sh clones and updates a checkout in one command", async () => {
 
   try {
     const firstRun = await execFile("bash", [installScript], {
-      env: {
-        ...process.env,
+      env: installTestEnv({
         REMOTE_VIBES_HOME: installDir,
         REMOTE_VIBES_REPO_URL: repoDir,
         REMOTE_VIBES_SKIP_RUN: "1",
-      },
+      }),
     });
 
     assert.match(firstRun.stdout, /Skipping launch/);
@@ -111,12 +120,11 @@ test("install.sh clones and updates a checkout in one command", async () => {
     await execFile("git", ["commit", "-m", "Update"], { cwd: repoDir });
 
     const secondRun = await execFile("bash", [installScript], {
-      env: {
-        ...process.env,
+      env: installTestEnv({
         REMOTE_VIBES_HOME: installDir,
         REMOTE_VIBES_REPO_URL: repoDir,
         REMOTE_VIBES_SKIP_RUN: "1",
-      },
+      }),
     });
 
     assert.match(secondRun.stdout, /Updating existing checkout/);
@@ -134,12 +142,11 @@ test("install.sh defaults to an app checkout under the home Remote Vibes directo
 
   try {
     const result = await execFile("bash", [installScript], {
-      env: {
-        ...process.env,
+      env: installTestEnv({
         HOME: homeDir,
         REMOTE_VIBES_REPO_URL: repoDir,
         REMOTE_VIBES_SKIP_RUN: "1",
-      },
+      }),
     });
 
     assert.match(result.stdout, new RegExp(`Cloning into ${escapeRegExp(installDir)}`));
@@ -147,6 +154,231 @@ test("install.sh defaults to an app checkout under the home Remote Vibes directo
     assert.ok(await stat(path.join(installDir, "start.sh")));
   } finally {
     await rm(tempRoot, { recursive: true, force: true });
+  }
+});
+
+test("install.sh installs Node.js on fresh macOS hosts before cloning", async () => {
+  const { tempRoot, repoDir } = await createSourceRepo();
+  const installRoot = await mkdtemp(path.join(os.tmpdir(), "remote-vibes-macos-node-install-"));
+  const installDir = path.join(installRoot, "remote-vibes");
+  const fakeBin = path.join(installRoot, "bin");
+  const nodeInstalledState = path.join(installRoot, "node-installed");
+  const nodePkg = "node-v22.99.0.pkg";
+
+  try {
+    await mkdir(fakeBin, { recursive: true });
+    await writeFile(path.join(fakeBin, "uname"), "#!/usr/bin/env sh\nprintf 'Darwin\\n'\n");
+    await writeFile(
+      path.join(fakeBin, "node"),
+      `#!/usr/bin/env sh
+if [ ! -f ${JSON.stringify(nodeInstalledState)} ]; then
+  exit 127
+fi
+if [ "\${1:-}" = "-p" ]; then
+  printf '22\\n'
+else
+  printf 'v22.99.0\\n'
+fi
+`,
+    );
+    await writeFile(
+      path.join(fakeBin, "npm"),
+      `#!/usr/bin/env sh
+if [ ! -f ${JSON.stringify(nodeInstalledState)} ]; then
+  exit 127
+fi
+printf '10.9.9\\n'
+`,
+    );
+    await writeFile(
+      path.join(fakeBin, "curl"),
+      `#!/usr/bin/env bash
+set -euo pipefail
+url=""
+output=""
+while [ "$#" -gt 0 ]; do
+  case "$1" in
+    -o)
+      output="$2"
+      shift 2
+      ;;
+    -*)
+      shift
+      ;;
+    *)
+      url="$1"
+      shift
+      ;;
+  esac
+done
+case "$url" in
+  *SHASUMS256.txt)
+    printf 'abc  ${nodePkg}\\n'
+    ;;
+  *${nodePkg})
+    printf 'node package' > "$output"
+    ;;
+  *)
+    printf 'unexpected curl URL: %s\\n' "$url" >&2
+    exit 1
+    ;;
+esac
+`,
+    );
+    await writeFile(
+      path.join(fakeBin, "installer"),
+      `#!/usr/bin/env sh
+: > ${JSON.stringify(nodeInstalledState)}
+exit 0
+`,
+    );
+    await writeFile(path.join(fakeBin, "sudo"), "#!/usr/bin/env sh\nexec \"$@\"\n");
+    await execFile("chmod", ["+x", ...["uname", "node", "npm", "curl", "installer", "sudo"].map((name) => path.join(fakeBin, name))]);
+
+    const result = await execFile("bash", [installScript], {
+      env: installTestEnv({
+        PATH: `${fakeBin}${path.delimiter}${process.env.PATH || ""}`,
+        REMOTE_VIBES_HOME: installDir,
+        REMOTE_VIBES_REPO_URL: repoDir,
+        REMOTE_VIBES_SKIP_RUN: "1",
+      }),
+    });
+
+    assert.match(result.stdout, /Installing Node\.js 22\.x for macOS/);
+    assert.match(result.stdout, /Using Node v22\.99\.0 and npm 10\.9\.9/);
+    assert.ok(await stat(path.join(installDir, "start.sh")));
+  } finally {
+    await rm(tempRoot, { recursive: true, force: true });
+    await rm(installRoot, { recursive: true, force: true });
+  }
+});
+
+test("install.sh starts Tailscale onboarding when Tailscale is installed but logged out", async () => {
+  const { tempRoot, repoDir } = await createSourceRepo();
+  const installRoot = await mkdtemp(path.join(os.tmpdir(), "remote-vibes-tailscale-install-"));
+  const installDir = path.join(installRoot, "remote-vibes");
+  const fakeBin = path.join(installRoot, "bin");
+  const tailscaleLog = path.join(installRoot, "tailscale.log");
+  const tailscaleState = path.join(installRoot, "tailscale-connected");
+
+  try {
+    await mkdir(fakeBin, { recursive: true });
+    await writeFile(
+      path.join(fakeBin, "tailscale"),
+      `#!/usr/bin/env bash
+set -euo pipefail
+printf '%s\\n' "$*" >> ${JSON.stringify(tailscaleLog)}
+if [ "\${1:-}" = "ip" ]; then
+  if [ -f ${JSON.stringify(tailscaleState)} ]; then
+    printf '100.64.0.5\\n'
+    exit 0
+  fi
+  exit 1
+fi
+if [ "\${1:-}" = "up" ]; then
+  : > ${JSON.stringify(tailscaleState)}
+  exit 0
+fi
+exit 0
+`,
+    );
+    await execFile("chmod", ["+x", path.join(fakeBin, "tailscale")]);
+
+    const result = await execFile("bash", [installScript], {
+      env: installTestEnv({
+        PATH: `${fakeBin}${path.delimiter}${process.env.PATH || ""}`,
+        REMOTE_VIBES_HOME: installDir,
+        REMOTE_VIBES_REPO_URL: repoDir,
+        REMOTE_VIBES_INSTALL_TAILSCALE: "1",
+        REMOTE_VIBES_TAILSCALE_USE_SUDO: "0",
+        REMOTE_VIBES_SKIP_RUN: "1",
+      }),
+    });
+
+    assert.match(result.stdout, /Starting Tailscale/);
+    assert.match(result.stdout, /Tailscale connected at 100\.64\.0\.5/);
+    assert.ok(await stat(path.join(installDir, "start.sh")));
+    assert.deepEqual((await readFile(tailscaleLog, "utf8")).trim().split("\n"), [
+      "ip -4",
+      "up",
+      "ip -4",
+      "ip -4",
+    ]);
+  } finally {
+    await rm(tempRoot, { recursive: true, force: true });
+    await rm(installRoot, { recursive: true, force: true });
+  }
+});
+
+test("install.sh enables a systemd service on Linux after launch", async () => {
+  const { tempRoot, repoDir } = await createSourceRepo();
+  const installRoot = await mkdtemp(path.join(os.tmpdir(), "remote-vibes-systemd-install-"));
+  const installDir = path.join(installRoot, "remote-vibes");
+  const fakeBin = path.join(installRoot, "bin");
+  const serviceDir = path.join(installRoot, "systemd");
+  const systemctlLog = path.join(installRoot, "systemctl.log");
+  const stateDir = path.join(installRoot, "state");
+  const wikiDir = path.join(installRoot, "wiki");
+
+  try {
+    await mkdir(fakeBin, { recursive: true });
+    await mkdir(serviceDir, { recursive: true });
+    await writeFile(path.join(fakeBin, "uname"), "#!/usr/bin/env sh\nprintf 'Linux\\n'\n");
+    await writeFile(
+      path.join(fakeBin, "ps"),
+      `#!/usr/bin/env sh
+if [ "\${1:-}" = "-p" ] && [ "\${2:-}" = "1" ]; then
+  printf 'systemd\\n'
+  exit 0
+fi
+exec /bin/ps "$@"
+`,
+    );
+    await writeFile(
+      path.join(fakeBin, "systemctl"),
+      `#!/usr/bin/env sh
+printf '%s\\n' "$*" >> ${JSON.stringify(systemctlLog)}
+exit 0
+`,
+    );
+    await writeFile(path.join(fakeBin, "sudo"), "#!/usr/bin/env sh\nexec \"$@\"\n");
+    await execFile("chmod", ["+x", ...["uname", "ps", "systemctl", "sudo"].map((name) => path.join(fakeBin, name))]);
+
+    const result = await execFile("bash", [installScript], {
+      env: installTestEnv({
+        PATH: `${fakeBin}${path.delimiter}${process.env.PATH || ""}`,
+        REMOTE_VIBES_HOME: installDir,
+        REMOTE_VIBES_REPO_URL: repoDir,
+        REMOTE_VIBES_INSTALL_SERVICE: "1",
+        REMOTE_VIBES_SYSTEMD_SERVICE_DIR: serviceDir,
+        REMOTE_VIBES_SERVICE_NAME: "remote-vibes-test",
+        REMOTE_VIBES_STATE_DIR: stateDir,
+        REMOTE_VIBES_WIKI_DIR: wikiDir,
+        REMOTE_VIBES_PORT: "4999",
+      }),
+    });
+
+    assert.match(result.stdout, /SOURCE_VERSION=v1/);
+    assert.match(result.stdout, /Installing systemd service remote-vibes-test\.service/);
+    assert.match(result.stdout, /Enabled remote-vibes-test\.service/);
+
+    const unit = await readFile(path.join(serviceDir, "remote-vibes-test.service"), "utf8");
+    assert.match(unit, new RegExp(`WorkingDirectory=${escapeRegExp(installDir)}`));
+    assert.match(unit, new RegExp(`ExecStart=${escapeRegExp(path.join(installDir, "start.sh"))}`));
+    assert.match(unit, new RegExp(`Environment=REMOTE_VIBES_STATE_DIR=${escapeRegExp(stateDir)}`));
+    assert.match(unit, new RegExp(`Environment=REMOTE_VIBES_WIKI_DIR=${escapeRegExp(wikiDir)}`));
+    assert.match(unit, /Environment=REMOTE_VIBES_PORT=4999/);
+    assert.match(unit, new RegExp(`PIDFile=${escapeRegExp(path.join(stateDir, "server.pid"))}`));
+    assert.match(unit, /Restart=always/);
+    assert.match(unit, /KillMode=process/);
+
+    assert.deepEqual((await readFile(systemctlLog, "utf8")).trim().split("\n"), [
+      "daemon-reload",
+      "enable --now remote-vibes-test.service",
+    ]);
+  } finally {
+    await rm(tempRoot, { recursive: true, force: true });
+    await rm(installRoot, { recursive: true, force: true });
   }
 });
 
@@ -171,13 +403,12 @@ test("start.sh refuses to reuse a different workspace already running on the req
     await assert.rejects(
       () =>
         execFile("bash", [path.join(repoDir, "start.sh")], {
-          env: {
-            ...process.env,
+          env: installTestEnv({
             REMOTE_VIBES_PORT: String(port),
             REMOTE_VIBES_READY_TIMEOUT_SECONDS: "1",
             REMOTE_VIBES_STATE_DIR: path.join(tempRoot, "state"),
             REMOTE_VIBES_WIKI_DIR: path.join(tempRoot, "mac-brain"),
-          },
+          }),
         }),
       (error) => {
         const combinedOutput = `${error.stdout || ""}${error.stderr || ""}`;
@@ -228,13 +459,12 @@ test("start.sh relaunches the same workspace when the running state dir differs"
 
   try {
     const result = await execFile("bash", [path.join(repoDir, "start.sh")], {
-      env: {
-        ...process.env,
+      env: installTestEnv({
         REMOTE_VIBES_PORT: String(port),
         REMOTE_VIBES_READY_TIMEOUT_SECONDS: "30",
         REMOTE_VIBES_STATE_DIR: newStateDir,
         REMOTE_VIBES_WIKI_DIR: path.join(tempRoot, "mac-brain"),
-      },
+      }),
       timeout: 60_000,
     });
     const combinedOutput = `${result.stdout}${result.stderr}`;
@@ -268,6 +498,59 @@ test("start.sh relaunches the same workspace when the running state dir differs"
   }
 });
 
+test("start.sh keeps the same workspace running when state already matches", async () => {
+  const { tempRoot, repoDir } = await createWorkingTreeRepoSnapshot();
+  const canonicalRepoDir = await realpath(repoDir);
+  const port = await getFreePort();
+  const stateDir = path.join(tempRoot, "state");
+  let terminateRequested = false;
+  const runningServer = http.createServer((request, response) => {
+    if (request.url === "/api/state") {
+      response.setHeader("Content-Type", "application/json");
+      response.end(JSON.stringify({ appName: "Remote Vibes", cwd: canonicalRepoDir, stateDir }));
+      return;
+    }
+
+    if (request.url === "/api/terminate" && request.method === "POST") {
+      terminateRequested = true;
+      response.setHeader("Content-Type", "application/json");
+      response.end("{}");
+      return;
+    }
+
+    response.statusCode = 404;
+    response.end("not found");
+  });
+
+  await new Promise((resolve) => runningServer.listen(port, "127.0.0.1", resolve));
+
+  try {
+    const result = await execFile("bash", [path.join(repoDir, "start.sh")], {
+      env: installTestEnv({
+        REMOTE_VIBES_PORT: String(port),
+        REMOTE_VIBES_READY_TIMEOUT_SECONDS: "1",
+        REMOTE_VIBES_STATE_DIR: stateDir,
+        REMOTE_VIBES_WIKI_DIR: path.join(tempRoot, "mac-brain"),
+      }),
+      timeout: 15_000,
+    });
+    const combinedOutput = `${result.stdout}${result.stderr}`;
+
+    assert.equal(terminateRequested, false);
+    assert.match(combinedOutput, /Remote Vibes is already running for this workspace/);
+
+    const response = await fetch(`http://127.0.0.1:${port}/api/state`);
+    assert.equal(response.status, 200);
+    const payload = await response.json();
+    assert.equal(payload.appName, "Remote Vibes");
+    assert.equal(payload.cwd, canonicalRepoDir);
+    assert.equal(payload.stateDir, stateDir);
+  } finally {
+    await new Promise((resolve) => runningServer.close(() => resolve()));
+    await rm(tempRoot, { recursive: true, force: true });
+  }
+});
+
 test("install.sh can launch remote vibes in one command", async () => {
   const { tempRoot, repoDir } = await createWorkingTreeRepoSnapshot();
   const installRoot = await mkdtemp(path.join(os.tmpdir(), "remote-vibes-launch-"));
@@ -280,14 +563,13 @@ test("install.sh can launch remote vibes in one command", async () => {
   try {
     child = spawn("bash", [installScript], {
       cwd: rootDir,
-      env: {
-        ...process.env,
+      env: installTestEnv({
         REMOTE_VIBES_HOME: installDir,
         REMOTE_VIBES_REPO_URL: repoUrl,
         REMOTE_VIBES_PORT: String(port),
         REMOTE_VIBES_STATE_DIR: path.join(installRoot, "state"),
         REMOTE_VIBES_WIKI_DIR: path.join(installRoot, "mac-brain"),
-      },
+      }),
       stdio: ["ignore", "pipe", "pipe"],
     });
 
@@ -379,12 +661,11 @@ test("start.sh migrates an old home checkout into app and uses home root for set
     await writeFile(path.join(repoDir, ".remote-vibes", "port-aliases.json"), "{\"aliases\":{}}\n");
 
     const result = await execFile("bash", [path.join(repoDir, "start.sh")], {
-      env: {
-        ...process.env,
+      env: installTestEnv({
         HOME: homeDir,
         REMOTE_VIBES_PORT: String(port),
         REMOTE_VIBES_READY_TIMEOUT_SECONDS: "30",
-      },
+      }),
       timeout: 60_000,
     });
     const combinedOutput = `${result.stdout}${result.stderr}`;
