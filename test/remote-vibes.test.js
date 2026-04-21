@@ -27,6 +27,7 @@ const PNG_FIXTURE = Buffer.from([
   0xef, 0x00, 0x00, 0x00, 0x00, 0x49, 0x45, 0x4e,
   0x44, 0xae, 0x42, 0x60, 0x82,
 ]);
+const GIF_FIXTURE = Buffer.from("R0lGODlhAQABAPAAAP///wAAACH5BAAAAAAALAAAAAABAAEAAAICRAEAOw==", "base64");
 
 async function startApp(options = {}) {
   const cwd = options.cwd || process.cwd();
@@ -755,6 +756,81 @@ test("knowledge base api indexes markdown notes and linked note content", async 
   }
 });
 
+test("knowledge base api skips inaccessible and system directories", async () => {
+  const workspaceDir = await createTempWorkspace("remote-vibes-knowledge-base-skip-");
+  const wikiDir = path.join(workspaceDir, ".remote-vibes", "wiki");
+  const trashDir = path.join(wikiDir, ".Trash");
+  const hiddenToolsDir = path.join(wikiDir, ".antigravity", "extensions", "example");
+  const modulesDir = path.join(wikiDir, "node_modules", "pkg");
+  const lockedDir = path.join(wikiDir, "locked");
+
+  await mkdir(trashDir, { recursive: true });
+  await mkdir(hiddenToolsDir, { recursive: true });
+  await mkdir(modulesDir, { recursive: true });
+  await mkdir(lockedDir, { recursive: true });
+  await writeFile(path.join(wikiDir, "index.md"), "# Wiki Index\n\nReadable.\n", "utf8");
+  await writeFile(path.join(trashDir, "deleted.md"), "# Deleted\n\nShould not index.\n", "utf8");
+  await writeFile(path.join(hiddenToolsDir, "readme.md"), "# Extension\n\nShould not index.\n", "utf8");
+  await writeFile(path.join(modulesDir, "readme.md"), "# Package\n\nShould not index.\n", "utf8");
+  await writeFile(path.join(lockedDir, "secret.md"), "# Secret\n\nShould not crash.\n", "utf8");
+  await chmod(lockedDir, 0);
+
+  const { app, baseUrl } = await startApp({ cwd: workspaceDir });
+
+  try {
+    const indexResponse = await fetch(`${baseUrl}/api/knowledge-base`);
+    assert.equal(indexResponse.status, 200);
+    const indexPayload = await indexResponse.json();
+
+    assert.deepEqual(
+      indexPayload.notes.map((note) => note.relativePath),
+      ["index.md", "log.md"],
+    );
+    assert.ok(indexPayload.skippedEntries >= 3);
+  } finally {
+    await chmod(lockedDir, 0o700).catch(() => {});
+    await app.close();
+    await rm(workspaceDir, { recursive: true, force: true });
+  }
+});
+
+test("knowledge base api narrows broad roots to nested remote vibes wiki", async () => {
+  const workspaceDir = await createTempWorkspace("remote-vibes-knowledge-base-nested-");
+  const wikiDir = path.join(workspaceDir, ".remote-vibes", "wiki");
+  await mkdir(wikiDir, { recursive: true });
+  const canonicalWikiDir = await realpath(wikiDir);
+
+  await writeFile(path.join(workspaceDir, "README.md"), "# Project README\n\nNot a wiki note.\n", "utf8");
+  await writeFile(path.join(wikiDir, "index.md"), "# Wiki Index\n\nReadable.\n", "utf8");
+
+  const { app, baseUrl } = await startApp({ cwd: workspaceDir });
+
+  try {
+    const settingsResponse = await fetch(`${baseUrl}/api/settings`, {
+      method: "PATCH",
+      headers: {
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify({ wikiPath: workspaceDir }),
+    });
+    assert.equal(settingsResponse.status, 200);
+
+    const indexResponse = await fetch(`${baseUrl}/api/knowledge-base`);
+    assert.equal(indexResponse.status, 200);
+    const indexPayload = await indexResponse.json();
+
+    assert.equal(indexPayload.rootPath, canonicalWikiDir);
+    assert.equal(indexPayload.relativeRoot, ".remote-vibes/wiki");
+    assert.deepEqual(
+      indexPayload.notes.map((note) => note.relativePath),
+      ["index.md", "log.md"],
+    );
+  } finally {
+    await app.close();
+    await rm(workspaceDir, { recursive: true, force: true });
+  }
+});
+
 test("knowledge base search ranks prefix markdown notes with BM25", async (t) => {
   const executablePath = await resolveBrowserExecutablePath({ env: process.env });
   if (!executablePath) {
@@ -800,6 +876,72 @@ test("knowledge base search ranks prefix markdown notes with BM25", async (t) =>
     );
 
     assert.deepEqual(titles, ["Install Guide", "Meeting Notes"]);
+  } finally {
+    await browser?.close().catch(() => {});
+    await app.close();
+    await rm(workspaceDir, { recursive: true, force: true });
+  }
+});
+
+test("knowledge base graph highlights linked notes on hover and can pulse physics", async (t) => {
+  const executablePath = await resolveBrowserExecutablePath({ env: process.env });
+  if (!executablePath) {
+    t.skip("No local Chromium/Chrome executable is available for the knowledge graph smoke.");
+    return;
+  }
+
+  const workspaceDir = await createTempWorkspace("remote-vibes-knowledge-graph-");
+  const wikiDir = path.join(workspaceDir, ".remote-vibes", "wiki");
+  await mkdir(wikiDir, { recursive: true });
+  await writeFile(path.join(wikiDir, "index.md"), "# Wiki Index\n\nSee [[topic-a]].\n", "utf8");
+  await writeFile(path.join(wikiDir, "topic-a.md"), "# Topic A\n\nBack to [[index]] and next [[topic-b]].\n", "utf8");
+  await writeFile(path.join(wikiDir, "topic-b.md"), "# Topic B\n\nLeaf note.\n", "utf8");
+
+  const { app, baseUrl } = await startApp({ cwd: workspaceDir });
+  let browser = null;
+
+  try {
+    const settingsResponse = await fetch(`${baseUrl}/api/settings`, {
+      method: "PATCH",
+      headers: {
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify({ wikiPath: wikiDir }),
+    });
+    assert.equal(settingsResponse.status, 200);
+
+    browser = await chromium.launch({ executablePath, headless: true });
+    const page = await browser.newPage();
+    await page.goto(`${baseUrl}/?view=knowledge-base`, { waitUntil: "domcontentloaded" });
+    await page.waitForSelector("#knowledge-base-graph", { timeout: 10_000 });
+    await page.waitForFunction(() => {
+      return Boolean(
+        document.querySelector('[data-kb-graph-node="topic-a.md"]') &&
+          document.querySelector('[data-kb-graph-node="topic-b.md"]'),
+      );
+    }, null, {
+      timeout: 10_000,
+    });
+
+    await page.click("#pulse-knowledge-base-graph");
+    await page.locator('[data-kb-graph-node="topic-a.md"] circle').hover();
+    await page.waitForFunction(() => {
+      return document.querySelector('[data-kb-graph-node="topic-b.md"]')?.classList.contains("is-connected");
+    }, null, { timeout: 10_000 });
+
+    const graphState = await page.evaluate(() => {
+      return {
+        pulseLabel: document.querySelector("#pulse-knowledge-base-graph")?.getAttribute("aria-label") || "",
+        topicBConnected: document
+          .querySelector('[data-kb-graph-node="topic-b.md"]')
+          ?.classList.contains("is-connected"),
+        connectedEdges: document.querySelectorAll(".knowledge-base-graph-edge.is-connected").length,
+      };
+    });
+
+    assert.equal(graphState.pulseLabel, "Pulse graph physics");
+    assert.equal(graphState.topicBConnected, true);
+    assert.ok(graphState.connectedEdges >= 1);
   } finally {
     await browser?.close().catch(() => {});
     await app.close();
@@ -960,6 +1102,109 @@ test("knowledge base markdown viewer renders GitHub-style tables", async (t) => 
     assert.equal(rendered.linkHref, "https://github.com/Clamepending/ogbench-cube/tree/r/iql");
     assert.equal(rendered.codeText, "abc123");
     assert.doesNotMatch(rendered.paragraphText, /\|------\|/);
+  } finally {
+    await browser?.close().catch(() => {});
+    await app.close();
+    await rm(workspaceDir, { recursive: true, force: true });
+  }
+});
+
+test("knowledge base markdown viewer renders image, GIF, and video media links", async (t) => {
+  const executablePath = await resolveBrowserExecutablePath({ env: process.env });
+  if (!executablePath) {
+    t.skip("No local Chromium/Chrome executable is available for the markdown media smoke.");
+    return;
+  }
+
+  const workspaceDir = await createTempWorkspace("remote-vibes-markdown-media-");
+  const wikiDir = path.join(workspaceDir, ".remote-vibes", "wiki");
+  const assetsDir = path.join(wikiDir, "assets");
+  await mkdir(assetsDir, { recursive: true });
+  await writeFile(path.join(assetsDir, "diagram.png"), PNG_FIXTURE);
+  await writeFile(path.join(assetsDir, "flow.gif"), GIF_FIXTURE);
+  await writeFile(path.join(assetsDir, "demo.mp4"), Buffer.from("not a real video, but enough for a DOM smoke\n"));
+  await writeFile(path.join(wikiDir, "index.md"), "# Wiki Index\n\nSee [[media]].\n", "utf8");
+  await writeFile(
+    path.join(wikiDir, "media.md"),
+    [
+      "# Media",
+      "",
+      "![Diagram](assets/diagram.png)",
+      "![Animated flow](assets/flow.gif)",
+      "[Demo clip](assets/demo.mp4)",
+      "[External still](https://example.com/still.webp)",
+      "[Plain docs](https://example.com/docs)",
+      "",
+    ].join("\n"),
+    "utf8",
+  );
+
+  const { app, baseUrl } = await startApp({ cwd: workspaceDir });
+  let browser = null;
+
+  try {
+    const settingsResponse = await fetch(`${baseUrl}/api/settings`, {
+      method: "PATCH",
+      headers: {
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify({ wikiPath: wikiDir }),
+    });
+    assert.equal(settingsResponse.status, 200);
+
+    browser = await chromium.launch({ executablePath, headless: true });
+    const page = await browser.newPage();
+    await page.goto(`${baseUrl}/?view=knowledge-base&note=media.md`, { waitUntil: "domcontentloaded" });
+    await page.waitForSelector(".knowledge-base-inline-image", { timeout: 10_000 });
+    await page.waitForSelector("video.knowledge-base-media-player", { timeout: 10_000 });
+
+    const rendered = await page.evaluate(() => {
+      const markdown = document.querySelector(".knowledge-base-markdown");
+      const imageData = Array.from(markdown.querySelectorAll("img.knowledge-base-inline-image"), (image) => {
+        const src = image.getAttribute("src") || "";
+        const parsed = src.startsWith("http") ? new URL(src) : null;
+        return {
+          alt: image.getAttribute("alt") || "",
+          path: parsed?.searchParams.get("path") || "",
+          src,
+          loading: image.getAttribute("loading") || "",
+          decoding: image.getAttribute("decoding") || "",
+        };
+      });
+      const video = markdown.querySelector("video.knowledge-base-media-player");
+      const videoUrl = new URL(video?.getAttribute("src") || "", window.location.href);
+      const plainDocsLink = Array.from(markdown.querySelectorAll("a.knowledge-base-external-link")).find(
+        (link) => link.textContent?.trim() === "Plain docs",
+      );
+
+      return {
+        images: imageData,
+        videoPath: videoUrl.searchParams.get("path") || "",
+        videoControls: Boolean(video?.hasAttribute("controls")),
+        videoPreload: video?.getAttribute("preload") || "",
+        captions: Array.from(markdown.querySelectorAll(".knowledge-base-media-caption"), (caption) =>
+          caption.textContent.trim(),
+        ),
+        plainDocsHref: plainDocsLink?.getAttribute("href") || "",
+      };
+    });
+
+    assert.deepEqual(
+      rendered.images.map((image) => image.alt),
+      ["Diagram", "Animated flow", "External still"],
+    );
+    assert.deepEqual(
+      rendered.images.slice(0, 2).map((image) => image.path),
+      ["assets/diagram.png", "assets/flow.gif"],
+    );
+    assert.equal(rendered.images[2].src, "https://example.com/still.webp");
+    assert.ok(rendered.images.every((image) => image.loading === "lazy"));
+    assert.ok(rendered.images.every((image) => image.decoding === "async"));
+    assert.equal(rendered.videoPath, "assets/demo.mp4");
+    assert.equal(rendered.videoControls, true);
+    assert.equal(rendered.videoPreload, "metadata");
+    assert.deepEqual(rendered.captions, ["Demo clip", "External still"]);
+    assert.equal(rendered.plainDocsHref, "https://example.com/docs");
   } finally {
     await browser?.close().catch(() => {});
     await app.close();

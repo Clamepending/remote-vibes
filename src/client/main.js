@@ -59,6 +59,38 @@ const KNOWLEDGE_BASE_GRAPH_FIT_PADDING = 72;
 const KNOWLEDGE_BASE_GRAPH_FOCUS_SCALE = 1.65;
 const KNOWLEDGE_BASE_GRAPH_DRAG_SLOP_PX = 6;
 const KNOWLEDGE_BASE_GRAPH_PROJECT_PREFIX = "project:";
+const KNOWLEDGE_BASE_GRAPH_PHYSICS = Object.freeze({
+  alphaDecay: 0.972,
+  alphaCooling: 0.0018,
+  stopAlpha: 0.018,
+  stopVelocity: 0.045,
+  damping: 0.9,
+  dragDamping: 0.82,
+  dragAlphaTarget: 0.32,
+  centerStrength: 0.0018,
+  groupAnchorStrength: 0.01,
+  projectAnchorStrength: 0.014,
+  sameGroupMinimumGap: 38,
+  otherGroupMinimumGap: 68,
+  sameGroupRepulsionBase: 3600,
+  otherGroupRepulsionBase: 7600,
+  sameGroupRepulsionRadius: 175,
+  otherGroupRepulsionRadius: 285,
+  sameGroupCollisionPush: 0.22,
+  otherGroupCollisionPush: 0.34,
+  sameGroupLinkDistance: 62,
+  otherGroupLinkDistance: 118,
+  sameGroupLinkRadius: 2.6,
+  otherGroupLinkRadius: 3.6,
+  sameGroupLinkStrength: 0.015,
+  otherGroupLinkStrength: 0.0075,
+  linkDegreeStrength: 0.00052,
+  maxVelocity: 15,
+  maxDragVelocity: 24,
+  boundaryMargin: 58,
+  boundaryStrength: 0.014,
+  maxAlpha: 0.58,
+});
 const KNOWLEDGE_BASE_BM25_K1 = 1.2;
 const KNOWLEDGE_BASE_BM25_B = 0.75;
 const KNOWLEDGE_BASE_SEARCH_PREFIX_MIN_LENGTH = 2;
@@ -90,6 +122,9 @@ const TERMINAL_IMAGE_PATH_EXTENSIONS = new Set([
   ".tiff",
   ".webp",
 ]);
+const KNOWLEDGE_BASE_IMAGE_EXTENSIONS = TERMINAL_IMAGE_PATH_EXTENSIONS;
+const KNOWLEDGE_BASE_VIDEO_EXTENSIONS = new Set([".mp4", ".m4v", ".mov", ".ogv", ".webm"]);
+const KNOWLEDGE_BASE_AUDIO_EXTENSIONS = new Set([".aac", ".flac", ".m4a", ".mp3", ".oga", ".ogg", ".opus", ".wav", ".weba"]);
 const TERMINAL_FILE_PATH_PATTERN = /(^|[\s"'`(<[{])((?:\\.|[^\s"'`<>()[\]{}|])+)(?=$|[\s"'`<>()[\]{}|])/gi;
 const FOLDER_PICKER_DRAG_MARGIN_PX = 12;
 const SYSTEM_HISTORY_REFRESH_MS = 30_000;
@@ -4186,6 +4221,99 @@ function resolveKnowledgeBaseNotePath(fromPath, targetPath) {
   return candidates.find((candidate) => notePaths.has(candidate)) || "";
 }
 
+function cleanMarkdownLinkTarget(targetPath) {
+  let cleaned = String(targetPath || "").trim();
+
+  if (!cleaned) {
+    return "";
+  }
+
+  if (cleaned.startsWith("<")) {
+    const closingIndex = cleaned.indexOf(">");
+    if (closingIndex > 0) {
+      return cleaned.slice(1, closingIndex).trim();
+    }
+  }
+
+  cleaned = cleaned.replace(/^<|>$/g, "");
+  const titleMatch = cleaned.match(/^(.+?)\s+(?:"[^"]*"|'[^']*'|\([^)]*\))\s*$/);
+  return (titleMatch?.[1] || cleaned).trim();
+}
+
+function isSafeKnowledgeBaseExternalUrl(url) {
+  try {
+    const parsedUrl = new URL(url);
+    return parsedUrl.protocol === "http:" || parsedUrl.protocol === "https:";
+  } catch {
+    return false;
+  }
+}
+
+function getKnowledgeBaseMediaExtension(targetPath) {
+  const cleaned = cleanMarkdownLinkTarget(targetPath);
+  if (!cleaned) {
+    return "";
+  }
+
+  let pathname = cleaned;
+  try {
+    pathname = new URL(cleaned).pathname;
+  } catch {
+    [pathname] = cleaned.split(/[?#]/);
+  }
+
+  const match = String(pathname || "").toLowerCase().match(/\.([a-z0-9]+)$/);
+  return match ? `.${match[1]}` : "";
+}
+
+function getKnowledgeBaseMediaKind(targetPath, { defaultToImage = false } = {}) {
+  const extension = getKnowledgeBaseMediaExtension(targetPath);
+
+  if (KNOWLEDGE_BASE_IMAGE_EXTENSIONS.has(extension)) {
+    return "image";
+  }
+
+  if (KNOWLEDGE_BASE_VIDEO_EXTENSIONS.has(extension)) {
+    return "video";
+  }
+
+  if (KNOWLEDGE_BASE_AUDIO_EXTENSIONS.has(extension)) {
+    return "audio";
+  }
+
+  return defaultToImage ? "image" : "";
+}
+
+function getKnowledgeBaseMediaResource(currentPath, targetPath, { defaultToImage = false } = {}) {
+  const cleanedTarget = cleanMarkdownLinkTarget(targetPath);
+
+  if (!cleanedTarget || cleanedTarget.startsWith("#")) {
+    return null;
+  }
+
+  if (/^[a-z][a-z0-9+.-]*:/i.test(cleanedTarget)) {
+    if (!isSafeKnowledgeBaseExternalUrl(cleanedTarget)) {
+      return null;
+    }
+
+    const kind = getKnowledgeBaseMediaKind(cleanedTarget, { defaultToImage });
+    return kind ? { kind, url: cleanedTarget } : null;
+  }
+
+  const relativeAssetPath = resolveKnowledgeBaseRelativePath(currentPath, cleanedTarget);
+  if (!relativeAssetPath) {
+    return null;
+  }
+
+  const kind = getKnowledgeBaseMediaKind(relativeAssetPath, { defaultToImage });
+  return kind
+    ? {
+        kind,
+        url: getKnowledgeBaseNoteRawUrl(relativeAssetPath),
+      }
+    : null;
+}
+
 function getFileDisplayName(relativePath) {
   const normalized = normalizeFileTreePath(relativePath);
   if (!normalized) {
@@ -5184,6 +5312,7 @@ function createEmptyKnowledgeBaseGraphLayout(previousLayout = null) {
     frameHandle: 0,
     dragState: null,
     panState: null,
+    hoveredPath: previousLayout?.hoveredPath ?? "",
     refs: null,
     cleanup: null,
     cameraInitialized: previousLayout?.cameraInitialized ?? false,
@@ -5209,6 +5338,7 @@ function teardownKnowledgeBaseGraphInteractions() {
   layout.refs = null;
   layout.dragState = null;
   layout.panState = null;
+  layout.hoveredPath = "";
 }
 
 function getKnowledgeBaseGraphSvgPoint(svg, clientX, clientY) {
@@ -5256,6 +5386,10 @@ function syncKnowledgeBaseGraphDom() {
     `translate(${layout.offsetX.toFixed(2)} ${layout.offsetY.toFixed(2)}) scale(${layout.scale.toFixed(4)})`,
   );
 
+  const selectedPath = state.knowledgeBase.selectedNotePath;
+  const activePath = layout.hoveredPath || selectedPath;
+  const connectedPaths = new Set(activePath ? [activePath] : []);
+
   layout.edges.forEach((edge, index) => {
     const source = layout.nodes[edge.sourceIndex];
     const target = layout.nodes[edge.targetIndex];
@@ -5263,6 +5397,13 @@ function syncKnowledgeBaseGraphDom() {
 
     if (!source || !target || !(element instanceof SVGLineElement)) {
       return;
+    }
+
+    const isConnected = Boolean(activePath && (edge.source === activePath || edge.target === activePath));
+    element.classList.toggle("is-connected", isConnected);
+    if (isConnected) {
+      connectedPaths.add(edge.source);
+      connectedPaths.add(edge.target);
     }
 
     element.setAttribute("x1", source.x.toFixed(2));
@@ -5279,6 +5420,9 @@ function syncKnowledgeBaseGraphDom() {
 
     element.setAttribute("transform", `translate(${node.x.toFixed(2)} ${node.y.toFixed(2)})`);
     element.classList.toggle("is-dragging", layout.dragState?.node?.relativePath === node.relativePath);
+    element.classList.toggle("is-hovered", layout.hoveredPath === node.relativePath);
+    element.classList.toggle("is-selected", selectedPath === node.relativePath);
+    element.classList.toggle("is-connected", connectedPaths.has(node.relativePath));
   });
 
   refs.svg.classList.toggle("is-panning", Boolean(layout.panState));
@@ -5428,17 +5572,34 @@ function scheduleKnowledgeBaseGraphFrame() {
       return;
     }
 
+    const physics = KNOWLEDGE_BASE_GRAPH_PHYSICS;
     const centerX = layout.width / 2;
     const centerY = layout.height / 2;
-    const damping = layout.dragState ? 0.72 : 0.82;
-    const baseAlpha = layout.dragState ? 0.22 : 0.1;
-    const alpha = Math.max(layout.alpha || 0, baseAlpha);
+    const damping = layout.dragState ? physics.dragDamping : physics.damping;
+    const alphaTarget = layout.dragState ? physics.dragAlphaTarget : 0;
+    const alpha = Math.max(layout.alpha || 0, alphaTarget);
 
     for (const node of layout.nodes) {
       const anchor = layout.groupAnchors?.[node.groupKey] || { x: centerX, y: centerY };
-      const anchorStrength = isKnowledgeBaseProjectGroup(node.groupKey) ? 0.010 : 0.007;
-      node.fx = (anchor.x - node.x) * anchorStrength + (centerX - node.x) * 0.0012;
-      node.fy = (anchor.y - node.y) * anchorStrength + (centerY - node.y) * 0.0012;
+      const anchorStrength = isKnowledgeBaseProjectGroup(node.groupKey)
+        ? physics.projectAnchorStrength
+        : physics.groupAnchorStrength;
+      node.fx = (anchor.x - node.x) * anchorStrength + (centerX - node.x) * physics.centerStrength;
+      node.fy = (anchor.y - node.y) * anchorStrength + (centerY - node.y) * physics.centerStrength;
+
+      const rightBoundary = layout.width - physics.boundaryMargin;
+      const bottomBoundary = layout.height - physics.boundaryMargin;
+      if (node.x < physics.boundaryMargin) {
+        node.fx += (physics.boundaryMargin - node.x) * physics.boundaryStrength;
+      } else if (node.x > rightBoundary) {
+        node.fx -= (node.x - rightBoundary) * physics.boundaryStrength;
+      }
+
+      if (node.y < physics.boundaryMargin) {
+        node.fy += (physics.boundaryMargin - node.y) * physics.boundaryStrength;
+      } else if (node.y > bottomBoundary) {
+        node.fy -= (node.y - bottomBoundary) * physics.boundaryStrength;
+      }
     }
 
     for (let leftIndex = 0; leftIndex < layout.nodes.length; leftIndex += 1) {
@@ -5451,11 +5612,16 @@ function scheduleKnowledgeBaseGraphFrame() {
         const distanceSquared = Math.max(deltaX * deltaX + deltaY * deltaY, 1);
         const distance = Math.sqrt(distanceSquared);
         const sameGroup = left.groupKey && left.groupKey === right.groupKey;
-        const minimumDistance = left.radius + right.radius + (sameGroup ? 30 : 58);
-        let repulsion = ((sameGroup ? 2600 : 5000) + minimumDistance * (sameGroup ? 135 : 210)) / distanceSquared;
+        const minimumDistance =
+          left.radius + right.radius + (sameGroup ? physics.sameGroupMinimumGap : physics.otherGroupMinimumGap);
+        let repulsion =
+          ((sameGroup ? physics.sameGroupRepulsionBase : physics.otherGroupRepulsionBase) +
+            minimumDistance * (sameGroup ? physics.sameGroupRepulsionRadius : physics.otherGroupRepulsionRadius)) /
+          distanceSquared;
 
         if (distance < minimumDistance) {
-          repulsion += (minimumDistance - distance) * (sameGroup ? 0.13 : 0.2);
+          repulsion +=
+            (minimumDistance - distance) * (sameGroup ? physics.sameGroupCollisionPush : physics.otherGroupCollisionPush);
         }
 
         const forceX = (deltaX / distance) * repulsion;
@@ -5501,7 +5667,7 @@ function scheduleKnowledgeBaseGraphFrame() {
       node.vx = (node.vx + node.fx * alpha) * damping;
       node.vy = (node.vy + node.fy * alpha) * damping;
       const velocity = Math.hypot(node.vx, node.vy);
-      const maxNodeVelocity = layout.dragState ? 18 : 12;
+      const maxNodeVelocity = layout.dragState ? physics.maxDragVelocity : physics.maxVelocity;
       if (velocity > maxNodeVelocity) {
         node.vx = (node.vx / velocity) * maxNodeVelocity;
         node.vy = (node.vy / velocity) * maxNodeVelocity;
@@ -5512,10 +5678,11 @@ function scheduleKnowledgeBaseGraphFrame() {
       maxVelocity = Math.max(maxVelocity, Math.abs(node.vx) + Math.abs(node.vy));
     }
 
-    layout.alpha = Math.max(0, alpha * 0.985 - 0.00025);
+    layout.alpha = Math.max(alphaTarget, alpha * physics.alphaDecay - physics.alphaCooling, 0);
     syncKnowledgeBaseGraphDom();
 
-    const shouldContinue = Boolean(layout.dragState) || maxVelocity > 0.032 || layout.alpha > 0.026;
+    const shouldContinue =
+      Boolean(layout.dragState) || maxVelocity > physics.stopVelocity || layout.alpha > physics.stopAlpha;
     layout.running = shouldContinue;
 
     if (shouldContinue) {
@@ -5532,7 +5699,7 @@ function startKnowledgeBaseGraphSimulation(boost = 0.16) {
   }
 
   layout.running = true;
-  layout.alpha = Math.max(layout.alpha || 0, boost);
+  layout.alpha = clamp(Math.max(layout.alpha || 0, boost), 0, KNOWLEDGE_BASE_GRAPH_PHYSICS.maxAlpha);
   scheduleKnowledgeBaseGraphFrame();
 }
 
@@ -5626,9 +5793,12 @@ function createKnowledgeBaseGraphLayout(notes, edges) {
   const maxDegree = Math.max(1, ...nodes.map((node) => node.degree || 0));
   const graphNodes = nodes.map((node) => ({
     ...node,
-    radius: Math.min(26, 6.5 + Math.sqrt(node.degree || 0) * 2.85 + ((node.degree || 0) / maxDegree) * 8.5),
+    radius: Math.min(30, 5.75 + Math.sqrt(node.degree || 0) * 3.05 + ((node.degree || 0) / maxDegree) * 10.5),
   }));
   const sizedNodeMap = new Map(graphNodes.map((node, index) => [node.relativePath, { node, index }]));
+  const physics = KNOWLEDGE_BASE_GRAPH_PHYSICS;
+  const previousHoveredPath = previousLayout?.hoveredPath || "";
+  const hoveredPath = sizedNodeMap.has(previousHoveredPath) ? previousHoveredPath : "";
 
   return {
     width,
@@ -5642,8 +5812,13 @@ function createKnowledgeBaseGraphLayout(notes, edges) {
       return {
         ...edge,
         edgeColor: sameGroup ? source?.color?.edge : "rgba(255, 255, 255, 0.08)",
-        distance: (sameGroup ? 78 : 150) + ((source?.radius || 10) + (target?.radius || 10)) * (sameGroup ? 3.2 : 4.4),
-        strength: (sameGroup ? 0.008 : 0.0035) + 0.00028 * Math.min((source?.degree || 0) + (target?.degree || 0), 12),
+        distance:
+          (sameGroup ? physics.sameGroupLinkDistance : physics.otherGroupLinkDistance) +
+          ((source?.radius || 10) + (target?.radius || 10)) *
+            (sameGroup ? physics.sameGroupLinkRadius : physics.otherGroupLinkRadius),
+        strength:
+          (sameGroup ? physics.sameGroupLinkStrength : physics.otherGroupLinkStrength) +
+          physics.linkDegreeStrength * Math.min((source?.degree || 0) + (target?.degree || 0), 12),
       };
     }),
     groupAnchors,
@@ -5655,6 +5830,7 @@ function createKnowledgeBaseGraphLayout(notes, edges) {
     frameHandle: 0,
     dragState: null,
     panState: null,
+    hoveredPath,
     refs: null,
     cleanup: null,
     cameraInitialized: previousLayout?.cameraInitialized ?? false,
@@ -5833,25 +6009,67 @@ async function selectKnowledgeBaseNoteForWorkspaceFile(relativePath, { openInKno
   return true;
 }
 
+function renderKnowledgeBaseMedia(media, { altText = "", caption = "" } = {}) {
+  const url = escapeHtml(media?.url || "");
+  const label = String(caption || "").trim();
+  const captionHtml = label
+    ? `<span class="knowledge-base-media-caption">${escapeHtml(label)}</span>`
+    : "";
+
+  if (!url) {
+    return "";
+  }
+
+  if (media.kind === "video") {
+    return `
+      <span class="knowledge-base-media knowledge-base-video-media">
+        <video class="knowledge-base-media-player" src="${url}" controls preload="metadata">
+          <a href="${url}" target="_blank" rel="noreferrer">${escapeHtml(altText || "Open video")}</a>
+        </video>
+        ${captionHtml}
+      </span>
+    `;
+  }
+
+  if (media.kind === "audio") {
+    return `
+      <span class="knowledge-base-media knowledge-base-audio-media">
+        <audio class="knowledge-base-media-player" src="${url}" controls preload="metadata">
+          <a href="${url}" target="_blank" rel="noreferrer">${escapeHtml(altText || "Open audio")}</a>
+        </audio>
+        ${captionHtml}
+      </span>
+    `;
+  }
+
+  return `
+    <span class="knowledge-base-media knowledge-base-image-media">
+      <a class="knowledge-base-media-open" href="${url}" target="_blank" rel="noreferrer">
+        <img class="knowledge-base-inline-image" src="${url}" alt="${escapeHtml(altText)}" loading="lazy" decoding="async" />
+      </a>
+      ${captionHtml}
+    </span>
+  `;
+}
+
 function renderKnowledgeBaseInline(text, currentPath) {
   const tokens = [];
   const createToken = (html) => `%%KB_TOKEN_${tokens.push(html) - 1}%%`;
   let output = String(text || "");
 
   output = output.replace(/!\[([^\]]*)\]\(([^)]+)\)/g, (_match, altText, target) => {
-    const relativeAssetPath = resolveKnowledgeBaseRelativePath(currentPath, target);
+    const media = getKnowledgeBaseMediaResource(currentPath, target, { defaultToImage: true });
 
-    if (!relativeAssetPath) {
+    if (!media) {
       return createToken(`<span>${escapeHtml(altText)}</span>`);
     }
 
-    return createToken(
-      `<img class="knowledge-base-inline-image" src="${escapeHtml(getKnowledgeBaseNoteRawUrl(relativeAssetPath))}" alt="${escapeHtml(altText)}" loading="lazy" />`,
-    );
+    return createToken(renderKnowledgeBaseMedia(media, { altText }));
   });
 
   output = output.replace(/\[([^\]]+)\]\(([^)]+)\)/g, (_match, label, target) => {
-    const notePath = resolveKnowledgeBaseNotePath(currentPath, target);
+    const cleanedTarget = cleanMarkdownLinkTarget(target);
+    const notePath = resolveKnowledgeBaseNotePath(currentPath, cleanedTarget);
 
     if (notePath) {
       return createToken(
@@ -5859,10 +6077,15 @@ function renderKnowledgeBaseInline(text, currentPath) {
       );
     }
 
-    const relativeAssetPath = resolveKnowledgeBaseRelativePath(currentPath, target);
+    const media = getKnowledgeBaseMediaResource(currentPath, cleanedTarget);
+    if (media) {
+      return createToken(renderKnowledgeBaseMedia(media, { altText: label, caption: label }));
+    }
+
+    const relativeAssetPath = resolveKnowledgeBaseRelativePath(currentPath, cleanedTarget);
     const externalHref = relativeAssetPath
       ? getKnowledgeBaseNoteRawUrl(relativeAssetPath)
-      : String(target || "").trim();
+      : cleanedTarget || String(target || "").trim();
     return createToken(
       `<a class="knowledge-base-external-link" href="${escapeHtml(externalHref)}" target="_blank" rel="noreferrer">${escapeHtml(label)}</a>`,
     );
@@ -6224,9 +6447,16 @@ function renderKnowledgeBaseGraph() {
           <div class="knowledge-base-panel-meta">${escapeHtml(
             `${layout.nodes.length} notes · ${layout.edges.length} links`,
           )}</div>
-          <div class="knowledge-base-graph-hint">drag nodes · drag canvas · scroll to zoom</div>
+          <div class="knowledge-base-graph-hint">hover nodes · drag nodes · scroll to zoom</div>
         </div>
         <div class="knowledge-base-graph-actions">
+          <button
+            class="icon-button toolbar-control knowledge-base-graph-icon-button"
+            type="button"
+            id="pulse-knowledge-base-graph"
+            aria-label="Pulse graph physics"
+            ${tooltipAttributes("Pulse graph physics")}
+          >${renderIcon(Zap)}</button>
           <button class="ghost-button toolbar-control" type="button" id="fit-knowledge-base-graph">fit</button>
         </div>
       </div>
@@ -6283,7 +6513,7 @@ function renderKnowledgeBaseGraph() {
 
                 return `
                   <g
-                    class="knowledge-base-graph-node ${isSelected ? "is-selected" : ""} ${isConnected ? "is-connected" : ""}"
+                    class="knowledge-base-graph-node ${shouldShowLabel ? "has-visible-label" : ""} ${isSelected ? "is-selected" : ""} ${isConnected ? "is-connected" : ""}"
                     data-kb-graph-node="${escapeHtml(node.relativePath)}"
                     data-kb-graph-node-index="${index}"
                     ${renderStyleVariables({
@@ -6296,13 +6526,9 @@ function renderKnowledgeBaseGraph() {
                     transform="translate(${node.x.toFixed(2)} ${node.y.toFixed(2)})"
                   >
                     <circle r="${node.radius.toFixed(2)}"></circle>
-                    ${
-                      shouldShowLabel
-                        ? `<text y="${(-node.radius - 10).toFixed(2)}">${escapeHtml(
-                            truncateKnowledgeBaseLabel(node.title, 18),
-                          )}</text>`
-                        : ""
-                    }
+                    <text y="${(-node.radius - 10).toFixed(2)}">${escapeHtml(
+                      truncateKnowledgeBaseLabel(node.title, 18),
+                    )}</text>
                   </g>
                 `;
               })
@@ -11417,6 +11643,7 @@ function bindKnowledgeBaseGraphInteractions() {
   const clearInteractionState = () => {
     layout.dragState = null;
     layout.panState = null;
+    layout.hoveredPath = "";
     svg.classList.remove("is-panning", "is-dragging-node");
     layout.nodes.forEach((_node, index) => {
       const element = nodeElements[index];
@@ -11424,6 +11651,15 @@ function bindKnowledgeBaseGraphInteractions() {
         element.classList.remove("is-dragging");
       }
     });
+  };
+
+  const setHoveredPath = (nextPath) => {
+    if (layout.hoveredPath === nextPath) {
+      return;
+    }
+
+    layout.hoveredPath = nextPath;
+    syncKnowledgeBaseGraphDom();
   };
 
   const onPointerMove = (event) => {
@@ -11555,6 +11791,51 @@ function bindKnowledgeBaseGraphInteractions() {
   window.addEventListener("pointercancel", onPointerEnd, { signal });
 
   svg.addEventListener(
+    "pointerover",
+    (event) => {
+      const target = event.target;
+      if (!(target instanceof Element)) {
+        return;
+      }
+
+      const nodeElement = target.closest("[data-kb-graph-node-index]");
+      if (!(nodeElement instanceof SVGGElement)) {
+        return;
+      }
+
+      const nodeIndex = Number.parseInt(nodeElement.getAttribute("data-kb-graph-node-index") || "", 10);
+      setHoveredPath(layout.nodes[nodeIndex]?.relativePath || "");
+    },
+    { signal },
+  );
+
+  svg.addEventListener(
+    "pointerout",
+    (event) => {
+      const target = event.target;
+      if (!(target instanceof Element)) {
+        return;
+      }
+
+      const nodeElement = target.closest("[data-kb-graph-node-index]");
+      if (!(nodeElement instanceof SVGGElement)) {
+        return;
+      }
+
+      const relatedElement =
+        event.relatedTarget instanceof Element
+          ? event.relatedTarget.closest("[data-kb-graph-node-index]")
+          : null;
+      if (relatedElement === nodeElement) {
+        return;
+      }
+
+      setHoveredPath("");
+    },
+    { signal },
+  );
+
+  svg.addEventListener(
     "wheel",
     (event) => {
       const svgPoint = getKnowledgeBaseGraphSvgPoint(svg, event.clientX, event.clientY);
@@ -11591,6 +11872,14 @@ function bindKnowledgeBaseGraphInteractions() {
     () => {
       fitKnowledgeBaseGraphCamera();
       startKnowledgeBaseGraphSimulation(0.18);
+    },
+    { signal },
+  );
+
+  document.querySelector("#pulse-knowledge-base-graph")?.addEventListener(
+    "click",
+    () => {
+      replayKnowledgeBaseGraphUnfold();
     },
     { signal },
   );

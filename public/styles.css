@@ -3235,6 +3235,16 @@ input[readonly][data-folder-picker-target] {
   grid-template-rows: auto minmax(0, 1fr);
 }
 
+.knowledge-base-column-graph {
+  display: grid;
+  grid-template-rows: minmax(0, 1fr);
+}
+
+.knowledge-base-column-graph .knowledge-base-graph-card {
+  min-height: 100%;
+  height: 100%;
+}
+
 .knowledge-base-column-list {
   grid-template-rows: auto auto minmax(0, 1fr);
 }
@@ -3586,13 +3596,50 @@ input[readonly][data-folder-picker-target] {
   text-decoration-color: rgba(216, 217, 222, 0.38);
 }
 
+.knowledge-base-media {
+  display: grid;
+  gap: 7px;
+  max-width: 100%;
+  margin: 12px 0;
+}
+
+.knowledge-base-media-open {
+  display: block;
+  max-width: 100%;
+}
+
 .knowledge-base-inline-image {
   display: block;
   max-width: 100%;
-  margin-top: 12px;
+  max-height: min(64vh, 720px);
   border: 1px solid rgba(255, 255, 255, 0.08);
   border-radius: 16px;
   background: rgba(8, 10, 12, 0.84);
+  object-fit: contain;
+}
+
+.knowledge-base-media-player {
+  display: block;
+  width: min(100%, 920px);
+  max-height: min(64vh, 720px);
+  border: 1px solid rgba(255, 255, 255, 0.08);
+  border-radius: 16px;
+  background: rgba(8, 10, 12, 0.84);
+}
+
+.knowledge-base-video-media .knowledge-base-media-player {
+  aspect-ratio: 16 / 9;
+}
+
+.knowledge-base-audio-media .knowledge-base-media-player {
+  max-height: none;
+  border-radius: 999px;
+}
+
+.knowledge-base-media-caption {
+  color: rgba(244, 244, 242, 0.62);
+  font-family: "IBM Plex Mono", monospace;
+  font-size: 0.76rem;
 }
 
 .file-rendered-markdown {
@@ -3640,14 +3687,20 @@ input[readonly][data-folder-picker-target] {
   gap: 8px;
 }
 
+.knowledge-base-graph-icon-button {
+  width: 44px;
+  min-width: 44px;
+  min-height: 44px;
+  padding: 0;
+}
+
 .knowledge-base-graph-frame {
   min-height: 0;
   padding: 0 12px 12px;
-  border-radius: 18px;
+  border-radius: 8px;
   background:
-    radial-gradient(circle at 18% 18%, rgba(255, 143, 99, 0.08), transparent 32%),
-    radial-gradient(circle at 82% 12%, rgba(104, 227, 199, 0.07), transparent 34%),
-    rgba(8, 11, 13, 0.78);
+    radial-gradient(circle at 50% 50%, rgba(246, 246, 248, 0.035), transparent 38%),
+    rgba(8, 11, 13, 0.84);
   overflow: hidden;
 }
 
@@ -3673,15 +3726,18 @@ input[readonly][data-folder-picker-target] {
 }
 
 .knowledge-base-graph-edge {
-  stroke: var(--kb-edge-stroke, rgba(255, 255, 255, 0.1));
+  stroke: var(--kb-edge-stroke, rgba(255, 255, 255, 0.14));
   stroke-width: 1.35;
   stroke-linecap: round;
+  opacity: 0.72;
+  transition: opacity 120ms ease, stroke 120ms ease, stroke-width 120ms ease;
   vector-effect: non-scaling-stroke;
 }
 
 .knowledge-base-graph-edge.is-connected {
-  stroke: rgba(226, 226, 230, 0.56);
-  stroke-width: 1.8;
+  stroke: rgba(244, 247, 251, 0.72);
+  stroke-width: 2.15;
+  opacity: 1;
 }
 
 .knowledge-base-graph-node {
@@ -3692,7 +3748,7 @@ input[readonly][data-folder-picker-target] {
   fill: var(--kb-node-fill, rgba(226, 226, 230, 0.62));
   stroke: var(--kb-node-stroke, rgba(246, 246, 248, 0.42));
   stroke-width: 1.25;
-  filter: drop-shadow(0 0 10px rgba(226, 226, 230, 0.08));
+  filter: drop-shadow(0 0 9px rgba(226, 226, 230, 0.12));
   transition: fill 120ms ease, stroke 120ms ease, filter 120ms ease, transform 120ms ease, r 120ms ease;
   vector-effect: non-scaling-stroke;
 }
@@ -3702,7 +3758,16 @@ input[readonly][data-folder-picker-target] {
   font-family: "IBM Plex Mono", monospace;
   font-size: 10px;
   text-anchor: middle;
+  opacity: 0;
   pointer-events: none;
+  transition: fill 120ms ease, opacity 120ms ease;
+}
+
+.knowledge-base-graph-node.has-visible-label text,
+.knowledge-base-graph-node.is-connected text,
+.knowledge-base-graph-node.is-hovered text,
+.knowledge-base-graph-node.is-selected text {
+  opacity: 1;
 }
 
 .knowledge-base-graph-node.is-connected circle {
@@ -3711,16 +3776,17 @@ input[readonly][data-folder-picker-target] {
 }
 
 .knowledge-base-graph-node.is-dragging circle,
+.knowledge-base-graph-node.is-hovered circle,
 .knowledge-base-graph-node:hover circle {
   fill: var(--kb-node-connected-fill, rgba(226, 226, 230, 0.82));
   stroke: var(--kb-node-connected-stroke, rgba(246, 246, 248, 0.84));
-  filter: drop-shadow(0 0 16px rgba(226, 226, 230, 0.16));
+  filter: drop-shadow(0 0 18px rgba(226, 226, 230, 0.22));
 }
 
 .knowledge-base-graph-node.is-selected circle {
   fill: var(--kb-node-connected-fill, rgba(226, 226, 230, 0.86));
   stroke: rgba(246, 246, 248, 0.94);
-  filter: drop-shadow(0 0 18px rgba(226, 226, 230, 0.18));
+  filter: drop-shadow(0 0 20px rgba(226, 226, 230, 0.26));
 }
 
 .knowledge-base-graph-node.is-selected text {
@@ -3731,6 +3797,9 @@ input[readonly][data-folder-picker-target] {
   display: flex;
   flex-wrap: wrap;
   gap: 8px;
+  align-content: flex-start;
+  max-height: 132px;
+  overflow-y: auto;
   padding: 0 12px 14px;
 }
 
@@ -5666,9 +5735,12 @@ select:disabled {
   }
 
   .knowledge-base-column-list,
-  .knowledge-base-column-note,
-  .knowledge-base-column-graph {
+  .knowledge-base-column-note {
     min-height: 320px;
+  }
+
+  .knowledge-base-column-graph {
+    min-height: 560px;
   }
 
   .knowledge-settings-options,
@@ -6133,9 +6205,12 @@ select:disabled {
     min-height: 248px;
   }
 
-  .knowledge-base-column-note,
-  .knowledge-base-column-graph {
+  .knowledge-base-column-note {
     min-height: 260px;
+  }
+
+  .knowledge-base-column-graph {
+    min-height: 560px;
   }
 
   .knowledge-base-column,

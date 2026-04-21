@@ -2,6 +2,23 @@ import path from "node:path";
 import { readdir, readFile, realpath, stat } from "node:fs/promises";
 
 const MARKDOWN_EXTENSIONS = new Set([".md", ".markdown"]);
+const RECOVERABLE_SCAN_ERROR_CODES = new Set(["EACCES", "ENOENT", "ENOTDIR", "EPERM", "ELOOP"]);
+const ALLOWED_HIDDEN_KNOWLEDGE_BASE_DIRECTORY_NAMES = new Set([".remote-vibes"]);
+const IGNORED_KNOWLEDGE_BASE_DIRECTORY_NAMES = new Set([
+  ".DocumentRevisions-V100",
+  ".Spotlight-V100",
+  ".TemporaryItems",
+  ".Trash",
+  ".fseventsd",
+  ".git",
+  ".hg",
+  ".svn",
+  "$RECYCLE.BIN",
+  "Applications",
+  "Library",
+  "System Volume Information",
+  "node_modules",
+]);
 
 function buildHttpError(message, statusCode) {
   const error = new Error(message);
@@ -46,6 +63,17 @@ function ensurePathInsideRoot(rootPath, targetPath) {
 
 function isMarkdownFile(fileName) {
   return MARKDOWN_EXTENSIONS.has(path.extname(fileName).toLowerCase());
+}
+
+function isRecoverableScanError(error) {
+  return RECOVERABLE_SCAN_ERROR_CODES.has(error?.code);
+}
+
+function shouldSkipKnowledgeBaseDirectory(directoryName) {
+  return (
+    IGNORED_KNOWLEDGE_BASE_DIRECTORY_NAMES.has(directoryName) ||
+    (directoryName.startsWith(".") && !ALLOWED_HIDDEN_KNOWLEDGE_BASE_DIRECTORY_NAMES.has(directoryName))
+  );
 }
 
 function stripMarkdown(text) {
@@ -184,9 +212,48 @@ async function resolveKnowledgeBaseRoot(rootPath) {
   return realRootPath;
 }
 
-async function collectMarkdownFiles(rootPath, relativeDirectory = "") {
+async function resolveNestedKnowledgeBaseRoot(realRootPath) {
+  const nestedRootPath = path.join(realRootPath, ".remote-vibes", "wiki");
+  const nestedStats = await stat(nestedRootPath).catch(() => null);
+
+  if (!nestedStats?.isDirectory()) {
+    return null;
+  }
+
+  return realpath(nestedRootPath).catch(() => null);
+}
+
+async function resolveKnowledgeBaseRootInfo(rootPath) {
+  const realRootPath = await resolveKnowledgeBaseRoot(rootPath);
+  const nestedRootPath = await resolveNestedKnowledgeBaseRoot(realRootPath);
+
+  if (!nestedRootPath) {
+    return {
+      rootPath: realRootPath,
+      relativeRoot: "",
+    };
+  }
+
+  return {
+    rootPath: nestedRootPath,
+    relativeRoot: normalizeRelativePath(path.relative(realRootPath, nestedRootPath)),
+  };
+}
+
+async function collectMarkdownFiles(rootPath, relativeDirectory = "", scanState = { skippedEntries: 0 }) {
   const directoryPath = path.join(rootPath, relativeDirectory);
-  const directoryEntries = await readdir(directoryPath, { withFileTypes: true });
+  let directoryEntries = [];
+  try {
+    directoryEntries = await readdir(directoryPath, { withFileTypes: true });
+  } catch (error) {
+    if (!relativeDirectory || !isRecoverableScanError(error)) {
+      throw error;
+    }
+
+    scanState.skippedEntries += 1;
+    return [];
+  }
+
   const results = [];
 
   const sortedEntries = directoryEntries
@@ -205,7 +272,12 @@ async function collectMarkdownFiles(rootPath, relativeDirectory = "") {
     );
 
     if (entry.isDirectory()) {
-      results.push(...(await collectMarkdownFiles(rootPath, entryRelativePath)));
+      if (shouldSkipKnowledgeBaseDirectory(entry.name)) {
+        scanState.skippedEntries += 1;
+        continue;
+      }
+
+      results.push(...(await collectMarkdownFiles(rootPath, entryRelativePath, scanState)));
       continue;
     }
 
@@ -220,11 +292,24 @@ async function collectMarkdownFiles(rootPath, relativeDirectory = "") {
 }
 
 export async function listKnowledgeBase({ rootPath, relativeRoot = ".remote-vibes/wiki" }) {
-  const resolvedRootPath = await resolveKnowledgeBaseRoot(rootPath);
-  const notePaths = await collectMarkdownFiles(resolvedRootPath);
-  const notesWithContent = await Promise.all(
+  const rootInfo = await resolveKnowledgeBaseRootInfo(rootPath);
+  const resolvedRootPath = rootInfo.rootPath;
+  const scanState = { skippedEntries: 0 };
+  const notePaths = await collectMarkdownFiles(resolvedRootPath, "", scanState);
+  const notesWithContent = (await Promise.all(
     notePaths.map(async (relativePath) => {
-      const content = await readFile(path.join(resolvedRootPath, relativePath), "utf8");
+      let content = "";
+      try {
+        content = await readFile(path.join(resolvedRootPath, relativePath), "utf8");
+      } catch (error) {
+        if (!isRecoverableScanError(error)) {
+          throw error;
+        }
+
+        scanState.skippedEntries += 1;
+        return null;
+      }
+
       return {
         relativePath,
         title: extractTitle(content, relativePath),
@@ -232,7 +317,7 @@ export async function listKnowledgeBase({ rootPath, relativeRoot = ".remote-vibe
         content,
       };
     }),
-  );
+  )).filter(Boolean);
   const notePathSet = new Set(notesWithContent.map((note) => note.relativePath));
   const edgePairs = new Set();
 
@@ -258,7 +343,8 @@ export async function listKnowledgeBase({ rootPath, relativeRoot = ".remote-vibe
 
   return {
     rootPath: resolvedRootPath,
-    relativeRoot,
+    relativeRoot: rootInfo.relativeRoot || relativeRoot,
+    skippedEntries: scanState.skippedEntries,
     notes,
     edges: Array.from(edgePairs)
       .map((pair) => {
@@ -276,7 +362,8 @@ export async function listKnowledgeBase({ rootPath, relativeRoot = ".remote-vibe
 }
 
 export async function readKnowledgeBaseNote({ rootPath, relativePath, relativeRoot = ".remote-vibes/wiki" }) {
-  const resolvedRootPath = await resolveKnowledgeBaseRoot(rootPath);
+  const rootInfo = await resolveKnowledgeBaseRootInfo(rootPath);
+  const resolvedRootPath = rootInfo.rootPath;
   const normalizedRelativePath = normalizeRelativePath(relativePath);
 
   if (!normalizedRelativePath) {
@@ -317,7 +404,7 @@ export async function readKnowledgeBaseNote({ rootPath, relativePath, relativeRo
 
   return {
     rootPath: resolvedRootPath,
-    relativeRoot,
+    relativeRoot: rootInfo.relativeRoot || relativeRoot,
     note: {
       relativePath: nextRelativePath,
       title: extractTitle(content, nextRelativePath),
