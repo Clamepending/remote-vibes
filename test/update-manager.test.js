@@ -168,7 +168,7 @@ test("UpdateManager blocks automatic updates when local changes are present", as
   }
 });
 
-test("UpdateManager does not block updates for managed prompt file churn", async () => {
+test("UpdateManager restores managed prompt file churn before updating", async () => {
   const { checkoutDir, sourceDir, tempRoot } = await createRepoPair();
   await commitSourceVersion(sourceDir, "v2");
   await writeFile(path.join(checkoutDir, "AGENTS.md"), `${MANAGED_PROMPT_MARKER}\nRuntime prompt\n`, "utf8");
@@ -184,20 +184,24 @@ test("UpdateManager does not block updates for managed prompt file churn", async
     assert.equal(status.status, "available");
     assert.equal(status.updateAvailable, true);
     assert.equal(status.canUpdate, true);
-    assert.equal(status.dirty, true);
+    assert.equal(status.dirty, false);
     assert.equal(status.blockingDirty, false);
     assert.deepEqual(status.dirtyFiles, []);
-    assert.deepEqual(status.ignoredDirtyFiles, ["AGENTS.md"]);
+    assert.deepEqual(status.ignoredDirtyFiles, []);
+    assert.deepEqual(status.restoredManagedPromptFiles, ["AGENTS.md"]);
+    assert.equal(await readFile(path.join(checkoutDir, "AGENTS.md"), "utf8"), `${MANAGED_PROMPT_MARKER}\nInitial prompt\n`);
   } finally {
     await rm(tempRoot, { recursive: true, force: true });
   }
 });
 
-test("UpdateManager does not block updates for generated Playwright smoke artifacts", async () => {
+test("UpdateManager does not block updates for generated smoke artifacts", async () => {
   const { checkoutDir, sourceDir, tempRoot } = await createRepoPair();
   await commitSourceVersion(sourceDir, "v2");
   await mkdir(path.join(checkoutDir, ".playwright-cli"), { recursive: true });
   await writeFile(path.join(checkoutDir, ".playwright-cli", "snapshot.yml"), "generated\n", "utf8");
+  await mkdir(path.join(checkoutDir, "output", "playwright"), { recursive: true });
+  await writeFile(path.join(checkoutDir, "output", "playwright", "hover.png"), "generated\n", "utf8");
 
   try {
     const manager = new UpdateManager({
@@ -213,7 +217,7 @@ test("UpdateManager does not block updates for generated Playwright smoke artifa
     assert.equal(status.dirty, true);
     assert.equal(status.blockingDirty, false);
     assert.deepEqual(status.dirtyFiles, []);
-    assert.deepEqual(status.ignoredDirtyFiles, [".playwright-cli/"]);
+    assert.deepEqual(status.ignoredDirtyFiles, [".playwright-cli/", "output/"]);
   } finally {
     await rm(tempRoot, { recursive: true, force: true });
   }

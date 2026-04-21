@@ -10,7 +10,7 @@ const DEFAULT_UPDATE_CHANNEL = "release";
 const MANAGED_PROMPT_MARKER = "<!-- remote-vibes:managed-agent-prompt -->";
 const MANAGED_PROMPT_FILES = ["AGENTS.md", "CLAUDE.md", "GEMINI.md"];
 const MANAGED_PROMPT_FILE_SET = new Set(MANAGED_PROMPT_FILES);
-const GENERATED_DIRTY_PATHS = new Set([".playwright-cli", ".playwright-cli/"]);
+const GENERATED_DIRTY_PATHS = new Set([".playwright-cli", ".playwright-cli/", "output", "output/"]);
 const NON_GIT_CHECKOUT_REASON =
   "Automatic updates are unavailable because Remote Vibes is not running from a git checkout.";
 
@@ -132,7 +132,7 @@ function parseGitStatusPorcelain(stdout) {
 
 function isGeneratedDirtyPath(filePath) {
   const normalized = String(filePath ?? "").replaceAll("\\", "/");
-  return GENERATED_DIRTY_PATHS.has(normalized) || normalized.startsWith(".playwright-cli/");
+  return GENERATED_DIRTY_PATHS.has(normalized) || normalized.startsWith(".playwright-cli/") || normalized.startsWith("output/");
 }
 
 function parseGitHubRepo(remoteUrl) {
@@ -267,12 +267,11 @@ export class UpdateManager {
         return this.createUnsupportedStatus(checkedAt);
       }
 
-      const [currentCommitResult, branchResult, remoteUrlResult, dirtyResult] =
+      const [currentCommitResult, branchResult, remoteUrlResult] =
         await Promise.all([
           this.git(["rev-parse", "HEAD"]),
           this.git(["branch", "--show-current"]).catch(() => ({ stdout: "" })),
           this.git(["config", "--get", `remote.${this.remote}.url`]).catch(() => ({ stdout: "" })),
-          this.git(["status", "--porcelain"]),
         ]);
 
       const currentCommit = trim(currentCommitResult.stdout);
@@ -284,7 +283,6 @@ export class UpdateManager {
       ]);
       const latestCommit = latest.commit;
       const currentTag = trim(currentTagResult.stdout);
-      const dirtyState = await this.readDirtyState(dirtyResult.stdout);
       const currentVersion = this.readCurrentVersion();
 
       if (!latestCommit) {
@@ -317,6 +315,9 @@ export class UpdateManager {
       if (aheadOfTarget) {
         updateAvailable = false;
       }
+      const restoredManagedPromptFiles = updateAvailable ? await this.restoreManagedPromptFiles() : [];
+      const dirtyResult = await this.git(["status", "--porcelain"]);
+      const dirtyState = await this.readDirtyState(dirtyResult.stdout);
       let reason = "";
 
       if (updateAvailable && dirtyState.blockingDirty) {
@@ -359,6 +360,7 @@ export class UpdateManager {
         blockingDirty: dirtyState.blockingDirty,
         dirtyFiles: dirtyState.dirtyFiles,
         ignoredDirtyFiles: dirtyState.ignoredDirtyFiles,
+        restoredManagedPromptFiles,
         reason,
       };
     } catch (error) {
@@ -428,6 +430,30 @@ export class UpdateManager {
       dirtyFiles,
       ignoredDirtyFiles,
     };
+  }
+
+  async restoreManagedPromptFiles() {
+    const restoredFiles = [];
+
+    for (const filePath of MANAGED_PROMPT_FILES) {
+      if (!(await this.hasManagedPromptMarker(filePath))) {
+        continue;
+      }
+
+      const status = await this.git(["status", "--porcelain", "--", filePath]).catch(() => ({ stdout: "" }));
+      if (!trim(status.stdout)) {
+        continue;
+      }
+
+      try {
+        await this.git(["checkout", "--", filePath]);
+        restoredFiles.push(filePath);
+      } catch {
+        // Best-effort: readDirtyState still treats managed prompt churn as non-blocking.
+      }
+    }
+
+    return restoredFiles;
   }
 
   async hasManagedPromptMarker(filePath) {
