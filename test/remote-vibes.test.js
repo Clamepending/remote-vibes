@@ -311,9 +311,12 @@ test("agent prompt api creates wiki scaffold and managed instruction files", asy
     assert.match(managedClaude, /remote-vibes:managed-agent-prompt/);
     assert.match(managedAgents, /Edit this from Remote Vibes or \.remote-vibes\/agent-prompt\.md/);
     assert.match(promptSource, /Remote Vibes Agent Prompt/);
+    assert.match(promptSource, /You are a research agent/);
+    assert.match(promptSource, /Always take QUEUE row 1/);
     assert.match(promptSource, /remote-vibes:wiki-v2-protocol:v2/);
     assert.match(promptSource, /Treat links as traversal hints, not decoration/);
     assert.match(promptSource, /Start with the directly named files, notes, messages, or artifacts/);
+    assert.doesNotMatch(promptSource, /\/Users\/mark\/mac-brain/);
     assert.doesNotMatch(promptSource, /remote-vibes:agent-mailbox-protocol/);
     assert.doesNotMatch(promptSource, /Agent Mailboxes/);
     assert.doesNotMatch(promptSource, /rv-mailwatch/);

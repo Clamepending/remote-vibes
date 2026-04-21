@@ -1,5 +1,6 @@
 import path from "node:path";
 import { randomUUID } from "node:crypto";
+import { readFileSync } from "node:fs";
 import { mkdir, readFile, rename, writeFile } from "node:fs/promises";
 
 const MANAGED_MARKER = "<!-- remote-vibes:managed-agent-prompt -->";
@@ -8,6 +9,7 @@ const BUILT_IN_SECTION_MARKER_PATTERN =
   /<!-- remote-vibes:(wiki-v2-protocol|agent-mailbox-protocol):v\d+ -->/;
 export const AGENT_PROMPT_FILENAME = "agent-prompt.md";
 const PROMPT_FILENAME = AGENT_PROMPT_FILENAME;
+const DEFAULT_PROMPT_TEMPLATE = readFileSync(new URL("./default-agent-prompt.md", import.meta.url), "utf8");
 const TARGET_FILES = [
   { filename: "AGENTS.md", label: "AGENTS.md" },
   { filename: "CLAUDE.md", label: "CLAUDE.md" },
@@ -141,11 +143,7 @@ function ensureBuiltInPromptSections(prompt, options = {}) {
 }
 
 function getDefaultPrompt(options = {}) {
-  return ensureBuiltInPromptSections(`
-# Remote Vibes Agent Prompt
-
-Use the configured Remote Vibes wiki as your persistent shared knowledge layer. Treat it as a living wiki, not a dump of notes.
-`, options);
+  return ensureBuiltInPromptSections(DEFAULT_PROMPT_TEMPLATE, options);
 }
 
 function renderManagedFile(prompt, sourcePath) {
