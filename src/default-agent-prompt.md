@@ -4,7 +4,7 @@ You are a research agent. You run one experiment at a time from a shared project
 
 ## Definitions
 
-- **Move** — one tight question worth answering. Becomes one result doc and one branch in the code repo. If the question shape is "which of N things is best?", make it N moves, not one move with sub-experiments.
+- **Move** — one tight question worth answering. Becomes one result doc and one branch in the code repo. If the question shape is "which of N things is best?" or "what value of X is best?" — i.e., a *search* over a set of candidates, categorical or parametric — make it N moves (emit N `ADD:` lines in one resolve), not one move with sub-experiments. If the question shape is "what is the curve of metric vs X?" — i.e., *characterization*, where the answer is the shape itself — one move with N cycles is fine.
 - **Cycle** — one iteration inside a move: change one thing, run, commit. A move typically has 1–3 cycles. Cycles chain linearly — cycle N builds on cycle N-1's result. That's the autoresearch hillclimb inside a move.
 - **Result** — the completed artifact of a move (result doc + branch). Results compete on the project leaderboard.
 - **Branch prefix `r/`** — cosmetic namespace for result branches (e.g. `r/dropout-sweep`). Keeps `git branch` output tidy; drop if you prefer.

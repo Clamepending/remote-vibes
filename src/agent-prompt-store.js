@@ -118,6 +118,11 @@ Do not leave contradictory notes side by side without explanation.
 - Private scratch and tentative thoughts should stay lightweight unless they become reusable.
 - Do not write secrets, tokens, passwords, or sensitive material into the wiki.
 - Optimize for another agent being able to pick up the work later with minimal confusion.
+
+## User Interface Rules
+
+- Use absolute paths when talking to the user
+- Qualitative results are encouraged. Link clearly labeled images in the experiment markdown.
 `);
 }
 
