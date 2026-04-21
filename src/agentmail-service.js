@@ -2,6 +2,7 @@ import { randomUUID } from "node:crypto";
 import { mkdir, readFile, rename, writeFile } from "node:fs/promises";
 import path from "node:path";
 import WebSocket from "ws";
+import { getRemoteVibesSystemDir } from "./state-paths.js";
 
 const AGENTMAIL_API_BASE_URL = "https://api.agentmail.to";
 const AGENTMAIL_WS_URL = "wss://ws.agentmail.to/v0";
@@ -273,6 +274,7 @@ export class AgentMailService {
     setTimeoutImpl = setTimeout,
     clearTimeoutImpl = clearTimeout,
     stateDir = "",
+    systemRootPath = stateDir ? getRemoteVibesSystemDir({ cwd, stateDir }) : "",
     WebSocketImpl = WebSocket,
   } = {}) {
     this.clearTimeout = clearTimeoutImpl;
@@ -295,6 +297,7 @@ export class AgentMailService {
     this.setTimeout = setTimeoutImpl;
     this.settings = settings;
     this.stateDir = stateDir;
+    this.systemRootPath = systemRootPath ? path.resolve(cwd, systemRootPath) : "";
     this.processedFilePath = stateDir ? path.join(stateDir, "agentmail-processed.json") : "";
     this.status = {
       connected: false,
@@ -716,10 +719,14 @@ export class AgentMailService {
 
     const subject = compactWhitespace(message.subject || "new email");
     const sessionName = `email: ${subject || "new message"}`.slice(0, 64);
-    const sessionCwd = this.settings.wikiPath || this.cwd;
+    const sessionCwd = this.systemRootPath || this.settings.wikiPath || this.cwd;
     let remoteClaim = null;
 
     try {
+      if (this.systemRootPath) {
+        await mkdir(this.systemRootPath, { recursive: true });
+      }
+
       remoteClaim = await this.claimRemoteMessage({
         config,
         inboxId,

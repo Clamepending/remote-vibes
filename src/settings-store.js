@@ -4,6 +4,11 @@ import path from "node:path";
 import { mkdir, readFile, realpath, rename, stat, writeFile } from "node:fs/promises";
 import { randomUUID } from "node:crypto";
 import { promisify } from "node:util";
+import {
+  getDefaultBrowserUseProfileDir,
+  getDefaultBrowserUseWorkerPath,
+  normalizeBrowserUseMaxTurns,
+} from "./browser-use-service.js";
 
 const SETTINGS_FILE_VERSION = 1;
 const SETTINGS_FILENAME = "settings.json";
@@ -79,6 +84,65 @@ function normalizeAgentProviderId(value) {
   return /^[a-z0-9_-]+$/.test(providerId) ? providerId : "claude";
 }
 
+function normalizePluginIds(value) {
+  if (!Array.isArray(value)) {
+    return [];
+  }
+
+  const pluginIds = new Set();
+  value.forEach((entry) => {
+    const pluginId = String(entry || "").trim().toLowerCase();
+    if (/^[a-z0-9][a-z0-9_-]*$/.test(pluginId)) {
+      pluginIds.add(pluginId);
+    }
+  });
+
+  return [...pluginIds].sort();
+}
+
+const AGENT_AUTOMATION_CADENCES = new Set(["hourly", "six-hours", "daily", "weekday", "weekly"]);
+const AGENT_AUTOMATION_WEEKDAYS = new Set(["monday", "tuesday", "wednesday", "thursday", "friday", "saturday", "sunday"]);
+
+function normalizeAutomationTime(value) {
+  const time = String(value || "").trim();
+  return /^\d{2}:\d{2}$/.test(time) ? time : "09:00";
+}
+
+function normalizeAgentAutomations(value) {
+  if (!Array.isArray(value)) {
+    return [];
+  }
+
+  return value
+    .map((entry) => {
+      const prompt = String(entry?.prompt || "").trim();
+      if (!prompt) {
+        return null;
+      }
+
+      const id = String(entry?.id || "").trim().toLowerCase();
+      const cadence = String(entry?.cadence || "").trim().toLowerCase();
+      const weekday = String(entry?.weekday || "").trim().toLowerCase();
+      const createdAt = String(entry?.createdAt || "").trim();
+
+      return {
+        cadence: AGENT_AUTOMATION_CADENCES.has(cadence) ? cadence : "daily",
+        createdAt: Number.isNaN(Date.parse(createdAt)) ? new Date().toISOString() : createdAt,
+        enabled: normalizeBoolean(entry?.enabled, true),
+        id: /^[a-z0-9][a-z0-9_-]*$/.test(id) ? id : `automation-${randomUUID()}`,
+        prompt,
+        time: normalizeAutomationTime(entry?.time),
+        weekday: AGENT_AUTOMATION_WEEKDAYS.has(weekday) ? weekday : "monday",
+      };
+    })
+    .filter(Boolean);
+}
+
+function normalizeOptionalPath(value, homeDir = os.homedir()) {
+  const rawValue = String(value || "").trim();
+  return rawValue ? path.resolve(expandHomePath(rawValue, homeDir)) : "";
+}
+
 async function writeAtomic(filePath, payload) {
   const tempPath = `${filePath}.${randomUUID()}.tmp`;
   await mkdir(path.dirname(filePath), { recursive: true });
@@ -128,6 +192,17 @@ export class SettingsStore {
       agentMailMode: "websocket",
       agentMailProviderId: "claude",
       agentMailUsername: "",
+      browserUseAnthropicApiKey: String(this.env.ANTHROPIC_API_KEY || this.env.CLAUDE_API_KEY || "").trim(),
+      browserUseBrowserPath: "",
+      browserUseEnabled: false,
+      browserUseHeadless: true,
+      browserUseKeepTabs: false,
+      browserUseMaxTurns: 50,
+      browserUseModel: "",
+      browserUseProfileDir: getDefaultBrowserUseProfileDir(this.homeDir),
+      browserUseWorkerPath: getDefaultBrowserUseWorkerPath(this.homeDir),
+      agentAutomations: [],
+      installedPluginIds: [],
       preventSleepEnabled: true,
       wikiGitBackupEnabled: true,
       wikiGitRemoteBranch: "main",
@@ -136,6 +211,7 @@ export class SettingsStore {
       wikiGitRemoteUrl: "",
       wikiBackupIntervalMs: this.defaultBackupIntervalMs,
       wikiPath: path.join(this.stateDir, "wiki"),
+      wikiPathConfigured: false,
     };
   }
 
@@ -148,6 +224,9 @@ export class SettingsStore {
 
   normalizeSettings(payload = {}) {
     const defaults = this.buildDefaults();
+    const wikiPathConfigured =
+      payload.wikiPathConfigured === true ||
+      (payload.wikiPathConfigured === undefined && Boolean(String(payload.wikiPath || "").trim()));
 
     return {
       agentMailApiKey:
@@ -162,6 +241,29 @@ export class SettingsStore {
       agentMailMode: normalizeAgentMailMode(payload.agentMailMode || defaults.agentMailMode),
       agentMailProviderId: normalizeAgentProviderId(payload.agentMailProviderId || defaults.agentMailProviderId),
       agentMailUsername: String(payload.agentMailUsername || defaults.agentMailUsername || "").trim(),
+      browserUseAnthropicApiKey:
+        payload.browserUseAnthropicApiKey === undefined
+          ? defaults.browserUseAnthropicApiKey
+          : String(payload.browserUseAnthropicApiKey || "").trim(),
+      browserUseBrowserPath: normalizeOptionalPath(
+        payload.browserUseBrowserPath || defaults.browserUseBrowserPath,
+        this.homeDir,
+      ),
+      browserUseEnabled: normalizeBoolean(payload.browserUseEnabled, defaults.browserUseEnabled),
+      browserUseHeadless: normalizeBoolean(payload.browserUseHeadless, defaults.browserUseHeadless),
+      browserUseKeepTabs: normalizeBoolean(payload.browserUseKeepTabs, defaults.browserUseKeepTabs),
+      browserUseMaxTurns: normalizeBrowserUseMaxTurns(payload.browserUseMaxTurns, defaults.browserUseMaxTurns),
+      browserUseModel: String(payload.browserUseModel || defaults.browserUseModel || "").trim(),
+      browserUseProfileDir: normalizeOptionalPath(
+        payload.browserUseProfileDir || defaults.browserUseProfileDir,
+        this.homeDir,
+      ),
+      browserUseWorkerPath: normalizeOptionalPath(
+        payload.browserUseWorkerPath || defaults.browserUseWorkerPath,
+        this.homeDir,
+      ),
+      agentAutomations: normalizeAgentAutomations(payload.agentAutomations || defaults.agentAutomations),
+      installedPluginIds: normalizePluginIds(payload.installedPluginIds || defaults.installedPluginIds),
       preventSleepEnabled: normalizeBoolean(
         payload.preventSleepEnabled,
         defaults.preventSleepEnabled,
@@ -183,6 +285,7 @@ export class SettingsStore {
         payload.wikiBackupIntervalMs ?? defaults.wikiBackupIntervalMs,
       ),
       wikiPath: this.normalizeWikiPath(payload.wikiPath || defaults.wikiPath),
+      wikiPathConfigured,
     };
   }
 
@@ -304,6 +407,10 @@ export class SettingsStore {
       }
     }
 
+    if (nextSettings.wikiPath !== undefined && String(nextSettings.wikiPath || "").trim()) {
+      mergedSettings.wikiPathConfigured = true;
+    }
+
     this.settings = this.normalizeSettings(mergedSettings);
     await this.ensureWikiDirectory();
     const wikiPathChanged = path.resolve(previousWikiPath) !== path.resolve(this.settings.wikiPath);
@@ -320,12 +427,15 @@ export class SettingsStore {
     return this.getState();
   }
 
-  getState({ agentMailStatus = null, backupStatus = null, sleepStatus = null } = {}) {
+  getState({ agentMailStatus = null, backupStatus = null, browserUseStatus = null, sleepStatus = null } = {}) {
     return {
       ...this.settings,
       agentMailApiKey: "",
       agentMailApiKeyConfigured: Boolean(this.settings.agentMailApiKey),
       agentMailStatus,
+      browserUseAnthropicApiKey: "",
+      browserUseAnthropicApiKeyConfigured: Boolean(this.settings.browserUseAnthropicApiKey),
+      browserUseStatus,
       wikiRelativePath: formatRelativePath(this.cwd, this.settings.wikiPath),
       wikiRelativeRoot: formatRelativePath(this.cwd, this.settings.wikiPath),
       wikiBackup: backupStatus,

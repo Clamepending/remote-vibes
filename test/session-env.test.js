@@ -22,9 +22,10 @@ test("buildSessionEnv exposes helper and common CLI directories on PATH", () => 
   process.env.PATH = "/usr/bin:/bin";
   const stateDir = path.join(rootDir, ".remote-vibes");
   const wikiRoot = path.join(rootDir, "mac-brain");
+  const systemRoot = path.join(stateDir, "remote-vibes-system");
 
   try {
-    const env = buildSessionEnv("session-1", "shell", [], rootDir, stateDir, process.env, wikiRoot);
+    const env = buildSessionEnv("session-1", "shell", [], rootDir, stateDir, process.env, wikiRoot, systemRoot);
     const entries = env.PATH.split(path.delimiter);
 
     assert.equal(entries[0], path.join(rootDir, "bin"));
@@ -33,17 +34,19 @@ test("buildSessionEnv exposes helper and common CLI directories on PATH", () => 
     assert.ok(entries.includes("/usr/bin"));
     assert.ok(entries.includes("/bin"));
     assert.equal(env.REMOTE_VIBES_ROOT, stateDir);
+    assert.equal(env.REMOTE_VIBES_SYSTEM_DIR, systemRoot);
     assert.equal(env.REMOTE_VIBES_AGENT_PROMPT_PATH, path.join(stateDir, "agent-prompt.md"));
     assert.equal(env.PWCLI, "rv-playwright");
     assert.equal(env.REMOTE_VIBES_BROWSER_COMMAND, "rv-playwright");
     assert.equal(env.REMOTE_VIBES_BROWSER_FALLBACK_COMMAND, "rv-browser");
+    assert.equal(env.REMOTE_VIBES_BROWSER_USE_COMMAND, "rv-browser-use");
     assert.equal(env.REMOTE_VIBES_PLAYWRIGHT_COMMAND, "rv-playwright");
     assert.equal(env.REMOTE_VIBES_PLAYWRIGHT_SKILL, path.join(rootDir, "skills", "playwright", "SKILL.md"));
     assert.equal(env.REMOTE_VIBES_WIKI_DIR, wikiRoot);
-    assert.equal(env.REMOTE_VIBES_COMMS_DIR, path.join(wikiRoot, "comms"));
+    assert.equal(env.REMOTE_VIBES_COMMS_DIR, path.join(systemRoot, "comms"));
     assert.equal(
       env.REMOTE_VIBES_AGENT_INBOX,
-      path.join(wikiRoot, "comms", "agents", "session-1", "inbox"),
+      path.join(systemRoot, "comms", "agents", "session-1", "inbox"),
     );
   } finally {
     process.env.PATH = originalPath;

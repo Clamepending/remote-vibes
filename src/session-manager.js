@@ -1,6 +1,6 @@
 import { execFile, execFileSync } from "node:child_process";
 import os from "node:os";
-import { readFileSync, readdirSync, realpathSync, rmSync, statSync } from "node:fs";
+import { closeSync, openSync, readFileSync, readSync, readdirSync, realpathSync, rmSync, statSync } from "node:fs";
 import { open, readFile, readdir } from "node:fs/promises";
 import path from "node:path";
 import { randomUUID } from "node:crypto";
@@ -10,7 +10,7 @@ import pty from "node-pty";
 import { AGENT_PROMPT_FILENAME } from "./agent-prompt-store.js";
 import { AgentRunTracker } from "./agent-run-tracker.js";
 import { SessionStore } from "./session-store.js";
-import { getLegacyWorkspaceStateDir, getRemoteVibesStateDir } from "./state-paths.js";
+import { getLegacyWorkspaceStateDir, getRemoteVibesStateDir, getRemoteVibesSystemDir } from "./state-paths.js";
 
 const MAX_BUFFER_LENGTH = 2_000_000;
 const STARTUP_DELAY_MS = 180;
@@ -29,6 +29,9 @@ const PROVIDER_SESSION_CAPTURE_RETRY_WINDOW_MS = 90_000;
 const CODEX_SESSION_INDEX_LIMIT = 100;
 const CODEX_SESSION_META_READ_LIMIT = 8192;
 const CLAUDE_SUBAGENT_TRANSCRIPT_READ_LIMIT = 1_000_000;
+const CLAUDE_BACKGROUND_TASK_TAIL_BYTES = 900_000;
+const CLAUDE_BACKGROUND_TASK_STALE_MS = 24 * 60 * 60 * 1000;
+const CLAUDE_BACKGROUND_TASK_GRACE_MS = 30_000;
 const CLAUDE_SKIP_PERMISSIONS_ARG = "--dangerously-skip-permissions";
 const PERSISTENT_TERMINAL_PROVIDER_IDS = new Set(["claude", "codex", "gemini", "opencode", "shell"]);
 const IDLE_TERMINAL_COMMANDS = new Set(["bash", "csh", "dash", "fish", "ksh", "login", "sh", "tcsh", "zsh"]);
@@ -64,6 +67,7 @@ const appRootDir = path.resolve(__dirname, "..");
 const helperBinDir = path.join(appRootDir, "bin");
 const preferredCliBinDirs = [helperBinDir, "/opt/homebrew/bin", "/usr/local/bin"];
 const execFileAsync = promisify(execFile);
+const claudeBackgroundTaskSummaryCache = new Map();
 
 function getShellArgs(shellPath) {
   const shellName = path.basename(shellPath);
@@ -340,6 +344,7 @@ export function buildSessionEnv(
   stateDir = null,
   baseEnv = process.env,
   wikiRootPath = null,
+  systemRootPath = null,
 ) {
   const providers = Array.isArray(providersOrWorkspaceRoot) ? providersOrWorkspaceRoot : [];
   const resolvedWorkspaceRoot = Array.isArray(providersOrWorkspaceRoot)
@@ -352,7 +357,16 @@ export function buildSessionEnv(
       ? getRemoteVibesStateDir({ cwd: resolvedWorkspaceRoot, env })
       : getLegacyWorkspaceStateDir(resolvedWorkspaceRoot));
   const resolvedWikiRootPath = wikiRootPath || path.join(resolvedStateDir, "wiki");
-  const agentDir = path.join(resolvedWikiRootPath, "comms", "agents", sessionId);
+  const resolvedSystemRootPath = path.resolve(
+    resolvedWorkspaceRoot,
+    systemRootPath || getRemoteVibesSystemDir({
+      cwd: resolvedWorkspaceRoot,
+      env,
+      stateDir: resolvedStateDir,
+    }),
+  );
+  const commsDir = path.join(resolvedSystemRootPath, "comms");
+  const agentDir = path.join(commsDir, "agents", sessionId);
   const { NO_COLOR: _noColor, ...colorCapableEnv } = env;
 
   return {
@@ -367,6 +381,7 @@ export function buildSessionEnv(
     REMOTE_VIBES_APP_ROOT: appRootDir,
     REMOTE_VIBES_BROWSER_COMMAND: "rv-playwright",
     REMOTE_VIBES_BROWSER_FALLBACK_COMMAND: "rv-browser",
+    REMOTE_VIBES_BROWSER_USE_COMMAND: "rv-browser-use",
     REMOTE_VIBES_BROWSER_DESCRIBE:
       "rv-browser describe 4173 --prompt \"What visual issues stand out in the rendered UI?\"",
     REMOTE_VIBES_BROWSER_HELP: "rv-playwright open http://127.0.0.1:4173 && rv-playwright snapshot",
@@ -379,11 +394,12 @@ export function buildSessionEnv(
     REMOTE_VIBES_REAL_CLAUDE_COMMAND: getResolvedProviderCommand(providers, "claude") || "",
     REMOTE_VIBES_REAL_CODEX_COMMAND: getResolvedProviderCommand(providers, "codex") || "",
     REMOTE_VIBES_ROOT: resolvedStateDir,
+    REMOTE_VIBES_SYSTEM_DIR: resolvedSystemRootPath,
     REMOTE_VIBES_AGENT_PROMPT_PATH: path.join(resolvedStateDir, AGENT_PROMPT_FILENAME),
     REMOTE_VIBES_PROVIDER: providerId,
     REMOTE_VIBES_SESSION_ID: sessionId,
     REMOTE_VIBES_WIKI_DIR: resolvedWikiRootPath,
-    REMOTE_VIBES_COMMS_DIR: path.join(resolvedWikiRootPath, "comms"),
+    REMOTE_VIBES_COMMS_DIR: commsDir,
     REMOTE_VIBES_AGENT_DIR: agentDir,
     REMOTE_VIBES_AGENT_INBOX: path.join(agentDir, "inbox"),
     REMOTE_VIBES_AGENT_PROCESSED_DIR: path.join(agentDir, "processed"),
@@ -526,6 +542,16 @@ function normalizeClaudeProjectDirName(cwd) {
 function getClaudeProjectDirForCwd(cwd, homeDirOrEnv = process.env) {
   const projectDirName = normalizeClaudeProjectDirName(cwd);
   return projectDirName ? path.join(getClaudeHomeDir(homeDirOrEnv), ".claude", "projects", projectDirName) : null;
+}
+
+function getClaudeSessionIdsForSession(session) {
+  return Array.from(
+    new Set(
+      [session?.providerState?.sessionId, session?.id]
+        .map((value) => (typeof value === "string" ? value.trim() : ""))
+        .filter(Boolean),
+    ),
+  );
 }
 
 function listClaudeSessionsForCwd(cwd, homeDirOrEnv = process.env) {
@@ -724,13 +750,7 @@ function listClaudeSubagentsForSession(session, homeDirOrEnv = process.env) {
     return [];
   }
 
-  const claudeSessionIds = Array.from(
-    new Set(
-      [session.providerState?.sessionId, session.id]
-        .map((value) => (typeof value === "string" ? value.trim() : ""))
-        .filter(Boolean),
-    ),
-  );
+  const claudeSessionIds = getClaudeSessionIdsForSession(session);
 
   const subagents = [];
 
@@ -783,6 +803,7 @@ function listClaudeSubagentsForSession(session, homeDirOrEnv = process.env) {
         name: normalizeSessionName(description) || `Subagent ${displayId.slice(0, 6)}`,
         description,
         agentType,
+        source: "claude",
         status: summary.status,
         createdAt: summary.createdAt,
         updatedAt: summary.updatedAt,
@@ -798,6 +819,299 @@ function listClaudeSubagentsForSession(session, homeDirOrEnv = process.env) {
   return subagents
     .sort((left, right) => String(right.updatedAt || "").localeCompare(String(left.updatedAt || "")))
     .slice(0, 12);
+}
+
+function readFileTailSync(filePath, byteLimit) {
+  let stats;
+  try {
+    stats = statSync(filePath);
+  } catch {
+    return "";
+  }
+
+  const size = Number(stats.size || 0);
+  if (size <= 0) {
+    return "";
+  }
+
+  const length = Math.min(size, byteLimit);
+  const start = Math.max(0, size - length);
+  const buffer = Buffer.alloc(length);
+  let fd = null;
+
+  try {
+    fd = openSync(filePath, "r");
+    const bytesRead = readSync(fd, buffer, 0, length, start);
+    const text = buffer.toString("utf8", 0, bytesRead);
+    if (start === 0) {
+      return text;
+    }
+
+    const firstNewline = text.indexOf("\n");
+    return firstNewline === -1 ? "" : text.slice(firstNewline + 1);
+  } catch {
+    return "";
+  } finally {
+    if (fd !== null) {
+      try {
+        closeSync(fd);
+      } catch {
+        // Best effort cleanup for read-only transcript inspection.
+      }
+    }
+  }
+}
+
+function getClaudeTranscriptPathsForSession(session, homeDirOrEnv = process.env) {
+  if (session?.providerId !== "claude") {
+    return [];
+  }
+
+  const projectDir = getClaudeProjectDirForCwd(session.cwd, homeDirOrEnv);
+  if (!projectDir) {
+    return [];
+  }
+
+  return getClaudeSessionIdsForSession(session)
+    .map((claudeSessionId) => path.join(projectDir, `${claudeSessionId}.jsonl`))
+    .filter((transcriptPath) => {
+      try {
+        return statSync(transcriptPath).isFile();
+      } catch {
+        return false;
+      }
+    });
+}
+
+function getClaudeMessageText(payload) {
+  const content = payload?.message?.content ?? payload?.content ?? "";
+  if (typeof content === "string") {
+    return content;
+  }
+
+  if (!Array.isArray(content)) {
+    return "";
+  }
+
+  return content
+    .map((entry) => {
+      if (typeof entry === "string") {
+        return entry;
+      }
+      if (typeof entry?.text === "string") {
+        return entry.text;
+      }
+      if (typeof entry?.content === "string") {
+        return entry.content;
+      }
+      return "";
+    })
+    .filter(Boolean)
+    .join("\n");
+}
+
+function parseTaskIdFromText(text) {
+  const content = String(text || "");
+  return (
+    content.match(/<task-id>([^<]+)<\/task-id>/i)?.[1]
+    || content.match(/\btask\s+([a-z0-9]+)\b/i)?.[1]
+    || content.match(/Command running in background with ID:\s*([a-z0-9]+)/i)?.[1]
+    || content.match(/Successfully stopped task:\s*([^\s(]+)/i)?.[1]
+    || ""
+  );
+}
+
+function parseClaudeTaskStart(text, toolUseResult = null) {
+  const content = String(text || "");
+  const backgroundShellId = (
+    typeof toolUseResult?.backgroundTaskId === "string"
+      ? toolUseResult.backgroundTaskId
+      : content.match(/Command running in background with ID:\s*([a-z0-9]+)/i)?.[1]
+  ) || "";
+  if (backgroundShellId) {
+    return {
+      taskId: backgroundShellId,
+      timeoutMs: 0,
+      persistent: true,
+      taskType: "bash",
+    };
+  }
+
+  const looksLikeBackgroundTask = (
+    /Monitor started/i.test(content)
+    || (typeof toolUseResult?.taskId === "string" && (toolUseResult.persistent === true || toolUseResult.timeoutMs != null))
+  );
+  if (!looksLikeBackgroundTask) {
+    return null;
+  }
+
+  const taskId = toolUseResult?.taskId || content.match(/Monitor started\s*\(\s*task\s+([^,\s)]+)/i)?.[1] || "";
+  if (!taskId) {
+    return null;
+  }
+
+  const timeoutText = content.match(/timeout\s+(\d+)ms/i)?.[1];
+  const timeoutMs = Number(toolUseResult?.timeoutMs ?? timeoutText ?? 0);
+  const persistent = Boolean(toolUseResult?.persistent) || /persistent/i.test(content);
+
+  return {
+    taskId,
+    timeoutMs: Number.isFinite(timeoutMs) ? timeoutMs : 0,
+    persistent,
+    taskType: "monitor",
+  };
+}
+
+function getClaudeTaskNotificationStatus(text) {
+  const content = String(text || "");
+  if (!/<task-notification>/i.test(content) && !content.includes("Monitor timed out")) {
+    return "";
+  }
+
+  const status = content.match(/<status>([^<]+)<\/status>/i)?.[1]?.trim().toLowerCase() || "";
+  if (["failed", "complete", "completed", "done", "cancelled", "canceled", "stopped"].includes(status)) {
+    return "done";
+  }
+
+  if (/Monitor timed out|script failed|Successfully stopped task|No task found/i.test(content)) {
+    return "done";
+  }
+
+  return "working";
+}
+
+function setClaudeBackgroundTaskState(tasks, taskId, patch) {
+  if (!taskId) {
+    return;
+  }
+
+  const existing = tasks.get(taskId) || { taskId };
+  tasks.set(taskId, { ...existing, ...patch, taskId });
+}
+
+function applyClaudeBackgroundTaskEvent(tasks, payload) {
+  const timestampMs = Date.parse(payload?.timestamp || "") || 0;
+  const timestamp = timestampMs ? new Date(timestampMs).toISOString() : null;
+  const text = [
+    getClaudeMessageText(payload),
+    typeof payload?.content === "string" ? payload.content : "",
+    typeof payload?.toolUseResult?.message === "string" ? payload.toolUseResult.message : "",
+  ].filter(Boolean).join("\n");
+
+  const start = parseClaudeTaskStart(text, payload?.toolUseResult);
+  if (start) {
+    setClaudeBackgroundTaskState(tasks, start.taskId, {
+      status: "working",
+      startedAt: timestamp,
+      startedAtMs: timestampMs,
+      updatedAt: timestamp,
+      updatedAtMs: timestampMs,
+      timeoutMs: start.timeoutMs,
+      persistent: start.persistent,
+      taskType: start.taskType,
+    });
+  }
+
+  const notificationStatus = getClaudeTaskNotificationStatus(text);
+  const notifiedTaskId = parseTaskIdFromText(text);
+  if (notificationStatus && notifiedTaskId) {
+    setClaudeBackgroundTaskState(tasks, notifiedTaskId, {
+      status: notificationStatus,
+      updatedAt: timestamp,
+      updatedAtMs: timestampMs,
+    });
+  }
+
+  const stoppedTaskId = text.match(/Successfully stopped task:\s*([^\s(]+)/i)?.[1];
+  if (stoppedTaskId) {
+    setClaudeBackgroundTaskState(tasks, stoppedTaskId, {
+      status: "done",
+      stoppedAt: timestamp,
+      updatedAt: timestamp,
+      updatedAtMs: timestampMs,
+    });
+  }
+}
+
+function isClaudeBackgroundTaskActive(task, now = Date.now()) {
+  if (!task || task.status !== "working") {
+    return false;
+  }
+
+  const startedAtMs = Number(task.startedAtMs || 0);
+  const updatedAtMs = Number(task.updatedAtMs || startedAtMs || 0);
+  const timeoutMs = Number(task.timeoutMs || 0);
+
+  if (!task.persistent && timeoutMs > 0 && startedAtMs > 0) {
+    return now <= startedAtMs + timeoutMs + CLAUDE_BACKGROUND_TASK_GRACE_MS;
+  }
+
+  if (updatedAtMs > 0) {
+    return now - updatedAtMs <= CLAUDE_BACKGROUND_TASK_STALE_MS;
+  }
+
+  return false;
+}
+
+function pruneClaudeBackgroundTaskSummaryCache() {
+  const maxEntries = 200;
+  while (claudeBackgroundTaskSummaryCache.size > maxEntries) {
+    const oldestKey = claudeBackgroundTaskSummaryCache.keys().next().value;
+    claudeBackgroundTaskSummaryCache.delete(oldestKey);
+  }
+}
+
+function readClaudeBackgroundTasksFromTranscript(transcriptPath) {
+  let stats;
+  try {
+    stats = statSync(transcriptPath);
+  } catch {
+    return [];
+  }
+
+  const cached = claudeBackgroundTaskSummaryCache.get(transcriptPath);
+  if (cached && cached.size === stats.size && cached.mtimeMs === stats.mtimeMs) {
+    return cached.tasks;
+  }
+
+  const tasks = new Map();
+  const text = readFileTailSync(transcriptPath, CLAUDE_BACKGROUND_TASK_TAIL_BYTES);
+  for (const line of text.split(/\r?\n/).filter(Boolean)) {
+    try {
+      applyClaudeBackgroundTaskEvent(tasks, JSON.parse(line));
+    } catch {
+      // Ignore malformed or truncated transcript lines.
+    }
+  }
+
+  const taskList = Array.from(tasks.values());
+  claudeBackgroundTaskSummaryCache.set(transcriptPath, {
+    size: stats.size,
+    mtimeMs: stats.mtimeMs,
+    tasks: taskList,
+  });
+  pruneClaudeBackgroundTaskSummaryCache();
+  return taskList;
+}
+
+function summarizeClaudeBackgroundTasksForSession(session, homeDirOrEnv = process.env) {
+  if (session?.providerId !== "claude" || session?.status === "exited") {
+    return { active: false, activeCount: 0, updatedAt: null };
+  }
+
+  const taskList = getClaudeTranscriptPathsForSession(session, homeDirOrEnv)
+    .flatMap((transcriptPath) => readClaudeBackgroundTasksFromTranscript(transcriptPath));
+  const activeTasks = taskList.filter((task) => isClaudeBackgroundTaskActive(task));
+  const latestUpdatedAtMs = Math.max(
+    0,
+    ...taskList.map((task) => Number(task.updatedAtMs || task.startedAtMs || 0)),
+  );
+
+  return {
+    active: activeTasks.length > 0,
+    activeCount: activeTasks.length,
+    updatedAt: latestUpdatedAtMs > 0 ? new Date(latestUpdatedAtMs).toISOString() : null,
+  };
 }
 
 function parseGitWorktreePorcelain(output) {
@@ -1265,13 +1579,15 @@ export class SessionManager {
     cwd,
     providers,
     persistSessions = true,
-    stateDir = getRemoteVibesStateDir({ cwd }),
+    env = process.env,
+    stateDir = getRemoteVibesStateDir({ cwd, env }),
     wikiRootPath = path.join(stateDir, "wiki"),
+    systemRootPath = getRemoteVibesSystemDir({ cwd, env, stateDir }),
     agentRunStore = null,
     runIdleTimeoutMs = Number(process.env.REMOTE_VIBES_RUN_IDLE_MS || 15_000),
     sessionActivityIdleMs = SESSION_ACTIVITY_IDLE_MS,
     persistentTerminals = true,
-    env = process.env,
+    extraSubagentsProvider = null,
     userHomeDir = env?.HOME || os.homedir(),
     setTimeoutFn = setTimeout,
     clearTimeoutFn = clearTimeout,
@@ -1281,8 +1597,10 @@ export class SessionManager {
     this.persistSessions = persistSessions;
     this.stateDir = stateDir;
     this.wikiRootPath = wikiRootPath;
+    this.systemRootPath = path.resolve(cwd, systemRootPath);
     this.env = env && typeof env === "object" ? { ...env } : { ...process.env };
     this.persistentTerminals = Boolean(persistentTerminals);
+    this.extraSubagentsProvider = typeof extraSubagentsProvider === "function" ? extraSubagentsProvider : null;
     this.tmuxAvailable = null;
     this.userHomeDir = getProviderHomeDir(userHomeDir);
     this.sessionActivityIdleMs = Math.max(500, Number(sessionActivityIdleMs) || SESSION_ACTIVITY_IDLE_MS);
@@ -1308,6 +1626,15 @@ export class SessionManager {
 
   setWikiRootPath(wikiRootPath) {
     this.wikiRootPath = wikiRootPath;
+  }
+
+  setSystemRootPath(systemRootPath) {
+    this.systemRootPath = path.resolve(this.cwd, systemRootPath);
+  }
+
+  setExtraSubagentsProvider(extraSubagentsProvider) {
+    this.extraSubagentsProvider =
+      typeof extraSubagentsProvider === "function" ? extraSubagentsProvider : null;
   }
 
   async initialize() {
@@ -1522,6 +1849,7 @@ export class SessionManager {
       this.stateDir,
       this.env,
       this.wikiRootPath,
+      this.systemRootPath,
     );
   }
 
@@ -2182,6 +2510,25 @@ export class SessionManager {
   }
 
   serializeSession(session) {
+    const claudeSubagents = listClaudeSubagentsForSession(session, this.userHomeDir);
+    let extraSubagents = [];
+    if (this.extraSubagentsProvider) {
+      try {
+        const provided = this.extraSubagentsProvider(session);
+        extraSubagents = Array.isArray(provided) ? provided : [];
+      } catch (error) {
+        console.warn("[remote-vibes] failed to list extra subagents", error);
+      }
+    }
+    const subagents = [...claudeSubagents, ...extraSubagents]
+      .sort((left, right) => String(right.updatedAt || "").localeCompare(String(left.updatedAt || "")))
+      .slice(0, 16);
+    const backgroundActivity = summarizeClaudeBackgroundTasksForSession(session, this.userHomeDir);
+    const hasActiveSubagent = subagents.some((subagent) => subagent.status === "working");
+    const activityStatus = session.activityStatus === "working" || backgroundActivity.active || hasActiveSubagent
+      ? "working"
+      : session.activityStatus;
+
     return {
       id: session.id,
       providerId: session.providerId,
@@ -2199,10 +2546,11 @@ export class SessionManager {
       rows: session.rows,
       host: os.hostname(),
       lastPromptAt: session.lastPromptAt,
-      activityStatus: session.activityStatus,
+      activityStatus,
       activityStartedAt: session.activityStartedAt,
       activityCompletedAt: session.activityCompletedAt,
-      subagents: listClaudeSubagentsForSession(session, this.userHomeDir),
+      backgroundActivity,
+      subagents,
     };
   }
 
@@ -2597,6 +2945,7 @@ export class SessionManager {
           this.stateDir,
           this.env,
           this.wikiRootPath,
+          this.systemRootPath,
         ),
       ),
       session.cwd,
@@ -2679,6 +3028,7 @@ export class SessionManager {
             this.stateDir,
             this.env,
             this.wikiRootPath,
+            this.systemRootPath,
           ),
         ),
         session.cwd,

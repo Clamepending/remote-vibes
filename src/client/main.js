@@ -1,6 +1,53 @@
 import { Terminal } from "xterm";
 import { FitAddon } from "@xterm/addon-fit";
 import { CanvasAddon } from "xterm-addon-canvas";
+import {
+  AppWindow,
+  ArrowUp,
+  BookOpen,
+  Bot,
+  CalendarClock,
+  CalendarDays,
+  ChevronDown,
+  ChevronLeft,
+  ChevronRight,
+  CircleStop,
+  Cpu,
+  Database,
+  File,
+  FilePenLine,
+  FileText,
+  Folder,
+  FolderCog,
+  FolderPlus,
+  FolderOpen,
+  FolderUp,
+  GitPullRequest,
+  GitFork,
+  Gpu,
+  Image as ImageIcon,
+  IndentDecrease,
+  IndentIncrease,
+  Mail,
+  MemoryStick,
+  Menu,
+  MessageSquarePlus,
+  PanelLeftClose,
+  Pencil,
+  Plug,
+  Plus,
+  RefreshCw,
+  Search,
+  ServerCog,
+  Settings,
+  Trash2,
+  Type,
+  Waypoints,
+  X,
+  Zap,
+  ZoomIn,
+  ZoomOut,
+} from "lucide";
 
 const app = document.querySelector("#app");
 const TOUCH_TAP_SLOP_PX = 10;
@@ -12,12 +59,39 @@ const KNOWLEDGE_BASE_GRAPH_FIT_PADDING = 72;
 const KNOWLEDGE_BASE_GRAPH_FOCUS_SCALE = 1.65;
 const KNOWLEDGE_BASE_GRAPH_DRAG_SLOP_PX = 6;
 const KNOWLEDGE_BASE_GRAPH_PROJECT_PREFIX = "project:";
+const KNOWLEDGE_BASE_BM25_K1 = 1.2;
+const KNOWLEDGE_BASE_BM25_B = 0.75;
+const KNOWLEDGE_BASE_SEARCH_PREFIX_MIN_LENGTH = 2;
+const KNOWLEDGE_BASE_SEARCH_FIELD_WEIGHTS = [
+  ["title", 3],
+  ["relativePath", 2],
+  ["excerpt", 1.4],
+  ["searchText", 1],
+];
 const PORT_PREVIEW_TAB_PREFIX = "port:";
-const ROUTED_MAIN_VIEWS = new Set(["search", "plugins", "automations", "system", "swarm"]);
+const ROUTED_MAIN_VIEWS = new Set(["search", "plugins", "automations", "system", "swarm", "browser-use"]);
 const SESSION_WORKING_SPINNER_MS = 900;
 const FILE_IMAGE_MIN_ZOOM = 1;
 const FILE_IMAGE_MAX_ZOOM = 8;
 const FILE_IMAGE_ZOOM_STEP = 0.25;
+const TERMINAL_FILE_PREVIEW_DELAY_MS = 220;
+const TERMINAL_FILE_PREVIEW_TEXT_MAX_CHARS = 3600;
+const TERMINAL_IMAGE_PATH_EXTENSIONS = new Set([
+  ".apng",
+  ".avif",
+  ".bmp",
+  ".gif",
+  ".heic",
+  ".jpeg",
+  ".jpg",
+  ".png",
+  ".svg",
+  ".tif",
+  ".tiff",
+  ".webp",
+]);
+const TERMINAL_FILE_PATH_PATTERN = /(^|[\s"'`(<[{])((?:\\.|[^\s"'`<>()[\]{}|])+)(?=$|[\s"'`<>()[\]{}|])/gi;
+const FOLDER_PICKER_DRAG_MARGIN_PX = 12;
 const SYSTEM_HISTORY_REFRESH_MS = 30_000;
 const PORTS_BACKGROUND_REFRESH_MS = 30_000;
 const SELECTION_REFRESH_RETRY_MS = 250;
@@ -25,6 +99,48 @@ const MOBILE_KEYBOARD_RESIZE_THRESHOLD_PX = 80;
 const MOBILE_KEYBOARD_SETTLE_MS = 650;
 const TERMINAL_WEBSOCKET_RECONNECT_BASE_MS = 300;
 const TERMINAL_WEBSOCKET_RECONNECT_MAX_MS = 4_000;
+const TERMINAL_TRANSCRIPT_RAW_LIMIT = 2_000_000;
+const TERMINAL_TRANSCRIPT_RENDER_LIMIT = 600_000;
+const TERMINAL_THEME = {
+  background: "#090b0d",
+  foreground: "#f3efe8",
+  cursor: "#6ae3c6",
+  black: "#111315",
+  red: "#ff7f79",
+  green: "#6ae3c6",
+  yellow: "#f0c674",
+  blue: "#8fb9ff",
+  magenta: "#d3a6ff",
+  cyan: "#7fe0d4",
+  white: "#f3efe8",
+  brightBlack: "#6a7176",
+  brightRed: "#ff9f99",
+  brightGreen: "#8ff1d8",
+  brightYellow: "#f6d58e",
+  brightBlue: "#add0ff",
+  brightMagenta: "#e2c2ff",
+  brightCyan: "#a6efe6",
+  brightWhite: "#ffffff",
+};
+const TERMINAL_TRANSCRIPT_BASIC_COLOR_NAMES = [
+  "black",
+  "red",
+  "green",
+  "yellow",
+  "blue",
+  "magenta",
+  "cyan",
+  "white",
+  "bright-black",
+  "bright-red",
+  "bright-green",
+  "bright-yellow",
+  "bright-blue",
+  "bright-magenta",
+  "bright-cyan",
+  "bright-white",
+];
+const REMOTE_VIBES_SYSTEM_FOLDER_NAME = "remote-vibes-system";
 const SYSTEM_CHART_WIDTH = 560;
 const SYSTEM_CHART_HEIGHT = 150;
 const SYSTEM_HISTORY_RANGES = [
@@ -48,68 +164,84 @@ const SYSTEM_CHART_COLORS = [
 ];
 const PLUGIN_CATALOG = [
   {
+    id: "github",
     name: "GitHub",
     category: "Coding",
     description: "Triage PRs, inspect issues, and publish changes from agent sessions.",
+    icon: GitPullRequest,
     status: "available in Codex",
     source: "plugin",
   },
   {
+    id: "google-drive",
     name: "Google Drive",
     category: "Knowledge",
     description: "Search Docs, Sheets, Slides, and shared project files when the host agent supports it.",
+    icon: Database,
     status: "MCP-ready",
     source: "mcp",
   },
   {
+    id: "google-calendar",
     name: "Google Calendar",
     category: "Planning",
     description: "Look up events and availability from connected agent tooling.",
+    icon: CalendarDays,
     status: "MCP-ready",
     source: "mcp",
   },
   {
-    name: "Stripe",
-    category: "Business",
-    description: "Use official Stripe docs and account tools from capable coding agents.",
-    status: "available in Codex",
-    source: "plugin",
-  },
-  {
-    name: "AgentMail",
-    category: "Communication",
-    description: "Give Remote Vibes an email inbox and wake a Claude session when mail arrives.",
+    id: "browser-use",
+    name: "Browser Use",
+    category: "Remote Vibes",
+    description: "Start an OttoAuth browser fulfillment agent from a coding-agent session.",
+    icon: Bot,
     status: "setup available",
     source: "remote-vibes",
   },
   {
-    name: "Slack",
-    category: "Team",
-    description: "A placeholder for chat-driven workflows once Remote Vibes exposes imported MCPs directly.",
-    status: "coming soon",
-    source: "mcp",
+    id: "agentmail",
+    name: "AgentMail",
+    category: "Communication",
+    description: "Give Remote Vibes an email inbox and wake a Claude session when mail arrives.",
+    icon: Mail,
+    status: "setup available",
+    source: "remote-vibes",
   },
   {
-    name: "Figma",
-    category: "Design",
-    description: "Design-to-code workflows belong here when a local MCP is configured for the agent.",
-    status: "coming soon",
-    source: "mcp",
-  },
-  {
+    id: "localhost-apps",
     name: "Localhost Apps",
     category: "Remote Vibes",
     description: "Preview web apps from discovered ports without leaving the current session.",
+    icon: AppWindow,
     status: "built in",
     source: "remote-vibes",
   },
   {
+    id: "knowledge-base",
     name: "Knowledge Base",
     category: "Remote Vibes",
     description: "Search and edit the shared markdown wiki that agents receive in their prompt.",
+    icon: BookOpen,
     status: "built in",
     source: "remote-vibes",
   },
+];
+const AUTOMATION_CADENCE_OPTIONS = [
+  ["hourly", "Every hour"],
+  ["six-hours", "Every 6 hours"],
+  ["daily", "Daily"],
+  ["weekday", "Weekdays"],
+  ["weekly", "Weekly"],
+];
+const AUTOMATION_WEEKDAY_OPTIONS = [
+  ["monday", "Monday"],
+  ["tuesday", "Tuesday"],
+  ["wednesday", "Wednesday"],
+  ["thursday", "Thursday"],
+  ["friday", "Friday"],
+  ["saturday", "Saturday"],
+  ["sunday", "Sunday"],
 ];
 const KNOWLEDGE_BASE_GRAPH_COLOR_PALETTE = [
   {
@@ -238,6 +370,15 @@ const LIKELY_TEXT_FILENAMES = new Set([
   "readme.md",
 ]);
 const SESSION_READ_STORAGE_KEY = "remote-vibes-session-read-at-v1";
+const LAYOUT_STORAGE_KEY = "remote-vibes-layout-v1";
+const SIDEBAR_DEFAULT_WIDTH = 276;
+const SIDEBAR_MIN_WIDTH = 220;
+const SIDEBAR_MAX_WIDTH = 520;
+const SIDEBAR_COLLAPSED_RAIL_WIDTH = 0;
+const WORKSPACE_FILE_PREVIEW_DEFAULT_WIDTH = 460;
+const WORKSPACE_FILE_PREVIEW_MIN_WIDTH = 280;
+const WORKSPACE_TERMINAL_MIN_WIDTH = 320;
+const LAYOUT_RESIZE_KEYBOARD_STEP = 16;
 
 function loadSessionReadState() {
   try {
@@ -264,6 +405,30 @@ function saveSessionReadState() {
   }
 }
 
+function getStoredLayoutNumber(value, fallback) {
+  const number = Number(value);
+  return Number.isFinite(number) && number > 0 ? number : fallback;
+}
+
+function loadLayoutPreferences() {
+  try {
+    const parsed = JSON.parse(window.localStorage.getItem(LAYOUT_STORAGE_KEY) || "{}");
+    if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) {
+      return {};
+    }
+
+    return {
+      sidebarCollapsed: Boolean(parsed.sidebarCollapsed),
+      sidebarWidth: getStoredLayoutNumber(parsed.sidebarWidth, SIDEBAR_DEFAULT_WIDTH),
+      filePreviewWidth: getStoredLayoutNumber(parsed.filePreviewWidth, WORKSPACE_FILE_PREVIEW_DEFAULT_WIDTH),
+    };
+  } catch {
+    return {};
+  }
+}
+
+const layoutPreferences = loadLayoutPreferences();
+
 const state = {
   providers: [],
   sessionProviderPickerGlobalListenersBound: false,
@@ -277,6 +442,11 @@ const state = {
   currentView: "shell",
   globalSearchQuery: "",
   pluginSearchQuery: "",
+  pluginInstallActions: {},
+  brainSetupCloneUrl: "",
+  brainSetupClonePath: "",
+  brainSetupCloning: false,
+  brainSetupError: "",
   agentPrompt: "",
   agentPromptPath: "",
   agentPromptWikiRoot: ".remote-vibes/wiki",
@@ -286,6 +456,12 @@ const state = {
     projectCwd: "",
     projectFallbackSessionId: "",
     projectName: "",
+    loading: false,
+    error: "",
+    data: null,
+  },
+  browserUseSession: {
+    id: "",
     loading: false,
     error: "",
     data: null,
@@ -301,9 +477,22 @@ const state = {
     agentMailProviderId: "claude",
     agentMailStatus: null,
     agentMailUsername: "",
+    agentAutomations: [],
+    browserUseAnthropicApiKeyConfigured: false,
+    browserUseBrowserPath: "",
+    browserUseEnabled: false,
+    browserUseHeadless: true,
+    browserUseKeepTabs: false,
+    browserUseMaxTurns: 50,
+    browserUseModel: "",
+    browserUseProfileDir: "",
+    browserUseStatus: null,
+    browserUseWorkerPath: "",
+    installedPluginIds: [],
     preventSleepEnabled: true,
     sleepPrevention: null,
     wikiPath: "",
+    wikiPathConfigured: false,
     wikiRelativeRoot: ".remote-vibes/wiki",
     wikiGitBackupEnabled: true,
     wikiGitRemoteBranch: "main",
@@ -328,6 +517,7 @@ const state = {
     requestId: 0,
     loading: false,
     error: "",
+    position: null,
   },
   sessionProjectExpanded: new Set(),
   sessionProjectInteractionSeen: false,
@@ -398,9 +588,13 @@ const state = {
   websocketReconnectSessionId: "",
   terminal: null,
   fitAddon: null,
+  terminalFileLinkDisposable: null,
   pollTimer: null,
   resizeBound: false,
   mobileSidebar: null,
+  sidebarCollapsed: Boolean(layoutPreferences.sidebarCollapsed),
+  sidebarWidth: layoutPreferences.sidebarWidth || SIDEBAR_DEFAULT_WIDTH,
+  filePreviewWidth: layoutPreferences.filePreviewWidth || WORKSPACE_FILE_PREVIEW_DEFAULT_WIDTH,
   terminalResizeObserver: null,
   terminalSelectionDisposable: null,
   terminalFitFrame: null,
@@ -409,6 +603,10 @@ const state = {
   pendingTerminalOutput: "",
   pendingTerminalScrollToBottom: false,
   terminalOutputFrame: null,
+  terminalTranscriptRaw: "",
+  terminalTranscriptRenderFrame: null,
+  terminalTranscriptScrollToBottom: false,
+  terminalTranscriptVisible: false,
   terminalComposing: false,
   terminalTextareaResetTimer: null,
   update: null,
@@ -435,6 +633,32 @@ const state = {
   lastVisualViewportHeight: 0,
   mobileKeyboardSettlingUntil: 0,
   preferredBaseUrl: "",
+};
+
+function saveLayoutPreferences() {
+  try {
+    window.localStorage.setItem(
+      LAYOUT_STORAGE_KEY,
+      JSON.stringify({
+        sidebarCollapsed: state.sidebarCollapsed,
+        sidebarWidth: state.sidebarWidth,
+        filePreviewWidth: state.filePreviewWidth,
+      }),
+    );
+  } catch {
+    // Layout preferences are optional; the app should keep working without storage.
+  }
+}
+
+let knowledgeBaseSearchIndexCache = {
+  notes: null,
+  index: null,
+};
+
+let knowledgeBaseSearchResultsCache = {
+  notes: null,
+  query: "",
+  results: null,
 };
 
 function getRouteState() {
@@ -495,6 +719,36 @@ function escapeHtml(value) {
     .replaceAll('"', "&quot;");
 }
 
+function renderIconAttributes(attributes = {}) {
+  return Object.entries(attributes)
+    .map(([key, value]) => `${escapeHtml(key)}="${escapeHtml(value)}"`)
+    .join(" ");
+}
+
+function renderIconNode([tagName, attributes]) {
+  return `<${escapeHtml(tagName)} ${renderIconAttributes(attributes)}></${escapeHtml(tagName)}>`;
+}
+
+function renderIcon(icon, { className = "rv-icon" } = {}) {
+  if (!Array.isArray(icon)) {
+    return "";
+  }
+
+  return `
+    <svg
+      class="${escapeHtml(className)}"
+      viewBox="0 0 24 24"
+      aria-hidden="true"
+      focusable="false"
+      fill="none"
+      stroke="currentColor"
+      stroke-width="2"
+      stroke-linecap="round"
+      stroke-linejoin="round"
+    >${icon.map(renderIconNode).join("")}</svg>
+  `;
+}
+
 function tooltipAttributes(label, placement = "top") {
   return `data-tooltip="${escapeHtml(label)}" data-tooltip-placement="${escapeHtml(placement)}"`;
 }
@@ -536,6 +790,91 @@ function clamp(value, min, max) {
   return Math.min(max, Math.max(min, value));
 }
 
+function getViewportWidth() {
+  return Math.max(0, window.innerWidth || document.documentElement?.clientWidth || 0);
+}
+
+function getSidebarWidthBounds() {
+  const viewportWidth = getViewportWidth();
+  const viewportMax = viewportWidth > 0 ? viewportWidth - 440 : SIDEBAR_MAX_WIDTH;
+  const max = Math.max(SIDEBAR_MIN_WIDTH, Math.min(SIDEBAR_MAX_WIDTH, viewportMax));
+  return { min: SIDEBAR_MIN_WIDTH, max };
+}
+
+function getSidebarWidth() {
+  const { min, max } = getSidebarWidthBounds();
+  return Math.round(clamp(Number(state.sidebarWidth) || SIDEBAR_DEFAULT_WIDTH, min, max));
+}
+
+function getWorkspaceFilePreviewBounds(split = document.querySelector("#workspace-split")) {
+  const splitWidth = split instanceof HTMLElement ? split.getBoundingClientRect().width : getViewportWidth();
+  const available = Math.max(0, splitWidth - WORKSPACE_TERMINAL_MIN_WIDTH - 12);
+  const max = Math.max(WORKSPACE_FILE_PREVIEW_MIN_WIDTH, available || WORKSPACE_FILE_PREVIEW_DEFAULT_WIDTH);
+  return { min: Math.min(WORKSPACE_FILE_PREVIEW_MIN_WIDTH, max), max };
+}
+
+function getWorkspaceFilePreviewWidth(split = document.querySelector("#workspace-split")) {
+  const { min, max } = getWorkspaceFilePreviewBounds(split);
+  return Math.round(clamp(Number(state.filePreviewWidth) || WORKSPACE_FILE_PREVIEW_DEFAULT_WIDTH, min, max));
+}
+
+function renderAppShellStyle() {
+  return `--sidebar-width: ${getSidebarWidth()}px; --sidebar-rail-width: ${SIDEBAR_COLLAPSED_RAIL_WIDTH}px;`;
+}
+
+function renderWorkspaceSplitStyle() {
+  return `--file-preview-width: ${getWorkspaceFilePreviewWidth()}px;`;
+}
+
+function renderSidebarToggleButton() {
+  const label = state.sidebarCollapsed ? "Open sidebar" : "Collapse sidebar";
+  return `
+    <button
+      class="icon-button sidebar-layout-button"
+      type="button"
+      data-sidebar-toggle
+      aria-label="${escapeHtml(label)}"
+      aria-pressed="${state.sidebarCollapsed ? "true" : "false"}"
+    >${renderIcon(state.sidebarCollapsed ? ChevronRight : ChevronLeft)}</button>
+  `;
+}
+
+function renderSidebarResizeHandle() {
+  const { min, max } = getSidebarWidthBounds();
+  return `
+    <div
+      class="layout-resize-handle sidebar-resize-handle"
+      role="separator"
+      aria-label="Resize sidebar"
+      aria-orientation="vertical"
+      aria-valuemin="${min}"
+      aria-valuemax="${max}"
+      aria-valuenow="${getSidebarWidth()}"
+      tabindex="0"
+      data-layout-resize="sidebar"
+    ></div>
+  `;
+}
+
+function renderWorkspaceResizeHandle() {
+  const { min, max } = getWorkspaceFilePreviewBounds();
+  const active = state.openFileTabs.length > 0;
+  return `
+    <div
+      class="layout-resize-handle workspace-resize-handle"
+      role="separator"
+      aria-label="Resize file preview"
+      aria-orientation="vertical"
+      aria-hidden="${active ? "false" : "true"}"
+      aria-valuemin="${min}"
+      aria-valuemax="${max}"
+      aria-valuenow="${getWorkspaceFilePreviewWidth()}"
+      tabindex="${active ? "0" : "-1"}"
+      data-layout-resize="workspace"
+    ></div>
+  `;
+}
+
 function timestampMs(timestamp) {
   const value = Date.parse(timestamp || "");
   return Number.isFinite(value) ? value : 0;
@@ -545,10 +884,19 @@ function getSessionReadAt(sessionId) {
   return Number(state.sessionReadAt[sessionId] || 0);
 }
 
+function getSessionSubactivityUpdatedAt(session) {
+  const subagents = Array.isArray(session?.subagents) ? session.subagents : [];
+  return Math.max(
+    timestampMs(session?.backgroundActivity?.updatedAt),
+    ...subagents.map((subagent) => timestampMs(subagent?.updatedAt)),
+  );
+}
+
 function getSessionUnreadAt(session) {
   return Math.max(
     timestampMs(session?.activityCompletedAt),
     timestampMs(session?.lastOutputAt),
+    getSessionSubactivityUpdatedAt(session),
   );
 }
 
@@ -594,6 +942,18 @@ function shouldMarkSessionRead(sessionId) {
     && state.currentView === "shell"
     && document.visibilityState !== "hidden"
   );
+}
+
+function hasWorkingSessionSubactivity(session) {
+  const subagents = Array.isArray(session?.subagents) ? session.subagents : [];
+  return (
+    session?.backgroundActivity?.active === true
+    || subagents.some((subagent) => subagent?.status === "working")
+  );
+}
+
+function hasWorkingSessionActivity(session) {
+  return session?.activityStatus === "working" || hasWorkingSessionSubactivity(session);
 }
 
 function pruneSessionReadState() {
@@ -711,8 +1071,11 @@ function getSessionLabel(session) {
     return { text: "exited", className: "exited", title: "session exited" };
   }
 
-  if (session.activityStatus === "working") {
-    return { text: "working", className: "working", title: "agent is working" };
+  if (hasWorkingSessionActivity(session)) {
+    const title = session?.backgroundActivity?.active
+      ? "agent has a live monitor or background task"
+      : "agent is working";
+    return { text: "working", className: "working", title };
   }
 
   if (isSessionUnread(session)) {
@@ -818,6 +1181,227 @@ function setMobileSidebar(nextSidebar) {
 
 function closeMobileSidebar() {
   setMobileSidebar(null);
+}
+
+function refreshSidebarToggleButtons() {
+  const label = state.sidebarCollapsed ? "Open sidebar" : "Collapse sidebar";
+  document.querySelectorAll("[data-sidebar-toggle]").forEach((button) => {
+    if (!(button instanceof HTMLButtonElement)) {
+      return;
+    }
+
+    button.setAttribute("aria-label", label);
+    button.setAttribute("aria-pressed", state.sidebarCollapsed ? "true" : "false");
+    button.removeAttribute("data-tooltip");
+    button.removeAttribute("data-tooltip-placement");
+    button.innerHTML = renderIcon(state.sidebarCollapsed ? ChevronRight : ChevronLeft);
+  });
+}
+
+function refreshSidebarResizeHandleUi() {
+  const handle = document.querySelector('[data-layout-resize="sidebar"]');
+  if (!(handle instanceof HTMLElement)) {
+    return;
+  }
+
+  const { min, max } = getSidebarWidthBounds();
+  handle.setAttribute("aria-valuemin", String(min));
+  handle.setAttribute("aria-valuemax", String(max));
+  handle.setAttribute("aria-valuenow", String(getSidebarWidth()));
+}
+
+function refreshWorkspaceResizeHandleUi() {
+  const split = document.querySelector("#workspace-split");
+  const handle = document.querySelector('[data-layout-resize="workspace"]');
+  if (!(handle instanceof HTMLElement)) {
+    return;
+  }
+
+  const active = state.openFileTabs.length > 0;
+  const { min, max } = getWorkspaceFilePreviewBounds(split);
+  handle.setAttribute("aria-hidden", active ? "false" : "true");
+  handle.setAttribute("aria-valuemin", String(min));
+  handle.setAttribute("aria-valuemax", String(max));
+  handle.setAttribute("aria-valuenow", String(getWorkspaceFilePreviewWidth(split)));
+  handle.tabIndex = active ? 0 : -1;
+}
+
+function refreshLayoutUi() {
+  state.sidebarWidth = getSidebarWidth();
+
+  const shell = document.querySelector(".app-shell");
+  if (shell instanceof HTMLElement) {
+    shell.classList.toggle("is-sidebar-collapsed", state.sidebarCollapsed);
+    shell.style.setProperty("--sidebar-width", `${state.sidebarWidth}px`);
+    shell.style.setProperty("--sidebar-rail-width", `${SIDEBAR_COLLAPSED_RAIL_WIDTH}px`);
+  }
+
+  const split = document.querySelector("#workspace-split");
+  if (split instanceof HTMLElement) {
+    state.filePreviewWidth = getWorkspaceFilePreviewWidth(split);
+    split.style.setProperty("--file-preview-width", `${state.filePreviewWidth}px`);
+  }
+
+  refreshSidebarToggleButtons();
+  refreshSidebarResizeHandleUi();
+  refreshWorkspaceResizeHandleUi();
+  fitTerminalSoon();
+}
+
+function toggleSidebarCollapsed() {
+  state.sidebarCollapsed = !state.sidebarCollapsed;
+  saveLayoutPreferences();
+  refreshLayoutUi();
+}
+
+function setSidebarWidth(width, { persist = false } = {}) {
+  const { min, max } = getSidebarWidthBounds();
+  state.sidebarCollapsed = false;
+  state.sidebarWidth = Math.round(clamp(width, min, max));
+  refreshLayoutUi();
+  if (persist) {
+    saveLayoutPreferences();
+  }
+}
+
+function setWorkspaceFilePreviewWidth(width, { persist = false, split = document.querySelector("#workspace-split") } = {}) {
+  const { min, max } = getWorkspaceFilePreviewBounds(split);
+  state.filePreviewWidth = Math.round(clamp(width, min, max));
+  refreshLayoutUi();
+  if (persist) {
+    saveLayoutPreferences();
+  }
+}
+
+function resetLayoutResizeTarget(kind) {
+  if (kind === "sidebar") {
+    setSidebarWidth(SIDEBAR_DEFAULT_WIDTH, { persist: true });
+    return;
+  }
+
+  if (kind === "workspace") {
+    setWorkspaceFilePreviewWidth(WORKSPACE_FILE_PREVIEW_DEFAULT_WIDTH, { persist: true });
+  }
+}
+
+function beginLayoutResize(event, kind) {
+  if (event.button !== undefined && event.button !== 0) {
+    return;
+  }
+
+  const handle = event.currentTarget;
+  if (!(handle instanceof HTMLElement)) {
+    return;
+  }
+
+  if (kind === "workspace" && !state.openFileTabs.length) {
+    return;
+  }
+
+  const pointerId = event.pointerId;
+  const startClientX = event.clientX;
+  const split = document.querySelector("#workspace-split");
+  const startSidebarWidth = getSidebarWidth();
+  const startFilePreviewWidth = getWorkspaceFilePreviewWidth(split);
+  const controller = new AbortController();
+  const resizeClass = kind === "sidebar" ? "is-resizing-sidebar" : "is-resizing-workspace";
+
+  document.body.classList.add("is-resizing-layout", resizeClass);
+  handle.classList.add("is-dragging");
+
+  const onPointerMove = (moveEvent) => {
+    if (moveEvent.pointerId !== pointerId) {
+      return;
+    }
+
+    const deltaX = moveEvent.clientX - startClientX;
+    if (kind === "sidebar") {
+      setSidebarWidth(startSidebarWidth + deltaX);
+    } else {
+      setWorkspaceFilePreviewWidth(startFilePreviewWidth - deltaX, { split });
+    }
+
+    moveEvent.preventDefault();
+  };
+
+  const onPointerEnd = (endEvent) => {
+    if (endEvent.pointerId !== pointerId) {
+      return;
+    }
+
+    handle.classList.remove("is-dragging");
+    document.body.classList.remove("is-resizing-layout", resizeClass);
+    saveLayoutPreferences();
+    controller.abort();
+    fitTerminalSoon();
+  };
+
+  window.addEventListener("pointermove", onPointerMove, { signal: controller.signal });
+  window.addEventListener("pointerup", onPointerEnd, { signal: controller.signal });
+  window.addEventListener("pointercancel", onPointerEnd, { signal: controller.signal });
+
+  try {
+    handle.setPointerCapture(pointerId);
+  } catch {
+    // Pointer capture is best-effort; window listeners still keep the drag alive.
+  }
+
+  event.preventDefault();
+}
+
+function handleLayoutResizeKeydown(event, kind) {
+  if (kind === "workspace" && !state.openFileTabs.length) {
+    return;
+  }
+
+  const sidebarBounds = kind === "sidebar" ? getSidebarWidthBounds() : null;
+  const workspaceBounds = kind === "workspace" ? getWorkspaceFilePreviewBounds() : null;
+  const step = event.shiftKey ? LAYOUT_RESIZE_KEYBOARD_STEP * 4 : LAYOUT_RESIZE_KEYBOARD_STEP;
+
+  if (kind === "sidebar") {
+    if (event.key === "ArrowLeft") {
+      setSidebarWidth(getSidebarWidth() - step, { persist: true });
+    } else if (event.key === "ArrowRight") {
+      setSidebarWidth(getSidebarWidth() + step, { persist: true });
+    } else if (event.key === "Home") {
+      setSidebarWidth(sidebarBounds.min, { persist: true });
+    } else if (event.key === "End") {
+      setSidebarWidth(sidebarBounds.max, { persist: true });
+    } else {
+      return;
+    }
+  } else if (kind === "workspace") {
+    if (event.key === "ArrowLeft") {
+      setWorkspaceFilePreviewWidth(getWorkspaceFilePreviewWidth() + step, { persist: true });
+    } else if (event.key === "ArrowRight") {
+      setWorkspaceFilePreviewWidth(getWorkspaceFilePreviewWidth() - step, { persist: true });
+    } else if (event.key === "Home") {
+      setWorkspaceFilePreviewWidth(workspaceBounds.min, { persist: true });
+    } else if (event.key === "End") {
+      setWorkspaceFilePreviewWidth(workspaceBounds.max, { persist: true });
+    } else {
+      return;
+    }
+  }
+
+  event.preventDefault();
+}
+
+function bindLayoutResizeEvents() {
+  document.querySelectorAll("[data-sidebar-toggle]").forEach((button) => {
+    button.addEventListener("click", () => toggleSidebarCollapsed());
+  });
+
+  document.querySelectorAll("[data-layout-resize]").forEach((handle) => {
+    const kind = handle.getAttribute("data-layout-resize");
+    if (kind !== "sidebar" && kind !== "workspace") {
+      return;
+    }
+
+    handle.addEventListener("pointerdown", (event) => beginLayoutResize(event, kind));
+    handle.addEventListener("keydown", (event) => handleLayoutResizeKeydown(event, kind));
+    handle.addEventListener("dblclick", () => resetLayoutResizeTarget(kind));
+  });
 }
 
 function getTerminalViewport() {
@@ -974,6 +1558,8 @@ function isCoarsePointerDevice() {
 const TOOLTIP_DELAY_MS = 700;
 let tooltipTimer = null;
 let tooltipTarget = null;
+let terminalFilePreviewTimer = null;
+let terminalFilePreviewSequence = 0;
 
 function getHoverTooltipElement() {
   let tooltip = document.querySelector("#hover-tooltip");
@@ -1229,9 +1815,14 @@ function applyTerminalDisplayProfile(mount) {
   if (currentOptions.smoothScrollDuration !== profile.smoothScrollDuration) {
     currentOptions.smoothScrollDuration = profile.smoothScrollDuration;
   }
+
 }
 
 function isTerminalAtBottom() {
+  if (state.terminalTranscriptVisible) {
+    return isTerminalTranscriptAtBottom();
+  }
+
   const viewport = document.querySelector("#terminal-mount .xterm-viewport");
   if (viewport instanceof HTMLElement && viewport.scrollHeight > viewport.clientHeight) {
     return viewport.scrollHeight - viewport.clientHeight - viewport.scrollTop <= 2;
@@ -1269,6 +1860,12 @@ function syncTerminalScrollState() {
 }
 
 function scrollTerminalToBottom() {
+  const transcriptViewport = getTerminalTranscriptViewport();
+  if (transcriptViewport instanceof HTMLElement) {
+    transcriptViewport.scrollTop = transcriptViewport.scrollHeight;
+  }
+  hideTerminalTranscriptOverlay();
+
   state.terminal?.scrollToBottom();
 
   const viewport = document.querySelector("#terminal-mount .xterm-viewport");
@@ -1286,17 +1883,1301 @@ function scrollTerminalToBottom() {
   });
 }
 
-function getTerminalWheelDeltaY(event, viewport) {
-  if (event.deltaMode === 1) {
-    const lineHeight = Number.parseFloat(window.getComputedStyle(viewport).lineHeight);
-    return event.deltaY * (Number.isFinite(lineHeight) && lineHeight > 0 ? lineHeight : 18);
+function sanitizeTerminalOutputForViewport(output) {
+  return String(output || "").replace(/\u001b\[\?(?:47|1047|1048|1049)[hl]/g, "");
+}
+
+function getNativeTerminalViewport() {
+  const viewport = document.querySelector("#terminal-mount .xterm-viewport");
+  return viewport instanceof HTMLElement ? viewport : null;
+}
+
+function hasNativeTerminalScrollableHistory() {
+  const buffer = state.terminal?.buffer?.active;
+  if (buffer && buffer.baseY > 0) {
+    return true;
   }
 
-  if (event.deltaMode === 2) {
-    return event.deltaY * viewport.clientHeight;
+  const viewport = getNativeTerminalViewport();
+  return Boolean(viewport && viewport.scrollHeight - viewport.clientHeight > 2);
+}
+
+function getTerminalTranscriptViewport() {
+  const viewport = document.querySelector("#terminal-transcript-scroll");
+  return viewport instanceof HTMLElement ? viewport : null;
+}
+
+function isTerminalTranscriptAtBottom() {
+  const viewport = getTerminalTranscriptViewport();
+  if (!(viewport instanceof HTMLElement) || viewport.scrollHeight <= viewport.clientHeight) {
+    return true;
+  }
+
+  return viewport.scrollHeight - viewport.clientHeight - viewport.scrollTop <= 2;
+}
+
+function getRenderableTerminalTranscriptOutput(rawOutput) {
+  return String(rawOutput || "")
+    .slice(-TERMINAL_TRANSCRIPT_RENDER_LIMIT)
+    .replace(/\u001b\[\?(?:47|1047|1048|1049)[hl]/g, "")
+    .replace(/\u001b\[\?2004[hl]/g, "");
+}
+
+function findTerminalAnsiEscapeEnd(source, startIndex) {
+  const introducer = source[startIndex + 1];
+  if (!introducer) {
+    return startIndex;
+  }
+
+  if (introducer === "[") {
+    for (let index = startIndex + 2; index < source.length; index += 1) {
+      const code = source.charCodeAt(index);
+      if (code >= 0x40 && code <= 0x7e) {
+        return index;
+      }
+    }
+    return source.length - 1;
+  }
+
+  if (introducer === "]" || introducer === "P" || introducer === "_" || introducer === "^") {
+    for (let index = startIndex + 2; index < source.length; index += 1) {
+      if (source[index] === "\u0007") {
+        return index;
+      }
+
+      if (source[index] === "\u001b" && source[index + 1] === "\\") {
+        return index + 1;
+      }
+    }
+    return source.length - 1;
+  }
+
+  if ("()*+-./#% ".includes(introducer)) {
+    return Math.min(source.length - 1, startIndex + 2);
+  }
+
+  return startIndex + 1;
+}
+
+function getTerminalAnsiSequence(source, startIndex) {
+  const endIndex = findTerminalAnsiEscapeEnd(source, startIndex);
+  return {
+    endIndex,
+    sequence: source.slice(startIndex, endIndex + 1),
+  };
+}
+
+function cloneTerminalTranscriptStyle(style) {
+  return {
+    bold: Boolean(style.bold),
+    fg: style.fg || "",
+  };
+}
+
+function isSameTerminalTranscriptStyle(left, right) {
+  return Boolean(left?.bold) === Boolean(right?.bold) && (left?.fg || "") === (right?.fg || "");
+}
+
+function getTerminalTranscriptStyleClass(style) {
+  const classNames = [];
+  if (style?.bold) {
+    classNames.push("is-bold");
+  }
+  if (style?.fg) {
+    classNames.push(`fg-${style.fg}`);
+  }
+  return classNames.join(" ");
+}
+
+function applyTerminalTranscriptSgr(sequence, style) {
+  const match = /^\u001b\[([0-9;:]*)m$/u.exec(sequence);
+  if (!match) {
+    return style;
+  }
+
+  const values = match[1]
+    ? match[1].split(/[;:]/u).map((value) => Number(value || 0))
+    : [0];
+  const nextStyle = cloneTerminalTranscriptStyle(style);
+  for (const value of values) {
+    if (value === 0) {
+      nextStyle.bold = false;
+      nextStyle.fg = "";
+    } else if (value === 1) {
+      nextStyle.bold = true;
+    } else if (value === 22) {
+      nextStyle.bold = false;
+    } else if (value === 39) {
+      nextStyle.fg = "";
+    } else if (value >= 30 && value <= 37) {
+      nextStyle.fg = ["black", "red", "green", "yellow", "blue", "magenta", "cyan", "white"][value - 30];
+    } else if (value >= 90 && value <= 97) {
+      nextStyle.fg = ["bright-black", "bright-red", "bright-green", "bright-yellow", "bright-blue", "bright-magenta", "bright-cyan", "bright-white"][value - 90];
+    }
+  }
+  return nextStyle;
+}
+
+function getTerminalPaletteColor(index) {
+  if (index >= 0 && index < TERMINAL_TRANSCRIPT_BASIC_COLOR_NAMES.length) {
+    const colorName = TERMINAL_TRANSCRIPT_BASIC_COLOR_NAMES[index].replace(/-([a-z])/gu, (_, character) =>
+      character.toUpperCase(),
+    );
+    return TERMINAL_THEME[colorName] || TERMINAL_THEME.foreground;
+  }
+
+  if (index >= 16 && index <= 231) {
+    const value = index - 16;
+    const red = Math.floor(value / 36);
+    const green = Math.floor((value % 36) / 6);
+    const blue = value % 6;
+    const component = (part) => (part === 0 ? 0 : 55 + part * 40);
+    return `#${[component(red), component(green), component(blue)]
+      .map((part) => part.toString(16).padStart(2, "0"))
+      .join("")}`;
+  }
+
+  if (index >= 232 && index <= 255) {
+    const value = 8 + (index - 232) * 10;
+    const hex = value.toString(16).padStart(2, "0");
+    return `#${hex}${hex}${hex}`;
+  }
+
+  return TERMINAL_THEME.foreground;
+}
+
+function getTerminalRgbColor(value) {
+  const numeric = Number(value) || 0;
+  return `#${numeric.toString(16).padStart(6, "0").slice(-6)}`;
+}
+
+function getTerminalTranscriptCellStyle(cell) {
+  const classNames = [];
+  const cssRules = [];
+
+  if (cell.isBold?.()) {
+    classNames.push("is-bold");
+  }
+  if (cell.isItalic?.()) {
+    classNames.push("is-italic");
+  }
+  if (cell.isDim?.()) {
+    classNames.push("is-dim");
+  }
+  if (cell.isUnderline?.()) {
+    classNames.push("is-underline");
+  }
+  if (cell.isStrikethrough?.()) {
+    classNames.push("is-strikethrough");
+  }
+
+  let foreground = "";
+  let background = "";
+
+  if (cell.isFgPalette?.()) {
+    const colorIndex = cell.getFgColor();
+    if (colorIndex >= 0 && colorIndex < TERMINAL_TRANSCRIPT_BASIC_COLOR_NAMES.length) {
+      classNames.push(`fg-${TERMINAL_TRANSCRIPT_BASIC_COLOR_NAMES[colorIndex]}`);
+    } else {
+      foreground = getTerminalPaletteColor(colorIndex);
+    }
+  } else if (cell.isFgRGB?.()) {
+    foreground = getTerminalRgbColor(cell.getFgColor());
+  }
+
+  if (cell.isBgPalette?.()) {
+    const colorIndex = cell.getBgColor();
+    if (colorIndex >= 0 && colorIndex < TERMINAL_TRANSCRIPT_BASIC_COLOR_NAMES.length) {
+      classNames.push(`bg-${TERMINAL_TRANSCRIPT_BASIC_COLOR_NAMES[colorIndex]}`);
+    } else {
+      background = getTerminalPaletteColor(colorIndex);
+    }
+  } else if (cell.isBgRGB?.()) {
+    background = getTerminalRgbColor(cell.getBgColor());
+  }
+
+  if (cell.isInverse?.()) {
+    if (!foreground) {
+      foreground = TERMINAL_THEME.background;
+    }
+    if (!background) {
+      background = TERMINAL_THEME.foreground;
+    }
+  }
+
+  if (foreground) {
+    cssRules.push(`color: ${foreground}`);
+  }
+  if (background) {
+    cssRules.push(`background-color: ${background}`);
+  }
+
+  return {
+    className: classNames.join(" "),
+    cssText: cssRules.join("; "),
+  };
+}
+
+function getTerminalTranscriptCellStyleKey(style) {
+  return `${style?.className || ""}|${style?.cssText || ""}`;
+}
+
+function renderTerminalTranscriptStyledText(text, style) {
+  if (!text) {
+    return "";
+  }
+
+  const classAttribute = style?.className ? ` class="${escapeHtml(style.className)}"` : "";
+  const styleAttribute = style?.cssText ? ` style="${escapeHtml(style.cssText)}"` : "";
+  return classAttribute || styleAttribute
+    ? `<span${classAttribute}${styleAttribute}>${escapeHtml(text)}</span>`
+    : escapeHtml(text);
+}
+
+function isTerminalTranscriptVisibleCell(cell) {
+  if (!cell || cell.isInvisible?.()) {
+    return false;
+  }
+
+  const chars = cell.getChars?.() || "";
+  if (chars && chars !== " ") {
+    return true;
+  }
+
+  return Boolean(cell.isBgPalette?.() || cell.isBgRGB?.());
+}
+
+function renderTerminalTranscriptBufferHtml() {
+  const terminal = state.terminal;
+  const buffer = terminal?.buffer?.active;
+  if (!terminal || !buffer || buffer.length <= 0) {
+    return "";
+  }
+
+  const cols = Math.max(1, Number(terminal.cols) || 1);
+  const cell = buffer.getNullCell?.();
+  const lines = [];
+
+  for (let row = 0; row < buffer.length; row += 1) {
+    const line = buffer.getLine(row);
+    if (!line || !cell) {
+      lines.push("");
+      continue;
+    }
+
+    const maxColumns = Math.min(cols, line.length || cols);
+    let lastVisibleColumn = -1;
+    for (let column = 0; column < maxColumns; column += 1) {
+      const nextCell = line.getCell(column, cell);
+      if (nextCell?.getWidth?.() === 0) {
+        continue;
+      }
+      if (isTerminalTranscriptVisibleCell(nextCell)) {
+        lastVisibleColumn = column;
+      }
+    }
+
+    if (lastVisibleColumn < 0) {
+      lines.push("");
+      continue;
+    }
+
+    let html = "";
+    let chunk = "";
+    let currentStyle = null;
+    let currentStyleKey = "";
+    const flush = () => {
+      if (!chunk) {
+        return;
+      }
+      html += renderTerminalTranscriptStyledText(chunk, currentStyle);
+      chunk = "";
+    };
+
+    for (let column = 0; column <= lastVisibleColumn; column += 1) {
+      const nextCell = line.getCell(column, cell);
+      if (!nextCell || nextCell.getWidth?.() === 0) {
+        continue;
+      }
+
+      const nextStyle = getTerminalTranscriptCellStyle(nextCell);
+      const nextStyleKey = getTerminalTranscriptCellStyleKey(nextStyle);
+      if (nextStyleKey !== currentStyleKey) {
+        flush();
+        currentStyle = nextStyle;
+        currentStyleKey = nextStyleKey;
+      }
+
+      chunk += nextCell.isInvisible?.() ? " " : nextCell.getChars?.() || " ";
+    }
+
+    flush();
+    lines.push(html);
+  }
+
+  return lines.join("\n").replace(/\n{8,}$/u, "\n\n");
+}
+
+function parseTerminalCsiSequence(sequence) {
+  const match = /^\u001b\[([?=>]?)([0-9;:]*)([ -/]*)?([@-~])$/u.exec(sequence);
+  if (!match) {
+    return null;
+  }
+
+  const params = match[2]
+    ? match[2].split(/[;:]/u).map((value) => Number(value || 0))
+    : [];
+
+  return {
+    final: match[4],
+    params,
+    privatePrefix: match[1] || "",
+  };
+}
+
+function renderTerminalRawTranscriptHtml(rawOutput) {
+  const source = getRenderableTerminalTranscriptOutput(rawOutput);
+  const lines = [[]];
+  let row = 0;
+  let column = 0;
+  let screenTop = 0;
+  let style = { bold: false, fg: "" };
+  const terminalColumns = Math.max(20, Number(state.terminal?.cols) || 120);
+  const terminalRows = Math.max(8, Number(state.terminal?.rows) || 36);
+
+  const ensureLine = (nextRow) => {
+    while (lines.length <= nextRow) {
+      lines.push([]);
+    }
+  };
+
+  const newLine = () => {
+    if (row - screenTop >= terminalRows - 1) {
+      lines.push([]);
+      screenTop = Math.max(0, screenTop + 1);
+      row = screenTop + terminalRows - 1;
+    } else {
+      row += 1;
+      ensureLine(row);
+    }
+    column = 0;
+  };
+
+  const eraseLine = (mode) => {
+    ensureLine(row);
+    if (mode === 1) {
+      for (let eraseColumn = 0; eraseColumn <= column; eraseColumn += 1) {
+        delete lines[row][eraseColumn];
+      }
+      return;
+    }
+
+    if (mode === 2) {
+      lines[row] = [];
+      return;
+    }
+
+    for (let eraseColumn = column; eraseColumn < terminalColumns; eraseColumn += 1) {
+      delete lines[row][eraseColumn];
+    }
+  };
+
+  const applyCsiSequence = (sequence) => {
+    const parsed = parseTerminalCsiSequence(sequence);
+    if (!parsed || parsed.privatePrefix) {
+      return false;
+    }
+
+    const getParam = (index, fallback) => Math.max(1, Number(parsed.params[index]) || fallback);
+    if (parsed.final === "m") {
+      style = applyTerminalTranscriptSgr(sequence, style);
+      return true;
+    }
+
+    if (parsed.final === "A" || parsed.final === "B") {
+      // Claude's full-screen redraws move around inside the viewport a lot.
+      // For the native transcript, preserving scrollback is more important
+      // than perfectly replaying those destructive screen updates.
+      return true;
+    }
+    if (parsed.final === "C") {
+      column = Math.min(terminalColumns - 1, column + getParam(0, 1));
+      return true;
+    }
+    if (parsed.final === "D") {
+      column = Math.max(0, column - getParam(0, 1));
+      return true;
+    }
+    if (parsed.final === "E") {
+      for (let count = 0; count < getParam(0, 1); count += 1) {
+        newLine();
+      }
+      return true;
+    }
+    if (parsed.final === "F") {
+      column = 0;
+      return true;
+    }
+    if (parsed.final === "G") {
+      column = clamp(getParam(0, 1) - 1, 0, terminalColumns - 1);
+      return true;
+    }
+    if (parsed.final === "H" || parsed.final === "f") {
+      const nextRow = getParam(0, 1) - 1;
+      const nextColumn = getParam(1, 1) - 1;
+      if (nextRow === 0 && nextColumn === 0 && lines[row]?.some(Boolean)) {
+        newLine();
+      }
+      column = clamp(nextColumn, 0, terminalColumns - 1);
+      return true;
+    }
+    if (parsed.final === "d") {
+      return true;
+    }
+    if (parsed.final === "J") {
+      if (lines[row]?.some(Boolean)) {
+        newLine();
+      }
+      return true;
+    }
+    if (parsed.final === "K") {
+      eraseLine(Number(parsed.params[0]) || 0);
+      return true;
+    }
+
+    return false;
+  };
+
+  for (let index = 0; index < source.length; index += 1) {
+    const character = source[index];
+    const code = source.charCodeAt(index);
+
+    if (character === "\u001b") {
+      const { endIndex, sequence } = getTerminalAnsiSequence(source, index);
+      applyCsiSequence(sequence);
+      index = endIndex;
+      continue;
+    }
+
+    if (character === "\r") {
+      column = 0;
+      continue;
+    }
+
+    if (character === "\n") {
+      newLine();
+      continue;
+    }
+
+    if (character === "\b") {
+      column = Math.max(0, column - 1);
+      continue;
+    }
+
+    if (character === "\t") {
+      const spaces = 8 - (column % 8);
+      for (let offset = 0; offset < spaces; offset += 1) {
+        lines[row][column] = { character: " ", style: cloneTerminalTranscriptStyle(style) };
+        column += 1;
+      }
+      continue;
+    }
+
+    if (code < 32 || code === 127) {
+      continue;
+    }
+
+    lines[row][column] = { character, style: cloneTerminalTranscriptStyle(style) };
+    column += 1;
+    if (column >= terminalColumns) {
+      newLine();
+    }
+  }
+
+  return lines
+    .map((line) => {
+      let html = "";
+      let currentStyle = null;
+      let chunk = "";
+      const flush = () => {
+        if (!chunk) {
+          return;
+        }
+        html += renderTerminalTranscriptStyledText(chunk, {
+          className: getTerminalTranscriptStyleClass(currentStyle),
+          cssText: "",
+        });
+        chunk = "";
+      };
+
+      for (const cell of line) {
+        const nextCell = cell || { character: " ", style: { bold: false, fg: "" } };
+        if (!currentStyle || !isSameTerminalTranscriptStyle(currentStyle, nextCell.style)) {
+          flush();
+          currentStyle = cloneTerminalTranscriptStyle(nextCell.style);
+        }
+        chunk += nextCell.character;
+      }
+      flush();
+      return html.replace(/\s+$/u, "");
+    })
+    .join("\n")
+    .replace(/\n{5,}$/u, "\n\n\n\n");
+}
+
+function renderTerminalTranscriptHtml(rawOutput) {
+  const bufferHtml = renderTerminalTranscriptBufferHtml();
+  const buffer = state.terminal?.buffer?.active;
+  const hasScrollableBuffer = Boolean(buffer && buffer.length > (Number(state.terminal?.rows) || 0) + 2);
+  return hasScrollableBuffer && bufferHtml ? bufferHtml : renderTerminalRawTranscriptHtml(rawOutput);
+}
+
+function renderTerminalTranscriptHistory({ afterRender = null, scrollToBottom = false } = {}) {
+  const pre = document.querySelector("#terminal-transcript-pre");
+  if (!(pre instanceof HTMLElement)) {
+    return;
+  }
+
+  pre.innerHTML = renderTerminalTranscriptHtml(state.terminalTranscriptRaw);
+  if (scrollToBottom || state.terminalTranscriptScrollToBottom) {
+    const viewport = getTerminalTranscriptViewport();
+    if (viewport instanceof HTMLElement) {
+      viewport.scrollTop = viewport.scrollHeight;
+    }
+  }
+  afterRender?.();
+  state.terminalTranscriptScrollToBottom = false;
+  syncTerminalScrollState();
+}
+
+function scheduleTerminalTranscriptRender({ scrollToBottom = false } = {}) {
+  state.terminalTranscriptScrollToBottom = state.terminalTranscriptScrollToBottom || scrollToBottom;
+
+  if (state.terminalTranscriptRenderFrame) {
+    return;
+  }
+
+  state.terminalTranscriptRenderFrame = window.requestAnimationFrame(() => {
+    state.terminalTranscriptRenderFrame = null;
+    renderTerminalTranscriptHistory();
+  });
+}
+
+function setTerminalTranscriptHistory(rawOutput, { scrollToBottom = false } = {}) {
+  state.terminalTranscriptRaw = String(rawOutput || "").slice(-TERMINAL_TRANSCRIPT_RAW_LIMIT);
+  scheduleTerminalTranscriptRender({ scrollToBottom });
+}
+
+function appendTerminalTranscriptOutput(chunk, { scrollToBottom = false } = {}) {
+  if (!chunk) {
+    return;
+  }
+
+  const shouldStickToBottom = scrollToBottom || (state.terminalTranscriptVisible && isTerminalTranscriptAtBottom());
+  state.terminalTranscriptRaw = `${state.terminalTranscriptRaw}${chunk}`.slice(-TERMINAL_TRANSCRIPT_RAW_LIMIT);
+
+  scheduleTerminalTranscriptRender({ scrollToBottom: shouldStickToBottom });
+}
+
+function setTerminalTranscriptVisible(visible) {
+  const nextVisible = Boolean(visible);
+  state.terminalTranscriptVisible = nextVisible;
+  const stack = document.querySelector(".terminal-stack");
+  stack?.classList.toggle("is-transcript-scroll", nextVisible);
+  if (nextVisible) {
+    renderTerminalTranscriptHistory();
+  }
+  syncTerminalScrollState();
+}
+
+function hideTerminalTranscriptOverlay() {
+  if (!state.terminalTranscriptVisible) {
+    return;
+  }
+
+  setTerminalTranscriptVisible(false);
+}
+
+function clearTerminalTranscriptHistory() {
+  if (state.terminalTranscriptRenderFrame) {
+    window.cancelAnimationFrame(state.terminalTranscriptRenderFrame);
+    state.terminalTranscriptRenderFrame = null;
+  }
+
+  state.terminalTranscriptRaw = "";
+  state.terminalTranscriptScrollToBottom = false;
+  hideTerminalTranscriptOverlay();
+
+  const pre = document.querySelector("#terminal-transcript-pre");
+  if (pre instanceof HTMLElement) {
+    pre.textContent = "";
+  }
+}
+
+function getTerminalWheelDeltaY(event) {
+  if (event.deltaMode === WheelEvent.DOM_DELTA_LINE) {
+    return event.deltaY * 18;
+  }
+
+  if (event.deltaMode === WheelEvent.DOM_DELTA_PAGE) {
+    const viewport = getTerminalTranscriptViewport();
+    return event.deltaY * (viewport?.clientHeight || 320);
   }
 
   return event.deltaY;
+}
+
+function routeTerminalTranscriptWheel(event) {
+  if (!event.deltaY || event.ctrlKey || event.metaKey) {
+    return false;
+  }
+
+  if (!state.terminalTranscriptVisible && hasNativeTerminalScrollableHistory()) {
+    hideTerminalTranscriptOverlay();
+    return false;
+  }
+
+  if (!(getTerminalTranscriptViewport() instanceof HTMLElement)) {
+    return false;
+  }
+
+  event.preventDefault();
+  event.stopPropagation();
+  event.stopImmediatePropagation?.();
+
+  const wheelDeltaY = getTerminalWheelDeltaY(event);
+  const applyTranscriptWheel = () => {
+    const transcriptViewport = getTerminalTranscriptViewport();
+    if (!(transcriptViewport instanceof HTMLElement)) {
+      return;
+    }
+    const maxScrollTop = Math.max(0, transcriptViewport.scrollHeight - transcriptViewport.clientHeight);
+    const nextScrollTop = clamp(transcriptViewport.scrollTop + wheelDeltaY, 0, maxScrollTop);
+    transcriptViewport.scrollTop = nextScrollTop;
+
+    if (event.deltaY > 0 && nextScrollTop >= maxScrollTop - 2) {
+      hideTerminalTranscriptOverlay();
+    } else {
+      syncTerminalScrollState();
+    }
+  };
+
+  if (!state.terminalTranscriptVisible) {
+    setTerminalTranscriptVisible(true);
+    renderTerminalTranscriptHistory({ afterRender: applyTranscriptWheel, scrollToBottom: true });
+    return true;
+  }
+
+  applyTranscriptWheel();
+
+  return true;
+}
+
+function getTerminalFilePathExtension(value) {
+  const withoutSuffix = getFileDisplayName(String(value || "").split(/[?#]/)[0]).toLowerCase();
+  const dotIndex = withoutSuffix.lastIndexOf(".");
+  return dotIndex >= 0 ? withoutSuffix.slice(dotIndex) : "";
+}
+
+function cleanTerminalFilePathMatchText(value) {
+  let text = String(value || "").trim().replace(/^<|>$/g, "");
+
+  while (/[.,:;!?]$/u.test(text)) {
+    text = text.slice(0, -1);
+  }
+
+  text = text.replace(/(?::\d+){1,2}$/u, "");
+
+  return text;
+}
+
+function getInferredHomeDirectory() {
+  const candidatePaths = [
+    state.defaultCwd,
+    state.filesRoot,
+    state.knowledgeBase.rootPath,
+    state.settings.wikiPath,
+  ];
+
+  for (const candidatePath of candidatePaths) {
+    const normalizedPath = normalizeAbsolutePathForCompare(candidatePath);
+    const match = /^(\/Users\/[^/]+|\/home\/[^/]+)/u.exec(normalizedPath);
+    if (match) {
+      return match[1];
+    }
+  }
+
+  return "";
+}
+
+function normalizeTerminalFilePathText(value) {
+  let normalized = cleanTerminalFilePathMatchText(value);
+  if (!normalized) {
+    return "";
+  }
+
+  if (/^[a-z][a-z0-9+.-]*:\/\//i.test(normalized) && !/^file:\/\//i.test(normalized)) {
+    return "";
+  }
+
+  if (/^file:\/\//i.test(normalized)) {
+    try {
+      const parsedUrl = new URL(normalized);
+      if (parsedUrl.protocol !== "file:") {
+        return "";
+      }
+      normalized = decodeURIComponent(parsedUrl.pathname);
+    } catch {
+      return "";
+    }
+  } else {
+    normalized = normalized.replace(/\\([ "'()[\]{}])/g, "$1");
+    try {
+      normalized = decodeURI(normalized);
+    } catch {
+      // Keep the original text if it only looks partly URI-escaped.
+    }
+  }
+
+  if (normalized.startsWith("~/")) {
+    const homeDirectory = getInferredHomeDirectory();
+    return homeDirectory ? `${homeDirectory}/${normalized.slice(2)}` : "";
+  }
+
+  return normalized;
+}
+
+function getRelativePathInsideAbsoluteRoot(candidatePath, rootPath) {
+  const rawRoot = String(rootPath || "").trim().replaceAll("\\", "/");
+  const candidateAliases = getAbsolutePathAliases(candidatePath);
+  const rootAliases = getAbsolutePathAliases(rawRoot);
+
+  if (!candidateAliases.length || !rawRoot) {
+    return "";
+  }
+
+  if (/^\/+$/.test(rawRoot)) {
+    return normalizeFileTreePath(candidateAliases[0]);
+  }
+
+  for (const candidate of candidateAliases) {
+    for (const root of rootAliases) {
+      if (candidate === root) {
+        return "";
+      }
+
+      if (candidate.startsWith(`${root}/`)) {
+        return normalizeFileTreePath(candidate.slice(root.length + 1));
+      }
+    }
+  }
+
+  return "";
+}
+
+function isLikelyTerminalFilePath(pathText) {
+  const normalizedPath = normalizeTerminalFilePathText(pathText);
+  if (!normalizedPath) {
+    return false;
+  }
+
+  const basename = getFileDisplayName(normalizedPath);
+  const extension = getTerminalFilePathExtension(normalizedPath);
+  if (TERMINAL_IMAGE_PATH_EXTENSIONS.has(extension) || isLikelyTextFile(basename) || isLikelyTextFile(normalizedPath)) {
+    return true;
+  }
+
+  return Boolean(extension && (normalizedPath.startsWith("/") || normalizedPath.includes("/")));
+}
+
+function normalizeTerminalRelativeFilePath(value) {
+  const normalizedPath = normalizeTerminalFilePathText(value);
+  if (!normalizedPath || normalizedPath.startsWith("/")) {
+    return "";
+  }
+
+  return normalizePosixSegments(normalizedPath);
+}
+
+function getTerminalFileAbsoluteDisplayPath(candidate) {
+  const root = normalizeWorkspaceRoot(candidate?.root || "");
+  const relativePath = normalizeFileTreePath(candidate?.relativePath || "");
+  if (!root || !relativePath) {
+    return relativePath;
+  }
+
+  return root === "/" ? `/${relativePath}` : `${root}/${relativePath}`;
+}
+
+function addTerminalFileCandidate(candidates, seen, { root, relativePath, source }) {
+  const normalizedRoot = normalizeWorkspaceRoot(root);
+  const normalizedRelativePath = normalizeFileTreePath(relativePath);
+  if (!normalizedRoot || !normalizedRelativePath) {
+    return;
+  }
+
+  const key = `${normalizedRoot}\u0000${normalizedRelativePath}`;
+  if (seen.has(key)) {
+    return;
+  }
+
+  seen.add(key);
+  candidates.push({
+    root: normalizedRoot,
+    relativePath: normalizedRelativePath,
+    source,
+    opensInPreviewPane: normalizedRoot === normalizeWorkspaceRoot(state.filesRoot),
+    url: getFileContentUrlForRoot(normalizedRoot, normalizedRelativePath),
+  });
+}
+
+function getTerminalFileRootCandidates(relativePath = "") {
+  const workspaceRoot = { root: state.filesRoot || getPreferredFilesRoot(), source: "workspace" };
+  const wikiRoot = { root: state.knowledgeBase.rootPath || state.settings.wikiPath, source: "wiki" };
+  const defaultRoot = { root: state.defaultCwd, source: "default" };
+
+  if (relativePath && wikiRoot.root && hasKnowledgeBaseNote(relativePath)) {
+    return [wikiRoot, workspaceRoot, defaultRoot];
+  }
+
+  return [workspaceRoot, wikiRoot, defaultRoot];
+}
+
+function getTerminalFileCandidates(normalizedPath) {
+  const candidates = [];
+  const seen = new Set();
+
+  if (normalizedPath.startsWith("/")) {
+    for (const rootCandidate of getTerminalFileRootCandidates()) {
+      const relativePath = getRelativePathInsideAbsoluteRoot(normalizedPath, normalizeWorkspaceRoot(rootCandidate.root));
+      if (relativePath) {
+        addTerminalFileCandidate(candidates, seen, {
+          root: rootCandidate.root,
+          relativePath,
+          source: rootCandidate.source,
+        });
+      }
+    }
+
+    addTerminalFileCandidate(candidates, seen, {
+      root: "/",
+      relativePath: normalizeFileTreePath(normalizedPath),
+      source: "filesystem",
+    });
+    return candidates;
+  }
+
+  const relativePath = normalizeTerminalRelativeFilePath(normalizedPath);
+  if (!relativePath) {
+    return candidates;
+  }
+
+  for (const rootCandidate of getTerminalFileRootCandidates(relativePath)) {
+    addTerminalFileCandidate(candidates, seen, {
+      root: rootCandidate.root,
+      relativePath,
+      source: rootCandidate.source,
+    });
+  }
+
+  return candidates;
+}
+
+function getTerminalFileRequest(pathText) {
+  const text = cleanTerminalFilePathMatchText(pathText);
+  const normalizedPath = normalizeTerminalFilePathText(text);
+  if (!normalizedPath || !isLikelyTerminalFilePath(text)) {
+    return null;
+  }
+
+  const candidates = getTerminalFileCandidates(normalizedPath);
+  if (!candidates.length) {
+    return null;
+  }
+
+  const extension = getTerminalFilePathExtension(normalizedPath);
+  return {
+    text,
+    normalizedPath,
+    isImage: TERMINAL_IMAGE_PATH_EXTENSIONS.has(extension),
+    candidates,
+  };
+}
+
+function getTerminalFilePathMatches(lineText) {
+  const matches = [];
+  TERMINAL_FILE_PATH_PATTERN.lastIndex = 0;
+
+  for (const match of String(lineText || "").matchAll(TERMINAL_FILE_PATH_PATTERN)) {
+    const text = cleanTerminalFilePathMatchText(match[2] || "");
+    const startIndex = (match.index || 0) + (match[1] || "").length;
+    if (!getTerminalFileRequest(text)) {
+      continue;
+    }
+
+    matches.push({ text, startIndex });
+  }
+
+  return matches;
+}
+
+function getTerminalWrappedLineGroup(bufferLineNumber) {
+  const buffer = state.terminal?.buffer?.active;
+  if (!buffer || typeof buffer.getLine !== "function") {
+    return null;
+  }
+
+  let startIndex = bufferLineNumber - 1;
+  while (startIndex > 0 && buffer.getLine(startIndex)?.isWrapped) {
+    startIndex -= 1;
+  }
+
+  const columns = Number(state.terminal?.cols || 0);
+  const translateEndColumn = Number.isFinite(columns) && columns > 0 ? columns : undefined;
+  const lines = [];
+  let text = "";
+
+  for (let lineIndex = startIndex; lineIndex < Number(buffer.length || 0); lineIndex += 1) {
+    const line = buffer.getLine(lineIndex);
+    if (!line || typeof line.translateToString !== "function") {
+      break;
+    }
+
+    const nextLine = buffer.getLine(lineIndex + 1);
+    const hasWrappedNext = Boolean(nextLine?.isWrapped);
+    const lineText = line.translateToString(!hasWrappedNext, 0, translateEndColumn);
+    lines.push({
+      lineNumber: lineIndex + 1,
+      startOffset: text.length,
+      text: lineText,
+    });
+    text += lineText;
+
+    if (!hasWrappedNext) {
+      break;
+    }
+  }
+
+  return lines.length ? { lines, text } : null;
+}
+
+function getTerminalFileMatchRange(lineGroup, match) {
+  const startOffset = match.startIndex;
+  const endOffset = match.startIndex + match.text.length - 1;
+  const startLine = lineGroup.lines.find(
+    (line) => startOffset >= line.startOffset && startOffset < line.startOffset + line.text.length,
+  );
+  const endLine = lineGroup.lines.find(
+    (line) => endOffset >= line.startOffset && endOffset < line.startOffset + line.text.length,
+  );
+
+  if (!startLine || !endLine) {
+    return null;
+  }
+
+  return {
+    start: {
+      x: startOffset - startLine.startOffset + 1,
+      y: startLine.lineNumber,
+    },
+    end: {
+      x: endOffset - endLine.startOffset + 1,
+      y: endLine.lineNumber,
+    },
+  };
+}
+
+function getTerminalFilePreviewElement() {
+  let preview = document.querySelector("#terminal-file-preview");
+  if (!preview) {
+    preview = document.createElement("div");
+    preview.id = "terminal-file-preview";
+    preview.className = "terminal-file-preview xterm-hover";
+    preview.setAttribute("role", "tooltip");
+    document.body.append(preview);
+  }
+
+  return preview;
+}
+
+function positionTerminalFilePreview(event, preview) {
+  const previewRect = preview.getBoundingClientRect();
+  const viewportWidth = window.innerWidth;
+  const viewportHeight = window.innerHeight;
+  const margin = 10;
+  const gap = 14;
+
+  let left = event.clientX + gap;
+  let top = event.clientY + gap;
+
+  if (left + previewRect.width > viewportWidth - margin) {
+    left = event.clientX - previewRect.width - gap;
+  }
+  if (top + previewRect.height > viewportHeight - margin) {
+    top = event.clientY - previewRect.height - gap;
+  }
+
+  left = clamp(left, margin, Math.max(margin, viewportWidth - previewRect.width - margin));
+  top = clamp(top, margin, Math.max(margin, viewportHeight - previewRect.height - margin));
+
+  preview.style.left = `${Math.round(left)}px`;
+  preview.style.top = `${Math.round(top)}px`;
+}
+
+function hideTerminalFilePreview() {
+  if (terminalFilePreviewTimer) {
+    window.clearTimeout(terminalFilePreviewTimer);
+    terminalFilePreviewTimer = null;
+  }
+
+  terminalFilePreviewSequence += 1;
+  const preview = document.querySelector("#terminal-file-preview");
+  if (!preview) {
+    return;
+  }
+
+  preview.classList.remove("is-visible", "is-loading", "is-error");
+  preview.replaceChildren();
+}
+
+function buildTerminalFilePreviewCaption(text) {
+  const caption = document.createElement("div");
+  caption.className = "terminal-file-preview-caption";
+  caption.textContent = text;
+  return caption;
+}
+
+function showTerminalFilePreviewError(event, request, sequence, messageText = "file unavailable") {
+  if (sequence !== terminalFilePreviewSequence) {
+    return;
+  }
+
+  const preview = getTerminalFilePreviewElement();
+  const message = document.createElement("div");
+  const caption = buildTerminalFilePreviewCaption(request.normalizedPath);
+  message.className = "terminal-file-preview-error";
+  message.textContent = messageText;
+  preview.replaceChildren(message, caption);
+  preview.classList.remove("is-loading");
+  preview.classList.add("is-error");
+  positionTerminalFilePreview(event, preview);
+  preview.classList.add("is-visible");
+}
+
+function loadTerminalPreviewImage(candidate) {
+  const image = document.createElement("img");
+  image.alt = getTerminalFileAbsoluteDisplayPath(candidate);
+  image.decoding = "async";
+
+  return new Promise((resolve, reject) => {
+    image.addEventListener("load", () => resolve(image), { once: true });
+    image.addEventListener("error", reject, { once: true });
+    image.src = candidate.url;
+  });
+}
+
+async function showTerminalImageFilePreview(event, request, sequence) {
+  const preview = getTerminalFilePreviewElement();
+  preview.classList.add("is-loading");
+  preview.classList.remove("is-visible", "is-error");
+  preview.replaceChildren();
+
+  for (const candidate of request.candidates) {
+    try {
+      const image = await loadTerminalPreviewImage(candidate);
+      if (sequence !== terminalFilePreviewSequence) {
+        return;
+      }
+
+      const caption = buildTerminalFilePreviewCaption(getTerminalFileAbsoluteDisplayPath(candidate));
+      preview.replaceChildren(image, caption);
+      preview.classList.remove("is-loading", "is-error");
+      positionTerminalFilePreview(event, preview);
+      preview.classList.add("is-visible");
+      return;
+    } catch {
+      // Try the next root candidate.
+    }
+  }
+
+  showTerminalFilePreviewError(event, request, sequence, "image unavailable");
+}
+
+async function fetchTerminalTextFileCandidate(request) {
+  const errors = [];
+
+  for (const candidate of request.candidates) {
+    try {
+      const payload = await fetchJson(
+        `/api/files/text?${getFileTextRequestParamsForRoot(candidate.root, candidate.relativePath).toString()}`,
+      );
+      return {
+        candidate,
+        file: payload.file,
+      };
+    } catch (error) {
+      errors.push(error.message);
+    }
+  }
+
+  throw new Error(errors.find(Boolean) || "file unavailable");
+}
+
+function truncateTerminalFilePreviewText(value) {
+  const text = String(value || "").replace(/\r\n/g, "\n");
+  if (text.length <= TERMINAL_FILE_PREVIEW_TEXT_MAX_CHARS) {
+    return text;
+  }
+
+  return `${text.slice(0, TERMINAL_FILE_PREVIEW_TEXT_MAX_CHARS).replace(/\s+$/u, "")}\n...`;
+}
+
+async function showTerminalTextFilePreview(event, request, sequence) {
+  const preview = getTerminalFilePreviewElement();
+  preview.classList.add("is-loading");
+  preview.classList.remove("is-visible", "is-error");
+  preview.replaceChildren();
+
+  try {
+    const result = await fetchTerminalTextFileCandidate(request);
+    if (sequence !== terminalFilePreviewSequence) {
+      return;
+    }
+
+    const code = document.createElement("pre");
+    const caption = buildTerminalFilePreviewCaption(getTerminalFileAbsoluteDisplayPath(result.candidate));
+    code.className = "terminal-file-preview-code";
+    code.textContent = truncateTerminalFilePreviewText(result.file?.content || "");
+    preview.replaceChildren(code, caption);
+    preview.classList.remove("is-loading", "is-error");
+    positionTerminalFilePreview(event, preview);
+    preview.classList.add("is-visible");
+  } catch (error) {
+    showTerminalFilePreviewError(event, request, sequence, error.message || "file unavailable");
+  }
+}
+
+function showTerminalFilePreview(event, request, sequence) {
+  if (sequence !== terminalFilePreviewSequence) {
+    return;
+  }
+
+  if (request.isImage) {
+    void showTerminalImageFilePreview(event, request, sequence);
+    return;
+  }
+
+  void showTerminalTextFilePreview(event, request, sequence);
+}
+
+function scheduleTerminalFilePreview(event, pathText) {
+  if (isCoarsePointerDevice()) {
+    return;
+  }
+
+  const request = getTerminalFileRequest(pathText);
+  if (!request) {
+    return;
+  }
+
+  hideTerminalFilePreview();
+  const sequence = terminalFilePreviewSequence + 1;
+  terminalFilePreviewSequence = sequence;
+  terminalFilePreviewTimer = window.setTimeout(() => {
+    terminalFilePreviewTimer = null;
+    showTerminalFilePreview(event, request, sequence);
+  }, TERMINAL_FILE_PREVIEW_DELAY_MS);
+}
+
+async function findReachableTerminalFileCandidate(request) {
+  for (const candidate of request.candidates) {
+    try {
+      const response = await fetch(candidate.url, { method: "HEAD", cache: "no-store" });
+      if (response.ok) {
+        return candidate;
+      }
+    } catch {
+      // Try the next candidate.
+    }
+  }
+
+  return request.candidates[0] || null;
+}
+
+async function activateTerminalFilePath(event, pathText) {
+  const request = getTerminalFileRequest(pathText);
+  if (!request) {
+    return;
+  }
+
+  event?.preventDefault?.();
+  event?.stopPropagation?.();
+  hideTerminalFilePreview();
+
+  const candidate = await findReachableTerminalFileCandidate(request);
+  if (!candidate) {
+    return;
+  }
+
+  if (candidate.opensInPreviewPane) {
+    void openWorkspaceFilePreview(candidate.relativePath, { mode: request.isImage ? "image" : "text" });
+    return;
+  }
+
+  window.open(candidate.url, "_blank", "noopener,noreferrer");
+}
+
+function buildTerminalFileLinkProvider() {
+  return {
+    provideLinks(bufferLineNumber, callback) {
+      const lineGroup = getTerminalWrappedLineGroup(bufferLineNumber);
+      if (!lineGroup) {
+        callback(undefined);
+        return;
+      }
+
+      const matches = getTerminalFilePathMatches(lineGroup.text);
+      const links = matches
+        .map((match) => {
+          const range = getTerminalFileMatchRange(lineGroup, match);
+          if (!range) {
+            return null;
+          }
+
+          return {
+            text: match.text,
+            range,
+            decorations: {
+              pointerCursor: true,
+              underline: true,
+            },
+            activate: (event, text) => {
+              void activateTerminalFilePath(event, text);
+            },
+            hover: (event, text) => scheduleTerminalFilePreview(event, text),
+            leave: () => hideTerminalFilePreview(),
+          };
+        })
+        .filter(Boolean);
+
+      callback(links.length ? links : undefined);
+    },
+  };
+}
+
+function installTerminalFileLinkProvider() {
+  try {
+    state.terminalFileLinkDisposable?.dispose?.();
+  } catch {
+    // Best-effort cleanup only.
+  }
+  state.terminalFileLinkDisposable = null;
+
+  if (!state.terminal || typeof state.terminal.registerLinkProvider !== "function") {
+    return;
+  }
+
+  state.terminalFileLinkDisposable = state.terminal.registerLinkProvider(buildTerminalFileLinkProvider());
 }
 
 function buildTerminalLinkHandler() {
@@ -1335,10 +3216,16 @@ function flushPendingTerminalOutput() {
     return;
   }
 
-  const nextOutput = state.pendingTerminalOutput;
+  const nextOutput = sanitizeTerminalOutputForViewport(state.pendingTerminalOutput);
   const shouldScrollToBottom = state.pendingTerminalScrollToBottom;
   state.pendingTerminalOutput = "";
   state.pendingTerminalScrollToBottom = false;
+
+  if (!nextOutput) {
+    syncTerminalScrollState();
+    return;
+  }
+
   state.terminal.write(nextOutput, () => {
     if (shouldScrollToBottom) {
       state.terminal?.scrollToBottom();
@@ -1348,9 +3235,13 @@ function flushPendingTerminalOutput() {
   });
 }
 
-function queueTerminalOutput(chunk, { scrollToBottom = false } = {}) {
+function queueTerminalOutput(chunk, { mirrorTranscript = true, scrollToBottom = false } = {}) {
   if (!chunk) {
     return;
+  }
+
+  if (mirrorTranscript) {
+    appendTerminalTranscriptOutput(chunk, { scrollToBottom });
   }
 
   state.pendingTerminalOutput += chunk;
@@ -1454,8 +3345,12 @@ function getMainViewUrl(view) {
 }
 
 function getFolderPickerTitle() {
+  if (state.folderPicker.target === "wiki-onboarding") {
+    return "select brain folder";
+  }
+
   if (state.folderPicker.target === "wiki") {
-    return "choose wiki folder";
+    return "choose brain folder";
   }
 
   if (state.folderPicker.target === "files") {
@@ -1467,6 +3362,26 @@ function getFolderPickerTitle() {
 
 function getFolderPickerCurrentPath() {
   return state.folderPicker.currentPath || state.folderPicker.root || state.defaultCwd || "";
+}
+
+function getFolderPickerDragPosition() {
+  const position = state.folderPicker.position;
+  const x = Number(position?.x);
+  const y = Number(position?.y);
+
+  return {
+    x: Number.isFinite(x) ? x : 0,
+    y: Number.isFinite(y) ? y : 0,
+  };
+}
+
+function renderFolderPickerDragStyle() {
+  if (!state.folderPicker.position) {
+    return "";
+  }
+
+  const { x, y } = getFolderPickerDragPosition();
+  return ` style="--folder-picker-x:${Math.round(x)}px; --folder-picker-y:${Math.round(y)}px"`;
 }
 
 function getWorkspacePathLeafName(value) {
@@ -1482,6 +3397,56 @@ function getWorkspacePathLeafName(value) {
 
   const parts = normalized.replace(/[\\/]+$/, "").split(/[\\/]/).filter(Boolean);
   return parts.at(-1) || normalized;
+}
+
+function isRemoteVibesSystemFolder(entryOrPath) {
+  if (typeof entryOrPath === "string") {
+    return getWorkspacePathLeafName(entryOrPath) === REMOTE_VIBES_SYSTEM_FOLDER_NAME;
+  }
+
+  return (
+    entryOrPath?.name === REMOTE_VIBES_SYSTEM_FOLDER_NAME ||
+    getWorkspacePathLeafName(entryOrPath?.path || entryOrPath?.relativePath || "") === REMOTE_VIBES_SYSTEM_FOLDER_NAME
+  );
+}
+
+function getDirectoryIcon(entryOrPath, expanded = false) {
+  if (isRemoteVibesSystemFolder(entryOrPath)) {
+    return FolderCog;
+  }
+
+  return expanded ? FolderOpen : Folder;
+}
+
+function renderDirectoryIcon(entryOrPath, expanded = false) {
+  const className = isRemoteVibesSystemFolder(entryOrPath)
+    ? "file-icon file-icon-system"
+    : "file-icon file-icon-folder";
+  return `<span class="${className}" aria-hidden="true">${renderIcon(getDirectoryIcon(entryOrPath, expanded))}</span>`;
+}
+
+function getFileEntryIcon(entry, openMode) {
+  if (entry?.isImage) {
+    return ImageIcon;
+  }
+
+  return openMode === "text" ? FileText : File;
+}
+
+function getFileEntryIconClass(entry, openMode) {
+  if (entry?.isImage) {
+    return "file-icon file-icon-image";
+  }
+
+  return openMode === "text" ? "file-icon file-icon-text" : "file-icon file-icon-file";
+}
+
+function renderFileEntryIcon(entry, openMode) {
+  return `<span class="${getFileEntryIconClass(entry, openMode)}" aria-hidden="true">${renderIcon(getFileEntryIcon(entry, openMode))}</span>`;
+}
+
+function renderTreeCaret(expanded) {
+  return `<span class="file-caret" aria-hidden="true">${renderIcon(expanded ? ChevronDown : ChevronRight)}</span>`;
 }
 
 function getWorkspaceParentPath(value) {
@@ -1538,6 +3503,10 @@ function getFolderPickerChildRelativePath(parentPath, childName) {
 function getFolderPickerTargetInput() {
   if (state.folderPicker.target === "wiki") {
     return document.querySelector("#wiki-path-input");
+  }
+
+  if (state.folderPicker.target === "wiki-onboarding") {
+    return document.querySelector("#brain-folder-input");
   }
 
   if (state.folderPicker.target === "files") {
@@ -1787,6 +3756,28 @@ function getAgentMailStatusText() {
   return status?.lastStatus || "connecting";
 }
 
+function getBrowserUseStatusText() {
+  const status = state.settings.browserUseStatus || {};
+  if (!state.settings.browserUseEnabled) {
+    return state.settings.browserUseAnthropicApiKeyConfigured ? "configured but disabled" : "not configured";
+  }
+
+  if (!state.settings.browserUseAnthropicApiKeyConfigured) {
+    return "add an Anthropic API key";
+  }
+
+  if (!status.workerAvailable) {
+    return status.reason || "OttoAuth worker not found";
+  }
+
+  const activeCount = Number(status.activeCount || 0);
+  if (activeCount > 0) {
+    return `${activeCount} browser task${activeCount === 1 ? "" : "s"} running`;
+  }
+
+  return "ready for rv-browser-use";
+}
+
 function getWikiBackupFailureMessage(backup) {
   if (!backup) {
     return "";
@@ -1900,7 +3891,7 @@ function renderSystemToasts() {
             <section class="system-toast is-${escapeHtml(toast.type)}">
               <div class="system-toast-head">
                 <strong>${escapeHtml(toast.title)}</strong>
-                <button class="icon-button system-toast-dismiss" type="button" aria-label="Dismiss" ${tooltipAttributes("Dismiss")} data-system-toast-dismiss="${escapeHtml(toast.key)}">×</button>
+                <button class="icon-button system-toast-dismiss" type="button" aria-label="Dismiss" ${tooltipAttributes("Dismiss")} data-system-toast-dismiss="${escapeHtml(toast.key)}">${renderIcon(X)}</button>
               </div>
               <div class="system-toast-message">${escapeHtml(toast.message)}</div>
               <div class="system-toast-actions">${renderSystemToastActions(toast)}</div>
@@ -2007,6 +3998,11 @@ async function applyFolderPickerSelection() {
   const input = getFolderPickerTargetInput();
   const selectedPath = getFolderPickerCurrentPath();
 
+  if (state.folderPicker.target === "wiki-onboarding") {
+    await saveBrainFolderSelection(selectedPath);
+    return;
+  }
+
   if (state.folderPicker.target === "session") {
     await createSessionInFolder(selectedPath);
     return;
@@ -2052,6 +4048,35 @@ function maybeRedirectToPreferredOrigin() {
   const nextUrl = `${preferredOrigin}${window.location.pathname}${window.location.search}${window.location.hash}`;
   window.location.replace(nextUrl);
   return true;
+}
+
+function isBrainSetupRequired() {
+  return state.settings.wikiPathConfigured === false;
+}
+
+function inferWikiPathConfigured(settings) {
+  if (settings.wikiPathConfigured !== undefined) {
+    return Boolean(settings.wikiPathConfigured);
+  }
+
+  const wikiPath = normalizeWorkspaceRoot(settings.wikiPath || "");
+  if (!wikiPath) {
+    return state.settings.wikiPathConfigured;
+  }
+
+  const relativeRoot = String(settings.wikiRelativeRoot || settings.wikiRelativePath || "");
+  const defaultWikiPath = state.defaultCwd
+    ? normalizeWorkspaceRoot(`${state.defaultCwd.replace(/\/+$/, "")}/.remote-vibes/wiki`)
+    : "";
+  if (relativeRoot === ".remote-vibes/wiki" || (defaultWikiPath && wikiPath === defaultWikiPath)) {
+    return false;
+  }
+
+  return true;
+}
+
+function getDefaultBrainClonePathHint() {
+  return state.defaultCwd ? `${state.defaultCwd.replace(/\/+$/, "")}/mac-brain` : "mac-brain";
 }
 
 function sendTerminalInput(data) {
@@ -2581,11 +4606,11 @@ async function applyFilesRoot(rootValue, { force = false } = {}) {
   await refreshOpenFileTree({ force });
 }
 
-function getFileContentUrl(relativePath) {
+function getFileContentUrlForRoot(root, relativePath) {
   const params = new URLSearchParams();
 
-  if (state.filesRoot) {
-    params.set("root", state.filesRoot);
+  if (root) {
+    params.set("root", root);
   }
 
   if (relativePath) {
@@ -2593,6 +4618,10 @@ function getFileContentUrl(relativePath) {
   }
 
   return `${getAppBaseUrl()}/api/files/content?${params.toString()}`;
+}
+
+function getFileContentUrl(relativePath) {
+  return getFileContentUrlForRoot(state.filesRoot, relativePath);
 }
 
 function getKnowledgeBaseNoteRawUrl(relativePath) {
@@ -2637,11 +4666,11 @@ function getKnowledgeBaseBackupRepoUrl() {
   return /^https?:\/\//i.test(remoteUrl) ? remoteUrl : "";
 }
 
-function getFileTextRequestParams(relativePath) {
+function getFileTextRequestParamsForRoot(root, relativePath) {
   const params = new URLSearchParams();
 
-  if (state.filesRoot) {
-    params.set("root", state.filesRoot);
+  if (root) {
+    params.set("root", root);
   }
 
   if (relativePath) {
@@ -2649,6 +4678,10 @@ function getFileTextRequestParams(relativePath) {
   }
 
   return params;
+}
+
+function getFileTextRequestParams(relativePath) {
+  return getFileTextRequestParamsForRoot(state.filesRoot, relativePath);
 }
 
 function updateRoute({
@@ -2728,27 +4761,233 @@ function getKnowledgeBaseSearchQuery() {
   return String(state.knowledgeBase.searchQuery || "").trim().toLowerCase();
 }
 
-function noteMatchesKnowledgeBaseSearch(note, query) {
-  if (!query) {
-    return true;
+function tokenizeKnowledgeBaseSearchText(value) {
+  return String(value || "").toLowerCase().match(/[a-z0-9]+/g) || [];
+}
+
+function getUniqueKnowledgeBaseSearchTerms(query) {
+  return Array.from(new Set(tokenizeKnowledgeBaseSearchText(query)));
+}
+
+function buildKnowledgeBaseSearchIndex(notes) {
+  const postings = new Map();
+  const documents = notes.map((note, index) => {
+    const termCounts = new Map();
+    let length = 0;
+
+    for (const [fieldName, weight] of KNOWLEDGE_BASE_SEARCH_FIELD_WEIGHTS) {
+      for (const term of tokenizeKnowledgeBaseSearchText(note[fieldName])) {
+        termCounts.set(term, (termCounts.get(term) || 0) + weight);
+        length += weight;
+      }
+    }
+
+    for (const [term, termFrequency] of termCounts) {
+      if (!postings.has(term)) {
+        postings.set(term, new Map());
+      }
+
+      postings.get(term).set(index, termFrequency);
+    }
+
+    return {
+      note,
+      index,
+      length: Math.max(1, length),
+    };
+  });
+
+  const totalLength = documents.reduce((sum, document) => sum + document.length, 0);
+
+  return {
+    documents,
+    postings,
+    terms: Array.from(postings.keys()).sort(),
+    averageLength: documents.length ? totalLength / documents.length : 1,
+  };
+}
+
+function getKnowledgeBaseSearchIndex(notes) {
+  if (knowledgeBaseSearchIndexCache.notes === notes && knowledgeBaseSearchIndexCache.index) {
+    return knowledgeBaseSearchIndexCache.index;
   }
 
-  const haystack = [
-    note.title,
-    note.relativePath,
-    note.excerpt,
-    note.searchText,
-  ]
-    .filter(Boolean)
-    .join("\n")
-    .toLowerCase();
+  const index = buildKnowledgeBaseSearchIndex(notes);
+  knowledgeBaseSearchIndexCache = {
+    notes,
+    index,
+  };
+  knowledgeBaseSearchResultsCache = {
+    notes: null,
+    query: "",
+    results: null,
+  };
 
-  return haystack.includes(query);
+  return index;
+}
+
+function fieldMatchesKnowledgeBaseSearchPrefixes(value, queryTerms) {
+  const fieldTerms = tokenizeKnowledgeBaseSearchText(value);
+  return queryTerms.every((queryTerm) => fieldTerms.some((fieldTerm) => fieldTerm.startsWith(queryTerm)));
+}
+
+function getKnowledgeBaseExactMatchBoost(note, query, queryTerms) {
+  const title = String(note.title || "").toLowerCase();
+  const relativePath = String(note.relativePath || "").toLowerCase();
+  const excerpt = String(note.excerpt || "").toLowerCase();
+  let boost = 0;
+
+  if (title === query) {
+    boost += 3;
+  }
+
+  if (title.includes(query)) {
+    boost += 1.5;
+  }
+
+  if (relativePath.includes(query)) {
+    boost += 1;
+  }
+
+  if (excerpt.includes(query)) {
+    boost += 0.25;
+  }
+
+  if (fieldMatchesKnowledgeBaseSearchPrefixes(title, queryTerms)) {
+    boost += 4;
+  }
+
+  if (fieldMatchesKnowledgeBaseSearchPrefixes(relativePath, queryTerms)) {
+    boost += 2;
+  }
+
+  if (fieldMatchesKnowledgeBaseSearchPrefixes(excerpt, queryTerms)) {
+    boost += 0.5;
+  }
+
+  return boost;
+}
+
+function getKnowledgeBaseSearchTermMatches(index, queryTerm) {
+  const matches = [];
+  const exactPostings = index.postings.get(queryTerm);
+
+  if (exactPostings) {
+    matches.push({
+      term: queryTerm,
+      postings: exactPostings,
+      weight: 1,
+    });
+  }
+
+  if (queryTerm.length < KNOWLEDGE_BASE_SEARCH_PREFIX_MIN_LENGTH) {
+    return matches;
+  }
+
+  for (const term of index.terms) {
+    if (term === queryTerm || !term.startsWith(queryTerm)) {
+      continue;
+    }
+
+    matches.push({
+      term,
+      postings: index.postings.get(term),
+      weight: Math.max(0.35, queryTerm.length / term.length),
+    });
+  }
+
+  return matches;
+}
+
+function scoreKnowledgeBaseSearch(query, notes) {
+  const terms = getUniqueKnowledgeBaseSearchTerms(query);
+  if (!terms.length) {
+    return notes;
+  }
+
+  const index = getKnowledgeBaseSearchIndex(notes);
+  const scores = new Map();
+  const matchedTermCounts = new Map();
+  const documentCount = index.documents.length;
+
+  for (const queryTerm of terms) {
+    const matches = getKnowledgeBaseSearchTermMatches(index, queryTerm);
+    if (!matches.length) {
+      return [];
+    }
+
+    const matchedDocuments = new Set();
+
+    for (const match of matches) {
+      const documentFrequency = match.postings.size;
+      const inverseDocumentFrequency = Math.log(
+        1 + (documentCount - documentFrequency + 0.5) / (documentFrequency + 0.5),
+      );
+
+      for (const [documentIndex, termFrequency] of match.postings) {
+        const document = index.documents[documentIndex];
+        const lengthNormalization =
+          1 - KNOWLEDGE_BASE_BM25_B +
+          KNOWLEDGE_BASE_BM25_B * (document.length / index.averageLength);
+        const score =
+          match.weight *
+          inverseDocumentFrequency *
+          ((termFrequency * (KNOWLEDGE_BASE_BM25_K1 + 1)) /
+            (termFrequency + KNOWLEDGE_BASE_BM25_K1 * lengthNormalization));
+
+        scores.set(documentIndex, (scores.get(documentIndex) || 0) + score);
+        matchedDocuments.add(documentIndex);
+      }
+    }
+
+    for (const documentIndex of matchedDocuments) {
+      matchedTermCounts.set(documentIndex, (matchedTermCounts.get(documentIndex) || 0) + 1);
+    }
+  }
+
+  return Array.from(scores, ([documentIndex, score]) => {
+    const document = index.documents[documentIndex];
+    return {
+      note: document.note,
+      index: document.index,
+      score: score + getKnowledgeBaseExactMatchBoost(document.note, query, terms),
+    };
+  })
+    .filter((result) => matchedTermCounts.get(result.index) === terms.length)
+    .sort((left, right) => {
+      if (right.score !== left.score) {
+        return right.score - left.score;
+      }
+
+      return left.index - right.index;
+    })
+    .map((result) => result.note);
 }
 
 function getFilteredKnowledgeBaseNotes() {
   const query = getKnowledgeBaseSearchQuery();
-  return state.knowledgeBase.notes.filter((note) => noteMatchesKnowledgeBaseSearch(note, query));
+  const notes = state.knowledgeBase.notes;
+
+  if (!query) {
+    return notes;
+  }
+
+  if (
+    knowledgeBaseSearchResultsCache.notes === notes &&
+    knowledgeBaseSearchResultsCache.query === query &&
+    knowledgeBaseSearchResultsCache.results
+  ) {
+    return knowledgeBaseSearchResultsCache.results;
+  }
+
+  const results = scoreKnowledgeBaseSearch(query, notes);
+  knowledgeBaseSearchResultsCache = {
+    notes,
+    query,
+    results,
+  };
+
+  return results;
 }
 
 function truncateKnowledgeBaseLabel(value, maxLength = 16) {
@@ -4244,7 +6483,7 @@ function renderKnowledgeSettingsForm({ popover = false } = {}) {
         aria-label="Knowledge settings"
         ${tooltipAttributes("Knowledge settings")}
       >
-        <span aria-hidden="true">⚙</span>
+        ${renderIcon(Settings)}
       </summary>
       <div class="knowledge-settings-popover-panel">
         <div class="knowledge-settings-head">
@@ -4269,7 +6508,7 @@ function renderKnowledgeBaseView() {
       `knowledge-base:${selectedNotePath || ""}:${state.knowledgeBase.selectedNoteEditing ? "edit" : "view"}`,
     )}>
       <div class="dashboard-toolbar">
-        <button class="icon-button hidden-desktop" type="button" id="open-sidebar" aria-label="Open sidebar" ${tooltipAttributes("Open sidebar")}>≡</button>
+        <button class="icon-button hidden-desktop" type="button" id="open-sidebar" aria-label="Open sidebar" ${tooltipAttributes("Open sidebar")}>${renderIcon(Menu)}</button>
         <div class="dashboard-copy">
           <strong>Knowledge Base</strong>
           <div class="terminal-meta" data-knowledge-base-header-meta>${escapeHtml(getKnowledgeBaseHeaderMeta())}</div>
@@ -4282,7 +6521,7 @@ function renderKnowledgeBaseView() {
               : ""
           }
           <button class="ghost-button toolbar-control" type="button" id="backup-wiki-now">backup now</button>
-          <button class="icon-button toolbar-control refresh-icon-button" type="button" id="refresh-knowledge-base" aria-label="Refresh knowledge base" ${tooltipAttributes("Refresh knowledge base")}>↻</button>
+          <button class="icon-button toolbar-control refresh-icon-button" type="button" id="refresh-knowledge-base" aria-label="Refresh knowledge base" ${tooltipAttributes("Refresh knowledge base")}>${renderIcon(RefreshCw)}</button>
         </div>
       </div>
       <div class="knowledge-base-grid">
@@ -4348,7 +6587,7 @@ function renderKnowledgeBaseApp() {
             ${rawHref
               ? `<a class="ghost-button toolbar-control" href="${escapeHtml(rawHref)}" target="_blank" rel="noreferrer">raw</a>`
               : ""}
-            <button class="icon-button toolbar-control refresh-icon-button" type="button" id="refresh-knowledge-base" aria-label="Refresh knowledge base" ${tooltipAttributes("Refresh knowledge base")}>↻</button>
+            <button class="icon-button toolbar-control refresh-icon-button" type="button" id="refresh-knowledge-base" aria-label="Refresh knowledge base" ${tooltipAttributes("Refresh knowledge base")}>${renderIcon(RefreshCw)}</button>
             <a class="ghost-button toolbar-control" href="${escapeHtml(getAppBaseUrl())}/">remote vibes</a>
           </div>
         </header>
@@ -4489,9 +6728,9 @@ function renderOpenFilePanel() {
             <div class="file-editor-path" title="${escapeHtml(state.openFileRelativePath)}">${escapeHtml(state.openFileRelativePath)}</div>
           </div>
           <div class="file-editor-actions">
-            <button class="ghost-button file-editor-button file-image-control" type="button" data-image-zoom="out" aria-label="Zoom image out">-</button>
+            <button class="ghost-button file-editor-button file-image-control" type="button" data-image-zoom="out" aria-label="Zoom image out">${renderIcon(ZoomOut)}</button>
             <span class="file-image-zoom-label" aria-label="Image zoom">${escapeHtml(zoomLabel)}</span>
-            <button class="ghost-button file-editor-button file-image-control" type="button" data-image-zoom="in" aria-label="Zoom image in">+</button>
+            <button class="ghost-button file-editor-button file-image-control" type="button" data-image-zoom="in" aria-label="Zoom image in">${renderIcon(ZoomIn)}</button>
             <button class="ghost-button file-editor-button" type="button" data-image-zoom="reset">fit</button>
             <a class="ghost-button file-editor-open" href="${escapeHtml(rawHref)}" target="_blank" rel="noreferrer">raw</a>
           </div>
@@ -4569,12 +6808,14 @@ function renderOpenFileTabs() {
       const active = tab.relativePath === state.openFileRelativePath;
       const dirty = isOpenFileDirty(tab);
       const tabTitle = tab.externalUrl || tab.url || tab.relativePath;
+      const tabMode = tab.mode === "image" ? "image" : tab.status === "text" || tab.mode === "text" ? "text" : "raw";
       return `
         <div class="file-preview-tab ${active ? "is-active" : ""}" title="${escapeHtml(tabTitle)}">
           <button class="file-preview-tab-label" type="button" data-file-tab="${escapeHtml(tab.relativePath)}">
+            ${renderFileEntryIcon({ isImage: tabMode === "image" }, tabMode)}
             <span class="file-preview-tab-name">${escapeHtml(tab.name)}${dirty ? " *" : ""}</span>
           </button>
-          <button class="file-preview-tab-close" type="button" aria-label="Close ${escapeHtml(tab.name)}" ${tooltipAttributes(`Close ${tab.name}`)} data-close-file-tab="${escapeHtml(tab.relativePath)}">×</button>
+          <button class="file-preview-tab-close" type="button" aria-label="Close ${escapeHtml(tab.name)}" ${tooltipAttributes(`Close ${tab.name}`)} data-close-file-tab="${escapeHtml(tab.relativePath)}">${renderIcon(X)}</button>
         </div>
       `;
     })
@@ -4588,7 +6829,7 @@ function renderFilePreviewPane() {
     <aside class="file-preview-pane ${open ? "is-open" : ""}" id="file-preview-pane" aria-hidden="${open ? "false" : "true"}">
       <div class="file-preview-tabs">
         <div class="file-preview-tab-strip">${renderOpenFileTabs()}</div>
-        <button class="icon-button file-preview-close-all" type="button" id="close-file-preview" aria-label="Close file preview" ${tooltipAttributes("Close file preview")}>×</button>
+        <button class="icon-button file-preview-close-all" type="button" id="close-file-preview" aria-label="Close file preview" ${tooltipAttributes("Close file preview")}>${renderIcon(X)}</button>
       </div>
       <div class="file-preview-body file-editor" id="file-editor">${renderOpenFilePanel()}</div>
     </aside>
@@ -4615,8 +6856,8 @@ function renderFileTreeNodes(parentPath = "", depth = 0) {
         return `
           <div class="file-node">
             <button class="file-row file-row-button" type="button" data-file-toggle="${escapeHtml(entry.relativePath)}" style="--depth:${depth}">
-              <span class="file-caret">${expanded ? "▾" : "▸"}</span>
-              <span class="file-icon file-icon-folder ${expanded ? "is-open" : ""}" aria-hidden="true"></span>
+              ${renderTreeCaret(expanded)}
+              ${renderDirectoryIcon(entry, expanded)}
               <span class="file-label">${escapeHtml(entry.name)}</span>
             </button>
             ${children ? `<div class="file-children" style="--depth:${depth}">${children}</div>` : ""}
@@ -4634,8 +6875,8 @@ function renderFileTreeNodes(parentPath = "", depth = 0) {
           data-file-open-mode="${openMode}"
           style="--depth:${depth}"
         >
-          <span class="file-caret file-caret-spacer">·</span>
-          <span class="file-icon ${entry.isImage ? "file-icon-image" : openMode === "text" ? "file-icon-text" : "file-icon-file"}" aria-hidden="true"></span>
+          <span class="file-caret file-caret-spacer" aria-hidden="true"></span>
+          ${renderFileEntryIcon(entry, openMode)}
           <span class="file-label">${escapeHtml(entry.name)}</span>
         </button>
       `;
@@ -4707,10 +6948,13 @@ function ensureSessionProjectDefaults(groups) {
 function renderSessionCard(session) {
   const status = getSessionLabel(session);
   const subagents = Array.isArray(session.subagents) ? session.subagents : [];
+  const visibleSubagents = subagents.filter(
+    (subagent) => subagent?.status === "working",
+  );
 
   return `
     <article class="session-card ${session.id === state.activeSessionId ? "is-active" : ""}" data-session-id="${session.id}">
-      <span class="session-activity-dot ${status.className}" role="img" aria-label="${escapeHtml(status.title)}" title="${escapeHtml(status.title)}"${getSessionActivityStyle(status)}></span>
+      ${renderSessionActivityButton(session, status)}
       <div class="session-main">
         <div class="session-name">${escapeHtml(session.name)}</div>
         <div class="session-subtitle">${escapeHtml(session.providerLabel)}</div>
@@ -4718,61 +6962,111 @@ function renderSessionCard(session) {
       <span class="session-time">${relativeTime(session.lastOutputAt)}</span>
       <div class="session-actions">
         <button class="session-action-button session-fork-button" type="button" aria-label="Fork session" ${tooltipAttributes("Fork session")} data-fork-session="${session.id}">
-          <svg viewBox="0 0 18 18" aria-hidden="true" focusable="false">
-            <path d="M5 3.5v2.2a4.8 4.8 0 0 0 4.8 4.8H13" />
-            <path d="M5 14.5v-2.2a4.8 4.8 0 0 1 4.8-4.8H13" />
-            <path d="M12 5.5 14.5 8 12 10.5" />
-          </svg>
+          ${renderIcon(GitFork)}
         </button>
         <button class="session-action-button" type="button" aria-label="Rename session" ${tooltipAttributes("Rename session")} data-rename-session="${session.id}">
-          <svg viewBox="0 0 18 18" aria-hidden="true" focusable="false">
-            <path d="m4 12.8-.5 2.7 2.7-.5 7.7-7.7-2.2-2.2L4 12.8Z" />
-            <path d="m10.8 6 2.2 2.2" />
-          </svg>
+          ${renderIcon(Pencil)}
         </button>
         <button class="session-action-button session-delete-button" type="button" aria-label="Delete session" ${tooltipAttributes("Delete session")} data-delete-session="${session.id}">
-          <svg viewBox="0 0 18 18" aria-hidden="true" focusable="false">
-            <path d="M4.5 6h9" />
-            <path d="M7 6V4.5h4V6" />
-            <path d="m6 8 .4 6h5.2l.4-6" />
-          </svg>
+          ${renderIcon(Trash2)}
         </button>
       </div>
     </article>
     ${
-      subagents.length
-        ? `<div class="session-subagents" aria-label="Claude subagents">${subagents.map((subagent) => renderSessionSubagentCard(subagent)).join("")}</div>`
+      visibleSubagents.length
+        ? `<div class="session-subagents" aria-label="Session subagents">${visibleSubagents.map((subagent) => renderSessionSubagentCard(subagent)).join("")}</div>`
         : ""
     }
   `;
 }
 
-function getSubagentLabel(subagent) {
-  if (subagent?.status === "working") {
-    return { className: "working", title: "Claude subagent is working" };
+function renderSessionActivityButton(session, status) {
+  const canMarkRead = status.className === "unread";
+  const title = canMarkRead ? "mark session read" : status.title;
+  const dot = `<span class="session-activity-dot ${status.className}" aria-hidden="true"${getSessionActivityStyle(status)}></span>`;
+  if (!canMarkRead) {
+    return `
+      <span class="session-activity-dot-frame" role="img" aria-label="${escapeHtml(title)}" title="${escapeHtml(title)}">
+        ${dot}
+      </span>
+    `;
   }
 
-  return { className: "read", title: "Claude subagent finished" };
+  return `
+    <button
+      class="session-activity-dot-button is-markable"
+      type="button"
+      aria-label="${escapeHtml(title)}"
+      title="${escapeHtml(title)}"
+      data-mark-session-read="${escapeHtml(session.id)}"
+    >
+      ${dot}
+    </button>
+  `;
+}
+
+function getSubagentLabel(subagent) {
+  if (subagent?.status === "working") {
+    return { className: "working", title: `${subagent?.agentType || "subagent"} is working` };
+  }
+
+  if (subagent?.status === "failed") {
+    return { className: "exited", title: `${subagent?.agentType || "subagent"} failed` };
+  }
+
+  return { className: "read", title: `${subagent?.agentType || "subagent"} finished` };
 }
 
 function renderSessionSubagentCard(subagent) {
   const status = getSubagentLabel(subagent);
+  const isBrowserUseSubagent = Boolean(subagent.browserUseSessionId);
   const messageCount = Number(subagent.messageCount);
   const toolUseCount = Number(subagent.toolUseCount);
   const metaParts = [
-    subagent.agentType || "subagent",
+    isBrowserUseSubagent ? "browser use" : `${subagent.source === "claude" ? "Claude" : subagent.agentType || "agent"} subagent`,
+    subagent.status && subagent.status !== "working" ? subagent.status : "",
     subagent.messageCount != null && Number.isFinite(messageCount) ? `${messageCount} msgs` : "",
     subagent.toolUseCount != null && Number.isFinite(toolUseCount) ? `${toolUseCount} tools` : "",
+    subagent.latestUrl || "",
   ].filter(Boolean);
+  const title = isBrowserUseSubagent
+    ? `Open Browser Use session: ${subagent.description || subagent.name || "Browser task"}`
+    : `Claude subagent: ${subagent.description || subagent.name || "subagent"}`;
+
+  if (isBrowserUseSubagent) {
+    const browserUseSessionId = escapeHtml(subagent.browserUseSessionId);
+    const openLabel = `Open Browser Use session: ${escapeHtml(subagent.name || "Browser task")}`;
+    const deleteLabel = "Terminate browser-use session";
+    return `
+      <div class="session-subagent-card is-browser-use" title="${escapeHtml(title)}">
+        <button class="session-subagent-main" type="button" data-open-browser-use-session="${browserUseSessionId}" aria-label="${openLabel}">
+          <span class="session-activity-dot ${status.className}" role="img" aria-label="${escapeHtml(status.title)}" title="${escapeHtml(status.title)}"${getSessionActivityStyle(status)}></span>
+          <div class="session-main">
+            <div class="session-name">${escapeHtml(subagent.name || "subagent")}</div>
+            <div class="session-subtitle">${escapeHtml(metaParts.join(" · "))}</div>
+          </div>
+          <span class="session-subagent-trailing">
+            <span class="session-time">${relativeTime(subagent.updatedAt)}</span>
+            <span class="session-subagent-open" aria-hidden="true">${renderIcon(AppWindow)}</span>
+          </span>
+        </button>
+        <button class="session-subagent-delete" type="button" data-delete-browser-use-session="${browserUseSessionId}" aria-label="${deleteLabel}" ${tooltipAttributes(deleteLabel)}>
+          ${renderIcon(Trash2)}
+        </button>
+      </div>
+    `;
+  }
 
   return `
-    <div class="session-subagent-card" title="${escapeHtml(subagent.description || subagent.name || "Claude subagent")}">
+    <div class="session-subagent-card is-provider-subagent" title="${escapeHtml(title)}">
       <span class="session-activity-dot ${status.className}" role="img" aria-label="${escapeHtml(status.title)}" title="${escapeHtml(status.title)}"${getSessionActivityStyle(status)}></span>
       <div class="session-main">
-        <div class="session-name">${escapeHtml(subagent.name || "Claude subagent")}</div>
+        <div class="session-name">${escapeHtml(subagent.name || "subagent")}</div>
         <div class="session-subtitle">${escapeHtml(metaParts.join(" · "))}</div>
       </div>
-      <span class="session-time">${relativeTime(subagent.updatedAt)}</span>
+      <span class="session-subagent-trailing">
+        <span class="session-time">${relativeTime(subagent.updatedAt)}</span>
+      </span>
     </div>
   `;
 }
@@ -4800,11 +7094,8 @@ function renderSessionCards() {
               aria-expanded="${expanded ? "true" : "false"}"
               title="${escapeHtml(group.cwd || group.name)}"
             >
-              <span class="session-project-icon" aria-hidden="true">
-                <svg viewBox="0 0 18 18" focusable="false">
-                  <path d="M2.5 5.5h4l1.4 2h7.6v6.2a1.3 1.3 0 0 1-1.3 1.3H3.8a1.3 1.3 0 0 1-1.3-1.3V5.5Z" />
-                  <path d="M2.5 5.5V4.8a1.3 1.3 0 0 1 1.3-1.3h3l1.2 2" />
-                </svg>
+              <span class="session-project-icon ${isRemoteVibesSystemFolder(group.cwd || group.name) ? "is-system" : ""}" aria-hidden="true">
+                ${renderIcon(getDirectoryIcon(group.cwd || group.name, expanded))}
               </span>
               <span class="session-project-copy">
                 <span class="session-project-name">${escapeHtml(group.name)}</span>
@@ -4819,13 +7110,7 @@ function renderSessionCards() {
               aria-label="Open repo graph for ${escapeHtml(group.name)}"
               ${tooltipAttributes("Repo graph")}
             >
-              <svg viewBox="0 0 18 18" aria-hidden="true" focusable="false">
-                <path d="M5 5.5h3.5a4 4 0 0 1 4 4v3" />
-                <path d="M5 12.5h3.5a4 4 0 0 0 4-4v-3" />
-                <path d="M3.5 4.2a1.8 1.8 0 1 0 0 3.6 1.8 1.8 0 0 0 0-3.6Z" />
-                <path d="M14.5 3.8a1.8 1.8 0 1 0 0 3.6 1.8 1.8 0 0 0 0-3.6Z" />
-                <path d="M14.5 10.6a1.8 1.8 0 1 0 0 3.6 1.8 1.8 0 0 0 0-3.6Z" />
-              </svg>
+              ${renderIcon(Waypoints)}
             </button>
             <button
               class="session-project-new"
@@ -4833,7 +7118,7 @@ function renderSessionCards() {
               data-create-session-in-cwd="${escapeHtml(group.cwd)}"
               aria-label="Create a new session in ${escapeHtml(group.name)}"
               ${tooltipAttributes("New session in this folder")}
-            >✎</button>
+            >${renderIcon(MessageSquarePlus)}</button>
           </div>
           ${
             expanded
@@ -4855,19 +7140,19 @@ function renderSidebarNav() {
   const primaryItems = [
     {
       view: "plugins",
-      icon: "⌘",
+      icon: Plug,
       label: "Plugins",
       meta: "MCPs and integrations",
     },
     {
       view: "automations",
-      icon: "◷",
+      icon: CalendarClock,
       label: "Automations",
       meta: "scheduled helpers",
     },
     {
       view: "system",
-      icon: "◌",
+      icon: ServerCog,
       label: "System",
       meta: "storage, CPU, GPU",
     },
@@ -4875,13 +7160,13 @@ function renderSidebarNav() {
   const workspaceItems = [
     {
       view: "knowledge-base",
-      icon: "◇",
+      icon: BookOpen,
       label: "Knowledge Base",
       meta: `${state.knowledgeBase.notes.length} notes · ${wikiLabel}`,
     },
     {
       view: "agent-prompt",
-      icon: "✎",
+      icon: FilePenLine,
       label: "Agent Prompt",
       meta: getAgentPromptTargetSummary(),
     },
@@ -4894,7 +7179,7 @@ function renderSidebarNav() {
       data-open-main-view="${escapeHtml(item.view)}"
       ${tooltipAttributes(item.label, "right")}
     >
-      <span class="sidebar-nav-icon" aria-hidden="true">${escapeHtml(item.icon)}</span>
+      <span class="sidebar-nav-icon" aria-hidden="true">${renderIcon(item.icon)}</span>
       <span class="sidebar-nav-copy">
         <span class="sidebar-nav-label">${escapeHtml(item.label)}</span>
         <span class="sidebar-nav-meta">${escapeHtml(item.meta)}</span>
@@ -4906,7 +7191,7 @@ function renderSidebarNav() {
     <div class="sidebar-nav-stack">
       <nav class="sidebar-nav sidebar-primary-nav" aria-label="Main views">
         <button class="sidebar-nav-item sidebar-nav-button" type="button" data-folder-picker-target="session" ${tooltipAttributes("New chat", "right")}>
-          <span class="sidebar-nav-icon" aria-hidden="true">+</span>
+          <span class="sidebar-nav-icon" aria-hidden="true">${renderIcon(Plus)}</span>
           <span class="sidebar-nav-copy">
             <span class="sidebar-nav-label">New chat</span>
             <span class="sidebar-nav-meta">${escapeHtml(`${getSelectedProviderLabel()} · choose folder`)}</span>
@@ -4925,6 +7210,10 @@ function renderSidebarNav() {
 }
 
 function renderPortCards() {
+  if (!isLocalhostAppsEnabled()) {
+    return `<div class="blank-state">install Localhost Apps to see ports</div>`;
+  }
+
   if (!state.ports.length) {
     return `<div class="blank-state">no ports</div>`;
   }
@@ -5000,18 +7289,20 @@ function getGlobalSearchResults() {
     });
   }
 
-  for (const port of state.ports) {
-    if (!searchMatches([getPortDisplayName(port), getPortMeta(port), port.process, port.port], query)) {
-      continue;
-    }
+  if (isLocalhostAppsEnabled()) {
+    for (const port of state.ports) {
+      if (!searchMatches([getPortDisplayName(port), getPortMeta(port), port.process, port.port], query)) {
+        continue;
+      }
 
-    results.push({
-      type: "port",
-      title: getPortDisplayName(port),
-      meta: getPortAccessHint(port),
-      excerpt: getPortMeta(port),
-      port: port.port,
-    });
+      results.push({
+        type: "port",
+        title: getPortDisplayName(port),
+        meta: getPortAccessHint(port),
+        excerpt: getPortMeta(port),
+        port: port.port,
+      });
+    }
   }
 
   for (const note of state.knowledgeBase.notes) {
@@ -5094,14 +7385,14 @@ function renderSearchView() {
       `search:${state.globalSearchQuery || ""}`,
     )}>
       <div class="dashboard-toolbar">
-        <button class="icon-button hidden-desktop" type="button" id="open-sidebar" aria-label="Open sidebar" ${tooltipAttributes("Open sidebar")}>≡</button>
+        <button class="icon-button hidden-desktop" type="button" id="open-sidebar" aria-label="Open sidebar" ${tooltipAttributes("Open sidebar")}>${renderIcon(Menu)}</button>
         <div class="dashboard-copy">
           <strong>Search</strong>
           <div class="terminal-meta">jump across sessions, project folders, ports, and wiki notes</div>
         </div>
       </div>
       <div class="main-search-shell">
-        <span class="main-search-icon" aria-hidden="true">⌕</span>
+        <span class="main-search-icon" aria-hidden="true">${renderIcon(Search)}</span>
         <input
           id="global-search-input"
           class="main-search-input"
@@ -5123,8 +7414,102 @@ function renderSearchView() {
 function getFilteredPlugins() {
   const query = String(state.pluginSearchQuery || "").trim().toLowerCase();
   return PLUGIN_CATALOG.filter((plugin) =>
-    searchMatches([plugin.name, plugin.category, plugin.description, plugin.status, plugin.source], query),
+    searchMatches([plugin.name, plugin.category, plugin.description, getPluginStatusLabel(plugin), plugin.source], query),
   );
+}
+
+function getPluginId(plugin) {
+  return String(plugin?.id || plugin?.name || "")
+    .trim()
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, "-")
+    .replace(/^-+|-+$/g, "");
+}
+
+function getPluginById(pluginId) {
+  return PLUGIN_CATALOG.find((plugin) => getPluginId(plugin) === pluginId) || null;
+}
+
+function getInstalledPluginIds() {
+  return new Set(Array.isArray(state.settings.installedPluginIds) ? state.settings.installedPluginIds : []);
+}
+
+function getUpdatedInstalledPluginIds(pluginId, installed) {
+  const pluginIds = getInstalledPluginIds();
+  if (installed) {
+    pluginIds.add(pluginId);
+  } else {
+    pluginIds.delete(pluginId);
+  }
+
+  return [...pluginIds].sort();
+}
+
+function isPluginInstalled(plugin) {
+  const pluginId = getPluginId(plugin);
+
+  if (pluginId === "browser-use") {
+    return Boolean(state.settings.browserUseEnabled);
+  }
+
+  return getInstalledPluginIds().has(pluginId);
+}
+
+function isPluginIdInstalled(pluginId) {
+  const plugin = getPluginById(pluginId);
+  return plugin ? isPluginInstalled(plugin) : getInstalledPluginIds().has(pluginId);
+}
+
+function isLocalhostAppsEnabled() {
+  return isPluginIdInstalled("localhost-apps");
+}
+
+function getPluginPendingAction(plugin) {
+  return state.pluginInstallActions[getPluginId(plugin)] || "";
+}
+
+function getPluginStatusLabel(plugin) {
+  const pendingAction = getPluginPendingAction(plugin);
+  if (pendingAction === "installing") {
+    return "installing";
+  }
+  if (pendingAction === "uninstalling") {
+    return "uninstalling";
+  }
+  return isPluginInstalled(plugin) ? "installed" : "not installed";
+}
+
+function renderPluginInstallButton(plugin) {
+  const pluginId = getPluginId(plugin);
+  const installed = isPluginInstalled(plugin);
+  const pendingAction = getPluginPendingAction(plugin);
+  const pending = Boolean(pendingAction);
+  const label = pending
+    ? pendingAction === "installing"
+      ? "Installing..."
+      : "Uninstalling..."
+    : installed
+      ? "Uninstall"
+      : "Install";
+  const ariaLabel = `${installed ? "Uninstall" : "Install"} ${plugin.name}`;
+  const disabled = pending;
+  const nextInstalled = installed ? "false" : "true";
+  const buttonClass = `${installed ? "ghost-button" : "primary-button"} plugin-install-button ${installed ? "is-installed" : ""} ${pending ? "is-loading" : ""}`;
+
+  return `
+    <button
+      class="${escapeHtml(buttonClass)}"
+      type="button"
+      data-plugin-install="${escapeHtml(pluginId)}"
+      data-plugin-next-installed="${escapeHtml(nextInstalled)}"
+      aria-label="${escapeHtml(ariaLabel)}"
+      ${tooltipAttributes(ariaLabel)}
+      ${disabled ? "disabled" : ""}
+    >
+      <span class="plugin-install-spinner" aria-hidden="true"></span>
+      <span class="plugin-install-label">${escapeHtml(label)}</span>
+    </button>
+  `;
 }
 
 function renderPluginCards() {
@@ -5136,113 +7521,116 @@ function renderPluginCards() {
 
   return plugins
     .map(
-      (plugin) => `
-        <article class="plugin-card">
-          <div class="plugin-icon" aria-hidden="true">${escapeHtml(plugin.name.slice(0, 1))}</div>
+      (plugin) => {
+        const installed = isPluginInstalled(plugin);
+        const pendingAction = getPluginPendingAction(plugin);
+        return `
+        <article class="plugin-card ${installed ? "is-installed" : ""} ${pendingAction ? "is-pending" : ""}">
+          <div class="plugin-icon" aria-hidden="true">${renderIcon(plugin.icon || Plug)}</div>
           <div class="plugin-copy">
             <strong>${escapeHtml(plugin.name)}</strong>
             <span>${escapeHtml(plugin.description)}</span>
             <em>${escapeHtml(plugin.category)}</em>
           </div>
-          <span class="plugin-status">${escapeHtml(plugin.status)}</span>
+          ${renderPluginInstallButton(plugin)}
+          <span class="plugin-status">${escapeHtml(getPluginStatusLabel(plugin))}</span>
         </article>
-      `,
+      `;
+      },
     )
     .join("");
 }
 
-function renderAgentMailPluginPanel() {
-  const status = state.settings.agentMailStatus || {};
-  const providerOptions = renderProviderOptions(state.settings.agentMailProviderId || state.defaultProviderId || "claude");
-  const lastEvent = status.lastEventAt ? relativeTime(status.lastEventAt) : "";
+function renderBrowserUsePluginPanel() {
+  const status = state.settings.browserUseStatus || {};
 
   return `
-    <aside class="mcp-import-card agentmail-plugin-card">
-      <span class="main-search-kind">email agent</span>
-      <strong>AgentMail inbox</strong>
-      <p>Remote Vibes can create or attach an AgentMail inbox, keep an outbound WebSocket listener open, and launch a Claude session when new mail arrives.</p>
-      <form class="settings-form agentmail-form" id="agentmail-form">
+    <aside class="mcp-import-card browser-use-plugin-card">
+      <span class="main-search-kind">browser agent</span>
+      <strong>Browser Use</strong>
+      <p>Remote Vibes can launch the local OttoAuth headless worker as a browser fulfillment subagent and stream its current browser snapshot back into the session sidebar.</p>
+      <form class="settings-form browser-use-form" id="browser-use-form">
         <label class="checkbox-row">
-          <input type="checkbox" name="agentMailEnabled" ${state.settings.agentMailEnabled ? "checked" : ""} />
-          <span>listen for incoming AgentMail messages</span>
+          <input type="checkbox" name="browserUseEnabled" ${state.settings.browserUseEnabled ? "checked" : ""} />
+          <span>enable browser-use requests</span>
         </label>
-        <label class="field-label" for="agentmail-api-key">AgentMail API key</label>
+        <label class="field-label" for="browser-use-api-key">Anthropic API key</label>
         <input
           class="file-root-input"
-          id="agentmail-api-key"
-          name="agentMailApiKey"
+          id="browser-use-api-key"
+          name="browserUseAnthropicApiKey"
           type="password"
-          placeholder="${escapeHtml(state.settings.agentMailApiKeyConfigured ? "saved; leave blank to keep" : "am_...")}"
+          placeholder="${escapeHtml(state.settings.browserUseAnthropicApiKeyConfigured ? "saved; leave blank to keep" : "sk-ant-...")}"
+          autocomplete="off"
+          autocorrect="off"
+          autocapitalize="none"
+          spellcheck="false"
+        />
+        <label class="field-label" for="browser-use-worker-path">OttoAuth worker folder</label>
+        <input
+          class="file-root-input"
+          id="browser-use-worker-path"
+          name="browserUseWorkerPath"
+          type="text"
+          value="${escapeHtml(state.settings.browserUseWorkerPath || status.workerPath || "")}"
+          autocomplete="off"
+          autocorrect="off"
+          autocapitalize="none"
+          spellcheck="false"
+        />
+        <label class="field-label" for="browser-use-profile-dir">browser profile folder</label>
+        <input
+          class="file-root-input"
+          id="browser-use-profile-dir"
+          name="browserUseProfileDir"
+          type="text"
+          value="${escapeHtml(state.settings.browserUseProfileDir || status.profileDir || "")}"
           autocomplete="off"
           autocorrect="off"
           autocapitalize="none"
           spellcheck="false"
         />
         <div class="knowledge-settings-remote-grid">
-          <label class="field-label" for="agentmail-inbox-id">inbox email</label>
+          <label class="field-label" for="browser-use-model">model</label>
           <input
             class="file-root-input"
-            id="agentmail-inbox-id"
-            name="agentMailInboxId"
+            id="browser-use-model"
+            name="browserUseModel"
             type="text"
-            value="${escapeHtml(state.settings.agentMailInboxId || "")}"
-            placeholder="leave blank to create one"
+            value="${escapeHtml(state.settings.browserUseModel || "")}"
+            placeholder="worker default"
             autocomplete="off"
             autocorrect="off"
             autocapitalize="none"
             spellcheck="false"
           />
-          <label class="field-label" for="agentmail-provider">reply agent</label>
-          <select class="file-root-input" id="agentmail-provider" name="agentMailProviderId">${providerOptions}</select>
-          <label class="field-label" for="agentmail-username">new inbox username</label>
+          <label class="field-label" for="browser-use-max-turns">max steps</label>
           <input
             class="file-root-input"
-            id="agentmail-username"
-            name="agentMailUsername"
-            type="text"
-            value="${escapeHtml(state.settings.agentMailUsername || "")}"
-            placeholder="optional"
+            id="browser-use-max-turns"
+            name="browserUseMaxTurns"
+            type="number"
+            min="1"
+            max="200"
+            step="1"
+            value="${escapeHtml(String(state.settings.browserUseMaxTurns || status.maxTurns || 50))}"
             autocomplete="off"
-            autocorrect="off"
-            autocapitalize="none"
-            spellcheck="false"
           />
-          <label class="field-label" for="agentmail-domain">domain</label>
-          <input
-            class="file-root-input"
-            id="agentmail-domain"
-            name="agentMailDomain"
-            type="text"
-            value="${escapeHtml(state.settings.agentMailDomain || "")}"
-            placeholder="agentmail.to"
-            autocomplete="off"
-            autocorrect="off"
-            autocapitalize="none"
-            spellcheck="false"
-          />
+          <label class="checkbox-row browser-use-compact-checkbox">
+            <input type="checkbox" name="browserUseHeadless" ${state.settings.browserUseHeadless ? "checked" : ""} />
+            <span>headless</span>
+          </label>
+          <label class="checkbox-row browser-use-compact-checkbox">
+            <input type="checkbox" name="browserUseKeepTabs" ${state.settings.browserUseKeepTabs ? "checked" : ""} />
+            <span>keep tabs</span>
+          </label>
         </div>
-        <label class="field-label" for="agentmail-display-name">display name</label>
-        <input
-          class="file-root-input"
-          id="agentmail-display-name"
-          name="agentMailDisplayName"
-          type="text"
-          value="${escapeHtml(state.settings.agentMailDisplayName || "Remote Vibes")}"
-          placeholder="Remote Vibes"
-          autocomplete="off"
-          autocorrect="off"
-          autocapitalize="none"
-          spellcheck="false"
-        />
         <div class="knowledge-settings-actions">
-          <button class="primary-button settings-save-button" type="submit" data-agentmail-action="setup">
-            ${state.settings.agentMailInboxId ? "save + reconnect" : "create inbox"}
-          </button>
-          <div class="settings-status" id="agentmail-settings-status">${escapeHtml(getAgentMailStatusText())}</div>
+          <button class="primary-button settings-save-button" type="submit" data-browser-use-action="setup">save browser use</button>
+          <div class="settings-status" id="browser-use-settings-status">${escapeHtml(getBrowserUseStatusText())}</div>
         </div>
       </form>
-      <p class="mcp-import-paths">Mode: <code>WebSocket</code> ${lastEvent ? `· last email ${escapeHtml(lastEvent)} ago` : ""} · processed ${escapeHtml(String(status.processedCount || 0))}</p>
-      <p class="mcp-import-paths">The reply agent uses <code>rv-agentmail-reply</code>; the API key stays server-side.</p>
+      <p class="mcp-import-paths">Tool: <code>rv-browser-use --task "..."</code> · sessions appear below their caller.</p>
     </aside>
   `;
 }
@@ -5254,14 +7642,14 @@ function renderPluginsView() {
       `plugins:${state.pluginSearchQuery || ""}`,
     )}>
       <div class="dashboard-toolbar">
-        <button class="icon-button hidden-desktop" type="button" id="open-sidebar" aria-label="Open sidebar" ${tooltipAttributes("Open sidebar")}>≡</button>
+        <button class="icon-button hidden-desktop" type="button" id="open-sidebar" aria-label="Open sidebar" ${tooltipAttributes("Open sidebar")}>${renderIcon(Menu)}</button>
         <div class="dashboard-copy">
           <strong>Plugins</strong>
           <div class="terminal-meta">a Codex-style place for MCPs, integrations, and built-in Remote Vibes tools</div>
         </div>
       </div>
       <div class="main-search-shell">
-        <span class="main-search-icon" aria-hidden="true">⌘</span>
+        <span class="main-search-icon" aria-hidden="true">${renderIcon(Plug)}</span>
         <input
           id="plugin-search-input"
           class="main-search-input"
@@ -5278,7 +7666,7 @@ function renderPluginsView() {
       <div class="plugins-layout">
         <section class="plugin-grid" id="plugin-results">${renderPluginCards()}</section>
         <div class="plugins-side-stack">
-          ${renderAgentMailPluginPanel()}
+          ${renderBrowserUsePluginPanel()}
           <aside class="mcp-import-card">
             <span class="main-search-kind">MCP bridge</span>
             <strong>Port the MCPs your agents already use</strong>
@@ -5291,6 +7679,103 @@ function renderPluginsView() {
   `;
 }
 
+function renderAutomationSelectOptions(options, selectedValue) {
+  return options
+    .map(([value, label]) => `<option value="${escapeHtml(value)}" ${selectedValue === value ? "selected" : ""}>${escapeHtml(label)}</option>`)
+    .join("");
+}
+
+function getAutomationCadenceLabel(cadence) {
+  return AUTOMATION_CADENCE_OPTIONS.find(([value]) => value === cadence)?.[1] || "Daily";
+}
+
+function getAutomationWeekdayLabel(weekday) {
+  return AUTOMATION_WEEKDAY_OPTIONS.find(([value]) => value === weekday)?.[1] || "Monday";
+}
+
+function getAutomationPromptPreview(prompt) {
+  const preview = String(prompt || "")
+    .trim()
+    .replace(/\s+/g, " ");
+  return preview.length > 140 ? `${preview.slice(0, 137)}...` : preview;
+}
+
+function getAutomationScheduleLabel(automation) {
+  const time = automation?.time || "09:00";
+  switch (automation?.cadence) {
+    case "hourly":
+      return "Every hour";
+    case "six-hours":
+      return "Every 6 hours";
+    case "weekday":
+      return `Weekdays at ${time}`;
+    case "weekly":
+      return `${getAutomationWeekdayLabel(automation.weekday)} at ${time}`;
+    case "daily":
+    default:
+      return `Daily at ${time}`;
+  }
+}
+
+function renderAgentAutomationCards() {
+  const automations = Array.isArray(state.settings.agentAutomations) ? state.settings.agentAutomations : [];
+  return automations
+    .map(
+      (automation) => `
+        <article class="automation-card agent-automation-card ${automation.enabled === false ? "is-disabled" : "is-enabled"}">
+          <div class="automation-card-icon" aria-hidden="true">${renderIcon(Bot)}</div>
+          <span class="main-search-kind">${automation.enabled === false ? "disabled" : "enabled"}</span>
+          <strong>${escapeHtml(getAutomationScheduleLabel(automation))}</strong>
+          <p>${escapeHtml(getAutomationPromptPreview(automation.prompt))}</p>
+          <button
+            class="ghost-button toolbar-control"
+            type="button"
+            data-delete-agent-automation="${escapeHtml(automation.id)}"
+            aria-label="Delete automation"
+            ${tooltipAttributes("Delete automation")}
+          >delete</button>
+        </article>
+      `,
+    )
+    .join("");
+}
+
+function renderCreateAutomationCard() {
+  return `
+    <article class="automation-card automation-create-card">
+      <div class="automation-card-icon" aria-hidden="true">${renderIcon(Plus)}</div>
+      <span class="main-search-kind">new</span>
+      <strong>Create automation</strong>
+      <form class="settings-form automation-create-form" id="automation-create-form">
+        <div class="automation-create-grid">
+          <label class="automation-field">
+            <span class="field-label">cadence</span>
+            <select class="file-root-input" name="cadence">${renderAutomationSelectOptions(AUTOMATION_CADENCE_OPTIONS, "daily")}</select>
+          </label>
+          <label class="automation-field">
+            <span class="field-label">time</span>
+            <input class="file-root-input" type="time" name="time" value="09:00" />
+          </label>
+          <label class="automation-field">
+            <span class="field-label">day</span>
+            <select class="file-root-input" name="weekday">${renderAutomationSelectOptions(AUTOMATION_WEEKDAY_OPTIONS, "monday")}</select>
+          </label>
+        </div>
+        <label class="field-label" for="automation-prompt">agent prompt</label>
+        <textarea
+          class="file-root-input automation-prompt-input"
+          id="automation-prompt"
+          name="prompt"
+          rows="5"
+          required
+          placeholder="Ask the agent to..."
+        ></textarea>
+        <button class="primary-button automation-create-button" type="submit">create automation</button>
+      </form>
+    </article>
+  `;
+}
+
 function renderAutomationsView() {
   const wikiBackupEnabled = Boolean(state.settings.wikiGitBackupEnabled);
   const wikiBackupLabel = wikiBackupEnabled ? "enabled" : "disabled";
@@ -5298,7 +7783,7 @@ function renderAutomationsView() {
   return `
     <section class="dashboard-panel main-view automations-view" ${renderMainViewAttributes("automations")}>
       <div class="dashboard-toolbar">
-        <button class="icon-button hidden-desktop" type="button" id="open-sidebar" aria-label="Open sidebar" ${tooltipAttributes("Open sidebar")}>≡</button>
+        <button class="icon-button hidden-desktop" type="button" id="open-sidebar" aria-label="Open sidebar" ${tooltipAttributes("Open sidebar")}>${renderIcon(Menu)}</button>
         <div class="dashboard-copy">
           <strong>Automations</strong>
           <div class="terminal-meta">scheduled Remote Vibes helpers live here as this grows</div>
@@ -5311,6 +7796,7 @@ function renderAutomationsView() {
       </div>
       <div class="main-results-grid automation-grid">
         <article class="automation-card ${wikiBackupEnabled ? "is-enabled" : "is-disabled"}">
+          <div class="automation-card-icon" aria-hidden="true">${renderIcon(CalendarClock)}</div>
           <button
             class="main-search-kind automation-status-toggle ${wikiBackupEnabled ? "is-enabled" : "is-disabled"}"
             type="button"
@@ -5323,11 +7809,8 @@ function renderAutomationsView() {
           <p>Backs up the selected wiki every ${escapeHtml(String(Math.round((state.settings.wikiBackupIntervalMs || 0) / 60000) || 5))} minutes when enabled.</p>
           <button class="ghost-button toolbar-control" type="button" data-open-main-view="knowledge-base">open settings</button>
         </article>
-        <article class="automation-card">
-          <span class="main-search-kind">coming soon</span>
-          <strong>Agent check-ins</strong>
-          <p>A future home for heartbeat tasks, plugin-backed automations, and proactive session health checks.</p>
-        </article>
+        ${renderCreateAutomationCard()}
+        ${renderAgentAutomationCards()}
       </div>
     </section>
   `;
@@ -5782,24 +8265,24 @@ function renderSystemSummaryCards(system) {
   return `
     <div class="system-summary-grid">
       <article class="system-summary-card">
-        <span>CPU</span>
+        <span class="system-summary-label">${renderIcon(Cpu)} CPU</span>
         <strong>${escapeHtml(formatPercent(cpu?.utilizationPercent))}</strong>
         ${renderMetricBar(cpu?.utilizationPercent, "is-cpu")}
         <em>${escapeHtml(cpu?.coreCount ? `${cpu.coreCount} cores` : "no CPU sample")}</em>
       </article>
       <article class="system-summary-card">
-        <span>Memory</span>
+        <span class="system-summary-label">${renderIcon(MemoryStick)} Memory</span>
         <strong>${escapeHtml(formatPercent(memory?.usedPercent))}</strong>
         ${renderMetricBar(memory?.usedPercent, "is-memory")}
         <em>${escapeHtml(memory ? `${formatBytes(memory.usedBytes)} of ${formatBytes(memory.totalBytes)}` : "not available")}</em>
       </article>
       <article class="system-summary-card">
-        <span>GPU</span>
+        <span class="system-summary-label">${renderIcon(Gpu)} GPU</span>
         <strong>${escapeHtml(String(gpuCount))}</strong>
         <em>${escapeHtml(gpuCount === 1 ? "device found" : "devices found")}</em>
       </article>
       <article class="system-summary-card">
-        <span>Accelerators</span>
+        <span class="system-summary-label">${renderIcon(Zap)} Accelerators</span>
         <strong>${escapeHtml(String(acceleratorCount))}</strong>
         <em>${escapeHtml(acceleratorCount === 1 ? "device found" : "devices found")}</em>
       </article>
@@ -5981,13 +8464,13 @@ function renderSystemView() {
       `system:${state.systemHistoryRange || "1h"}`,
     )}>
       <div class="dashboard-toolbar">
-        <button class="icon-button hidden-desktop" type="button" id="open-sidebar" aria-label="Open sidebar" ${tooltipAttributes("Open sidebar")}>≡</button>
+        <button class="icon-button hidden-desktop" type="button" id="open-sidebar" aria-label="Open sidebar" ${tooltipAttributes("Open sidebar")}>${renderIcon(Menu)}</button>
         <div class="dashboard-copy">
           <strong>System</strong>
           <div class="terminal-meta">storage, CPU cores, GPUs, and accelerators on this machine</div>
         </div>
         <div class="dashboard-actions">
-          <button class="icon-button toolbar-control refresh-icon-button ${state.systemMetricsLoading ? "is-loading" : ""}" type="button" id="refresh-system" aria-label="${escapeHtml(refreshLabel)}" ${tooltipAttributes(refreshLabel)} ${state.systemMetricsLoading ? "disabled" : ""}>↻</button>
+          <button class="icon-button toolbar-control refresh-icon-button ${state.systemMetricsLoading ? "is-loading" : ""}" type="button" id="refresh-system" aria-label="${escapeHtml(refreshLabel)}" ${tooltipAttributes(refreshLabel)} ${state.systemMetricsLoading ? "disabled" : ""}>${renderIcon(RefreshCw)}</button>
         </div>
       </div>
       <div class="dashboard-range">
@@ -6803,14 +9286,14 @@ function renderSwarmGraphView() {
       `swarm:${state.swarmGraph.projectCwd || state.swarmGraph.sessionId || ""}`,
     )}>
       <div class="dashboard-toolbar">
-        <button class="icon-button hidden-desktop" type="button" id="open-sidebar" aria-label="Open sidebar" ${tooltipAttributes("Open sidebar")}>≡</button>
+        <button class="icon-button hidden-desktop" type="button" id="open-sidebar" aria-label="Open sidebar" ${tooltipAttributes("Open sidebar")}>${renderIcon(Menu)}</button>
         <div class="dashboard-copy">
           <strong>${escapeHtml(title)}</strong>
           <div class="terminal-meta">swarm graph · ${escapeHtml(meta)}</div>
         </div>
         <div class="dashboard-actions">
           <button class="ghost-button toolbar-control" type="button" id="swarm-back-to-session">terminal</button>
-          <button class="icon-button toolbar-control refresh-icon-button ${state.swarmGraph.loading ? "is-loading" : ""}" type="button" id="refresh-swarm-graph" aria-label="${escapeHtml(refreshLabel)}" ${tooltipAttributes(refreshLabel)} ${state.swarmGraph.loading || !canRefreshSwarm ? "disabled" : ""}>↻</button>
+          <button class="icon-button toolbar-control refresh-icon-button ${state.swarmGraph.loading ? "is-loading" : ""}" type="button" id="refresh-swarm-graph" aria-label="${escapeHtml(refreshLabel)}" ${tooltipAttributes(refreshLabel)} ${state.swarmGraph.loading || !canRefreshSwarm ? "disabled" : ""}>${renderIcon(RefreshCw)}</button>
         </div>
       </div>
       ${
@@ -6830,6 +9313,334 @@ function renderSwarmGraphView() {
               </div>
             `
             : `<div class="blank-state">hover a project folder and click the repo graph icon to map it.</div>`
+      }
+    </section>
+  `;
+}
+
+function getBrowserUseViewTitle(session) {
+  return session?.name || "Browser task";
+}
+
+function getBrowserUseViewMeta(session) {
+  if (!session) {
+    return "browser fulfillment session";
+  }
+
+  const latestUrl = session.latestUrl || session.latestSnapshot?.tabs?.find((tab) => tab.active)?.url || "";
+  return [session.status, latestUrl || session.taskPrompt].filter(Boolean).join(" · ");
+}
+
+function formatBrowserUseActivityType(type) {
+  return String(type || "event")
+    .replace(/[_-]+/g, " ")
+    .replace(/\s+/g, " ")
+    .trim();
+}
+
+function renderBrowserUseCompactJson(value) {
+  if (!value || typeof value !== "object" || Object.keys(value).length === 0) {
+    return "";
+  }
+
+  return `<pre class="browser-use-event-json">${escapeHtml(JSON.stringify(value, null, 2))}</pre>`;
+}
+
+function renderBrowserUseActivityDetail(event) {
+  const payload = event?.payload && typeof event.payload === "object" ? event.payload : {};
+  const type = String(event?.type || "");
+
+  if (type === "assistant_message") {
+    const text = String(payload.text || "").trim();
+    if (text) {
+      return `<p>${escapeHtml(text)}</p>`;
+    }
+    return payload.toolCount
+      ? `<p>chose ${escapeHtml(payload.toolCount)} tool call${Number(payload.toolCount) === 1 ? "" : "s"}.</p>`
+      : "";
+  }
+
+  if (type === "tool_started") {
+    return renderBrowserUseCompactJson(payload.input);
+  }
+
+  if (type === "tool_completed") {
+    const preview = String(payload.outputPreview || "").trim();
+    return preview ? `<p>${escapeHtml(preview)}</p>` : "";
+  }
+
+  if (type === "requester_message_received") {
+    return payload.message ? `<p>${escapeHtml(payload.message)}</p>` : "";
+  }
+
+  if (type === "model_retry" || type === "page_context_injection_failed") {
+    return payload.message || payload.error ? `<p>${escapeHtml(payload.message || payload.error)}</p>` : "";
+  }
+
+  const compactPayload = Object.fromEntries(
+    Object.entries(payload).filter(([key]) => !["tool", "toolUseId", "loop", "tabCount", "status"].includes(key)),
+  );
+  return renderBrowserUseCompactJson(compactPayload);
+}
+
+function getBrowserUseActivitySummary(event) {
+  const payload = event?.payload && typeof event.payload === "object" ? event.payload : {};
+  const type = String(event?.type || "event");
+  const loop = payload.loop ? `loop ${payload.loop}` : "";
+
+  if (type === "loop_started") {
+    return `${loop || "loop"} started${payload.tabCount ? ` · ${payload.tabCount} tab${Number(payload.tabCount) === 1 ? "" : "s"}` : ""}`;
+  }
+  if (type === "assistant_message") {
+    return payload.toolCount
+      ? `${loop || "agent"} planned ${payload.toolCount} tool call${Number(payload.toolCount) === 1 ? "" : "s"}`
+      : `${loop || "agent"} replied`;
+  }
+  if (type === "tool_started") {
+    return `${payload.tool || "tool"} started`;
+  }
+  if (type === "tool_completed") {
+    return `${payload.tool || "tool"} completed`;
+  }
+  if (type === "model_usage") {
+    const input = Number(payload.input_tokens || 0);
+    const output = Number(payload.output_tokens || 0);
+    const total = input + output;
+    return `${payload.source || "model"} · ${Number.isFinite(total) ? `${total} tokens` : "usage"}`;
+  }
+  if (type === "model_retry") {
+    return `model retry ${payload.attempt || ""}`.trim();
+  }
+  if (type === "requester_message_received") {
+    return "requester message received";
+  }
+  if (type === "task_completed") {
+    return "task completed";
+  }
+  if (type === "task_failed") {
+    return "task failed";
+  }
+
+  return formatBrowserUseActivityType(type);
+}
+
+function renderBrowserUseProcess(session) {
+  const activity = Array.isArray(session?.activity) ? session.activity.slice(-80) : [];
+  if (activity.length === 0) {
+    return `<div class="browser-use-empty-inline">waiting for process events...</div>`;
+  }
+
+  return `
+    <ol class="browser-use-activity-list">
+      ${activity
+        .map((event) => {
+          const createdAt = event?.createdAt || "";
+          const detail = renderBrowserUseActivityDetail(event);
+          return `
+            <li class="browser-use-activity-item">
+              <div class="browser-use-activity-meta">
+                <span class="browser-use-activity-type">${escapeHtml(getBrowserUseActivitySummary(event))}</span>
+                ${createdAt ? `<time>${escapeHtml(relativeTime(createdAt))}</time>` : ""}
+              </div>
+              ${detail ? `<div class="browser-use-activity-detail">${detail}</div>` : ""}
+            </li>
+          `;
+        })
+        .join("")}
+    </ol>
+  `;
+}
+
+function renderBrowserUseTranscriptBlock(block) {
+  if (!block || typeof block !== "object") {
+    return `<p>${escapeHtml(block || "")}</p>`;
+  }
+
+  if (block.type === "text") {
+    const text = String(block.text || "").trim();
+    return text ? `<p>${escapeHtml(text)}</p>` : "";
+  }
+
+  if (block.type === "tool_use") {
+    return `
+      <div class="browser-use-tool-call">
+        <span>${escapeHtml(block.name || "tool")}</span>
+        ${renderBrowserUseCompactJson(block.input)}
+      </div>
+    `;
+  }
+
+  if (block.type === "tool_result") {
+    const content = Array.isArray(block.content)
+      ? block.content.map(renderBrowserUseTranscriptBlock).join("")
+      : renderBrowserUseTranscriptBlock(block.content);
+    return `
+      <div class="browser-use-tool-result">
+        <span>tool result${block.tool_use_id ? ` · ${escapeHtml(block.tool_use_id)}` : ""}</span>
+        ${content || `<p>completed</p>`}
+      </div>
+    `;
+  }
+
+  if (block.type === "image") {
+    return `<p class="browser-use-muted">[image omitted]</p>`;
+  }
+
+  return renderBrowserUseCompactJson(block);
+}
+
+function renderBrowserUseTranscript(session) {
+  const transcript = Array.isArray(session?.transcript) ? session.transcript : [];
+  if (transcript.length === 0) {
+    const message = ["queued", "running"].includes(session?.status)
+      ? "final transcript will appear after completion."
+      : "no transcript was captured.";
+    return `<div class="browser-use-empty-inline">${escapeHtml(message)}</div>`;
+  }
+
+  return `
+    <div class="browser-use-transcript-list">
+      ${transcript
+        .map((message) => {
+          const blocks = Array.isArray(message?.content) ? message.content : [];
+          const isToolResult = blocks.length > 0 && blocks.every((block) => block?.type === "tool_result");
+          const role = isToolResult ? "tool" : String(message?.role || "message");
+          const label = role === "assistant" ? "agent" : role;
+          return `
+            <article class="browser-use-message browser-use-message-${escapeHtml(role)}">
+              <span class="browser-use-message-role">${escapeHtml(label)}</span>
+              <div class="browser-use-message-content">
+                ${blocks.map(renderBrowserUseTranscriptBlock).join("") || `<p class="browser-use-muted">empty message</p>`}
+              </div>
+            </article>
+          `;
+        })
+        .join("")}
+    </div>
+  `;
+}
+
+function renderBrowserUseResult(session) {
+  if (!session) {
+    return "";
+  }
+
+  const result = session.result && typeof session.result === "object" ? session.result : null;
+  const summary =
+    (result && typeof result.summary === "string" && result.summary.trim()) ||
+    session.error ||
+    "";
+  const charges = result?.charges && typeof result.charges === "object" ? result.charges : null;
+  const chargeText = charges
+    ? `${Number(charges.goods_cents || 0) + Number(charges.shipping_cents || 0) + Number(charges.tax_cents || 0) + Number(charges.other_cents || 0)} cents ${charges.currency || ""}`.trim()
+    : "";
+  const workerLog = [session.stderr, session.stdout]
+    .map((value) => String(value || "").trim())
+    .filter(Boolean)
+    .join("\n")
+    .slice(-4_000);
+
+  return `
+    <aside class="browser-use-details">
+      <section class="browser-use-detail-section">
+        <div class="browser-use-section-heading">Result</div>
+        ${summary ? `<p>${escapeHtml(summary)}</p>` : `<p>No final result yet.</p>`}
+        <div class="browser-use-facts">
+          <span>${escapeHtml(session.status || "queued")}</span>
+          ${result?.merchant ? `<span>${escapeHtml(result.merchant)}</span>` : ""}
+          ${chargeText ? `<span>${escapeHtml(chargeText)}</span>` : ""}
+        </div>
+        ${
+          result
+            ? `<pre class="browser-use-json">${escapeHtml(JSON.stringify(result, null, 2))}</pre>`
+            : ""
+        }
+      </section>
+      <section class="browser-use-detail-section">
+        <div class="browser-use-section-heading">Process</div>
+        ${renderBrowserUseProcess(session)}
+      </section>
+      <section class="browser-use-detail-section">
+        <div class="browser-use-section-heading">Chat / Tool Calls</div>
+        ${renderBrowserUseTranscript(session)}
+      </section>
+      ${
+        workerLog
+          ? `<details class="browser-use-log"><summary>worker log</summary><pre>${escapeHtml(workerLog)}</pre></details>`
+          : ""
+      }
+    </aside>
+  `;
+}
+
+function renderBrowserUseSnapshot(session) {
+  const snapshot = session?.latestSnapshot;
+  const imageBase64 = snapshot?.imageBase64 || "";
+  const activeTab = snapshot?.tabs?.find((tab) => tab.active) || snapshot?.tabs?.[0] || null;
+
+  if (!imageBase64) {
+    return `
+      <div class="browser-use-snapshot browser-use-snapshot-empty">
+        <div class="blank-state">waiting for the first browser snapshot...</div>
+      </div>
+    `;
+  }
+
+  return `
+    <div class="browser-use-snapshot">
+      <div class="browser-use-snapshot-bar">
+        <span>${escapeHtml(activeTab?.title || "browser")}</span>
+        <em>${escapeHtml(activeTab?.url || "")}</em>
+      </div>
+      <img
+        class="browser-use-image"
+        src="data:image/png;base64,${escapeHtml(imageBase64)}"
+        alt="Browser-use session snapshot"
+      />
+    </div>
+  `;
+}
+
+function renderBrowserUseView() {
+  const session = state.browserUseSession.data;
+  const refreshLabel = state.browserUseSession.loading ? "Refreshing browser task" : "Refresh browser task";
+  const deleteLabel = session && ["queued", "running"].includes(session.status)
+    ? "Terminate browser task"
+    : "Delete browser task";
+
+  return `
+    <section class="dashboard-panel main-view browser-use-view" ${renderMainViewAttributes(
+      "browser-use",
+      `browser-use:${state.browserUseSession.id || ""}`,
+    )}>
+      <div class="dashboard-toolbar">
+        <button class="icon-button hidden-desktop" type="button" id="open-sidebar" aria-label="Open sidebar" ${tooltipAttributes("Open sidebar")}>${renderIcon(Menu)}</button>
+        <div class="dashboard-copy">
+          <strong>${escapeHtml(getBrowserUseViewTitle(session))}</strong>
+          <div class="terminal-meta">${escapeHtml(getBrowserUseViewMeta(session))}</div>
+        </div>
+        <div class="dashboard-actions">
+          <button class="ghost-button toolbar-control" type="button" id="browser-use-back-to-session">terminal</button>
+          <button class="icon-button toolbar-control danger-icon-button" type="button" id="delete-browser-use-session" aria-label="${escapeHtml(deleteLabel)}" ${tooltipAttributes(deleteLabel)} ${state.browserUseSession.loading || !state.browserUseSession.id ? "disabled" : ""}>${renderIcon(Trash2)}</button>
+          <button class="icon-button toolbar-control refresh-icon-button ${state.browserUseSession.loading ? "is-loading" : ""}" type="button" id="refresh-browser-use-session" aria-label="${escapeHtml(refreshLabel)}" ${tooltipAttributes(refreshLabel)} ${state.browserUseSession.loading || !state.browserUseSession.id ? "disabled" : ""}>${renderIcon(RefreshCw)}</button>
+        </div>
+      </div>
+      ${
+        state.browserUseSession.error
+          ? `<div class="system-error-card">${escapeHtml(state.browserUseSession.error)}</div>`
+          : ""
+      }
+      ${
+        state.browserUseSession.loading && !session
+          ? `<div class="blank-state">loading browser session...</div>`
+          : session
+            ? `
+              <div class="browser-use-layout">
+                ${renderBrowserUseSnapshot(session)}
+                ${renderBrowserUseResult(session)}
+              </div>
+            `
+            : `<div class="blank-state">choose a browser-use child session from the sidebar.</div>`
       }
     </section>
   `;
@@ -6881,10 +9692,14 @@ function renderTerminalPanel(activeSession) {
     return renderSwarmGraphView();
   }
 
+  if (state.currentView === "browser-use") {
+    return renderBrowserUseView();
+  }
+
   return `
     <section class="terminal-panel" ${renderMainViewAttributes("shell", `shell:${activeSession?.id || ""}`)}>
       <div class="terminal-toolbar">
-        <button class="icon-button hidden-desktop" type="button" id="open-sidebar" aria-label="Open sidebar" ${tooltipAttributes("Open sidebar")}>≡</button>
+        <button class="icon-button hidden-desktop" type="button" id="open-sidebar" aria-label="Open sidebar" ${tooltipAttributes("Open sidebar")}>${renderIcon(Menu)}</button>
         <div class="terminal-copy">
           <strong id="toolbar-title">${escapeHtml(activeSession ? activeSession.name : "new session")}</strong>
           <div class="terminal-meta" id="toolbar-meta">${escapeHtml(
@@ -6892,18 +9707,21 @@ function renderTerminalPanel(activeSession) {
           )}</div>
         </div>
         <div class="toolbar-actions">
-          <button class="icon-button" type="button" id="refresh-sessions" aria-label="Refresh sessions" ${tooltipAttributes("Refresh sessions")}>↻</button>
-          <button class="ghost-button toolbar-control" type="button" id="tab-button" data-terminal-control aria-label="Send Tab" ${tooltipAttributes("Send Tab")} ${activeSession ? "" : "disabled"}>tab</button>
-          <button class="ghost-button toolbar-control" type="button" id="shift-tab-button" data-terminal-control aria-label="Send Shift Tab" ${tooltipAttributes("Send Shift Tab")} ${activeSession ? "" : "disabled"}>⇧⇥</button>
-          <button class="ghost-button toolbar-control" type="button" id="ctrl-p-button" data-terminal-control aria-label="Send Control P" ${tooltipAttributes("Send Control P")} ${activeSession ? "" : "disabled"}>^P</button>
-          <button class="ghost-button toolbar-control" type="button" id="ctrl-t-button" data-terminal-control aria-label="Send Control T" ${tooltipAttributes("Send Control T")} ${activeSession ? "" : "disabled"}>^T</button>
-          <button class="ghost-button toolbar-control" type="button" id="ctrl-c-button" data-terminal-control aria-label="Send Control C" ${tooltipAttributes("Send Control C")} ${activeSession ? "" : "disabled"}>^C</button>
+          <button class="icon-button" type="button" id="refresh-sessions" aria-label="Refresh sessions" ${tooltipAttributes("Refresh sessions")}>${renderIcon(RefreshCw)}</button>
+          <button class="ghost-button toolbar-control terminal-control-button" type="button" id="tab-button" data-terminal-control aria-label="Send Tab" ${tooltipAttributes("Send Tab")} ${activeSession ? "" : "disabled"}>${renderIcon(IndentIncrease)}</button>
+          <button class="ghost-button toolbar-control terminal-control-button" type="button" id="shift-tab-button" data-terminal-control aria-label="Send Shift Tab" ${tooltipAttributes("Send Shift Tab")} ${activeSession ? "" : "disabled"}>${renderIcon(IndentDecrease)}</button>
+          <button class="ghost-button toolbar-control terminal-control-button" type="button" id="ctrl-p-button" data-terminal-control aria-label="Send Control P" ${tooltipAttributes("Send Control P")} ${activeSession ? "" : "disabled"}>${renderIcon(ArrowUp)}</button>
+          <button class="ghost-button toolbar-control terminal-control-button" type="button" id="ctrl-t-button" data-terminal-control aria-label="Send Control T" ${tooltipAttributes("Send Control T")} ${activeSession ? "" : "disabled"}>${renderIcon(Type)}</button>
+          <button class="ghost-button toolbar-control terminal-control-button" type="button" id="ctrl-c-button" data-terminal-control aria-label="Send Control C" ${tooltipAttributes("Send Control C")} ${activeSession ? "" : "disabled"}>${renderIcon(CircleStop)}</button>
         </div>
       </div>
 
-      <div class="workspace-split ${state.openFileTabs.length ? "has-file-preview" : ""}" id="workspace-split">
+      <div class="workspace-split ${state.openFileTabs.length ? "has-file-preview" : ""}" id="workspace-split" style="${renderWorkspaceSplitStyle()}">
         <div class="terminal-stack">
           <div class="terminal-mount" id="terminal-mount"></div>
+          <div class="terminal-transcript-scroll" id="terminal-transcript-scroll" tabindex="0" aria-label="Terminal transcript history">
+            <pre class="terminal-transcript-pre" id="terminal-transcript-pre"></pre>
+          </div>
           <button class="jump-bottom-button ${activeSession && state.terminalShowJumpToBottom ? "is-visible" : ""}" type="button" id="jump-to-bottom" aria-label="Jump to bottom" ${tooltipAttributes("Jump to bottom")} ${activeSession ? "" : "disabled"}>
             bottom
           </button>
@@ -6911,6 +9729,7 @@ function renderTerminalPanel(activeSession) {
             <p class="empty-state-copy">open the menu, choose a CLI, then pick or create a folder to start a session</p>
           </div>
         </div>
+        ${renderWorkspaceResizeHandle()}
         ${renderFilePreviewPane()}
       </div>
     </section>
@@ -6956,13 +9775,13 @@ function renderAgentPromptView() {
   return `
     <section class="dashboard-panel agent-prompt-view" ${renderMainViewAttributes("agent-prompt")}>
       <div class="dashboard-toolbar">
-        <button class="icon-button hidden-desktop" type="button" id="open-sidebar" aria-label="Open sidebar" ${tooltipAttributes("Open sidebar")}>≡</button>
+        <button class="icon-button hidden-desktop" type="button" id="open-sidebar" aria-label="Open sidebar" ${tooltipAttributes("Open sidebar")}>${renderIcon(Menu)}</button>
         <div class="dashboard-copy">
           <strong>Agent Prompt</strong>
           <div class="terminal-meta">shared instructions injected into Codex, Claude, Gemini, and OpenCode sessions</div>
         </div>
         <div class="dashboard-actions">
-          <button class="icon-button toolbar-control refresh-icon-button" type="button" id="refresh-agent-prompt" aria-label="Reload agent prompt from disk" ${tooltipAttributes("Reload agent prompt from disk")}>↻</button>
+          <button class="icon-button toolbar-control refresh-icon-button" type="button" id="refresh-agent-prompt" aria-label="Reload agent prompt from disk" ${tooltipAttributes("Reload agent prompt from disk")}>${renderIcon(RefreshCw)}</button>
         </div>
       </div>
       <div class="dashboard-range agent-prompt-summary">
@@ -7042,8 +9861,8 @@ function renderFolderPickerTreeNodes(parentPath = "", depth = 1) {
             data-folder-picker-path="${escapeHtml(entry.path)}"
             style="--depth:${depth}"
           >
-            <span class="file-caret">${expanded ? "▾" : "▸"}</span>
-            <span class="file-icon file-icon-folder ${expanded ? "is-open" : ""}" aria-hidden="true"></span>
+            ${renderTreeCaret(expanded)}
+            ${renderDirectoryIcon(entry, expanded)}
             <span class="file-label">${escapeHtml(entry.name)}</span>
           </button>
           ${children ? `<div class="file-children" style="--depth:${depth}">${children}</div>` : ""}
@@ -7076,8 +9895,8 @@ function renderFolderPickerEntries() {
         data-folder-picker-path="${escapeHtml(rootPath)}"
         style="--depth:0"
       >
-        <span class="file-caret">${rootExpanded ? "▾" : "▸"}</span>
-        <span class="file-icon file-icon-folder ${rootExpanded ? "is-open" : ""}" aria-hidden="true"></span>
+        ${renderTreeCaret(rootExpanded)}
+        ${renderDirectoryIcon(rootPath, rootExpanded)}
         <span class="file-label">${escapeHtml(getWorkspacePathLeafName(rootPath))}</span>
       </button>
       ${rootChildren ? `<div class="file-children" style="--depth:0">${rootChildren}</div>` : ""}
@@ -7092,17 +9911,30 @@ function renderFolderPickerModal() {
 
   const currentPath = getFolderPickerCurrentPath();
   const isSessionTarget = state.folderPicker.target === "session";
+  const chooseLabel = isSessionTarget
+    ? "choose folder"
+    : state.folderPicker.target === "wiki-onboarding"
+      ? "use this brain"
+      : "choose this folder";
+  const dragStyle = renderFolderPickerDragStyle();
 
   return `
     <div class="prompt-modal-shell" data-folder-picker-modal>
       <button class="sidebar-scrim is-open" type="button" aria-label="Close folder picker" data-close-folder-picker></button>
-      <section class="prompt-modal folder-picker-modal">
-        <div class="section-head">
+      <section class="prompt-modal folder-picker-modal" data-folder-picker-panel${dragStyle}>
+        <div class="section-head folder-picker-drag-handle" data-folder-picker-drag-handle>
           <span>${escapeHtml(getFolderPickerTitle())}</span>
-          <button class="icon-button" type="button" aria-label="Close folder picker" ${tooltipAttributes("Close folder picker")} data-close-folder-picker>×</button>
+          <button class="icon-button" type="button" aria-label="Close folder picker" ${tooltipAttributes("Close folder picker")} data-close-folder-picker>${renderIcon(X)}</button>
         </div>
         <div class="folder-picker-path-row">
-          <button class="ghost-button folder-picker-button" type="button" id="folder-picker-up" ${state.folderPicker.parentPath ? "" : "disabled"}>up</button>
+          <button
+            class="ghost-button folder-picker-button folder-picker-up-button"
+            type="button"
+            id="folder-picker-up"
+            aria-label="Go up one folder"
+            ${tooltipAttributes("Go up one folder")}
+            ${state.folderPicker.parentPath ? "" : "disabled"}
+          >${renderIcon(FolderUp)}</button>
           <div class="folder-picker-path" title="${escapeHtml(currentPath)}">${escapeHtml(currentPath)}</div>
         </div>
         <div class="folder-picker-list" data-folder-picker-root="${escapeHtml(state.folderPicker.root || "")}">${renderFolderPickerEntries()}</div>
@@ -7121,7 +9953,7 @@ function renderFolderPickerModal() {
             />
             <button class="ghost-button folder-picker-button" type="submit">create folder</button>
           </form>
-          <button class="primary-button folder-picker-button folder-picker-choose-button" type="button" id="folder-picker-select" ${currentPath ? "" : "disabled"}>${isSessionTarget ? "choose folder" : "choose this folder"}</button>
+          <button class="primary-button folder-picker-button folder-picker-choose-button" type="button" id="folder-picker-select" ${currentPath ? "" : "disabled"}>${escapeHtml(chooseLabel)}</button>
         </div>
       </section>
     </div>
@@ -7288,11 +10120,112 @@ function renderUpdateBanner() {
   `;
 }
 
+function renderBrainSetupScreen() {
+  document.title = "Set Brain Folder · Remote Vibes";
+
+  app.innerHTML = `
+    <main class="screen brain-setup-screen">
+      <section class="brain-setup-card" aria-labelledby="brain-setup-title">
+        <span class="brain-setup-eyebrow">Remote Vibes</span>
+        <h1 id="brain-setup-title">Choose your brain</h1>
+        <p>
+          Remote Vibes needs one markdown wiki folder for shared memory. Select an
+          existing local folder, or clone one from GitHub.
+        </p>
+        <div class="brain-setup-picker">
+          <h2>Select a brain folder</h2>
+          <p>
+            If the folder is already a git repo, Remote Vibes will detect its origin
+            remote and use it for private backups.
+          </p>
+          <label class="field-label" for="brain-folder-input">Brain folder</label>
+          <div class="folder-input-row">
+            <input
+              id="brain-folder-input"
+              class="file-root-input"
+              type="text"
+              value="${escapeHtml(state.settings.wikiPathConfigured ? state.settings.wikiPath || "" : "")}"
+              placeholder="${escapeHtml(state.defaultCwd || "choose a folder")}"
+              readonly
+              data-folder-picker-target="wiki-onboarding"
+              autocomplete="off"
+              autocorrect="off"
+              autocapitalize="none"
+              spellcheck="false"
+            />
+            <button class="primary-button brain-setup-button" type="button" data-folder-picker-target="wiki-onboarding">select folder</button>
+          </div>
+        </div>
+        <div class="brain-setup-divider"><span>or</span></div>
+        <form class="brain-setup-git-form" id="brain-git-form">
+          <div>
+            <h2>Insert GitHub URL</h2>
+            <p>
+              Paste a GitHub repo URL and Remote Vibes will clone it locally, set it
+              as the active brain, and use its origin remote for backups.
+            </p>
+          </div>
+          <label class="field-label" for="brain-git-url">GitHub repo URL</label>
+          <input
+            id="brain-git-url"
+            class="file-root-input"
+            name="remoteUrl"
+            type="text"
+            value="${escapeHtml(state.brainSetupCloneUrl)}"
+            placeholder="https://github.com/you/private-mac-brain.git"
+            autocomplete="off"
+            autocorrect="off"
+            autocapitalize="none"
+            spellcheck="false"
+            ${state.brainSetupCloning ? "disabled" : ""}
+          />
+          <label class="field-label" for="brain-clone-path">Local folder (optional)</label>
+          <input
+            id="brain-clone-path"
+            class="file-root-input"
+            name="wikiPath"
+            type="text"
+            value="${escapeHtml(state.brainSetupClonePath)}"
+            placeholder="${escapeHtml(getDefaultBrainClonePathHint())}"
+            autocomplete="off"
+            autocorrect="off"
+            autocapitalize="none"
+            spellcheck="false"
+            ${state.brainSetupCloning ? "disabled" : ""}
+          />
+          <div class="brain-setup-git-actions">
+            <button class="ghost-button brain-setup-clone-button" type="submit" ${state.brainSetupCloning ? "disabled" : ""}>
+              ${state.brainSetupCloning ? "cloning..." : "clone and use"}
+            </button>
+            <span class="brain-setup-hint">Private repos work if this machine's git credentials can clone them.</span>
+          </div>
+          ${
+            state.brainSetupError
+              ? `<div class="brain-setup-error" role="alert">${escapeHtml(state.brainSetupError)}</div>`
+              : ""
+          }
+        </form>
+      </section>
+      ${renderFolderPickerModal()}
+      ${renderSystemToasts()}
+    </main>
+  `;
+
+  bindShellEvents();
+  disposeTerminal();
+}
+
 function renderShell() {
   const explorerScrollSnapshot = captureExplorerScrollSnapshots();
   const mainViewScrollSnapshot = captureMainViewScrollSnapshots();
   teardownKnowledgeBaseGraphInteractions();
   syncFilesRoot();
+
+  if (isBrainSetupRequired()) {
+    renderBrainSetupScreen();
+    return;
+  }
+
   const viewTitles = {
     "knowledge-base": "Knowledge Base · Remote Vibes",
     "agent-prompt": "Agent Prompt · Remote Vibes",
@@ -7301,17 +10234,21 @@ function renderShell() {
     automations: "Automations · Remote Vibes",
     system: "System · Remote Vibes",
     swarm: "Swarm Graph · Remote Vibes",
+    "browser-use": "Browser Use · Remote Vibes",
   };
   document.title = viewTitles[state.currentView] || "Remote Vibes";
 
   const activeSession = state.sessions.find((session) => session.id === state.activeSessionId) || null;
 
   app.innerHTML = `
-    <main class="screen app-shell">
+    <main class="screen app-shell ${state.sidebarCollapsed ? "is-sidebar-collapsed" : ""}" style="${renderAppShellStyle()}">
       <button class="sidebar-scrim ${state.mobileSidebar ? "is-open" : ""}" type="button" aria-label="Close sidebars" data-sidebar-scrim></button>
       <aside class="sidebar sidebar-left ${state.mobileSidebar === "left" ? "is-open" : ""}" data-sidebar-panel="left">
+        <div class="sidebar-desktop-actions">
+          ${renderSidebarToggleButton()}
+        </div>
         <div class="sidebar-mobile-actions">
-          <button class="icon-button hidden-desktop" type="button" id="close-left-sidebar" aria-label="Close sidebar" ${tooltipAttributes("Close sidebar")}>×</button>
+          <button class="icon-button hidden-desktop" type="button" id="close-left-sidebar" aria-label="Close sidebar" ${tooltipAttributes("Close sidebar")}>${renderIcon(PanelLeftClose)}</button>
         </div>
 
         <div class="sidebar-body">
@@ -7323,7 +10260,7 @@ function renderShell() {
             <div class="section-head">
               <span>Threads</span>
               <div class="section-actions">
-                <button class="icon-button sidebar-head-button" type="button" data-folder-picker-target="session" aria-label="Add project" ${tooltipAttributes("Add project")}>+</button>
+                <button class="icon-button sidebar-head-button" type="button" data-folder-picker-target="session" aria-label="Add project" ${tooltipAttributes("Add project")}>${renderIcon(FolderPlus)}</button>
               </div>
             </div>
             <div class="list-shell" id="sessions-list">${renderSessionCards()}</div>
@@ -7334,7 +10271,7 @@ function renderShell() {
               <span>files</span>
               <div class="section-actions">
                 <button class="ghost-button files-root-reset" type="button" id="auto-files-root" aria-label="Use automatic files root" ${tooltipAttributes("Use automatic files root")} ${state.filesRootOverride ? "" : "disabled"}>auto</button>
-                <button class="icon-button" type="button" id="refresh-files" aria-label="Refresh files" ${tooltipAttributes("Refresh files")}>↻</button>
+                <button class="icon-button" type="button" id="refresh-files" aria-label="Refresh files" ${tooltipAttributes("Refresh files")}>${renderIcon(RefreshCw)}</button>
               </div>
             </div>
             <form class="file-root-form" id="files-root-form">
@@ -7357,13 +10294,18 @@ function renderShell() {
             <div class="file-tree" id="files-tree" data-files-root="${escapeHtml(state.filesRoot || "")}">${renderFileTree()}</div>
           </section>
 
+          ${
+            isLocalhostAppsEnabled()
+              ? `
           <section class="sidebar-section ports-section">
             <div class="section-head">
               <span>ports</span>
-              <button class="icon-button" type="button" id="refresh-ports" aria-label="Refresh ports" ${tooltipAttributes("Refresh ports")}>↻</button>
+              <button class="icon-button" type="button" id="refresh-ports" aria-label="Refresh ports" ${tooltipAttributes("Refresh ports")}>${renderIcon(RefreshCw)}</button>
             </div>
             <div class="list-shell" id="ports-list">${renderPortCards()}</div>
-          </section>
+          </section>`
+              : ""
+          }
         </div>
 
         <div class="sidebar-footer">
@@ -7372,6 +10314,7 @@ function renderShell() {
             <button class="danger-button terminate-button" type="button" id="terminate-app">terminate</button>
           </div>
         </div>
+        ${renderSidebarResizeHandle()}
       </aside>
 
       ${renderTerminalPanel(activeSession)}
@@ -7512,8 +10455,8 @@ function flushDeferredSelectableRefreshes({ force = false } = {}) {
     refreshSystemToastsUi({ force: true });
   }
 
-  if (refreshes.has("agentmail")) {
-    refreshAgentMailPluginUi({ force: true });
+  if (refreshes.has("browser-use")) {
+    refreshBrowserUsePluginUi({ force: true });
   }
 }
 
@@ -7626,6 +10569,23 @@ function bindSessionEvents() {
   const sessionsList = document.querySelector("#sessions-list");
   if (sessionsList && !sessionsList.dataset.sessionRefreshBound) {
     sessionsList.dataset.sessionRefreshBound = "true";
+    sessionsList.addEventListener("pointerdown", (event) => {
+      const target = event.target;
+      if (!(target instanceof Element)) {
+        return;
+      }
+
+      const browserUseButton = target.closest("[data-open-browser-use-session]");
+      if (!browserUseButton) {
+        return;
+      }
+
+      event.preventDefault();
+      event.stopPropagation();
+      markSessionListInteractionActive();
+      const browserUseSessionId = browserUseButton.getAttribute("data-open-browser-use-session") || "";
+      void openBrowserUseSession(browserUseSessionId);
+    });
     sessionsList.addEventListener("pointerleave", () => {
       window.setTimeout(flushDeferredSessionRefresh, 80);
     });
@@ -7699,6 +10659,54 @@ function bindSessionEvents() {
       const fallbackSessionId = button.getAttribute("data-swarm-project-fallback-session") || "";
       const projectName = button.getAttribute("data-swarm-project-name") || "";
       void openSwarmProjectGraph(projectCwd, { fallbackSessionId, projectName });
+    });
+  });
+
+  document.querySelectorAll("[data-open-browser-use-session]").forEach((button) => {
+    button.addEventListener("click", (event) => {
+      event.preventDefault();
+      event.stopPropagation();
+      const browserUseSessionId = button.getAttribute("data-open-browser-use-session") || "";
+      void openBrowserUseSession(browserUseSessionId);
+    });
+  });
+
+  document.querySelectorAll("[data-delete-browser-use-session]").forEach((button) => {
+    button.addEventListener("click", async (event) => {
+      event.preventDefault();
+      event.stopPropagation();
+      const browserUseSessionId = button.getAttribute("data-delete-browser-use-session") || "";
+      if (!browserUseSessionId) {
+        return;
+      }
+
+      if (button instanceof HTMLButtonElement) {
+        button.disabled = true;
+      }
+
+      try {
+        await deleteBrowserUseSession(browserUseSessionId);
+      } catch (error) {
+        if (button instanceof HTMLButtonElement) {
+          button.disabled = false;
+        }
+        window.alert(error.message);
+      }
+    });
+  });
+
+  document.querySelectorAll("[data-mark-session-read]").forEach((button) => {
+    button.addEventListener("click", (event) => {
+      event.preventDefault();
+      event.stopPropagation();
+      const sessionId = button.getAttribute("data-mark-session-read") || "";
+      if (!sessionId) {
+        return;
+      }
+
+      if (markSessionRead(sessionId, { refresh: false })) {
+        refreshSessionsList({ force: true });
+      }
     });
   });
 
@@ -7865,6 +10873,11 @@ function refreshPortsList({ force = false } = {}) {
     return;
   }
 
+  if (!isLocalhostAppsEnabled()) {
+    portsList.innerHTML = "";
+    return;
+  }
+
   if (shouldDeferSelectableRefresh({ force })) {
     deferSelectableRefresh("ports");
     return;
@@ -7919,6 +10932,124 @@ function refreshPluginSearchUi() {
   }
 
   results.innerHTML = renderPluginCards();
+  bindPluginCardEvents();
+}
+
+async function setPluginInstalled(pluginId, installed) {
+  const plugin = getPluginById(pluginId);
+  if (!plugin) {
+    return;
+  }
+
+  state.pluginInstallActions = {
+    ...state.pluginInstallActions,
+    [pluginId]: installed ? "installing" : "uninstalling",
+  };
+  refreshPluginSearchUi();
+
+  try {
+    const body = {
+      installedPluginIds: getUpdatedInstalledPluginIds(pluginId, installed),
+    };
+
+    if (pluginId === "browser-use") {
+      body.browserUseEnabled = installed;
+    }
+
+    const [payload] = await Promise.all([
+      fetchJson("/api/settings", {
+        method: "PATCH",
+        body: JSON.stringify(body),
+      }),
+      sleep(520),
+    ]);
+
+    applySettingsState(payload.settings);
+    if (payload.agentPrompt) {
+      applyAgentPromptState(payload.agentPrompt);
+    }
+    delete state.pluginInstallActions[pluginId];
+
+    if (pluginId === "localhost-apps") {
+      if (!installed) {
+        clearLocalhostAppsSurfaces();
+      }
+      renderShell();
+      if (installed) {
+        void loadPorts();
+      }
+      return;
+    }
+
+    refreshPluginSearchUi();
+
+    refreshBrowserUsePluginUi({ force: true });
+  } catch (error) {
+    delete state.pluginInstallActions[pluginId];
+    refreshPluginSearchUi();
+    window.alert(error.message);
+  }
+}
+
+function bindPluginCardEvents() {
+  document.querySelectorAll("[data-plugin-install]").forEach((button) => {
+    button.addEventListener("click", () => {
+      if (!(button instanceof HTMLButtonElement)) {
+        return;
+      }
+
+      const pluginId = button.getAttribute("data-plugin-install") || "";
+      const installed = button.getAttribute("data-plugin-next-installed") === "true";
+      void setPluginInstalled(pluginId, installed);
+    });
+  });
+}
+
+function createClientId(prefix) {
+  const randomId =
+    typeof window.crypto?.randomUUID === "function"
+      ? window.crypto.randomUUID()
+      : `${Date.now()}-${Math.random().toString(16).slice(2)}`;
+  return `${prefix}-${randomId}`.toLowerCase().replace(/[^a-z0-9_-]+/g, "-");
+}
+
+function getAgentAutomations() {
+  return Array.isArray(state.settings.agentAutomations) ? state.settings.agentAutomations : [];
+}
+
+async function saveAgentAutomations(agentAutomations) {
+  const payload = await fetchJson("/api/settings", {
+    method: "PATCH",
+    body: JSON.stringify({ agentAutomations }),
+  });
+  applySettingsState(payload.settings);
+  if (payload.agentPrompt) {
+    applyAgentPromptState(payload.agentPrompt);
+  }
+}
+
+async function createAgentAutomationFromForm(form) {
+  const formData = new FormData(form);
+  const prompt = String(formData.get("prompt") || "").trim();
+  if (!prompt) {
+    throw new Error("Add a prompt for the agent first.");
+  }
+
+  const automation = {
+    cadence: String(formData.get("cadence") || "daily"),
+    createdAt: new Date().toISOString(),
+    enabled: true,
+    id: createClientId("automation"),
+    prompt,
+    time: String(formData.get("time") || "09:00"),
+    weekday: String(formData.get("weekday") || "monday"),
+  };
+
+  await saveAgentAutomations([...getAgentAutomations(), automation]);
+}
+
+async function deleteAgentAutomation(automationId) {
+  await saveAgentAutomations(getAgentAutomations().filter((automation) => automation.id !== automationId));
 }
 
 function bindAutomationEvents() {
@@ -7944,30 +11075,75 @@ function bindAutomationEvents() {
       }
     });
   });
+
+  document.querySelector("#automation-create-form")?.addEventListener("submit", async (event) => {
+    event.preventDefault();
+    const form = event.currentTarget;
+    if (!(form instanceof HTMLFormElement)) {
+      return;
+    }
+
+    const button = form.querySelector("button[type='submit']");
+    if (button instanceof HTMLButtonElement) {
+      button.disabled = true;
+      button.textContent = "creating...";
+    }
+
+    try {
+      await createAgentAutomationFromForm(form);
+      renderShell();
+    } catch (error) {
+      if (button instanceof HTMLButtonElement) {
+        button.disabled = false;
+        button.textContent = "create automation";
+      }
+      window.alert(error.message);
+    }
+  });
+
+  document.querySelectorAll("[data-delete-agent-automation]").forEach((button) => {
+    button.addEventListener("click", async () => {
+      const automationId = button.getAttribute("data-delete-agent-automation") || "";
+      if (!automationId || !(button instanceof HTMLButtonElement)) {
+        return;
+      }
+
+      button.disabled = true;
+      button.textContent = "deleting...";
+      try {
+        await deleteAgentAutomation(automationId);
+        renderShell();
+      } catch (error) {
+        button.disabled = false;
+        button.textContent = "delete";
+        window.alert(error.message);
+      }
+    });
+  });
 }
 
-function refreshAgentMailPluginUi({ force = false } = {}) {
-  const card = document.querySelector(".agentmail-plugin-card");
+function refreshBrowserUsePluginUi({ force = false } = {}) {
+  const card = document.querySelector(".browser-use-plugin-card");
   if (!card) {
     return;
   }
 
   if (shouldDeferSelectableRefresh({ force })) {
-    deferSelectableRefresh("agentmail");
+    deferSelectableRefresh("browser-use");
     return;
   }
 
   const activeElement = document.activeElement;
-  if (activeElement instanceof HTMLElement && activeElement.closest("#agentmail-form")) {
+  if (activeElement instanceof HTMLElement && activeElement.closest("#browser-use-form")) {
     return;
   }
 
-  card.outerHTML = renderAgentMailPluginPanel();
-  bindAgentMailForm();
+  card.outerHTML = renderBrowserUsePluginPanel();
+  bindBrowserUseForm();
 }
 
-function bindAgentMailForm() {
-  document.querySelector("#agentmail-form")?.addEventListener("submit", async (event) => {
+function bindBrowserUseForm() {
+  document.querySelector("#browser-use-form")?.addEventListener("submit", async (event) => {
     event.preventDefault();
     const form = event.currentTarget;
 
@@ -7975,20 +11151,20 @@ function bindAgentMailForm() {
       return;
     }
 
-    const button = form.querySelector("[data-agentmail-action]");
+    const button = form.querySelector("[data-browser-use-action]");
     if (button instanceof HTMLButtonElement) {
       button.disabled = true;
-      button.textContent = "connecting...";
+      button.textContent = "saving...";
     }
 
     try {
-      await setupAgentMailFromForm(form);
+      await setupBrowserUseFromForm(form);
       renderShell();
     } catch (error) {
       window.alert(error.message);
       if (button instanceof HTMLButtonElement) {
         button.disabled = false;
-        button.textContent = state.settings.agentMailInboxId ? "save + reconnect" : "create inbox";
+        button.textContent = "save browser use";
       }
     }
   });
@@ -8124,6 +11300,10 @@ function bindSystemToastEvents() {
 }
 
 function bindPortEvents() {
+  if (!isLocalhostAppsEnabled()) {
+    return;
+  }
+
   document.querySelectorAll("[data-open-port-preview]").forEach((button) => {
     button.addEventListener("click", (event) => {
       event.preventDefault();
@@ -8658,6 +11838,7 @@ function refreshOpenFileUi() {
     workspaceSplit?.classList.toggle("has-file-preview", state.openFileTabs.length > 0);
     previewPane.outerHTML = renderFilePreviewPane();
     bindFileEditorEvents();
+    refreshLayoutUi();
     fitTerminalSoon();
     return;
   }
@@ -9125,6 +12306,10 @@ async function openWorkspaceFilePreview(relativePath, { mode = "text", force = f
 }
 
 function openPortPreview(portNumber) {
+  if (!isLocalhostAppsEnabled()) {
+    return;
+  }
+
   const port = state.ports.find((entry) => entry.port === Number(portNumber));
   if (!port) {
     return;
@@ -9429,6 +12614,7 @@ function applySettingsState(payload) {
   const backup = settings.wikiBackup || settings.backup || state.settings.wikiBackup;
   const sleepPrevention = settings.sleepPrevention || settings.sleep || state.settings.sleepPrevention;
   const agentMailStatus = settings.agentMailStatus || settings.agentMail || state.settings.agentMailStatus;
+  const browserUseStatus = settings.browserUseStatus || settings.browserUse || state.settings.browserUseStatus;
 
   state.settings = {
     agentMailApiKeyConfigured:
@@ -9450,12 +12636,54 @@ function applySettingsState(payload) {
     agentMailStatus: agentMailStatus || null,
     agentMailUsername:
       settings.agentMailUsername === undefined ? state.settings.agentMailUsername || "" : String(settings.agentMailUsername || ""),
+    agentAutomations: Array.isArray(settings.agentAutomations)
+      ? settings.agentAutomations
+      : state.settings.agentAutomations || [],
+    browserUseAnthropicApiKeyConfigured:
+      settings.browserUseAnthropicApiKeyConfigured === undefined
+        ? state.settings.browserUseAnthropicApiKeyConfigured
+        : Boolean(settings.browserUseAnthropicApiKeyConfigured),
+    browserUseBrowserPath:
+      settings.browserUseBrowserPath === undefined
+        ? state.settings.browserUseBrowserPath || ""
+        : String(settings.browserUseBrowserPath || ""),
+    browserUseEnabled:
+      settings.browserUseEnabled === undefined
+        ? state.settings.browserUseEnabled
+        : Boolean(settings.browserUseEnabled),
+    browserUseHeadless:
+      settings.browserUseHeadless === undefined
+        ? state.settings.browserUseHeadless
+        : Boolean(settings.browserUseHeadless),
+    browserUseKeepTabs:
+      settings.browserUseKeepTabs === undefined
+        ? state.settings.browserUseKeepTabs
+        : Boolean(settings.browserUseKeepTabs),
+    browserUseMaxTurns:
+      settings.browserUseMaxTurns === undefined
+        ? state.settings.browserUseMaxTurns || 50
+        : Number(settings.browserUseMaxTurns) || 50,
+    browserUseModel:
+      settings.browserUseModel === undefined ? state.settings.browserUseModel || "" : String(settings.browserUseModel || ""),
+    browserUseProfileDir:
+      settings.browserUseProfileDir === undefined
+        ? state.settings.browserUseProfileDir || ""
+        : String(settings.browserUseProfileDir || ""),
+    browserUseStatus: browserUseStatus || null,
+    browserUseWorkerPath:
+      settings.browserUseWorkerPath === undefined
+        ? state.settings.browserUseWorkerPath || ""
+        : String(settings.browserUseWorkerPath || ""),
+    installedPluginIds: Array.isArray(settings.installedPluginIds)
+      ? settings.installedPluginIds.map((pluginId) => String(pluginId || "")).filter(Boolean)
+      : state.settings.installedPluginIds || [],
     preventSleepEnabled:
       settings.preventSleepEnabled === undefined
         ? state.settings.preventSleepEnabled
         : Boolean(settings.preventSleepEnabled),
     sleepPrevention: sleepPrevention || null,
     wikiPath: settings.wikiPath || state.settings.wikiPath || "",
+    wikiPathConfigured: inferWikiPathConfigured(settings),
     wikiRelativeRoot:
       settings.wikiRelativeRoot ||
       settings.wikiRelativePath ||
@@ -9679,6 +12907,89 @@ async function openSwarmProjectGraph(projectCwd, { fallbackSessionId = "", proje
   renderShell();
 }
 
+async function loadBrowserUseSession(browserUseSessionId, { silent = false } = {}) {
+  if (!browserUseSessionId) {
+    return;
+  }
+
+  if (!silent) {
+    state.browserUseSession = {
+      id: browserUseSessionId,
+      loading: true,
+      error: "",
+      data: state.browserUseSession.id === browserUseSessionId ? state.browserUseSession.data : null,
+    };
+    setCurrentView("browser-use");
+    closeMobileSidebar();
+    renderShell();
+  }
+
+  try {
+    const payload = await fetchJson(`/api/browser-use/sessions/${encodeURIComponent(browserUseSessionId)}`, {
+      cache: "no-store",
+    });
+    state.browserUseSession = {
+      id: browserUseSessionId,
+      loading: false,
+      error: "",
+      data: payload.session,
+    };
+  } catch (error) {
+    state.browserUseSession = {
+      id: browserUseSessionId,
+      loading: false,
+      error: error.message,
+      data: state.browserUseSession.id === browserUseSessionId ? state.browserUseSession.data : null,
+    };
+  }
+
+  if (state.currentView === "browser-use" && state.browserUseSession.id === browserUseSessionId) {
+    renderShell();
+  }
+}
+
+async function openBrowserUseSession(browserUseSessionId) {
+  await loadBrowserUseSession(browserUseSessionId);
+}
+
+function removeBrowserUseSessionFromState(browserUseSessionId) {
+  state.sessions = state.sessions.map((session) => ({
+    ...session,
+    subagents: Array.isArray(session.subagents)
+      ? session.subagents.filter((subagent) => subagent.browserUseSessionId !== browserUseSessionId)
+      : session.subagents,
+  }));
+}
+
+async function deleteBrowserUseSession(browserUseSessionId) {
+  if (!browserUseSessionId) {
+    return;
+  }
+
+  await fetchJson(`/api/browser-use/sessions/${encodeURIComponent(browserUseSessionId)}`, {
+    method: "DELETE",
+  });
+
+  removeBrowserUseSessionFromState(browserUseSessionId);
+
+  if (state.browserUseSession.id === browserUseSessionId) {
+    state.browserUseSession = {
+      id: "",
+      loading: false,
+      error: "",
+      data: null,
+    };
+    setCurrentView("shell");
+    renderShell();
+    if (state.activeSessionId) {
+      connectToSession(state.activeSessionId);
+    }
+    return;
+  }
+
+  refreshSessionsList({ force: true });
+}
+
 function closeSessionProviderPicker() {
   const picker = document.querySelector("[data-session-provider-picker]");
   const trigger = document.querySelector("[data-session-provider-trigger]");
@@ -9742,10 +13053,126 @@ function ensureSessionProviderPickerGlobalListeners() {
   });
 }
 
+function setFolderPickerPanelPosition(panel, position) {
+  panel.style.setProperty("--folder-picker-x", `${Math.round(position.x)}px`);
+  panel.style.setProperty("--folder-picker-y", `${Math.round(position.y)}px`);
+}
+
+function clampFolderPickerDragDelta(value, min, max) {
+  if (min > max) {
+    return (min + max) / 2;
+  }
+
+  return clamp(value, min, max);
+}
+
+function getClampedFolderPickerPosition(startPosition, startRect, deltaX, deltaY) {
+  const minDeltaX = FOLDER_PICKER_DRAG_MARGIN_PX - startRect.left;
+  const maxDeltaX = window.innerWidth - FOLDER_PICKER_DRAG_MARGIN_PX - startRect.right;
+  const minDeltaY = FOLDER_PICKER_DRAG_MARGIN_PX - startRect.top;
+  const maxDeltaY = window.innerHeight - FOLDER_PICKER_DRAG_MARGIN_PX - startRect.bottom;
+
+  return {
+    x: startPosition.x + clampFolderPickerDragDelta(deltaX, minDeltaX, maxDeltaX),
+    y: startPosition.y + clampFolderPickerDragDelta(deltaY, minDeltaY, maxDeltaY),
+  };
+}
+
+function syncFolderPickerDragPosition() {
+  if (!state.folderPicker.position) {
+    return;
+  }
+
+  const panel = document.querySelector("[data-folder-picker-panel]");
+  if (!(panel instanceof HTMLElement)) {
+    return;
+  }
+
+  const position = getFolderPickerDragPosition();
+  const nextPosition = getClampedFolderPickerPosition(position, panel.getBoundingClientRect(), 0, 0);
+  state.folderPicker.position = nextPosition;
+  setFolderPickerPanelPosition(panel, nextPosition);
+}
+
+function bindFolderPickerDragEvents() {
+  const handle = document.querySelector("[data-folder-picker-drag-handle]");
+  const panel = document.querySelector("[data-folder-picker-panel]");
+
+  if (!(handle instanceof HTMLElement) || !(panel instanceof HTMLElement)) {
+    return;
+  }
+
+  syncFolderPickerDragPosition();
+
+  handle.addEventListener("pointerdown", (event) => {
+    if (event.button != null && event.button !== 0) {
+      return;
+    }
+
+    const target = event.target;
+    if (target instanceof Element && target.closest("button, input, textarea, select, a")) {
+      return;
+    }
+
+    const pointerId = event.pointerId;
+    const startClientX = event.clientX;
+    const startClientY = event.clientY;
+    const startPosition = getFolderPickerDragPosition();
+    const startRect = panel.getBoundingClientRect();
+    const controller = new AbortController();
+
+    panel.classList.add("is-dragging");
+
+    const onPointerMove = (moveEvent) => {
+      if (moveEvent.pointerId !== pointerId) {
+        return;
+      }
+
+      const nextPosition = getClampedFolderPickerPosition(
+        startPosition,
+        startRect,
+        moveEvent.clientX - startClientX,
+        moveEvent.clientY - startClientY,
+      );
+      state.folderPicker.position = nextPosition;
+
+      const activePanel = document.querySelector("[data-folder-picker-panel]");
+      if (activePanel instanceof HTMLElement) {
+        setFolderPickerPanelPosition(activePanel, nextPosition);
+      }
+
+      moveEvent.preventDefault();
+    };
+
+    const onPointerEnd = (endEvent) => {
+      if (endEvent.pointerId !== pointerId) {
+        return;
+      }
+
+      panel.classList.remove("is-dragging");
+      controller.abort();
+    };
+
+    window.addEventListener("pointermove", onPointerMove, { signal: controller.signal });
+    window.addEventListener("pointerup", onPointerEnd, { signal: controller.signal });
+    window.addEventListener("pointercancel", onPointerEnd, { signal: controller.signal });
+
+    try {
+      handle.setPointerCapture(pointerId);
+    } catch {
+      // Some browsers skip pointer capture for detached/replaced nodes during rerenders.
+    }
+
+    event.preventDefault();
+  });
+}
+
 function bindShellEvents() {
   bindLineNumberEditors();
   ensureSessionProviderPickerGlobalListeners();
   bindSessionProviderPicker();
+  bindFolderPickerDragEvents();
+  bindLayoutResizeEvents();
 
   document.querySelectorAll("[data-open-main-view]").forEach((link) => {
     link.addEventListener("click", (event) => {
@@ -9758,21 +13185,26 @@ function bindShellEvents() {
   document.querySelectorAll("[data-folder-picker-target]").forEach((button) => {
     button.addEventListener("click", async () => {
       const target = button.getAttribute("data-folder-picker-target") || "session";
+      const isWikiTarget = target === "wiki" || target === "wiki-onboarding";
       if (target === "session") {
         state.defaultProviderId = getSelectedSessionProviderId();
       }
 
       const input =
-        target === "wiki"
-          ? document.querySelector("#wiki-path-input")
+        target === "wiki-onboarding"
+          ? document.querySelector("#brain-folder-input")
+          : target === "wiki"
+            ? document.querySelector("#wiki-path-input")
           : target === "files"
             ? document.querySelector("#files-root-input")
             : null;
       const initialPath =
         input instanceof HTMLInputElement && input.value.trim()
           ? input.value.trim()
-          : target === "wiki"
-            ? state.settings.wikiPath || state.defaultCwd
+          : isWikiTarget
+            ? target === "wiki-onboarding"
+              ? state.defaultCwd || state.settings.wikiPath
+              : state.settings.wikiPath || state.defaultCwd
             : target === "files"
               ? state.filesRoot || state.defaultCwd
               : state.defaultCwd;
@@ -9833,6 +13265,7 @@ function bindShellEvents() {
   bindPortEvents();
   bindFileTreeEvents();
   bindSearchResultEvents();
+  bindPluginCardEvents();
   bindAutomationEvents();
   bindUpdateEvents();
   bindSystemToastEvents();
@@ -9886,6 +13319,38 @@ function bindShellEvents() {
       connectToSession(state.activeSessionId);
     }
   });
+  document.querySelector("#refresh-browser-use-session")?.addEventListener("click", () => {
+    if (state.browserUseSession.id) {
+      void loadBrowserUseSession(state.browserUseSession.id);
+    }
+  });
+  document.querySelector("#delete-browser-use-session")?.addEventListener("click", async (event) => {
+    const button = event.currentTarget;
+    const browserUseSessionId = state.browserUseSession.id;
+    if (!browserUseSessionId) {
+      return;
+    }
+
+    if (button instanceof HTMLButtonElement) {
+      button.disabled = true;
+    }
+
+    try {
+      await deleteBrowserUseSession(browserUseSessionId);
+    } catch (error) {
+      if (button instanceof HTMLButtonElement) {
+        button.disabled = false;
+      }
+      window.alert(error.message);
+    }
+  });
+  document.querySelector("#browser-use-back-to-session")?.addEventListener("click", () => {
+    setCurrentView("shell");
+    renderShell();
+    if (state.activeSessionId) {
+      connectToSession(state.activeSessionId);
+    }
+  });
 
   document.querySelector("#refresh-sessions")?.addEventListener("click", () => loadSessions());
   document.querySelector("#refresh-agent-prompt")?.addEventListener("click", async () => {
@@ -9906,13 +13371,14 @@ function bindShellEvents() {
   });
   document.querySelector("#agent-prompt-form")?.addEventListener("submit", async (event) => {
     event.preventDefault();
-    const formData = new FormData(event.currentTarget);
+    const textarea = document.querySelector("#agent-prompt-textarea");
+    const prompt = textarea instanceof HTMLTextAreaElement ? textarea.value : "";
 
     try {
       const payload = await fetchJson("/api/agent-prompt", {
         method: "PUT",
         body: JSON.stringify({
-          prompt: String(formData.get("prompt") || ""),
+          prompt,
         }),
       });
 
@@ -9937,7 +13403,32 @@ function bindShellEvents() {
       window.alert(error.message);
     }
   });
-  bindAgentMailForm();
+  document.querySelector("#brain-git-form")?.addEventListener("submit", async (event) => {
+    event.preventDefault();
+    const form = event.currentTarget;
+
+    if (!(form instanceof HTMLFormElement)) {
+      return;
+    }
+
+    const formData = new FormData(form);
+    const remoteUrl = String(formData.get("remoteUrl") || "").trim();
+    const wikiPath = String(formData.get("wikiPath") || "").trim();
+    state.brainSetupCloneUrl = remoteUrl;
+    state.brainSetupClonePath = wikiPath;
+    state.brainSetupCloning = true;
+    state.brainSetupError = "";
+    renderShell();
+
+    try {
+      await cloneBrainFromGit({ remoteUrl, wikiPath });
+    } catch (error) {
+      state.brainSetupCloning = false;
+      state.brainSetupError = error.message;
+      renderShell();
+    }
+  });
+  bindBrowserUseForm();
   document.querySelector("#backup-wiki-now")?.addEventListener("click", async (event) => {
     const button = event.currentTarget;
     if (button instanceof HTMLButtonElement) {
@@ -10188,6 +13679,14 @@ function closeWebsocket() {
 function disposeTerminal() {
   closeWebsocket();
   cleanupTerminalInteractions();
+  clearTerminalTranscriptHistory();
+  hideTerminalFilePreview();
+  try {
+    state.terminalFileLinkDisposable?.dispose?.();
+  } catch {
+    // Best-effort cleanup only.
+  }
+  state.terminalFileLinkDisposable = null;
   state.terminalResizeObserver?.disconnect();
   state.terminalResizeObserver = null;
 
@@ -10261,6 +13760,7 @@ function setupTerminalInteractions(mount) {
   cleanupTerminalInteractions();
 
   const viewport = mount.querySelector(".xterm-viewport");
+  const transcriptViewport = getTerminalTranscriptViewport();
   const helperTextarea = mount.querySelector(".xterm-helper-textarea");
   if (!viewport) {
     return;
@@ -10273,13 +13773,25 @@ function setupTerminalInteractions(mount) {
     moved: false,
     startY: 0,
   };
+  const focusTerminalInput = () => {
+    configureTerminalTextarea(helperTextarea);
+    if (helperTextarea instanceof HTMLTextAreaElement) {
+      try {
+        helperTextarea.focus({ preventScroll: true });
+      } catch {
+        helperTextarea.focus();
+      }
+    } else {
+      state.terminal?.focus();
+    }
+  };
 
   const handlePointerDown = (event) => {
     if (event.pointerType && event.pointerType !== "mouse") {
       return;
     }
 
-    state.terminal?.focus();
+    focusTerminalInput();
   };
 
   const handleTouchStart = (event) => {
@@ -10312,7 +13824,7 @@ function setupTerminalInteractions(mount) {
     }
 
     if (!touchState.moved && touchState.maxDistance < TOUCH_TAP_SLOP_PX) {
-      state.terminal?.focus();
+      focusTerminalInput();
     }
   };
 
@@ -10331,27 +13843,12 @@ function setupTerminalInteractions(mount) {
     });
   };
 
-  const handleViewportWheel = (event) => {
-    if (event.ctrlKey || event.metaKey || event.shiftKey || !event.deltaY) {
-      return;
-    }
+  const handleTranscriptFallbackWheel = (event) => {
+    routeTerminalTranscriptWheel(event);
+  };
 
-    const maxScrollTop = Math.max(0, viewport.scrollHeight - viewport.clientHeight);
-    if (maxScrollTop <= 0) {
-      return;
-    }
-
-    const previousScrollTop = viewport.scrollTop;
-    const nextScrollTop = clamp(previousScrollTop + getTerminalWheelDeltaY(event, viewport), 0, maxScrollTop);
-    if (nextScrollTop === previousScrollTop) {
-      return;
-    }
-
-    event.preventDefault();
-    event.stopPropagation();
-    event.stopImmediatePropagation?.();
-    viewport.scrollTop = nextScrollTop;
-    syncTerminalScrollState();
+  const handleTranscriptClick = () => {
+    focusTerminalInput();
   };
 
   const handleBeforeInput = (event) => {
@@ -10414,8 +13911,10 @@ function setupTerminalInteractions(mount) {
   };
 
   mount.addEventListener("pointerdown", handlePointerDown);
+  mount.addEventListener("wheel", handleTranscriptFallbackWheel, { capture: true, passive: false });
+  transcriptViewport?.addEventListener("wheel", handleTranscriptFallbackWheel, { capture: true, passive: false });
+  transcriptViewport?.addEventListener("click", handleTranscriptClick);
   viewport.addEventListener("scroll", handleViewportScroll, { passive: true });
-  viewport.addEventListener("wheel", handleViewportWheel, { capture: true, passive: false });
   viewport.addEventListener("touchstart", handleTouchStart, { capture: true, passive: true });
   viewport.addEventListener("touchmove", handleTouchMove, { capture: true, passive: true });
   viewport.addEventListener("touchend", handleTouchEnd, { capture: true, passive: true });
@@ -10428,8 +13927,10 @@ function setupTerminalInteractions(mount) {
 
   state.terminalInteractionCleanup = () => {
     mount.removeEventListener("pointerdown", handlePointerDown);
+    mount.removeEventListener("wheel", handleTranscriptFallbackWheel, true);
+    transcriptViewport?.removeEventListener("wheel", handleTranscriptFallbackWheel, true);
+    transcriptViewport?.removeEventListener("click", handleTranscriptClick);
     viewport.removeEventListener("scroll", handleViewportScroll);
-    viewport.removeEventListener("wheel", handleViewportWheel, true);
     viewport.removeEventListener("touchstart", handleTouchStart, true);
     viewport.removeEventListener("touchmove", handleTouchMove, true);
     viewport.removeEventListener("touchend", handleTouchEnd, true);
@@ -10452,6 +13953,7 @@ function mountTerminal() {
     observeTerminalMount(mount);
     applyTerminalDisplayProfile(mount);
     setupTerminalInteractions(mount);
+    renderTerminalTranscriptHistory();
     fitTerminalSoon();
 
     if (state.activeSessionId) {
@@ -10478,27 +13980,7 @@ function mountTerminal() {
     scrollSensitivity: getTerminalDisplayProfile(mount).scrollSensitivity,
     scrollback: 5000,
     smoothScrollDuration: getTerminalDisplayProfile(mount).smoothScrollDuration,
-    theme: {
-      background: "#090b0d",
-      foreground: "#f3efe8",
-      cursor: "#6ae3c6",
-      black: "#111315",
-      red: "#ff7f79",
-      green: "#6ae3c6",
-      yellow: "#f0c674",
-      blue: "#8fb9ff",
-      magenta: "#d3a6ff",
-      cyan: "#7fe0d4",
-      white: "#f3efe8",
-      brightBlack: "#6a7176",
-      brightRed: "#ff9f99",
-      brightGreen: "#8ff1d8",
-      brightYellow: "#f6d58e",
-      brightBlue: "#add0ff",
-      brightMagenta: "#e2c2ff",
-      brightCyan: "#a6efe6",
-      brightWhite: "#ffffff",
-    },
+    theme: TERMINAL_THEME,
   });
 
   state.fitAddon = new FitAddon();
@@ -10509,11 +13991,13 @@ function mountTerminal() {
     }
   });
   state.terminal.open(mount);
+  installTerminalFileLinkProvider();
   configureTerminalTextarea(state.terminal.textarea);
   resetTerminalTextarea();
   applyTerminalDisplayProfile(mount);
   loadCanvasRenderer();
   setupTerminalInteractions(mount);
+  renderTerminalTranscriptHistory({ scrollToBottom: true });
   fitTerminalSoon();
   window.setTimeout(() => fitTerminalSoon(), 60);
   window.setTimeout(() => fitTerminalSoon(), 220);
@@ -10532,6 +14016,7 @@ function mountTerminal() {
       return;
     }
 
+    hideTerminalTranscriptOverlay();
     state.websocket.send(JSON.stringify({ type: "input", data }));
     scheduleTerminalTextareaReset();
   });
@@ -10546,6 +14031,7 @@ function mountTerminal() {
     const handleResize = () => {
       const mount = document.querySelector("#terminal-mount");
       syncViewportMetrics();
+      refreshLayoutUi();
       applyTerminalDisplayProfile(mount);
       fitTerminalSoon();
     };
@@ -10598,6 +14084,7 @@ function connectToSession(sessionId) {
 
   closeWebsocket();
   clearPendingTerminalOutput();
+  clearTerminalTranscriptHistory();
   state.terminal.reset();
   state.terminalShowJumpToBottom = false;
   refreshTerminalJumpUi();
@@ -10631,7 +14118,8 @@ function connectToSession(sessionId) {
     const payload = JSON.parse(event.data);
 
     if (payload.type === "snapshot") {
-      queueTerminalOutput(payload.data || "", { scrollToBottom: true });
+      setTerminalTranscriptHistory(payload.data || "", { scrollToBottom: true });
+      queueTerminalOutput(payload.data || "", { mirrorTranscript: false, scrollToBottom: true });
       updateSession(payload.session);
       return;
     }
@@ -10659,7 +14147,9 @@ function connectToSession(sessionId) {
     }
 
     if (payload.type === "error") {
-      state.terminal.writeln(`\r\n[remote-vibes] ${payload.message}`);
+      const errorLine = `\r\n[remote-vibes] ${payload.message}\r\n`;
+      appendTerminalTranscriptOutput(errorLine, { scrollToBottom: true });
+      state.terminal.write(errorLine);
       if (/session not found/i.test(payload.message || "")) {
         closeWebsocket();
         void loadSessions();
@@ -10707,6 +14197,10 @@ function updateSession(session) {
 }
 
 function updatePort(port) {
+  if (!isLocalhostAppsEnabled()) {
+    return;
+  }
+
   const index = state.ports.findIndex((entry) => entry.port === port.port);
   if (index === -1) {
     state.ports = [...state.ports, port].sort((left, right) => left.port - right.port);
@@ -10746,6 +14240,36 @@ function syncOpenPortPreviewTabs() {
   }
 }
 
+function closePortPreviewTabs() {
+  const previousTabs = state.openFileTabs;
+  const activePath = normalizeFileTreePath(state.openFileRelativePath);
+  const activePortTabIndex = previousTabs.findIndex(
+    (tab) => tab.relativePath === activePath && tab.mode === "web" && tab.port,
+  );
+  const nextTabs = previousTabs.filter((tab) => tab.mode !== "web" || !tab.port);
+
+  if (nextTabs.length === previousTabs.length) {
+    return false;
+  }
+
+  state.openFileTabs = nextTabs;
+
+  if (activePortTabIndex >= 0) {
+    syncOpenFileStateFromTab(nextTabs[Math.min(activePortTabIndex, nextTabs.length - 1)] || null);
+  }
+
+  refreshFileTreeUi();
+  refreshOpenFileUi();
+  return true;
+}
+
+function clearLocalhostAppsSurfaces() {
+  const hadPorts = state.ports.length > 0;
+  state.ports = [];
+  state.portsLoadedAt = Date.now();
+  return closePortPreviewTabs() || hadPorts;
+}
+
 async function loadSessions() {
   try {
     const previousActiveSessionId = state.activeSessionId;
@@ -10759,6 +14283,10 @@ async function loadSessions() {
 
     if (!state.activeSessionId && state.sessions.length) {
       state.activeSessionId = state.sessions[0].id;
+    }
+
+    if (state.currentView === "browser-use" && state.browserUseSession.id && !state.browserUseSession.loading) {
+      void loadBrowserUseSession(state.browserUseSession.id, { silent: true });
     }
 
     if (state.currentView !== "shell") {
@@ -10792,9 +14320,14 @@ async function loadSessions() {
 }
 
 async function loadPorts() {
+  if (!isLocalhostAppsEnabled()) {
+    clearLocalhostAppsSurfaces();
+    return;
+  }
+
   try {
     const payload = await fetchJson("/api/ports");
-    state.ports = payload.ports;
+    state.ports = payload.ports ?? [];
     state.portsLoadedAt = Date.now();
     syncOpenPortPreviewTabs();
     refreshShellUi({ sessions: false, ports: true, files: false });
@@ -10831,13 +14364,28 @@ async function loadUpdateStatus({ force = false } = {}) {
 
 async function loadSettingsStatus() {
   try {
+    const wasLocalhostAppsEnabled = isLocalhostAppsEnabled();
     const payload = await fetchJson("/api/settings", {
       cache: "no-store",
     });
     applySettingsState(payload.settings);
+    const localhostAppsEnabled = isLocalhostAppsEnabled();
+
+    if (wasLocalhostAppsEnabled !== localhostAppsEnabled) {
+      if (!localhostAppsEnabled) {
+        clearLocalhostAppsSurfaces();
+      }
+      renderShell();
+      if (localhostAppsEnabled) {
+        void loadPorts();
+      }
+      return;
+    }
+
     refreshKnowledgeSettingsUi();
     if (state.currentView === "plugins") {
-      refreshAgentMailPluginUi();
+      refreshPluginSearchUi();
+      refreshBrowserUsePluginUi();
     }
     refreshSystemToastsUi();
   } catch (error) {
@@ -11091,10 +14639,13 @@ async function saveSettingsFromForm(form) {
       wikiGitRemoteName: String(formData.get("wikiGitRemoteName") || "origin"),
       wikiGitRemoteUrl: String(formData.get("wikiGitRemoteUrl") || ""),
       wikiPath: String(formData.get("wikiPath") || ""),
+      wikiPathConfigured: Boolean(String(formData.get("wikiPath") || "").trim()),
     }),
   });
 
   applySettingsState(payload.settings);
+  state.settings.wikiPath = wikiPath;
+  state.settings.wikiPathConfigured = true;
   applyAgentPromptState(payload.agentPrompt);
   state.knowledgeBase.noteCache = {};
 
@@ -11104,38 +14655,70 @@ async function saveSettingsFromForm(form) {
   }
 }
 
-async function setupAgentMailFromForm(form) {
-  const formData = new FormData(form);
-  const apiKey = String(formData.get("agentMailApiKey") || "").trim();
-  const body = {
-    agentMailProviderId: String(formData.get("agentMailProviderId") || "claude"),
-    apiKey: apiKey || undefined,
-    displayName: String(formData.get("agentMailDisplayName") || "Remote Vibes"),
-    domain: String(formData.get("agentMailDomain") || ""),
-    inboxId: String(formData.get("agentMailInboxId") || ""),
-    username: String(formData.get("agentMailUsername") || ""),
-  };
-
-  if (formData.get("agentMailEnabled") !== "on") {
-    const payload = await fetchJson("/api/settings", {
-      method: "PATCH",
-      body: JSON.stringify({
-        agentMailDisplayName: body.displayName,
-        agentMailDomain: body.domain,
-        agentMailEnabled: false,
-        agentMailInboxId: body.inboxId,
-        agentMailProviderId: body.agentMailProviderId,
-        agentMailUsername: body.username,
-        ...(apiKey ? { agentMailApiKey: apiKey } : {}),
-      }),
-    });
-    applySettingsState(payload.settings);
-    return;
+async function saveBrainFolderSelection(selectedPath) {
+  const wikiPath = normalizeWorkspaceRoot(selectedPath);
+  if (!wikiPath) {
+    throw new Error("Choose or create a brain folder first.");
   }
 
-  const payload = await fetchJson("/api/agentmail/setup", {
+  const payload = await fetchJson("/api/settings", {
+    method: "PATCH",
+    body: JSON.stringify({
+      wikiPath,
+      wikiPathConfigured: true,
+    }),
+  });
+
+  applySettingsState(payload.settings);
+  state.settings.wikiPath = payload.settings?.wikiPath || state.settings.wikiPath;
+  state.settings.wikiPathConfigured = true;
+  applyAgentPromptState(payload.agentPrompt);
+  state.knowledgeBase.noteCache = {};
+  state.folderPicker.open = false;
+  setCurrentView("knowledge-base");
+  await loadKnowledgeBaseIndex();
+  await ensureKnowledgeBaseSelectionLoaded({ force: true });
+  renderShell();
+}
+
+async function cloneBrainFromGit({ remoteUrl, wikiPath = "" }) {
+  const payload = await fetchJson("/api/wiki/clone", {
     method: "POST",
-    body: JSON.stringify(body),
+    body: JSON.stringify({
+      remoteUrl,
+      wikiPath,
+    }),
+  });
+
+  applySettingsState(payload.settings);
+  applyAgentPromptState(payload.agentPrompt);
+  state.knowledgeBase.noteCache = {};
+  state.folderPicker.open = false;
+  state.brainSetupCloning = false;
+  state.brainSetupError = "";
+  setCurrentView("knowledge-base");
+  await loadKnowledgeBaseIndex();
+  await ensureKnowledgeBaseSelectionLoaded({ force: true });
+  renderShell();
+}
+
+async function setupBrowserUseFromForm(form) {
+  const formData = new FormData(form);
+  const apiKey = String(formData.get("browserUseAnthropicApiKey") || "").trim();
+  const payload = await fetchJson("/api/browser-use/setup", {
+    method: "POST",
+    body: JSON.stringify({
+      anthropicApiKey: apiKey || undefined,
+      browserPath: String(formData.get("browserUseBrowserPath") || ""),
+      enabled: formData.get("browserUseEnabled") === "on",
+      headless: formData.get("browserUseHeadless") === "on",
+      installedPluginIds: getUpdatedInstalledPluginIds("browser-use", formData.get("browserUseEnabled") === "on"),
+      keepTabs: formData.get("browserUseKeepTabs") === "on",
+      maxTurns: String(formData.get("browserUseMaxTurns") || ""),
+      model: String(formData.get("browserUseModel") || ""),
+      profileDir: String(formData.get("browserUseProfileDir") || ""),
+      workerPath: String(formData.get("browserUseWorkerPath") || ""),
+    }),
   });
   applySettingsState(payload.settings);
 }
@@ -11208,11 +14791,11 @@ async function bootstrapApp() {
   state.providers = payload.providers;
   state.sessions = payload.sessions;
   pruneSessionReadState();
-  state.ports = payload.ports ?? [];
-  state.portsLoadedAt = Date.now();
   state.defaultCwd = payload.cwd;
   state.defaultProviderId = payload.defaultProviderId;
   applySettingsState(payload.settings);
+  state.ports = isLocalhostAppsEnabled() ? (payload.ports ?? []) : [];
+  state.portsLoadedAt = Date.now();
   state.preferredBaseUrl = payload.preferredUrl ? new URL(payload.preferredUrl).origin : "";
   applyAgentPromptState(payload.agentPrompt);
 
@@ -11225,7 +14808,7 @@ async function bootstrapApp() {
   state.activeSessionId = payload.sessions[0]?.id ?? null;
   syncFilesRoot({ force: true });
 
-  if (route.view === "file") {
+  if (route.view === "file" && !isBrainSetupRequired()) {
     setOpenFileSelection(route.path, {
       status: route.path ? "loading" : "idle",
       message: "",
@@ -11240,7 +14823,7 @@ async function bootstrapApp() {
     return;
   }
 
-  if (state.currentView === "knowledge-base") {
+  if (state.currentView === "knowledge-base" && !isBrainSetupRequired()) {
     await loadKnowledgeBaseIndex();
     await ensureKnowledgeBaseSelectionLoaded();
     updateRoute({ view: "knowledge-base", notePath: state.knowledgeBase.selectedNotePath });
@@ -11287,7 +14870,7 @@ async function bootstrapApp() {
 
   state.pollTimer = window.setInterval(() => {
     loadSessions();
-    if (Date.now() - state.portsLoadedAt > PORTS_BACKGROUND_REFRESH_MS) {
+    if (isLocalhostAppsEnabled() && Date.now() - state.portsLoadedAt > PORTS_BACKGROUND_REFRESH_MS) {
       loadPorts();
     }
     if (state.currentView === "system") {

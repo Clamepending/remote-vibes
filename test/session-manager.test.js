@@ -197,6 +197,12 @@ async function writeClaudeSubagent(homeDir, cwd, sessionId, {
   await writeFile(path.join(subagentsDir, `${fileBase}.jsonl`), `${lines.map((line) => JSON.stringify(line)).join("\n")}\n`, "utf8");
 }
 
+async function writeClaudeTranscript(homeDir, cwd, sessionId, lines) {
+  const projectDir = path.join(homeDir, ".claude", "projects", path.resolve(cwd).replaceAll(path.sep, "-"));
+  await mkdir(projectDir, { recursive: true });
+  await writeFile(path.join(projectDir, `${sessionId}.jsonl`), `${lines.map((line) => JSON.stringify(line)).join("\n")}\n`, "utf8");
+}
+
 async function writeGeminiSessions(homeDir, cwd, projectId, sessions) {
   const geminiDir = path.join(homeDir, ".gemini");
   await mkdir(geminiDir, { recursive: true });
@@ -815,6 +821,7 @@ test("Claude sessions expose completed subagents from Claude sidechain transcrip
     assert.equal(serialized.subagents.length, 1);
     assert.equal(serialized.subagents[0].name, "ARC hill-climbing trial");
     assert.equal(serialized.subagents[0].agentType, "general-purpose");
+    assert.equal(serialized.subagents[0].source, "claude");
     assert.equal(serialized.subagents[0].status, "done");
     assert.equal(serialized.subagents[0].messageCount, 2);
     assert.equal(serialized.subagents[0].toolUseCount, 0);
@@ -850,10 +857,152 @@ test("Claude sessions expose active subagents when the session id is the provide
     assert.equal(serialized.subagents.length, 1);
     assert.equal(serialized.subagents[0].name, "Read docs in parallel");
     assert.equal(serialized.subagents[0].agentType, "explorer");
+    assert.equal(serialized.subagents[0].source, "claude");
     assert.equal(serialized.subagents[0].status, "working");
     assert.equal(serialized.subagents[0].messageCount, 2);
     assert.equal(serialized.subagents[0].toolUseCount, 1);
     assert.equal(serialized.subagents[0].parentProviderSessionId, claudeSessionId);
+  } finally {
+    await cleanupManager(manager, workspaceDir, userHomeDir);
+  }
+});
+
+test("Claude monitor tasks keep sessions working until the task stops", async () => {
+  const { manager, workspaceDir, userHomeDir } = await createManager();
+
+  try {
+    const claudeSessionId = "33333333-4444-4555-8666-777777777777";
+    const taskId = "bmonitor1";
+    const startedAt = new Date().toISOString();
+    const stoppedAt = new Date(Date.now() + 1_000).toISOString();
+
+    const monitorStarted = {
+      type: "user",
+      timestamp: startedAt,
+      message: {
+        role: "user",
+        content: [{
+          type: "tool_result",
+          content: `Monitor started (task ${taskId}, timeout 600000ms). You will be notified on each event.`,
+        }],
+      },
+      toolUseResult: { taskId, timeoutMs: 600000, persistent: false },
+    };
+
+    await writeClaudeTranscript(userHomeDir, workspaceDir, claudeSessionId, [monitorStarted]);
+
+    const session = manager.buildSessionRecord({
+      id: claudeSessionId,
+      providerId: "claude",
+      providerLabel: "Claude Code",
+      name: "Claude 1",
+      cwd: workspaceDir,
+      activityStatus: "done",
+      status: "running",
+    });
+
+    let serialized = manager.serializeSession(session);
+    assert.equal(serialized.backgroundActivity.active, true);
+    assert.equal(serialized.backgroundActivity.activeCount, 1);
+    assert.equal(serialized.activityStatus, "working");
+
+    await writeClaudeTranscript(userHomeDir, workspaceDir, claudeSessionId, [
+      monitorStarted,
+      {
+        type: "user",
+        timestamp: stoppedAt,
+        message: {
+          role: "user",
+          content: [{
+            type: "tool_result",
+            content: `{"message":"Successfully stopped task: ${taskId} (tail -F train.log)","task_id":"${taskId}"}`,
+          }],
+        },
+      },
+    ]);
+
+    serialized = manager.serializeSession(session);
+    assert.equal(serialized.backgroundActivity.active, false);
+    assert.equal(serialized.backgroundActivity.activeCount, 0);
+    assert.equal(serialized.backgroundActivity.updatedAt, stoppedAt);
+    assert.equal(serialized.activityStatus, "done");
+  } finally {
+    await cleanupManager(manager, workspaceDir, userHomeDir);
+  }
+});
+
+test("Claude background Bash shells keep sessions working", async () => {
+  const { manager, workspaceDir, userHomeDir } = await createManager();
+
+  try {
+    const claudeSessionId = "33333333-4444-4555-8666-888888888888";
+    const shellTaskId = "bshell123";
+    const startedAt = new Date().toISOString();
+    const foregroundCompletedAt = new Date(Date.now() + 1_000).toISOString();
+
+    const backgroundShellStarted = {
+      type: "user",
+      timestamp: startedAt,
+      message: {
+        role: "user",
+        content: [{
+          type: "tool_result",
+          tool_use_id: "toolu_background",
+          content: `Command running in background with ID: ${shellTaskId}. Output is being written to: /tmp/${shellTaskId}.output`,
+          is_error: false,
+        }],
+      },
+      toolUseResult: {
+        stdout: "",
+        stderr: "",
+        interrupted: false,
+        backgroundTaskId: shellTaskId,
+      },
+    };
+
+    await writeClaudeTranscript(userHomeDir, workspaceDir, claudeSessionId, [backgroundShellStarted]);
+
+    const session = manager.buildSessionRecord({
+      id: claudeSessionId,
+      providerId: "claude",
+      providerLabel: "Claude Code",
+      name: "Claude 1",
+      cwd: workspaceDir,
+      activityStatus: "done",
+      status: "running",
+    });
+
+    let serialized = manager.serializeSession(session);
+    assert.equal(serialized.backgroundActivity.active, true);
+    assert.equal(serialized.backgroundActivity.activeCount, 1);
+    assert.equal(serialized.activityStatus, "working");
+
+    await writeClaudeTranscript(userHomeDir, workspaceDir, claudeSessionId, [
+      backgroundShellStarted,
+      {
+        type: "user",
+        timestamp: foregroundCompletedAt,
+        message: {
+          role: "user",
+          content: [{
+            type: "tool_result",
+            tool_use_id: "toolu_foreground",
+            content: "(Bash completed with no output)",
+            is_error: false,
+          }],
+        },
+        toolUseResult: {
+          stdout: "",
+          stderr: "",
+          interrupted: false,
+        },
+      },
+    ]);
+
+    serialized = manager.serializeSession(session);
+    assert.equal(serialized.backgroundActivity.active, true);
+    assert.equal(serialized.backgroundActivity.activeCount, 1);
+    assert.equal(serialized.activityStatus, "working");
   } finally {
     await cleanupManager(manager, workspaceDir, userHomeDir);
   }

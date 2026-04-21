@@ -4,6 +4,7 @@ import path from "node:path";
 export const REMOTE_VIBES_STATE_DIR_ENV = "REMOTE_VIBES_STATE_DIR";
 export const REMOTE_VIBES_ROOT_ENV = "REMOTE_VIBES_ROOT";
 export const DEFAULT_STATE_SUBDIR = ".remote-vibes";
+export const REMOTE_VIBES_SYSTEM_SUBDIR = "remote-vibes-system";
 
 function expandHomePath(value, homeDir = os.homedir()) {
   const rawValue = String(value || "").trim();
@@ -39,4 +40,14 @@ export function getRemoteVibesStateDir({
 
 export function getLegacyWorkspaceStateDir(cwd = process.cwd()) {
   return path.join(cwd, ".remote-vibes");
+}
+
+export function getRemoteVibesSystemDir({
+  cwd = process.cwd(),
+  env = process.env,
+  homeDir = os.homedir(),
+  stateDir = null,
+} = {}) {
+  const resolvedStateDir = stateDir || getRemoteVibesStateDir({ cwd, env, homeDir });
+  return path.join(resolvedStateDir, REMOTE_VIBES_SYSTEM_SUBDIR);
 }

@@ -224,6 +224,7 @@ test("AgentMail polling backfills unread inbox messages and persists processed i
     { body: { count: 1, messages: [message] } },
     { body: { count: 1, messages: [message] } },
   ]);
+  const systemRoot = path.join(stateDir, "remote-vibes-system");
 
   try {
     const service = new AgentMailService({
@@ -260,7 +261,7 @@ test("AgentMail polling backfills unread inbox messages and persists processed i
     await flushAgentMailBackgroundWork();
     assert.equal(firstPoll.length, 1);
     assert.equal(createdSessions.length, 1);
-    assert.equal(createdSessions[0].cwd, "/tmp/wiki");
+    assert.equal(createdSessions[0].cwd, systemRoot);
     assert.equal(createdSessions[0].name, "email: Missed while offline");
     assert.equal(writes.length, 2);
     assert.match(writes[0].input, /simple greeting or test email/);

@@ -1,7 +1,7 @@
 import { execFile } from "node:child_process";
 import { randomUUID } from "node:crypto";
 import httpProxy from "http-proxy";
-import { mkdir, rename, rm, writeFile } from "node:fs/promises";
+import { mkdir, readdir, realpath, rename, rm, stat, writeFile } from "node:fs/promises";
 import { networkInterfaces } from "node:os";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
@@ -19,13 +19,14 @@ import {
 import { AgentMailService } from "./agentmail-service.js";
 import { AgentPromptStore } from "./agent-prompt-store.js";
 import { AgentRunStore } from "./agent-run-store.js";
+import { BrowserUseService } from "./browser-use-service.js";
 import { createFolderEntry, listFolderEntries } from "./folder-browser.js";
 import { PortAliasStore } from "./port-alias-store.js";
 import { listListeningPorts } from "./ports.js";
 import { SettingsStore } from "./settings-store.js";
 import { SessionManager } from "./session-manager.js";
 import { SleepPreventionService } from "./sleep-prevention.js";
-import { getRemoteVibesStateDir } from "./state-paths.js";
+import { getRemoteVibesStateDir, getRemoteVibesSystemDir } from "./state-paths.js";
 import { collectSystemMetrics } from "./system-metrics.js";
 import { SystemMetricsHistoryStore } from "./system-metrics-history.js";
 import { TailscaleServeManager } from "./tailscale-serve.js";
@@ -45,10 +46,44 @@ const publicDir = path.resolve(__dirname, "..", "public");
 const execFileAsync = promisify(execFile);
 const SERVER_INFO_FILENAME = "server.json";
 const TAILSCALE_HTTPS_SERVE_ENABLED = process.env.REMOTE_VIBES_TAILSCALE_HTTPS !== "0";
+const JSON_BODY_LIMIT = "25mb";
+
+function buildHttpError(message, statusCode = 400) {
+  const error = new Error(message);
+  error.statusCode = statusCode;
+  return error;
+}
 
 function normalizePort(value) {
   const port = Number(value);
   return Number.isInteger(port) && port > 0 && port < 65_536 ? port : null;
+}
+
+function normalizeGitCloneRemoteUrl(value) {
+  const remoteUrl = String(value || "").trim();
+  if (!remoteUrl) {
+    throw buildHttpError("Git repo URL is required.", 400);
+  }
+
+  if (remoteUrl.startsWith("-") || remoteUrl.includes("\0")) {
+    throw buildHttpError("Git repo URL is invalid.", 400);
+  }
+
+  return remoteUrl;
+}
+
+function getGitRepoFolderName(remoteUrl) {
+  const cleaned = String(remoteUrl || "")
+    .trim()
+    .replace(/[?#].*$/, "")
+    .replace(/\/+$/, "");
+  const rawName = cleaned.split(/[/:]/).filter(Boolean).at(-1) || "brain";
+  const folderName = rawName
+    .replace(/\.git$/i, "")
+    .replace(/[^A-Za-z0-9._-]+/g, "-")
+    .replace(/^-+|-+$/g, "");
+
+  return folderName || "brain";
 }
 
 function getPortFromProxyPath(pathname) {
@@ -357,6 +392,7 @@ export async function createRemoteVibesApp({
     }),
   onTerminate = null,
   agentMailServiceFactory = null,
+  browserUseServiceFactory = null,
   systemMetricsProvider = collectSystemMetrics,
   systemMetricsSampleIntervalMs = 60_000,
   updateManager = new UpdateManager({ cwd, stateDir, port }),
@@ -365,11 +401,21 @@ export async function createRemoteVibesApp({
   const defaultProviderId = getDefaultProviderId(providers);
   const app = express();
   const agentRunStore = new AgentRunStore({ stateDir });
+  const systemRootPath = getRemoteVibesSystemDir({ cwd, stateDir });
   const settingsStore = new SettingsStore({ cwd, stateDir });
   const systemMetricsHistoryStore = new SystemMetricsHistoryStore({ stateDir });
   const portAliasStore = new PortAliasStore({ stateDir });
   await settingsStore.initialize();
+  await mkdir(systemRootPath, { recursive: true });
   await systemMetricsHistoryStore.initialize();
+  const browserUseService =
+    typeof browserUseServiceFactory === "function"
+      ? browserUseServiceFactory(settingsStore.settings, { cwd, stateDir, systemRootPath })
+      : new BrowserUseService({
+          settings: settingsStore.settings,
+          stateDir,
+          systemRootPath,
+        });
   const wikiBackupService = new WikiBackupService({
     enabled: settingsStore.settings.wikiGitBackupEnabled,
     intervalMs: settingsStore.settings.wikiBackupIntervalMs,
@@ -388,6 +434,8 @@ export async function createRemoteVibesApp({
     stateDir,
     agentRunStore,
     wikiRootPath: settingsStore.settings.wikiPath,
+    systemRootPath,
+    extraSubagentsProvider: (session) => browserUseService.listSubagentsForSession(session.id),
   });
   const agentPromptStore = new AgentPromptStore({
     cwd,
@@ -396,15 +444,17 @@ export async function createRemoteVibesApp({
   });
   const agentMailService =
     typeof agentMailServiceFactory === "function"
-      ? agentMailServiceFactory(settingsStore.settings, { cwd, sessionManager, stateDir })
+      ? agentMailServiceFactory(settingsStore.settings, { cwd, sessionManager, stateDir, systemRootPath })
       : new AgentMailService({
           cwd,
           sessionManager,
           settings: settingsStore.settings,
           stateDir,
+          systemRootPath,
         });
   await agentRunStore.initialize();
   await portAliasStore.initialize();
+  await browserUseService.initialize();
   await sessionManager.initialize();
   await agentPromptStore.initialize();
   wikiBackupService.start();
@@ -511,8 +561,78 @@ export async function createRemoteVibesApp({
     return settingsStore.getState({
       agentMailStatus: agentMailService.getStatus(),
       backupStatus: wikiBackupService.getStatus(),
+      browserUseStatus: browserUseService.getStatus(),
       sleepStatus: sleepPreventionService.getStatus(),
     });
+  }
+
+  async function applyRuntimeSettings(settings, { backupReason = "settings" } = {}) {
+    const wikiRootChanged = settings.wikiPath !== agentPromptStore.wikiRootPath;
+    agentPromptStore.setWikiRootPath(settings.wikiPath);
+    sessionManager.setWikiRootPath(settings.wikiPath);
+    if (wikiRootChanged) {
+      await agentPromptStore.refreshBuiltInSections();
+    } else {
+      await agentPromptStore.save(agentPromptStore.prompt);
+    }
+    wikiBackupService.setConfig({
+      enabled: settings.wikiGitBackupEnabled,
+      intervalMs: settings.wikiBackupIntervalMs,
+      remoteBranch: settings.wikiGitRemoteBranch,
+      remoteEnabled: settings.wikiGitRemoteEnabled,
+      remoteName: settings.wikiGitRemoteName,
+      remoteUrl: settings.wikiGitRemoteUrl,
+      wikiPath: settings.wikiPath,
+    });
+    wikiBackupService.start();
+    sleepPreventionService.setConfig({
+      enabled: settings.preventSleepEnabled,
+    });
+    browserUseService.restart(settingsStore.settings);
+    agentMailService.restart(settingsStore.settings);
+    if (backupReason) {
+      void wikiBackupService.runBackup({ reason: backupReason });
+    }
+  }
+
+  async function ensureBrainCloneTargetAvailable(targetPath) {
+    await mkdir(path.dirname(targetPath), { recursive: true });
+
+    try {
+      const stats = await stat(targetPath);
+      if (!stats.isDirectory()) {
+        throw buildHttpError(`Brain path is not a directory: ${targetPath}`, 400);
+      }
+
+      const entries = await readdir(targetPath);
+      const meaningfulEntries = entries.filter((entry) => entry !== ".DS_Store");
+      if (meaningfulEntries.length > 0) {
+        throw buildHttpError("Brain clone folder must be empty.", 409);
+      }
+
+      return { existed: true };
+    } catch (error) {
+      if (error?.code === "ENOENT") {
+        return { existed: false };
+      }
+
+      throw error;
+    }
+  }
+
+  async function readBrainCloneBranch(targetPath) {
+    try {
+      const { stdout = "" } = await execFileAsync("git", [
+        "-C",
+        targetPath,
+        "branch",
+        "--show-current",
+      ]);
+      const branchName = stdout.trim();
+      return branchName || "main";
+    } catch {
+      return "main";
+    }
   }
 
   async function collectAndRecordSystemMetrics({ forceHistory = false } = {}) {
@@ -546,7 +666,7 @@ export async function createRemoteVibesApp({
     return systemMetricsSamplePromise;
   }
 
-  app.use(express.json());
+  app.use(express.json({ limit: JSON_BODY_LIMIT }));
 
   app.use((request, response, next) => {
     if (request.path.startsWith("/api/") && request.get("X-Remote-Vibes-API") === "1") {
@@ -725,6 +845,7 @@ export async function createRemoteVibesApp({
   app.patch("/api/settings", async (request, response) => {
     try {
       const settings = await settingsStore.update({
+        agentAutomations: request.body?.agentAutomations,
         preventSleepEnabled: request.body?.preventSleepEnabled,
         agentMailApiKey: request.body?.agentMailApiKey,
         agentMailClientId: request.body?.agentMailClientId,
@@ -735,36 +856,80 @@ export async function createRemoteVibesApp({
         agentMailMode: request.body?.agentMailMode,
         agentMailProviderId: request.body?.agentMailProviderId,
         agentMailUsername: request.body?.agentMailUsername,
+        browserUseAnthropicApiKey: request.body?.browserUseAnthropicApiKey,
+        browserUseBrowserPath: request.body?.browserUseBrowserPath,
+        browserUseEnabled: request.body?.browserUseEnabled,
+        browserUseHeadless: request.body?.browserUseHeadless,
+        browserUseKeepTabs: request.body?.browserUseKeepTabs,
+        browserUseModel: request.body?.browserUseModel,
+        browserUseProfileDir: request.body?.browserUseProfileDir,
+        browserUseWorkerPath: request.body?.browserUseWorkerPath,
+        installedPluginIds: request.body?.installedPluginIds,
         wikiGitBackupEnabled: request.body?.wikiGitBackupEnabled,
         wikiGitRemoteBranch: request.body?.wikiGitRemoteBranch,
         wikiGitRemoteEnabled: request.body?.wikiGitRemoteEnabled,
         wikiGitRemoteName: request.body?.wikiGitRemoteName,
         wikiGitRemoteUrl: request.body?.wikiGitRemoteUrl,
         wikiPath: request.body?.wikiPath,
+        wikiPathConfigured: request.body?.wikiPathConfigured,
       });
 
-      agentPromptStore.setWikiRootPath(settings.wikiPath);
-      sessionManager.setWikiRootPath(settings.wikiPath);
-      await agentPromptStore.save(agentPromptStore.prompt);
-      wikiBackupService.setConfig({
-        enabled: settings.wikiGitBackupEnabled,
-        intervalMs: settings.wikiBackupIntervalMs,
-        remoteBranch: settings.wikiGitRemoteBranch,
-        remoteEnabled: settings.wikiGitRemoteEnabled,
-        remoteName: settings.wikiGitRemoteName,
-        remoteUrl: settings.wikiGitRemoteUrl,
-        wikiPath: settings.wikiPath,
-      });
-      wikiBackupService.start();
-      sleepPreventionService.setConfig({
-        enabled: settings.preventSleepEnabled,
-      });
-      agentMailService.restart(settingsStore.settings);
-      void wikiBackupService.runBackup({ reason: "settings" });
+      await applyRuntimeSettings(settings, { backupReason: "settings" });
 
       response.json({
         settings: getSettingsState(),
         agentPrompt: await agentPromptStore.getState(),
+      });
+    } catch (error) {
+      response.status(error.statusCode || 400).json({ error: error.message });
+    }
+  });
+
+  app.post("/api/wiki/clone", async (request, response) => {
+    let targetPath = "";
+    let targetExisted = true;
+
+    try {
+      const remoteUrl = normalizeGitCloneRemoteUrl(request.body?.remoteUrl);
+      const defaultFolder = path.join(path.dirname(stateDir), getGitRepoFolderName(remoteUrl));
+      targetPath = settingsStore.normalizeWikiPath(request.body?.wikiPath || defaultFolder);
+      const availability = await ensureBrainCloneTargetAvailable(targetPath);
+      targetExisted = availability.existed;
+
+      try {
+        await execFileAsync("git", ["clone", remoteUrl, targetPath], {
+          timeout: 120_000,
+        });
+      } catch (error) {
+        if (!targetExisted && targetPath) {
+          await rm(targetPath, { recursive: true, force: true }).catch(() => {});
+        }
+
+        const stderr = String(error?.stderr || error?.message || "").trim();
+        throw buildHttpError(stderr || "Could not clone the brain git repo.", 400);
+      }
+
+      const wikiPath = await realpath(targetPath);
+      const branch = await readBrainCloneBranch(wikiPath);
+      const settings = await settingsStore.update({
+        wikiGitBackupEnabled: true,
+        wikiGitRemoteBranch: branch,
+        wikiGitRemoteEnabled: true,
+        wikiGitRemoteName: "origin",
+        wikiGitRemoteUrl: remoteUrl,
+        wikiPath,
+      });
+
+      await applyRuntimeSettings(settings, { backupReason: "clone" });
+
+      response.json({
+        settings: getSettingsState(),
+        agentPrompt: await agentPromptStore.getState(),
+        clone: {
+          branch,
+          remoteUrl,
+          wikiPath,
+        },
       });
     } catch (error) {
       response.status(error.statusCode || 400).json({ error: error.message });
@@ -830,6 +995,7 @@ export async function createRemoteVibesApp({
         agentMailMode: "websocket",
         agentMailProviderId: request.body?.agentMailProviderId || request.body?.providerId,
         agentMailUsername: username,
+        installedPluginIds: request.body?.installedPluginIds,
       });
       agentMailService.restart(settingsStore.settings);
 
@@ -860,6 +1026,191 @@ export async function createRemoteVibesApp({
       response.json({ ok: true, reply });
     } catch (error) {
       response.status(400).json({ error: error.message || "Could not send AgentMail reply." });
+    }
+  });
+
+  app.get("/api/browser-use/status", (_request, response) => {
+    response.json({ browserUse: browserUseService.getStatus() });
+  });
+
+  app.post("/api/browser-use/setup", async (request, response) => {
+    try {
+      const apiKey = String(request.body?.anthropicApiKey || request.body?.browserUseAnthropicApiKey || "").trim();
+      const settings = await settingsStore.update({
+        browserUseAnthropicApiKey: apiKey || undefined,
+        browserUseBrowserPath: request.body?.browserPath ?? request.body?.browserUseBrowserPath,
+        browserUseEnabled: request.body?.enabled ?? request.body?.browserUseEnabled,
+        browserUseHeadless: request.body?.headless ?? request.body?.browserUseHeadless,
+        browserUseKeepTabs: request.body?.keepTabs ?? request.body?.browserUseKeepTabs,
+        browserUseMaxTurns: request.body?.maxTurns ?? request.body?.maxSteps ?? request.body?.browserUseMaxTurns,
+        browserUseModel: request.body?.model ?? request.body?.browserUseModel,
+        browserUseProfileDir: request.body?.profileDir ?? request.body?.browserUseProfileDir,
+        browserUseWorkerPath: request.body?.workerPath ?? request.body?.browserUseWorkerPath,
+        installedPluginIds: request.body?.installedPluginIds,
+      });
+      await applyRuntimeSettings(settings, { backupReason: false });
+
+      response.json({
+        browserUse: browserUseService.getStatus(),
+        settings: getSettingsState(),
+      });
+    } catch (error) {
+      response.status(400).json({ error: error.message || "Could not set up browser-use plugin." });
+    }
+  });
+
+  app.get("/api/browser-use/sessions", (_request, response) => {
+    response.json({ sessions: browserUseService.listSessions() });
+  });
+
+  app.post("/api/browser-use/sessions", async (request, response) => {
+    try {
+      const token = String(request.headers["x-remote-vibes-browser-use-token"] || request.body?.token || "").trim();
+      if (!browserUseService.validateCreateRequest(token)) {
+        response.status(403).json({ error: "Invalid browser-use token." });
+        return;
+      }
+
+      const session = await browserUseService.createSession({
+        callerSessionId: request.body?.callerSessionId || request.body?.parentSessionId,
+        cwd: request.body?.cwd,
+        maxSteps: request.body?.maxSteps,
+        maxTurns: request.body?.maxTurns,
+        prompt: request.body?.prompt,
+        task: request.body?.task,
+        taskPrompt: request.body?.taskPrompt,
+        title: request.body?.title || request.body?.name,
+        url: request.body?.url,
+      });
+
+      response.status(201).json({ session });
+    } catch (error) {
+      response.status(400).json({ error: error.message || "Could not start browser-use session." });
+    }
+  });
+
+  app.get("/api/browser-use/sessions/:browserUseSessionId", (request, response) => {
+    const session = browserUseService.getSession(request.params.browserUseSessionId, { includeSnapshot: true });
+    if (!session) {
+      response.status(404).json({ error: "Browser-use session not found." });
+      return;
+    }
+
+    response.json({ session });
+  });
+
+  app.delete("/api/browser-use/sessions/:browserUseSessionId", async (request, response) => {
+    const session = await browserUseService.deleteSession(request.params.browserUseSessionId);
+    if (!session) {
+      response.status(404).json({ error: "Browser-use session not found." });
+      return;
+    }
+
+    response.json({ ok: true, session });
+  });
+
+  app.get("/api/computeruse/device/wait-task", async (request, response) => {
+    try {
+      if (!browserUseService.validateDeviceRequest(request)) {
+        response.status(403).json({ error: "Invalid browser-use device token." });
+        return;
+      }
+
+      const task = await browserUseService.claimNextTask({
+        deviceId: String(request.get("x-ottoauth-mock-device") || "").trim(),
+      });
+
+      if (!task) {
+        response.status(204).end();
+        return;
+      }
+
+      response.json(task);
+    } catch (error) {
+      response.status(400).json({ error: error.message || "Could not claim browser-use task." });
+    }
+  });
+
+  app.post("/api/computeruse/device/tasks/:browserUseSessionId/snapshot", async (request, response) => {
+    try {
+      if (!browserUseService.validateDeviceRequest(request)) {
+        response.status(403).json({ error: "Invalid browser-use device token." });
+        return;
+      }
+
+      const session = await browserUseService.recordSnapshot(request.params.browserUseSessionId, request.body);
+      if (!session) {
+        response.status(404).json({ error: "Browser-use session not found." });
+        return;
+      }
+
+      response.json({ ok: true });
+    } catch (error) {
+      response.status(400).json({ error: error.message || "Could not record browser-use snapshot." });
+    }
+  });
+
+  app.post("/api/computeruse/device/tasks/:browserUseSessionId/events", async (request, response) => {
+    try {
+      if (!browserUseService.validateDeviceRequest(request)) {
+        response.status(403).json({ error: "Invalid browser-use device token." });
+        return;
+      }
+
+      const session = await browserUseService.recordActivity(request.params.browserUseSessionId, request.body);
+      if (!session) {
+        response.status(404).json({ error: "Browser-use session not found." });
+        return;
+      }
+
+      response.json({ ok: true });
+    } catch (error) {
+      response.status(400).json({ error: error.message || "Could not record browser-use event." });
+    }
+  });
+
+  app.post("/api/computeruse/device/tasks/:browserUseSessionId/local-agent-complete", async (request, response) => {
+    try {
+      if (!browserUseService.validateDeviceRequest(request)) {
+        response.status(403).json({ error: "Invalid browser-use device token." });
+        return;
+      }
+
+      const session = await browserUseService.completeTask(request.params.browserUseSessionId, request.body);
+      if (!session) {
+        response.status(404).json({ error: "Browser-use session not found." });
+        return;
+      }
+
+      response.json({ ok: true, session });
+    } catch (error) {
+      response.status(400).json({ error: error.message || "Could not complete browser-use task." });
+    }
+  });
+
+  app.get("/api/computeruse/device/tasks/:browserUseSessionId/messages", (request, response) => {
+    if (!browserUseService.validateDeviceRequest(request)) {
+      response.status(403).json({ error: "Invalid browser-use device token." });
+      return;
+    }
+
+    response.json({ messages: browserUseService.getTaskMessages(request.params.browserUseSessionId) });
+  });
+
+  app.post("/api/computeruse/device/tasks/:browserUseSessionId/messages", async (request, response) => {
+    try {
+      if (!browserUseService.validateDeviceRequest(request)) {
+        response.status(403).json({ error: "Invalid browser-use device token." });
+        return;
+      }
+
+      const message = await browserUseService.addTaskMessage(
+        request.params.browserUseSessionId,
+        request.body?.message,
+      );
+      response.json({ message });
+    } catch (error) {
+      response.status(400).json({ error: error.message || "Could not record browser-use message." });
     }
   });
 
@@ -1170,12 +1521,15 @@ export async function createRemoteVibesApp({
   updateManager.setRuntime?.({ port: resolvedPort });
   urls = await accessUrlsProvider(host, resolvedPort);
   preferredUrl = pickPreferredUrl(urls)?.url ?? urls[0]?.url ?? null;
+  const helperBaseUrl = getHelperBaseUrl(host, resolvedPort);
+  browserUseService.setServerBaseUrl(helperBaseUrl);
   await writeServerInfo(stateDir, {
     agentMailReplyToken: agentMailService.replyToken,
+    browserUseToken: browserUseService.requestToken,
     pid: process.pid,
     host,
     port: resolvedPort,
-    helperBaseUrl: getHelperBaseUrl(host, resolvedPort),
+    helperBaseUrl,
     preferredUrl,
   });
   if (systemMetricsSampleIntervalMs > 0) {
@@ -1260,6 +1614,7 @@ export async function createRemoteVibesApp({
 
     closePromise = (async () => {
       await sessionManager.shutdown({ preserveSessions: persistSessions });
+      await browserUseService.shutdown();
       await removeServerInfo(stateDir);
       agentMailService.stop();
       wikiBackupService.stop();

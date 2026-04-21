@@ -5,8 +5,8 @@ import { mkdir, readFile, rename, writeFile } from "node:fs/promises";
 
 const MANAGED_MARKER = "<!-- remote-vibes:managed-agent-prompt -->";
 const WIKI_V2_MARKER = "<!-- remote-vibes:wiki-v2-protocol:v2 -->";
-const BUILT_IN_SECTION_MARKER_PATTERN =
-  /<!-- remote-vibes:(wiki-v2-protocol|agent-mailbox-protocol):v\d+ -->/;
+const WIKI_V2_SECTION_MARKER_PATTERN = /<!-- remote-vibes:wiki-v2-protocol:v\d+ -->/;
+const AGENT_MAILBOX_SECTION_MARKER_PATTERN = /<!-- remote-vibes:agent-mailbox-protocol:v\d+ -->/;
 export const AGENT_PROMPT_FILENAME = "agent-prompt.md";
 const PROMPT_FILENAME = AGENT_PROMPT_FILENAME;
 const DEFAULT_PROMPT_TEMPLATE = readFileSync(new URL("./default-agent-prompt.md", import.meta.url), "utf8");
@@ -21,20 +21,15 @@ function normalizePrompt(prompt) {
   return trimmed ? `${trimmed}\n` : "";
 }
 
-function stripBuiltInPromptSections(prompt) {
+function stripDeprecatedPromptSections(prompt) {
   const normalized = normalizePrompt(prompt);
 
   if (!normalized) {
     return "";
   }
 
-  const match = BUILT_IN_SECTION_MARKER_PATTERN.exec(normalized);
-
-  if (!match) {
-    return normalized;
-  }
-
-  return normalizePrompt(normalized.slice(0, match.index));
+  const match = AGENT_MAILBOX_SECTION_MARKER_PATTERN.exec(normalized);
+  return match ? normalizePrompt(normalized.slice(0, match.index)) : normalized;
 }
 
 function getWikiV2Section({ wikiRootLabel = ".remote-vibes/wiki" } = {}) {
@@ -133,13 +128,25 @@ function substitutePromptPlaceholders(prompt, { wikiRootLabel = ".remote-vibes/w
 }
 
 function ensureBuiltInPromptSections(prompt, options = {}) {
-  const normalized = stripBuiltInPromptSections(prompt);
+  const { preserveCurrentWikiSection = true, ...sectionOptions } = options;
+  const normalized = stripDeprecatedPromptSections(prompt);
 
   if (!normalized) {
     return "";
   }
 
-  return normalizePrompt(`${normalized}\n${getWikiV2Section(options)}`);
+  const wikiMatch = WIKI_V2_SECTION_MARKER_PATTERN.exec(normalized);
+  if (wikiMatch) {
+    if (preserveCurrentWikiSection && wikiMatch[0] === WIKI_V2_MARKER) {
+      return normalized;
+    }
+
+    return normalizePrompt(
+      `${normalizePrompt(normalized.slice(0, wikiMatch.index))}\n${getWikiV2Section(sectionOptions)}`,
+    );
+  }
+
+  return normalizePrompt(`${normalized}\n${getWikiV2Section(sectionOptions)}`);
 }
 
 function getDefaultPrompt(options = {}) {
@@ -244,7 +251,14 @@ export class AgentPromptStore {
   }
 
   async save(prompt) {
-    await this.persistPrompt(prompt);
+    await this.persistPrompt(prompt, { preserveCurrentWikiSection: true });
+    await this.ensureWikiScaffold();
+    this.targets = await this.syncManagedFiles();
+    return this.getState();
+  }
+
+  async refreshBuiltInSections() {
+    await this.persistPrompt(this.prompt, { preserveCurrentWikiSection: false });
     await this.ensureWikiScaffold();
     this.targets = await this.syncManagedFiles();
     return this.getState();
@@ -260,8 +274,8 @@ export class AgentPromptStore {
     return this.getState();
   }
 
-  async persistPrompt(prompt) {
-    const options = { wikiRootLabel: this.getWikiRootLabel() };
+  async persistPrompt(prompt, { preserveCurrentWikiSection = true } = {}) {
+    const options = { preserveCurrentWikiSection, wikiRootLabel: this.getWikiRootLabel() };
     this.prompt = ensureBuiltInPromptSections(prompt, options) || getDefaultPrompt(options);
     await writeAtomic(this.promptFilePath, this.prompt);
   }

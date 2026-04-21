@@ -99,6 +99,37 @@ async function waitForPort(baseUrl, port) {
   throw new Error(`Port ${port} never appeared in /api/ports.`);
 }
 
+async function createBrainGitRemote(workspaceDir, name = "mac-brain") {
+  const sourceDir = path.join(workspaceDir, `${name}-source`);
+  const remoteDir = path.join(workspaceDir, `${name}.git`);
+  await mkdir(sourceDir, { recursive: true });
+  await execFileAsync("git", ["-C", sourceDir, "init", "-b", "main"]);
+  await writeFile(
+    path.join(sourceDir, "index.md"),
+    `# Existing Brain\n\nLoaded from ${name}.\n`,
+    "utf8",
+  );
+  await writeFile(path.join(sourceDir, "log.md"), "# Log\n\n- cloned brain fixture\n", "utf8");
+  await execFileAsync("git", ["-C", sourceDir, "add", "."]);
+  await execFileAsync("git", [
+    "-C",
+    sourceDir,
+    "-c",
+    "user.name=Remote Vibes Test",
+    "-c",
+    "user.email=remote-vibes@example.test",
+    "commit",
+    "-m",
+    "seed brain",
+  ]);
+  await execFileAsync("git", ["clone", "--bare", sourceDir, remoteDir]);
+
+  return {
+    remoteDir,
+    sourceDir,
+  };
+}
+
 async function waitForShutdown(baseUrl) {
   for (let attempt = 0; attempt < 30; attempt += 1) {
     try {
@@ -161,10 +192,162 @@ test("state is available without authentication", async () => {
     assert.equal(state.settings.wikiBackupIntervalMs, 5 * 60 * 1000);
     assert.equal(state.settings.wikiRelativeRoot, ".remote-vibes/wiki");
     assert.equal(typeof state.settings.wikiPath, "string");
+    assert.equal(state.settings.wikiPathConfigured, false);
+    assert.deepEqual(state.settings.agentAutomations, []);
+    assert.deepEqual(state.settings.installedPluginIds, []);
     assert.equal(state.settings.wikiBackup.enabled, true);
 
     const gpuResponse = await fetch(`${baseUrl}/api/gpu`);
     assert.equal(gpuResponse.status, 404);
+  } finally {
+    await app.close();
+    await rm(workspaceDir, { recursive: true, force: true });
+  }
+});
+
+test("settings api persists simple agent automations", async () => {
+  const workspaceDir = await createTempWorkspace("remote-vibes-agent-automations-");
+  const { app, baseUrl } = await startApp({ cwd: workspaceDir });
+
+  try {
+    const settingsResponse = await fetch(`${baseUrl}/api/settings`, {
+      method: "PATCH",
+      headers: {
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify({
+        agentAutomations: [
+          {
+            cadence: "weekly",
+            createdAt: "2026-04-21T09:00:00.000Z",
+            enabled: true,
+            id: "automation-weekly-review",
+            prompt: "Review the project and summarize anything that needs attention.",
+            time: "09:30",
+            weekday: "tuesday",
+          },
+          {
+            cadence: "daily",
+            id: "empty-prompt",
+            prompt: "",
+          },
+        ],
+      }),
+    });
+
+    assert.equal(settingsResponse.status, 200);
+    const settingsPayload = await settingsResponse.json();
+    assert.deepEqual(settingsPayload.settings.agentAutomations, [
+      {
+        cadence: "weekly",
+        createdAt: "2026-04-21T09:00:00.000Z",
+        enabled: true,
+        id: "automation-weekly-review",
+        prompt: "Review the project and summarize anything that needs attention.",
+        time: "09:30",
+        weekday: "tuesday",
+      },
+    ]);
+  } finally {
+    await app.close();
+    await rm(workspaceDir, { recursive: true, force: true });
+  }
+});
+
+test("settings api persists installed plugin ids", async () => {
+  const workspaceDir = await createTempWorkspace("remote-vibes-installed-plugins-");
+  const { app, baseUrl } = await startApp({ cwd: workspaceDir });
+
+  try {
+    const settingsResponse = await fetch(`${baseUrl}/api/settings`, {
+      method: "PATCH",
+      headers: {
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify({
+        installedPluginIds: ["agentmail", "github", "knowledge-base", "localhost-apps", "agentmail", "../bad"],
+      }),
+    });
+
+    assert.equal(settingsResponse.status, 200);
+    const settingsPayload = await settingsResponse.json();
+    assert.deepEqual(settingsPayload.settings.installedPluginIds, [
+      "agentmail",
+      "github",
+      "knowledge-base",
+      "localhost-apps",
+    ]);
+
+    const stateResponse = await fetch(`${baseUrl}/api/state`);
+    assert.equal(stateResponse.status, 200);
+    const statePayload = await stateResponse.json();
+    assert.deepEqual(statePayload.settings.installedPluginIds, [
+      "agentmail",
+      "github",
+      "knowledge-base",
+      "localhost-apps",
+    ]);
+  } finally {
+    await app.close();
+    await rm(workspaceDir, { recursive: true, force: true });
+  }
+});
+
+test("saved wiki paths from existing installs count as configured", async () => {
+  const workspaceDir = await createTempWorkspace("remote-vibes-existing-wiki-");
+  const stateDir = path.join(workspaceDir, ".remote-vibes");
+  const wikiDir = path.join(workspaceDir, "mac-brain");
+  await mkdir(wikiDir, { recursive: true });
+  await mkdir(stateDir, { recursive: true });
+  await writeFile(
+    path.join(stateDir, "settings.json"),
+    `${JSON.stringify({ version: 1, settings: { wikiPath: wikiDir } }, null, 2)}\n`,
+    "utf8",
+  );
+
+  const { app, baseUrl } = await startApp({ cwd: workspaceDir, stateDir });
+
+  try {
+    const response = await fetch(`${baseUrl}/api/state`);
+    assert.equal(response.status, 200);
+    const state = await response.json();
+    assert.equal(state.settings.wikiPathConfigured, true);
+    assert.equal(state.settings.wikiPath, wikiDir);
+  } finally {
+    await app.close();
+    await rm(workspaceDir, { recursive: true, force: true });
+  }
+});
+
+test("wiki clone endpoint sets the brain from an existing git repo", async () => {
+  const workspaceDir = await createTempWorkspace("remote-vibes-clone-brain-");
+  const { remoteDir } = await createBrainGitRemote(workspaceDir, "mac-brain");
+  const { app, baseUrl } = await startApp({ cwd: workspaceDir });
+
+  try {
+    const cloneResponse = await fetch(`${baseUrl}/api/wiki/clone`, {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify({
+        remoteUrl: remoteDir,
+      }),
+    });
+    assert.equal(cloneResponse.status, 200);
+    const clonePayload = await cloneResponse.json();
+    const canonicalBrainDir = await realpath(path.join(workspaceDir, "mac-brain"));
+    assert.equal(clonePayload.settings.wikiPathConfigured, true);
+    assert.equal(clonePayload.settings.wikiPath, canonicalBrainDir);
+    assert.equal(clonePayload.settings.wikiGitRemoteEnabled, true);
+    assert.equal(clonePayload.settings.wikiGitRemoteUrl, remoteDir);
+    assert.equal(clonePayload.settings.wikiGitRemoteBranch, "main");
+
+    const indexResponse = await fetch(`${baseUrl}/api/knowledge-base`);
+    assert.equal(indexResponse.status, 200);
+    const indexPayload = await indexResponse.json();
+    assert.ok(indexPayload.notes.some((note) => note.relativePath === "index.md"));
+    assert.ok(indexPayload.notes.some((note) => note.relativePath === "log.md"));
   } finally {
     await app.close();
     await rm(workspaceDir, { recursive: true, force: true });
@@ -352,6 +535,45 @@ test("agent prompt api creates wiki scaffold and managed instruction files", asy
   }
 });
 
+test("agent prompt save preserves edits inside the current wiki protocol section", async () => {
+  const workspaceDir = await createTempWorkspace("remote-vibes-agent-prompt-save-");
+  const { app, baseUrl } = await startApp({ cwd: workspaceDir });
+
+  try {
+    const response = await fetch(`${baseUrl}/api/agent-prompt`);
+    assert.equal(response.status, 200);
+    const payload = await response.json();
+    assert.match(payload.prompt, /remote-vibes:wiki-v2-protocol:v2/);
+    assert.match(payload.prompt, /Prefer fewer, better notes/);
+
+    const editedPrompt = payload.prompt.replace(
+      "Prefer fewer, better notes.",
+      "Prefer fewer, better durable notes.",
+    );
+    const updateResponse = await fetch(`${baseUrl}/api/agent-prompt`, {
+      method: "PUT",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ prompt: editedPrompt }),
+    });
+    assert.equal(updateResponse.status, 200);
+    const updatedPayload = await updateResponse.json();
+    assert.match(updatedPayload.prompt, /Prefer fewer, better durable notes/);
+    assert.doesNotMatch(updatedPayload.prompt, /Prefer fewer, better notes\./);
+
+    const savedPrompt = await readFile(
+      path.join(workspaceDir, ".remote-vibes", "agent-prompt.md"),
+      "utf8",
+    );
+    assert.match(savedPrompt, /Prefer fewer, better durable notes/);
+
+    const managedClaude = await readFile(path.join(workspaceDir, "CLAUDE.md"), "utf8");
+    assert.match(managedClaude, /Prefer fewer, better durable notes/);
+  } finally {
+    await app.close();
+    await rm(workspaceDir, { recursive: true, force: true });
+  }
+});
+
 test("existing prompt files are upgraded with the current built-in wiki protocol only", async () => {
   const workspaceDir = await createTempWorkspace("remote-vibes-agent-prompt-upgrade-");
   const stateDir = path.join(workspaceDir, ".remote-vibes");
@@ -533,6 +755,149 @@ test("knowledge base api indexes markdown notes and linked note content", async 
   }
 });
 
+test("knowledge base search ranks prefix markdown notes with BM25", async (t) => {
+  const executablePath = await resolveBrowserExecutablePath({ env: process.env });
+  if (!executablePath) {
+    t.skip("No local Chromium/Chrome executable is available for the knowledge search smoke.");
+    return;
+  }
+
+  const workspaceDir = await createTempWorkspace("remote-vibes-knowledge-search-");
+  const wikiDir = path.join(workspaceDir, ".remote-vibes", "wiki");
+  await mkdir(wikiDir, { recursive: true });
+  await writeFile(path.join(wikiDir, "index.md"), "# Wiki Index\n\nStart here.\n", "utf8");
+  await writeFile(path.join(wikiDir, "install-guide.md"), "# Install Guide\n\nUse this for setup.\n", "utf8");
+  await writeFile(
+    path.join(wikiDir, "meeting-notes.md"),
+    "# Meeting Notes\n\ninstall guide install guide install guide install guide install guide\n",
+    "utf8",
+  );
+
+  const { app, baseUrl } = await startApp({ cwd: workspaceDir });
+  let browser = null;
+
+  try {
+    const settingsResponse = await fetch(`${baseUrl}/api/settings`, {
+      method: "PATCH",
+      headers: {
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify({ wikiPath: wikiDir }),
+    });
+    assert.equal(settingsResponse.status, 200);
+
+    browser = await chromium.launch({ executablePath, headless: true });
+    const page = await browser.newPage();
+    await page.goto(`${baseUrl}/?view=knowledge-base`, { waitUntil: "domcontentloaded" });
+    await page.waitForSelector(".knowledge-base-view", { timeout: 10_000 });
+    await page.fill("#knowledge-base-search", "inst gui");
+    await page.waitForFunction(() => document.querySelectorAll(".knowledge-base-note-row").length === 2, null, {
+      timeout: 10_000,
+    });
+
+    const titles = await page.$$eval(".knowledge-base-note-title", (elements) =>
+      elements.map((element) => element.textContent.trim()),
+    );
+
+    assert.deepEqual(titles, ["Install Guide", "Meeting Notes"]);
+  } finally {
+    await browser?.close().catch(() => {});
+    await app.close();
+    await rm(workspaceDir, { recursive: true, force: true });
+  }
+});
+
+test("fresh browser starts on brain folder setup until a folder is chosen", async (t) => {
+  const executablePath = await resolveBrowserExecutablePath({ env: process.env });
+  if (!executablePath) {
+    t.skip("No local Chromium/Chrome executable is available for the brain setup smoke.");
+    return;
+  }
+
+  const workspaceDir = await createTempWorkspace("remote-vibes-brain-setup-");
+  const { remoteDir } = await createBrainGitRemote(workspaceDir, "brain-remote");
+  const brainDir = path.join(workspaceDir, "brain-repo");
+  await mkdir(brainDir, { recursive: true });
+  await writeFile(path.join(brainDir, "index.md"), "# Local Brain\n", "utf8");
+  await execFileAsync("git", ["-C", brainDir, "init", "-b", "main"]);
+  await execFileAsync("git", ["-C", brainDir, "remote", "add", "origin", remoteDir]);
+  const { app, baseUrl } = await startApp({ cwd: workspaceDir });
+  let browser = null;
+
+  try {
+    browser = await chromium.launch({ executablePath, headless: true });
+    const page = await browser.newPage();
+    await page.goto(baseUrl, { waitUntil: "domcontentloaded" });
+    await page.waitForSelector(".brain-setup-screen", { timeout: 10_000 });
+    await page.waitForSelector("text=Select a brain folder", { timeout: 10_000 });
+    await page.waitForSelector("text=Insert GitHub URL", { timeout: 10_000 });
+    assert.equal(await page.locator(".app-shell").count(), 0);
+
+    await page.locator(".brain-setup-button").click();
+    await page.waitForSelector(".folder-picker-modal", { timeout: 10_000 });
+    await page.locator(".folder-picker-tree-row", { hasText: "brain-repo" }).click();
+    await page.waitForFunction(() => document.querySelector(".folder-picker-path")?.textContent?.includes("brain-repo"), null, {
+      timeout: 10_000,
+    });
+    const canonicalBrainDir = await realpath(brainDir);
+
+    await page.click("#folder-picker-select");
+    await page.waitForSelector(".app-shell", { timeout: 10_000 });
+    await page.waitForSelector(".knowledge-base-view", { timeout: 10_000 });
+
+    const settingsResponse = await fetch(`${baseUrl}/api/settings`);
+    assert.equal(settingsResponse.status, 200);
+    const settingsPayload = await settingsResponse.json();
+    assert.equal(settingsPayload.settings.wikiPathConfigured, true);
+    assert.equal(settingsPayload.settings.wikiPath, canonicalBrainDir);
+    assert.equal(settingsPayload.settings.wikiGitRemoteUrl, remoteDir);
+  } finally {
+    await browser?.close().catch(() => {});
+    await app.close();
+    await rm(workspaceDir, { recursive: true, force: true });
+  }
+});
+
+test("brain setup can clone an existing git brain from the browser", async (t) => {
+  const executablePath = await resolveBrowserExecutablePath({ env: process.env });
+  if (!executablePath) {
+    t.skip("No local Chromium/Chrome executable is available for the brain clone smoke.");
+    return;
+  }
+
+  const workspaceDir = await createTempWorkspace("remote-vibes-brain-clone-ui-");
+  const { remoteDir } = await createBrainGitRemote(workspaceDir, "existing-brain");
+  const { app, baseUrl } = await startApp({ cwd: workspaceDir });
+  let browser = null;
+
+  try {
+    browser = await chromium.launch({ executablePath, headless: true });
+    const page = await browser.newPage();
+    await page.goto(baseUrl, { waitUntil: "domcontentloaded" });
+    await page.waitForSelector(".brain-setup-screen", { timeout: 10_000 });
+    await page.fill("#brain-git-url", remoteDir);
+    await page.click("#brain-git-form button[type='submit']");
+    await page.waitForSelector(".app-shell", { timeout: 20_000 });
+    await page.waitForSelector(".knowledge-base-view", { timeout: 10_000 });
+    await page.waitForSelector(".knowledge-base-markdown", { timeout: 10_000 });
+
+    const renderedText = await page.locator(".knowledge-base-markdown").textContent();
+    assert.match(renderedText || "", /Existing Brain/);
+
+    const settingsResponse = await fetch(`${baseUrl}/api/settings`);
+    assert.equal(settingsResponse.status, 200);
+    const settingsPayload = await settingsResponse.json();
+    const canonicalBrainDir = await realpath(path.join(workspaceDir, "existing-brain"));
+    assert.equal(settingsPayload.settings.wikiPathConfigured, true);
+    assert.equal(settingsPayload.settings.wikiPath, canonicalBrainDir);
+    assert.equal(settingsPayload.settings.wikiGitRemoteUrl, remoteDir);
+  } finally {
+    await browser?.close().catch(() => {});
+    await app.close();
+    await rm(workspaceDir, { recursive: true, force: true });
+  }
+});
+
 test("knowledge base markdown viewer renders GitHub-style tables", async (t) => {
   const executablePath = await resolveBrowserExecutablePath({ env: process.env });
   if (!executablePath) {
@@ -563,6 +928,15 @@ test("knowledge base markdown viewer renders GitHub-style tables", async (t) => 
   let browser = null;
 
   try {
+    const settingsResponse = await fetch(`${baseUrl}/api/settings`, {
+      method: "PATCH",
+      headers: {
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify({ wikiPath: wikiDir }),
+    });
+    assert.equal(settingsResponse.status, 200);
+
     browser = await chromium.launch({ executablePath, headless: true });
     const page = await browser.newPage();
     await page.goto(`${baseUrl}/?view=knowledge-base&note=leaderboard.md`, { waitUntil: "domcontentloaded" });
@@ -1107,7 +1481,7 @@ test("shell session keeps running while the browser websocket disconnects", asyn
   }
 });
 
-test("mobile terminal keeps history scroll anchored while the keyboard viewport resizes", async (t) => {
+test("mobile terminal stays usable while the keyboard viewport resizes", async (t) => {
   const executablePath = await resolveBrowserExecutablePath({ env: process.env });
   if (!executablePath) {
     t.skip("No local Chromium/Chrome executable is available for the mobile terminal smoke.");
@@ -1120,6 +1494,15 @@ test("mobile terminal keeps history scroll anchored while the keyboard viewport 
   let browser = null;
 
   try {
+    const settingsResponse = await fetch(`${baseUrl}/api/settings`, {
+      method: "PATCH",
+      headers: {
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify({ wikiPath: path.join(workspaceDir, "brain") }),
+    });
+    assert.equal(settingsResponse.status, 200);
+
     const createResponse = await fetch(`${baseUrl}/api/sessions`, {
       method: "POST",
       headers: {
@@ -1182,36 +1565,6 @@ test("mobile terminal keeps history scroll anchored while the keyboard viewport 
       { timeout: 10_000 },
     );
 
-    const wheelScroll = await page.evaluate(() => {
-      const viewport = document.querySelector("#terminal-mount .xterm-viewport");
-      const style = window.getComputedStyle(viewport);
-
-      viewport.scrollTop = viewport.scrollHeight;
-      const before = viewport.scrollTop;
-      const event = new WheelEvent("wheel", {
-        bubbles: true,
-        cancelable: true,
-        deltaY: -240,
-      });
-      const dispatched = viewport.dispatchEvent(event);
-
-      return {
-        after: viewport.scrollTop,
-        before,
-        defaultPrevented: event.defaultPrevented,
-        dispatched,
-        overflowY: style.overflowY,
-      };
-    });
-
-    assert.match(wheelScroll.overflowY, /auto|scroll|overlay/);
-    assert.ok(
-      wheelScroll.after < wheelScroll.before,
-      `terminal wheel did not scroll history from ${wheelScroll.before} to ${wheelScroll.after}`,
-    );
-    assert.equal(wheelScroll.defaultPrevented, true);
-    assert.equal(wheelScroll.dispatched, false);
-
     const initial = await page.evaluate(() => {
       const viewport = document.querySelector("#terminal-mount .xterm-viewport");
       const textarea = document.querySelector("#terminal-mount .xterm-helper-textarea");
@@ -1222,7 +1575,6 @@ test("mobile terminal keeps history scroll anchored while the keyboard viewport 
 
       return {
         activeIsTextarea: document.activeElement === textarea,
-        scrollTop: viewport.scrollTop,
       };
     });
 
@@ -1239,16 +1591,296 @@ test("mobile terminal keeps history scroll anchored while the keyboard viewport 
 
       return {
         activeIsTextarea: document.activeElement === textarea,
-        scrollTop: viewport.scrollTop,
+        terminalMounted: Boolean(document.querySelector("#terminal-mount .xterm")),
+        scrollHeight: viewport.scrollHeight,
+        clientHeight: viewport.clientHeight,
+      };
+    });
+
+    assert.equal(expanded.terminalMounted, true);
+    assert.ok(expanded.scrollHeight > expanded.clientHeight);
+    assert.equal(expanded.activeIsTextarea, false);
+  } finally {
+    if (websocket && websocket.readyState < WebSocket.CLOSING) {
+      websocket.close();
+    }
+    await browser?.close().catch(() => {});
+    await app.close();
+    await rm(workspaceDir, { recursive: true, force: true });
+  }
+});
+
+test("terminal wheel opens a scrollable transcript history", async (t) => {
+  const executablePath = await resolveBrowserExecutablePath({ env: process.env });
+  if (!executablePath) {
+    t.skip("No local Chromium/Chrome executable is available for the terminal wheel smoke.");
+    return;
+  }
+
+  const workspaceDir = await createTempWorkspace("remote-vibes-xterm-wheel-");
+  const { app, baseUrl } = await startApp({ cwd: workspaceDir });
+  let websocket = null;
+  let browser = null;
+
+  try {
+    const settingsResponse = await fetch(`${baseUrl}/api/settings`, {
+      method: "PATCH",
+      headers: {
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify({ wikiPath: path.join(workspaceDir, "brain") }),
+    });
+    assert.equal(settingsResponse.status, 200);
+
+    const createResponse = await fetch(`${baseUrl}/api/sessions`, {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify({
+        providerId: "shell",
+        name: "Xterm Wheel Smoke",
+        cwd: workspaceDir,
+      }),
+    });
+
+    assert.equal(createResponse.status, 201);
+    const { session } = await createResponse.json();
+    websocket = new WebSocket(`${baseUrl.replace("http", "ws")}/ws?sessionId=${session.id}`);
+
+    await new Promise((resolve, reject) => {
+      let combined = "";
+      let sentCommand = false;
+      const timeout = setTimeout(() => {
+        reject(new Error("Timed out writing terminal history for the xterm wheel smoke."));
+      }, 10_000);
+
+      websocket.on("open", () => {
+        websocket.send(JSON.stringify({ type: "resize", cols: 80, rows: 24 }));
+      });
+
+      websocket.on("message", (chunk) => {
+        const payload = JSON.parse(String(chunk));
+        combined += payload.data || "";
+
+        if (!sentCommand) {
+          websocket.send(
+            JSON.stringify({
+              type: "input",
+              data: "i=1; while [ \"$i\" -le 180 ]; do printf 'RV_XTERM_SCROLL_%03d\\n' \"$i\"; i=$((i+1)); done\r",
+            }),
+          );
+          sentCommand = true;
+        }
+
+        if (combined.includes("RV_XTERM_SCROLL_180")) {
+          clearTimeout(timeout);
+          resolve();
+        }
+      });
+    });
+
+    browser = await chromium.launch({ executablePath, headless: true });
+    const page = await browser.newPage({ viewport: { width: 900, height: 700 } });
+    await page.goto(baseUrl, { waitUntil: "domcontentloaded" });
+    await page.waitForSelector("#terminal-mount .xterm-viewport", { timeout: 10_000 });
+    await page.waitForFunction(
+      () => document.querySelector("#terminal-mount .xterm")?.textContent?.includes("RV_XTERM_SCROLL_180"),
+      null,
+      { timeout: 10_000 },
+    );
+
+    const wheelStart = await page.evaluate(() => {
+      const terminal = document.querySelector("#terminal-mount .xterm");
+      const viewport = document.querySelector("#terminal-mount .xterm-viewport");
+      const bounds = terminal.getBoundingClientRect();
+      viewport.scrollTop = viewport.scrollHeight;
+      return {
+        before: viewport.scrollTop,
+        x: bounds.left + 32,
+        y: bounds.top + 32,
+      };
+    });
+
+    await page.mouse.move(wheelStart.x, wheelStart.y);
+    await page.mouse.wheel(0, -360);
+    await page.waitForTimeout(100);
+
+    const wheelAfter = await page.evaluate(() => {
+      const nativeViewport = document.querySelector("#terminal-mount .xterm-viewport");
+      const transcriptViewport = document.querySelector("#terminal-transcript-scroll");
+      const transcript = document.querySelector("#terminal-transcript-pre");
+      return {
+        nativeMaxScrollTop: Math.max(0, nativeViewport.scrollHeight - nativeViewport.clientHeight),
+        nativeScrollTop: nativeViewport.scrollTop,
+        transcriptMaxScrollTop: Math.max(0, transcriptViewport.scrollHeight - transcriptViewport.clientHeight),
+        transcriptScrollTop: transcriptViewport.scrollTop,
+        transcriptText: transcript?.textContent || "",
+        terminalText: document.querySelector("#terminal-mount .xterm")?.textContent || "",
+        transcriptVisible: document.querySelector(".terminal-stack")?.classList.contains("is-transcript-scroll"),
       };
     });
 
     assert.ok(
-      Math.abs(expanded.scrollTop - initial.scrollTop) <= 30,
-      `terminal history scroll drifted from ${initial.scrollTop} to ${expanded.scrollTop}`,
+      wheelAfter.transcriptVisible || wheelAfter.nativeMaxScrollTop > 0,
+      "terminal did not expose scrollable history",
     );
-    assert.equal(expanded.activeIsTextarea, false);
+    if (wheelAfter.transcriptVisible) {
+      assert.ok(wheelAfter.transcriptMaxScrollTop > 0, "transcript did not expose scrollable history");
+      assert.ok(
+        wheelAfter.transcriptScrollTop < wheelAfter.transcriptMaxScrollTop,
+        "wheel did not move the transcript away from bottom",
+      );
+      assert.match(wheelAfter.transcriptText, /RV_XTERM_SCROLL_/);
+    } else {
+      assert.ok(
+        wheelAfter.nativeScrollTop < wheelAfter.nativeMaxScrollTop,
+        "wheel did not move native xterm history away from bottom",
+      );
+      assert.match(wheelAfter.terminalText, /RV_XTERM_SCROLL_/);
+    }
   } finally {
+    if (websocket && websocket.readyState < WebSocket.CLOSING) {
+      websocket.close();
+    }
+    await browser?.close().catch(() => {});
+    await app.close();
+    await rm(workspaceDir, { recursive: true, force: true });
+  }
+});
+
+test("terminal wheel without xterm scrollback opens transcript instead of sending arrows", async (t) => {
+  const executablePath = await resolveBrowserExecutablePath({ env: process.env });
+  if (!executablePath) {
+    t.skip("No local Chromium/Chrome executable is available for the terminal wheel fallback smoke.");
+    return;
+  }
+
+  const workspaceDir = await createTempWorkspace("remote-vibes-transcript-wheel-");
+  const { app, baseUrl } = await startApp({ cwd: workspaceDir });
+  let websocket = null;
+  let browser = null;
+
+  try {
+    const settingsResponse = await fetch(`${baseUrl}/api/settings`, {
+      method: "PATCH",
+      headers: {
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify({ wikiPath: path.join(workspaceDir, "brain") }),
+    });
+    assert.equal(settingsResponse.status, 200);
+
+    const createResponse = await fetch(`${baseUrl}/api/sessions`, {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify({
+        providerId: "shell",
+        name: "Transcript Wheel Smoke",
+        cwd: workspaceDir,
+      }),
+    });
+
+    assert.equal(createResponse.status, 201);
+    const { session } = await createResponse.json();
+    websocket = new WebSocket(`${baseUrl.replace("http", "ws")}/ws?sessionId=${session.id}`);
+
+    await new Promise((resolve, reject) => {
+      let combined = "";
+      let sentCommand = false;
+      const timeout = setTimeout(() => {
+        reject(new Error("Timed out starting cat for the terminal transcript wheel smoke."));
+      }, 10_000);
+
+      websocket.on("open", () => {
+        websocket.send(JSON.stringify({ type: "resize", cols: 80, rows: 24 }));
+      });
+
+      websocket.on("message", (chunk) => {
+        const payload = JSON.parse(String(chunk));
+        combined += payload.data || "";
+
+        if (!sentCommand) {
+          websocket.send(
+            JSON.stringify({
+              type: "input",
+              data: "printf '\\033[31mRV_TRANSCRIPT_RED\\033[0m\\n'; i=1; while [ \"$i\" -le 90 ]; do printf 'RV_TRANSCRIPT_LINE_%03d\\n' \"$i\"; i=$((i+1)); done; cat -v\r",
+            }),
+          );
+          sentCommand = true;
+        }
+
+        if (combined.includes("RV_TRANSCRIPT_LINE_090") && combined.includes("cat -v")) {
+          clearTimeout(timeout);
+          resolve();
+        }
+      });
+    });
+
+    browser = await chromium.launch({ executablePath, headless: true });
+    const page = await browser.newPage({ viewport: { width: 900, height: 700 } });
+    await page.goto(baseUrl, { waitUntil: "domcontentloaded" });
+    await page.waitForSelector("#terminal-mount .xterm-viewport", { timeout: 10_000 });
+    await page.waitForFunction(
+      () => document.querySelector("#terminal-mount .xterm")?.textContent?.includes("RV_TRANSCRIPT_LINE_090"),
+      null,
+      { timeout: 10_000 },
+    );
+
+    const wheelTarget = await page.evaluate(() => {
+      const terminal = document.querySelector("#terminal-mount .xterm");
+      const bounds = terminal.getBoundingClientRect();
+      return {
+        x: bounds.left + 32,
+        y: bounds.top + 32,
+      };
+    });
+
+    await page.mouse.move(wheelTarget.x, wheelTarget.y);
+    await page.mouse.wheel(0, -360);
+    await page.waitForTimeout(200);
+    const result = await page.evaluate(() => {
+      const nativeViewport = document.querySelector("#terminal-mount .xterm-viewport");
+      const transcriptViewport = document.querySelector("#terminal-transcript-scroll");
+      const transcript = document.querySelector("#terminal-transcript-pre");
+      return {
+        nativeMaxScrollTop: Math.max(0, nativeViewport.scrollHeight - nativeViewport.clientHeight),
+        nativeScrollTop: nativeViewport.scrollTop,
+        transcriptMaxScrollTop: Math.max(0, transcriptViewport.scrollHeight - transcriptViewport.clientHeight),
+        transcriptScrollTop: transcriptViewport.scrollTop,
+        transcriptHtml: transcript?.innerHTML || "",
+        transcriptVisible: document.querySelector(".terminal-stack")?.classList.contains("is-transcript-scroll"),
+        terminalText: document.querySelector("#terminal-mount .xterm")?.textContent || "",
+        transcriptText: transcript?.textContent || "",
+      };
+    });
+
+    assert.ok(
+      result.transcriptVisible || result.nativeMaxScrollTop > 0,
+      "terminal did not expose scrollable fallback history",
+    );
+    if (result.transcriptVisible) {
+      assert.ok(result.transcriptMaxScrollTop > 0, "transcript did not expose scrollable fallback history");
+      assert.ok(
+        result.transcriptScrollTop < result.transcriptMaxScrollTop,
+        "wheel did not move the fallback transcript away from bottom",
+      );
+      assert.match(result.transcriptText, /RV_TRANSCRIPT_(?:RED|LINE_)/);
+      assert.match(result.transcriptHtml, /fg-red/);
+    } else {
+      assert.ok(
+        result.nativeScrollTop < result.nativeMaxScrollTop,
+        "wheel did not move native xterm fallback history away from bottom",
+      );
+      assert.match(result.terminalText, /RV_TRANSCRIPT_(?:RED|LINE_)/);
+    }
+    assert.doesNotMatch(`${result.terminalText}\n${result.transcriptText}`, /\^\[(?:\[|O)?[AB]/);
+  } finally {
+    if (websocket && websocket.readyState === WebSocket.OPEN) {
+      websocket.send(JSON.stringify({ type: "input", data: "\u0003" }));
+    }
     if (websocket && websocket.readyState < WebSocket.CLOSING) {
       websocket.close();
     }

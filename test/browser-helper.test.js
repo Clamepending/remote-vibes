@@ -617,6 +617,10 @@ printf '%s\n' "$@" > "$CAPTURED_ARGS_PATH"
     const codexArgs = await readFile(capturedArgsPath, "utf8");
     const codexProvider = await readFile(capturedProviderPath, "utf8");
     assert.match(codexArgs, /developer_instructions=/);
+    assert.match(codexArgs, /Browser Use plugin/);
+    assert.match(codexArgs, /rv-browser-use --task/);
+    assert.match(codexArgs, /--max-steps <n>/);
+    assert.match(codexArgs, /do not spawn an internal Agent/);
     assert.match(codexArgs, /Playwright CLI browser skill/);
     assert.match(codexArgs, /skills\/playwright\/SKILL\.md/);
     assert.match(codexArgs, /rv-playwright/);
@@ -640,6 +644,10 @@ printf '%s\n' "$@" > "$CAPTURED_ARGS_PATH"
     const claudeArgs = await readFile(capturedArgsPath, "utf8");
     const claudeProvider = await readFile(capturedProviderPath, "utf8");
     assert.match(claudeArgs, /--append-system-prompt/);
+    assert.match(claudeArgs, /Browser Use plugin/);
+    assert.match(claudeArgs, /rv-browser-use --task/);
+    assert.match(claudeArgs, /--max-steps <n>/);
+    assert.match(claudeArgs, /do not spawn an internal Agent/);
     assert.match(claudeArgs, /Playwright CLI browser skill/);
     assert.match(claudeArgs, /skills\/playwright\/SKILL\.md/);
     assert.match(claudeArgs, /rv-playwright/);
