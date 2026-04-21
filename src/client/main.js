@@ -116,6 +116,62 @@ const TERMINAL_FILE_PREVIEW_TEXT_MAX_CHARS = 3600;
 const TERMINAL_ATTACHMENT_MAX_IMAGES = 8;
 const TERMINAL_KEYBOARD_SCROLL_LINES = 3;
 const TERMINAL_KEYBOARD_SCROLL_PAGE_RATIO = 0.85;
+const VISUAL_GAME_WIDTH = 480;
+const VISUAL_GAME_HEIGHT = 270;
+const VISUAL_GAME_TILE = 16;
+const VISUAL_GAME_AGENT_SIZE = 18;
+const VISUAL_GAME_AGENT_PALETTES = [
+  { hat: "#263a78", brim: "#17204e", hair: "#33231c", skin: "#f2c29a", coat: "#173a67", trim: "#f3d49a", pants: "#2e2b32", boots: "#5c3a21" },
+  { hat: "#6b2f56", brim: "#3f1f38", hair: "#18151d", skin: "#d99f7a", coat: "#5c1f3a", trim: "#d6edf6", pants: "#2f2735", boots: "#482c1d" },
+  { hat: "#2e6142", brim: "#1c3e2a", hair: "#5d351f", skin: "#e8b484", coat: "#274f37", trim: "#f4c58e", pants: "#253642", boots: "#5a3b23" },
+  { hat: "#6d5225", brim: "#3d2f18", hair: "#241610", skin: "#c98965", coat: "#6f4c2b", trim: "#d8e5a8", pants: "#263238", boots: "#3d291c" },
+  { hat: "#2f5b73", brim: "#1c394b", hair: "#4a2b21", skin: "#f1b895", coat: "#245266", trim: "#ffc7a7", pants: "#282f3c", boots: "#57331f" },
+  { hat: "#713c35", brim: "#48231f", hair: "#d1a044", skin: "#e2aa7e", coat: "#7c3930", trim: "#f4e0ae", pants: "#2d3137", boots: "#4c2f20" },
+];
+const VISUAL_GAME_ROAM_ROUTES = [
+  [
+    [92, 154],
+    [154, 154],
+    [210, 122],
+    [250, 156],
+    [192, 194],
+  ],
+  [
+    [66, 98],
+    [112, 128],
+    [154, 178],
+    [98, 208],
+    [54, 174],
+  ],
+  [
+    [322, 200],
+    [390, 190],
+    [420, 146],
+    [364, 128],
+    [300, 154],
+  ],
+  [
+    [252, 78],
+    [212, 112],
+    [180, 146],
+    [234, 184],
+    [286, 136],
+  ],
+  [
+    [140, 62],
+    [204, 76],
+    [262, 86],
+    [238, 132],
+    [166, 126],
+  ],
+  [
+    [70, 214],
+    [140, 212],
+    [214, 210],
+    [282, 206],
+    [348, 216],
+  ],
+];
 const TERMINAL_IMAGE_PATH_EXTENSIONS = new Set([
   ".apng",
   ".avif",
@@ -528,6 +584,12 @@ const state = {
     loading: false,
     error: "",
     data: null,
+  },
+  visualGame: {
+    frameHandle: 0,
+    cleanup: null,
+    hitAreas: [],
+    hoverLabel: "",
   },
   browserUseSession: {
     id: "",
@@ -10477,13 +10539,555 @@ function renderVisualTownWorld(graph) {
   `;
 }
 
+function renderVisualPixelGame(graph) {
+  const agents = getVisualInterfaceAgents(graph);
+  const workingCount = agents.filter((agent) => getVisualStatusClass(agent.status) === "working").length;
+  const roamingCount = Math.max(0, agents.length - workingCount);
+  const pathBuckets = collectSwarmPathBuckets(graph);
+
+  return `
+    <section class="visual-game-stage" aria-label="Agent village videogame">
+      <div class="visual-game-frame">
+        <canvas
+          id="visual-game-canvas"
+          class="visual-game-canvas"
+          width="${VISUAL_GAME_WIDTH}"
+          height="${VISUAL_GAME_HEIGHT}"
+          role="img"
+          aria-label="${escapeHtml(`${workingCount} working agents, ${roamingCount} roaming agents in the pixel village`)}"
+        ></canvas>
+        <div class="visual-game-hud" aria-hidden="true">
+          <div>
+            <strong>${escapeHtml(`${workingCount} at computers`)}</strong>
+            <span>${escapeHtml(`${roamingCount} roaming`)}</span>
+          </div>
+          <div>
+            <strong>${escapeHtml(`${pathBuckets.length} evidence groups`)}</strong>
+            <span>${escapeHtml(`${Number(graph?.git?.dirtyCount || 0)} repo changes`)}</span>
+          </div>
+          <div class="visual-game-hover">agent village</div>
+        </div>
+      </div>
+    </section>
+  `;
+}
+
 function renderVisualVillage(graph) {
   return `
     <div class="visual-game-layout">
-      ${renderVisualTownWorld(graph)}
+      ${renderVisualPixelGame(graph)}
       ${renderVisualEvidenceWall(graph)}
     </div>
   `;
+}
+
+function teardownVisualPixelGame() {
+  if (state.visualGame.frameHandle) {
+    window.cancelAnimationFrame(state.visualGame.frameHandle);
+    state.visualGame.frameHandle = 0;
+  }
+
+  state.visualGame.cleanup?.();
+  state.visualGame.cleanup = null;
+  state.visualGame.hitAreas = [];
+  state.visualGame.hoverLabel = "";
+}
+
+function mountVisualPixelGame() {
+  teardownVisualPixelGame();
+
+  const canvas = document.querySelector("#visual-game-canvas");
+  const graph = state.swarmGraph.data;
+  if (!(canvas instanceof HTMLCanvasElement) || !graph) {
+    return;
+  }
+
+  const context = canvas.getContext("2d");
+  if (!context) {
+    return;
+  }
+
+  context.imageSmoothingEnabled = false;
+
+  const getPointerPoint = (event) => {
+    const rect = canvas.getBoundingClientRect();
+    if (!rect.width || !rect.height) {
+      return null;
+    }
+
+    return {
+      x: ((event.clientX - rect.left) / rect.width) * VISUAL_GAME_WIDTH,
+      y: ((event.clientY - rect.top) / rect.height) * VISUAL_GAME_HEIGHT,
+    };
+  };
+
+  const getHitAtPoint = (point) => {
+    if (!point) {
+      return null;
+    }
+
+    for (let index = state.visualGame.hitAreas.length - 1; index >= 0; index -= 1) {
+      const hit = state.visualGame.hitAreas[index];
+      if (point.x >= hit.x && point.x <= hit.x + hit.width && point.y >= hit.y && point.y <= hit.y + hit.height) {
+        return hit;
+      }
+    }
+
+    return null;
+  };
+
+  const hoverElement = document.querySelector(".visual-game-hover");
+  const setHoverLabel = (label) => {
+    const nextLabel = label || "agent village";
+    if (state.visualGame.hoverLabel === nextLabel) {
+      return;
+    }
+
+    state.visualGame.hoverLabel = nextLabel;
+    if (hoverElement instanceof HTMLElement) {
+      hoverElement.textContent = nextLabel;
+    }
+  };
+
+  const onPointerMove = (event) => {
+    const hit = getHitAtPoint(getPointerPoint(event));
+    canvas.classList.toggle("is-actionable", Boolean(hit));
+    setHoverLabel(hit?.label || "");
+  };
+  const onPointerLeave = () => {
+    canvas.classList.remove("is-actionable");
+    setHoverLabel("");
+  };
+  const onClick = (event) => {
+    const hit = getHitAtPoint(getPointerPoint(event));
+    if (hit) {
+      event.preventDefault();
+      void handleVisualGameHit(hit);
+    }
+  };
+
+  canvas.addEventListener("pointermove", onPointerMove);
+  canvas.addEventListener("pointerleave", onPointerLeave);
+  canvas.addEventListener("click", onClick);
+
+  const drawFrame = (time) => {
+    state.visualGame.hitAreas = [];
+    drawVisualGameScene(context, graph, time, state.visualGame.hitAreas);
+    state.visualGame.frameHandle = window.requestAnimationFrame(drawFrame);
+  };
+
+  state.visualGame.cleanup = () => {
+    canvas.removeEventListener("pointermove", onPointerMove);
+    canvas.removeEventListener("pointerleave", onPointerLeave);
+    canvas.removeEventListener("click", onClick);
+  };
+  state.visualGame.frameHandle = window.requestAnimationFrame(drawFrame);
+}
+
+async function handleVisualGameHit(hit) {
+  if (!hit || !hit.kind) {
+    return;
+  }
+
+  if (hit.kind === "session" && hit.sessionId) {
+    if (state.currentView !== "shell") {
+      setCurrentView("shell");
+    }
+
+    markSessionRead(hit.sessionId, { refresh: false });
+    state.activeSessionId = hit.sessionId;
+    const nextSession = state.sessions.find((session) => session.id === hit.sessionId);
+    if (nextSession) {
+      expandSessionProject(nextSession.cwd);
+    }
+    renderShell();
+    connectToSession(state.activeSessionId);
+    closeMobileSidebar();
+    return;
+  }
+
+  if (hit.kind === "browser" && hit.browserUseSessionId) {
+    await openBrowserUseSession(hit.browserUseSessionId);
+    return;
+  }
+
+  if (hit.kind === "main-view" && hit.view) {
+    await openMainView(hit.view);
+    return;
+  }
+
+  if (hit.kind === "new-session") {
+    state.defaultProviderId = getSelectedSessionProviderId();
+    await loadFolderPicker(state.defaultCwd, { target: "session" });
+  }
+}
+
+function drawVisualGameScene(context, graph, time, hitAreas) {
+  context.save();
+  context.imageSmoothingEnabled = false;
+  context.clearRect(0, 0, VISUAL_GAME_WIDTH, VISUAL_GAME_HEIGHT);
+
+  drawVisualGameGround(context, time);
+  drawVisualGamePaths(context);
+  drawVisualGameBuilding(context, hitAreas, {
+    x: 27,
+    y: 25,
+    width: 100,
+    height: 54,
+    label: "Mission Board",
+    meta: "start work",
+    roof: "#8d3c2f",
+    body: "#9d6935",
+    action: { kind: "new-session", label: "Mission Board" },
+  });
+  drawVisualGameBuilding(context, hitAreas, {
+    x: 37,
+    y: 110,
+    width: 88,
+    height: 48,
+    label: "Tool Shed",
+    meta: `${state.settings.installedPluginIds?.length || 0} plugins`,
+    roof: "#6f3f33",
+    body: "#75603a",
+    action: { kind: "main-view", view: "plugins", label: "Tool Shed" },
+  });
+  drawVisualGameBuilding(context, hitAreas, {
+    x: 42,
+    y: 197,
+    width: 110,
+    height: 45,
+    label: "Evidence",
+    meta: `${collectSwarmPathBuckets(graph).length} groups`,
+    roof: "#704a38",
+    body: "#64533d",
+    action: { kind: "main-view", view: "knowledge-base", label: "Evidence Wall" },
+  });
+  drawVisualGameBuilding(context, hitAreas, {
+    x: 182,
+    y: 27,
+    width: 84,
+    height: 44,
+    label: "Schedule",
+    meta: "helpers",
+    roof: "#70523a",
+    body: "#695b42",
+    action: { kind: "main-view", view: "automations", label: "Schedule" },
+  });
+  drawVisualGameWorkshop(context, graph, hitAreas, time);
+  drawVisualGameBrowserLab(context);
+  drawVisualGameDock(context);
+
+  const agents = getVisualGameAgents(graph, time);
+  for (const agent of agents.sort((left, right) => left.y - right.y)) {
+    drawVisualGameAgent(context, agent, time, hitAreas);
+  }
+
+  drawVisualGameForeground(context, time);
+  context.restore();
+}
+
+function drawVisualGameGround(context, time) {
+  context.fillStyle = "#2f6849";
+  context.fillRect(0, 0, VISUAL_GAME_WIDTH, VISUAL_GAME_HEIGHT);
+
+  for (let y = 0; y < VISUAL_GAME_HEIGHT; y += VISUAL_GAME_TILE) {
+    for (let x = 0; x < VISUAL_GAME_WIDTH; x += VISUAL_GAME_TILE) {
+      const hash = getVisualGameHash(x / VISUAL_GAME_TILE, y / VISUAL_GAME_TILE);
+      context.fillStyle = hash % 3 === 0 ? "#34714f" : hash % 5 === 0 ? "#2b6046" : "#31694b";
+      context.fillRect(x, y, VISUAL_GAME_TILE, VISUAL_GAME_TILE);
+
+      if (hash % 4 === 0) {
+        context.fillStyle = "#3d8356";
+        context.fillRect(x + 3, y + 11, 2, 5);
+        context.fillRect(x + 6, y + 9, 2, 7);
+      }
+
+      if (hash % 17 === 0) {
+        context.fillStyle = "#e7ca79";
+        context.fillRect(x + 11, y + 7 + Math.floor(Math.sin(time / 600 + hash) * 1), 2, 2);
+      }
+    }
+  }
+}
+
+function drawVisualGamePaths(context) {
+  drawVisualGamePathRect(context, 58, 151, 350, 34);
+  drawVisualGamePathRect(context, 216, 51, 43, 178);
+  drawVisualGamePathRect(context, 88, 76, 172, 24);
+  drawVisualGamePathRect(context, 320, 151, 92, 25);
+}
+
+function drawVisualGamePathRect(context, x, y, width, height) {
+  context.fillStyle = "#c09a52";
+  context.fillRect(x, y, width, height);
+  context.fillStyle = "#d1af63";
+  context.fillRect(x + 3, y + 3, width - 6, height - 6);
+  context.fillStyle = "#a87b3f";
+  for (let offset = 0; offset < width; offset += 21) {
+    context.fillRect(x + offset + 5, y + 7 + ((offset / 7) % 3), 6, 2);
+  }
+  context.fillStyle = "rgba(82, 58, 31, 0.2)";
+  context.fillRect(x, y, width, 2);
+  context.fillRect(x, y + height - 2, width, 2);
+}
+
+function drawVisualGameBuilding(context, hitAreas, building) {
+  const { x, y, width, height, label, meta, roof, body, action } = building;
+  drawVisualGameShadow(context, x + 4, y + height - 2, width, 8);
+  context.fillStyle = body;
+  context.fillRect(x, y + 12, width, height - 12);
+  context.fillStyle = "#553523";
+  context.fillRect(x, y + height - 5, width, 5);
+  context.fillStyle = roof;
+  context.fillRect(x - 5, y + 3, width + 10, 14);
+  context.fillStyle = "#4b211b";
+  context.fillRect(x - 1, y, width + 2, 5);
+  context.fillStyle = "rgba(255, 232, 159, 0.16)";
+  for (let row = y + 21; row < y + height - 8; row += 9) {
+    context.fillRect(x + 6, row, width - 12, 2);
+  }
+  context.fillStyle = "#2a1c18";
+  context.fillRect(x + width - 20, y + height - 21, 12, 16);
+  context.fillStyle = "#ffd37c";
+  context.fillRect(x + 12, y + 25, 13, 10);
+  context.fillStyle = "#49311f";
+  context.fillRect(x + 18, y + 25, 1, 10);
+  context.fillRect(x + 12, y + 30, 13, 1);
+  drawVisualGameText(context, label, x + 8, y + height - 18, "#fff3cf", 8);
+  drawVisualGameText(context, meta, x + 8, y + height - 8, "#d7c49c", 7);
+
+  if (action) {
+    hitAreas.push({ x, y, width, height, ...action });
+  }
+}
+
+function drawVisualGameWorkshop(context, graph, hitAreas, time) {
+  const x = 278;
+  const y = 31;
+  const width = 145;
+  const height = 118;
+  const agents = getVisualInterfaceAgents(graph);
+  const workingAgents = agents.filter((agent) => getVisualStatusClass(agent.status) === "working");
+
+  drawVisualGameShadow(context, x + 5, y + height - 3, width, 9);
+  context.fillStyle = "#171b1d";
+  context.fillRect(x, y + 13, width, height - 13);
+  context.fillStyle = "#6e392f";
+  context.fillRect(x - 5, y + 4, width + 10, 13);
+  context.fillStyle = "#301917";
+  context.fillRect(x, y, width, 5);
+  context.fillStyle = "#262d2d";
+  context.fillRect(x + 8, y + 23, width - 16, height - 33);
+  context.fillStyle = "#3d2c21";
+  context.fillRect(x + 17, y + 69, width - 33, 10);
+  context.fillRect(x + 17, y + 109, width - 33, 10);
+  drawVisualGameText(context, "Workshop", x + 10, y + 27, "#fff3cf", 8);
+  drawVisualGameText(context, `${workingAgents.length} at computers`, x + 10, y + 38, "#d7c49c", 7);
+
+  for (let index = 0; index < 6; index += 1) {
+    const desk = getVisualGameDeskSpot(index);
+    const occupied = Boolean(workingAgents[index]);
+    context.fillStyle = "#293841";
+    context.fillRect(desk.x - 11, desk.y - 27, 24, 16);
+    context.fillStyle = occupied ? "#79bdf8" : "#31526a";
+    context.fillRect(desk.x - 8, desk.y - 24, 18, 9);
+    if (occupied) {
+      context.fillStyle = `rgba(153, 224, 255, ${0.22 + Math.sin(time / 180 + index) * 0.08})`;
+      context.fillRect(desk.x - 10, desk.y - 26, 22, 13);
+    }
+    context.fillStyle = "#161b1e";
+    context.fillRect(desk.x - 2, desk.y - 12, 8, 2);
+  }
+
+  hitAreas.push({ x, y, width, height, kind: "main-view", view: "visual-interface", label: "Workshop" });
+}
+
+function drawVisualGameBrowserLab(context) {
+  const x = 396;
+  const y = 76;
+  const width = 66;
+  const height = 54;
+  drawVisualGameShadow(context, x + 3, y + height - 1, width, 7);
+  context.fillStyle = "#253936";
+  context.fillRect(x, y + 10, width, height - 10);
+  context.fillStyle = "#4d795d";
+  context.fillRect(x + 8, y + 4, width - 16, 15);
+  context.fillStyle = "#6fa36f";
+  context.fillRect(x + 11, y + 7, width - 22, 8);
+  drawVisualGameText(context, "Browser", x + 9, y + height - 15, "#f4f3d2", 8);
+  drawVisualGameText(context, "Lab", x + 9, y + height - 6, "#d7c49c", 7);
+}
+
+function drawVisualGameDock(context) {
+  const x = 390;
+  const y = 193;
+  const width = 64;
+  const height = 42;
+  drawVisualGameShadow(context, x + 3, y + height - 1, width, 7);
+  context.fillStyle = "#304d64";
+  context.fillRect(x - 8, y + 20, width + 18, 25);
+  context.fillStyle = "#5a3f2c";
+  for (let plank = 0; plank < 5; plank += 1) {
+    context.fillRect(x + plank * 12, y + 14, 9, 35);
+  }
+  context.fillStyle = "#2c2020";
+  context.fillRect(x + 6, y + 18, width - 8, 3);
+  drawVisualGameText(context, "Port Dock", x + 1, y + 10, "#fff3cf", 8);
+  drawVisualGameText(context, isLocalhostAppsEnabled() ? `${state.ports.length} ports` : "off", x + 1, y + 20, "#d7c49c", 7);
+}
+
+function drawVisualGameForeground(context, time) {
+  for (let index = 0; index < 34; index += 1) {
+    const x = (getVisualGameHash(index, 9) * 17) % VISUAL_GAME_WIDTH;
+    const y = 238 + (getVisualGameHash(index, 19) % 26);
+    context.fillStyle = index % 5 === 0 ? "#d5c967" : "#235e42";
+    context.fillRect(x, y + Math.floor(Math.sin(time / 700 + index) * 1), 2, 6);
+    context.fillRect(x + 3, y + 2, 2, 4);
+  }
+}
+
+function drawVisualGameAgent(context, agent, time, hitAreas) {
+  const palette = VISUAL_GAME_AGENT_PALETTES[agent.index % VISUAL_GAME_AGENT_PALETTES.length];
+  const bob = agent.statusClass === "working" ? Math.floor(Math.sin(time / 130 + agent.index) * 1) : Math.floor(Math.sin(time / 150 + agent.index) * 2);
+  const step = Math.floor(time / 180 + agent.index) % 4;
+  const x = Math.round(agent.x - VISUAL_GAME_AGENT_SIZE / 2);
+  const y = Math.round(agent.y - 25 + bob);
+
+  drawVisualGameShadow(context, x + 2, y + 27, 15, 4);
+  context.fillStyle = palette.boots;
+  context.fillRect(x + 4, y + 25 + (step % 2), 4, 3);
+  context.fillRect(x + 11, y + 25 + ((step + 1) % 2), 4, 3);
+  context.fillStyle = palette.pants;
+  context.fillRect(x + 5, y + 20, 4, 7);
+  context.fillRect(x + 10, y + 20, 4, 7);
+  context.fillStyle = palette.coat;
+  context.fillRect(x + 3, y + 11, 13, 11);
+  context.fillStyle = palette.trim;
+  context.fillRect(x + 8, y + 12, 2, 10);
+  context.fillStyle = palette.skin;
+  context.fillRect(x + 5, y + 7, 9, 7);
+  context.fillStyle = palette.hair;
+  context.fillRect(x + 4, y + 6, 11, 3);
+  context.fillStyle = palette.hat;
+  context.fillRect(x + 3, y + 1, 13, 7);
+  context.fillRect(x + 5, y - 2, 9, 3);
+  context.fillStyle = palette.brim;
+  context.fillRect(x + 1, y + 7, 17, 2);
+  context.fillStyle = "#fff0d6";
+  context.fillRect(x + 8, y + 10, 2, 2);
+  context.fillStyle = palette.skin;
+  context.fillRect(x + 1, y + 15 + (step % 2), 3, 7);
+  context.fillRect(x + 15, y + 15 + ((step + 1) % 2), 3, 7);
+
+  if (agent.statusClass === "failed") {
+    context.fillStyle = "#ff7f79";
+    context.fillRect(x + 14, y, 4, 4);
+  } else if (agent.statusClass === "done") {
+    context.fillStyle = "#9ad67f";
+    context.fillRect(x + 14, y, 4, 4);
+  } else if (agent.statusClass === "working") {
+    context.fillStyle = "#79bdf8";
+    context.fillRect(x + 14, y, 4, 4);
+  }
+
+  drawVisualGameNameplate(context, truncateSwarmLabel(agent.name, 14), x + 9, y + 34);
+  hitAreas.push({
+    x: x - 10,
+    y: y - 5,
+    width: 38,
+    height: 48,
+    kind: agent.browserUseSessionId ? "browser" : "session",
+    sessionId: agent.sessionId || "",
+    browserUseSessionId: agent.browserUseSessionId || "",
+    label: `${agent.name} - ${agent.statusClass === "working" ? "at computer" : "walking"}`,
+  });
+}
+
+function drawVisualGameNameplate(context, text, centerX, y) {
+  const width = Math.max(34, text.length * 5 + 10);
+  context.fillStyle = "rgba(12, 15, 16, 0.82)";
+  context.fillRect(Math.round(centerX - width / 2), y, width, 13);
+  drawVisualGameText(context, text, Math.round(centerX - width / 2) + 5, y + 9, "#f3f6e9", 7);
+}
+
+function drawVisualGameText(context, text, x, y, color, size = 8) {
+  context.fillStyle = color;
+  context.font = `${size}px "IBM Plex Mono", monospace`;
+  context.textBaseline = "alphabetic";
+  context.fillText(String(text || ""), Math.round(x), Math.round(y));
+}
+
+function drawVisualGameShadow(context, x, y, width, height) {
+  context.fillStyle = "rgba(0, 0, 0, 0.24)";
+  context.fillRect(Math.round(x), Math.round(y), Math.round(width), Math.round(height));
+}
+
+function getVisualGameAgents(graph, time) {
+  const workingIndex = { value: 0 };
+  const roamingIndex = { value: 0 };
+  return getVisualInterfaceAgents(graph).map((agent, index) => {
+    const statusClass = getVisualStatusClass(agent.status);
+    const base = {
+      ...agent,
+      index,
+      statusClass,
+    };
+
+    if (statusClass === "working") {
+      const desk = getVisualGameDeskSpot(workingIndex.value);
+      workingIndex.value += 1;
+      return {
+        ...base,
+        x: desk.x,
+        y: desk.y,
+      };
+    }
+
+    const route = VISUAL_GAME_ROAM_ROUTES[roamingIndex.value % VISUAL_GAME_ROAM_ROUTES.length];
+    const seed = getVisualGameHash(index + 1, String(agent.name || "").length + 3);
+    const position = getVisualGameRoutePosition(route, time / (9000 + (seed % 5) * 900) + seed / 100);
+    roamingIndex.value += 1;
+    return {
+      ...base,
+      x: position.x,
+      y: position.y,
+    };
+  });
+}
+
+function getVisualGameDeskSpot(index) {
+  const column = index % 3;
+  const row = Math.floor(index / 3) % 2;
+  return {
+    x: 306 + column * 43,
+    y: 96 + row * 41,
+  };
+}
+
+function getVisualGameRoutePosition(route, phase) {
+  if (!Array.isArray(route) || route.length < 2) {
+    return { x: VISUAL_GAME_WIDTH / 2, y: VISUAL_GAME_HEIGHT / 2 };
+  }
+
+  const normalized = phase - Math.floor(phase);
+  const scaled = normalized * route.length;
+  const index = Math.floor(scaled) % route.length;
+  const nextIndex = (index + 1) % route.length;
+  const t = scaled - Math.floor(scaled);
+  const eased = t * t * (3 - 2 * t);
+  const start = route[index];
+  const end = route[nextIndex];
+
+  return {
+    x: start[0] + (end[0] - start[0]) * eased,
+    y: start[1] + (end[1] - start[1]) * eased,
+  };
+}
+
+function getVisualGameHash(a, b) {
+  let value = (Number(a) + 1) * 1103515245 + (Number(b) + 7) * 12345;
+  value = (value ^ (value >>> 16)) >>> 0;
+  return value;
 }
 
 function renderSwarmGraphView() {
@@ -11438,6 +12042,7 @@ function renderShell() {
   const explorerScrollSnapshot = captureExplorerScrollSnapshots();
   const mainViewScrollSnapshot = captureMainViewScrollSnapshots();
   teardownKnowledgeBaseGraphInteractions();
+  teardownVisualPixelGame();
   syncFilesRoot();
 
   if (isBrainSetupRequired()) {
@@ -11553,6 +12158,9 @@ function renderShell() {
   } else {
     disposeTerminal();
     refreshKnowledgeBaseUi();
+    if (isVisualInterfaceView()) {
+      mountVisualPixelGame();
+    }
   }
 
   void refreshOpenFileTree();
