@@ -118,6 +118,7 @@ const TERMINAL_KEYBOARD_SCROLL_LINES = 3;
 const TERMINAL_KEYBOARD_SCROLL_PAGE_RATIO = 0.85;
 const VISUAL_GAME_WIDTH = 480;
 const VISUAL_GAME_HEIGHT = 270;
+const VISUAL_GAME_RENDER_SCALE = 2;
 const VISUAL_GAME_TILE = 16;
 const VISUAL_GAME_AGENT_SIZE = 18;
 const VISUAL_GAME_AGENT_PALETTES = [
@@ -130,47 +131,64 @@ const VISUAL_GAME_AGENT_PALETTES = [
 ];
 const VISUAL_GAME_ROAM_ROUTES = [
   [
-    [92, 154],
-    [154, 154],
-    [210, 122],
-    [250, 156],
-    [192, 194],
+    [78, 165],
+    [148, 165],
+    [220, 165],
+    [326, 165],
+    [434, 165],
+    [220, 165],
   ],
   [
-    [66, 98],
-    [112, 128],
-    [154, 178],
-    [98, 208],
-    [54, 174],
+    [78, 91],
+    [146, 91],
+    [224, 91],
+    [224, 126],
+    [224, 165],
   ],
   [
-    [322, 200],
-    [390, 190],
-    [420, 146],
-    [364, 128],
-    [300, 154],
+    [322, 165],
+    [420, 165],
+    [430, 188],
+    [430, 206],
+    [400, 188],
   ],
   [
-    [252, 78],
-    [212, 112],
-    [180, 146],
-    [234, 184],
-    [286, 136],
+    [224, 76],
+    [224, 112],
+    [224, 150],
+    [260, 165],
+    [306, 165],
   ],
   [
-    [140, 62],
-    [204, 76],
-    [262, 86],
-    [238, 132],
-    [166, 126],
+    [92, 91],
+    [164, 91],
+    [224, 91],
+    [224, 136],
+    [164, 165],
   ],
   [
-    [70, 214],
-    [140, 212],
-    [214, 210],
-    [282, 206],
-    [348, 216],
+    [96, 165],
+    [96, 192],
+    [96, 214],
+    [126, 192],
+    [154, 165],
   ],
+];
+const VISUAL_GAME_BROWSER_SPOTS = [
+  { x: 428, y: 125 },
+  { x: 443, y: 126 },
+  { x: 415, y: 126 },
+];
+const VISUAL_GAME_LIBRARY_SPOTS = [
+  { x: 78, y: 224 },
+  { x: 105, y: 226 },
+  { x: 132, y: 224 },
+  { x: 95, y: 207 },
+];
+const VISUAL_GAME_EVIDENCE_SPOTS = [
+  { x: 78, y: 190 },
+  { x: 106, y: 192 },
+  { x: 134, y: 190 },
 ];
 const TERMINAL_IMAGE_PATH_EXTENSIONS = new Set([
   ".apng",
@@ -590,6 +608,9 @@ const state = {
     cleanup: null,
     hitAreas: [],
     hoverLabel: "",
+    agentPositions: new Map(),
+    selectedSessionId: "",
+    selectedBrowserUseSessionId: "",
   },
   browserUseSession: {
     id: "",
@@ -10142,7 +10163,8 @@ function getVisualInterfaceAgents(graph) {
   const sessions = getVisualGraphSessions(graph);
   const agents = [];
 
-  for (const session of sessions) {
+  for (let sessionIndex = 0; sessionIndex < sessions.length; sessionIndex += 1) {
+    const session = sessions[sessionIndex];
     agents.push({
       kind: "chat",
       name: session.name || session.providerLabel || "Agent",
@@ -10150,9 +10172,19 @@ function getVisualInterfaceAgents(graph) {
       status: session.activityStatus || session.status || "idle",
       meta: relativeTime(session.lastOutputAt || session.updatedAt || session.createdAt),
       sessionId: session.id,
+      parentSessionId: "",
+      parentName: "",
+      familyIndex: sessionIndex,
+      isSubagent: false,
+      paths: [],
+      commands: [],
     });
 
     for (const subagent of Array.isArray(session.subagents) ? session.subagents : []) {
+      if (!isVisualGameLiveSubagent(subagent)) {
+        continue;
+      }
+
       const toolUseCount = Number(subagent.toolUseCount);
       const messageCount = Number(subagent.messageCount);
       const detail = [
@@ -10167,7 +10199,14 @@ function getVisualInterfaceAgents(graph) {
         subtitle: detail,
         status: subagent.status || "idle",
         meta: relativeTime(subagent.updatedAt),
+        sessionId: session.id,
+        parentSessionId: session.id,
+        parentName: session.name || session.providerLabel || "Agent",
+        familyIndex: sessionIndex,
+        isSubagent: true,
         browserUseSessionId: subagent.browserUseSessionId || "",
+        paths: Array.isArray(subagent.paths) ? subagent.paths : [],
+        commands: Array.isArray(subagent.commands) ? subagent.commands : [],
       });
     }
   }
@@ -10181,6 +10220,11 @@ function getVisualInterfaceAgents(graph) {
       return String(right.meta || "").localeCompare(String(left.meta || ""));
     })
     .slice(0, 12);
+}
+
+function isVisualGameLiveSubagent(subagent) {
+  const statusClass = getVisualStatusClass(subagent?.status || "");
+  return statusClass === "working";
 }
 
 function renderVisualAgentTile(agent, index) {
@@ -10563,7 +10607,6 @@ function renderVisualPixelGame(graph) {
   const agents = getVisualInterfaceAgents(graph);
   const workingCount = agents.filter((agent) => getVisualStatusClass(agent.status) === "working").length;
   const roamingCount = Math.max(0, agents.length - workingCount);
-  const pathBuckets = collectSwarmPathBuckets(graph);
 
   return `
     <section class="visual-game-stage" aria-label="Agent village videogame">
@@ -10571,32 +10614,76 @@ function renderVisualPixelGame(graph) {
         <canvas
           id="visual-game-canvas"
           class="visual-game-canvas"
-          width="${VISUAL_GAME_WIDTH}"
-          height="${VISUAL_GAME_HEIGHT}"
+          width="${VISUAL_GAME_WIDTH * VISUAL_GAME_RENDER_SCALE}"
+          height="${VISUAL_GAME_HEIGHT * VISUAL_GAME_RENDER_SCALE}"
           role="img"
           aria-label="${escapeHtml(`${workingCount} working agents, ${roamingCount} roaming agents in the pixel village`)}"
         ></canvas>
-        <div class="visual-game-hud" aria-hidden="true">
-          <div>
-            <strong>${escapeHtml(`${workingCount} at computers`)}</strong>
-            <span>${escapeHtml(`${roamingCount} roaming`)}</span>
-          </div>
-          <div>
-            <strong>${escapeHtml(`${pathBuckets.length} evidence groups`)}</strong>
-            <span>${escapeHtml(`${Number(graph?.git?.dirtyCount || 0)} repo changes`)}</span>
-          </div>
-          <div class="visual-game-hover">agent village</div>
-        </div>
+        <div class="visual-game-hover" aria-hidden="true">agent village</div>
       </div>
     </section>
   `;
 }
 
-function renderVisualVillage(graph) {
+function renderVisualGameSessionDrawer(graph) {
+  const selectedSessionId = state.visualGame.selectedSessionId || "";
+  if (!selectedSessionId) {
+    return "";
+  }
+
+  const selectedSession =
+    state.sessions.find((session) => session.id === selectedSessionId)
+    || getVisualGraphSessions(graph).find((session) => session.id === selectedSessionId)
+    || null;
+  const title = selectedSession?.name || selectedSession?.providerLabel || "Agent";
+  const meta = selectedSession
+    ? [selectedSession.providerLabel, selectedSession.cwd].filter(Boolean).join(" · ")
+    : "session unavailable";
+  const browserUseSessionId = state.visualGame.selectedBrowserUseSessionId || "";
+
   return `
-    <div class="visual-game-layout">
+    <aside class="visual-game-session-panel" aria-label="Agent terminal">
+      <div class="visual-game-session-head">
+        <div class="terminal-copy">
+          <strong>${escapeHtml(title)}</strong>
+          <div class="terminal-meta">${escapeHtml(meta)}</div>
+        </div>
+        <div class="visual-game-session-actions">
+          ${
+            browserUseSessionId
+              ? `<button class="icon-button toolbar-control" type="button" data-open-browser-use-session="${escapeHtml(browserUseSessionId)}" aria-label="Open browser task" ${tooltipAttributes("Open browser task")}>${renderIcon(AppWindow)}</button>`
+              : ""
+          }
+          <button class="ghost-button toolbar-control terminal-control-button" type="button" id="tab-button" data-terminal-control aria-label="Send Tab" ${tooltipAttributes("Send Tab")} ${selectedSession ? "" : "disabled"}>${renderIcon(IndentIncrease)}</button>
+          <button class="ghost-button toolbar-control terminal-control-button" type="button" id="shift-tab-button" data-terminal-control aria-label="Send Shift Tab" ${tooltipAttributes("Send Shift Tab")} ${selectedSession ? "" : "disabled"}>${renderIcon(IndentDecrease)}</button>
+          <button class="ghost-button toolbar-control terminal-control-button" type="button" id="ctrl-p-button" data-terminal-control aria-label="Send Control P" ${tooltipAttributes("Send Control P")} ${selectedSession ? "" : "disabled"}>${renderIcon(ArrowUp)}</button>
+          <button class="ghost-button toolbar-control terminal-control-button" type="button" id="ctrl-t-button" data-terminal-control aria-label="Send Control T" ${tooltipAttributes("Send Control T")} ${selectedSession ? "" : "disabled"}>${renderIcon(Type)}</button>
+          <button class="ghost-button toolbar-control terminal-control-button" type="button" id="ctrl-c-button" data-terminal-control aria-label="Send Control C" ${tooltipAttributes("Send Control C")} ${selectedSession ? "" : "disabled"}>${renderIcon(CircleStop)}</button>
+          <button class="icon-button toolbar-control" type="button" id="visual-game-close-session" aria-label="Close agent terminal" ${tooltipAttributes("Close agent terminal")}>${renderIcon(X)}</button>
+        </div>
+      </div>
+      <div class="terminal-stack visual-game-terminal-stack">
+        <div class="terminal-mount" id="terminal-mount"></div>
+        <div class="terminal-transcript-scroll" id="terminal-transcript-scroll" tabindex="0" aria-label="Terminal transcript history">
+          <pre class="terminal-transcript-pre" id="terminal-transcript-pre"></pre>
+        </div>
+        <button class="jump-bottom-button ${selectedSession && state.terminalShowJumpToBottom ? "is-visible" : ""}" type="button" id="jump-to-bottom" aria-label="Jump to bottom" ${tooltipAttributes("Jump to bottom")} ${selectedSession ? "" : "disabled"}>
+          bottom
+        </button>
+        <div class="empty-state ${selectedSession ? "hidden" : ""}" id="empty-state">
+          <p class="empty-state-copy">session no longer available</p>
+        </div>
+      </div>
+    </aside>
+  `;
+}
+
+function renderVisualVillage(graph) {
+  const hasSessionPanel = Boolean(state.visualGame.selectedSessionId);
+  return `
+    <div class="visual-game-layout ${hasSessionPanel ? "has-session-panel" : ""}">
       ${renderVisualPixelGame(graph)}
-      ${renderVisualEvidenceWall(graph)}
+      ${renderVisualGameSessionDrawer(graph)}
     </div>
   `;
 }
@@ -10628,6 +10715,7 @@ function mountVisualPixelGame() {
   }
 
   context.imageSmoothingEnabled = false;
+  const gameModel = getVisualGameModel(graph);
 
   const getPointerPoint = (event) => {
     const rect = canvas.getBoundingClientRect();
@@ -10692,7 +10780,9 @@ function mountVisualPixelGame() {
 
   const drawFrame = (time) => {
     state.visualGame.hitAreas = [];
-    drawVisualGameScene(context, graph, time, state.visualGame.hitAreas);
+    context.setTransform(VISUAL_GAME_RENDER_SCALE, 0, 0, VISUAL_GAME_RENDER_SCALE, 0, 0);
+    context.imageSmoothingEnabled = false;
+    drawVisualGameScene(context, graph, gameModel, time, state.visualGame.hitAreas);
     state.visualGame.frameHandle = window.requestAnimationFrame(drawFrame);
   };
 
@@ -10710,12 +10800,10 @@ async function handleVisualGameHit(hit) {
   }
 
   if (hit.kind === "session" && hit.sessionId) {
-    if (state.currentView !== "shell") {
-      setCurrentView("shell");
-    }
-
     markSessionRead(hit.sessionId, { refresh: false });
     state.activeSessionId = hit.sessionId;
+    state.visualGame.selectedSessionId = hit.sessionId;
+    state.visualGame.selectedBrowserUseSessionId = hit.browserUseSessionId || "";
     const nextSession = state.sessions.find((session) => session.id === hit.sessionId);
     if (nextSession) {
       expandSessionProject(nextSession.cwd);
@@ -10742,10 +10830,22 @@ async function handleVisualGameHit(hit) {
   }
 }
 
-function drawVisualGameScene(context, graph, time, hitAreas) {
+function getVisualGameModel(graph) {
+  return {
+    pathBucketCount: collectSwarmPathBuckets(graph).length,
+    pluginCount: state.settings.installedPluginIds?.length || 0,
+    dirtyCount: Number(graph?.git?.dirtyCount || 0),
+  };
+}
+
+function drawVisualGameScene(context, graph, model, time, hitAreas) {
   context.save();
   context.imageSmoothingEnabled = false;
   context.clearRect(0, 0, VISUAL_GAME_WIDTH, VISUAL_GAME_HEIGHT);
+  const agents = getVisualGameAgents(graph, time);
+  const deskAgents = agents.filter((agent) => agent.destination === "desk");
+  const browserAgents = agents.filter((agent) => agent.destination === "browser");
+  const libraryAgents = agents.filter((agent) => agent.destination === "library");
 
   drawVisualGameGround(context, time);
   drawVisualGamePaths(context);
@@ -10766,22 +10866,12 @@ function drawVisualGameScene(context, graph, time, hitAreas) {
     width: 88,
     height: 48,
     label: "Tool Shed",
-    meta: `${state.settings.installedPluginIds?.length || 0} plugins`,
+    meta: `${model.pluginCount} plugins`,
     roof: "#6f3f33",
     body: "#75603a",
     action: { kind: "main-view", view: "plugins", label: "Tool Shed" },
   });
-  drawVisualGameBuilding(context, hitAreas, {
-    x: 42,
-    y: 197,
-    width: 110,
-    height: 45,
-    label: "Evidence",
-    meta: `${collectSwarmPathBuckets(graph).length} groups`,
-    roof: "#704a38",
-    body: "#64533d",
-    action: { kind: "main-view", view: "knowledge-base", label: "Evidence Wall" },
-  });
+  drawVisualGameLibrary(context, hitAreas, model, time, libraryAgents);
   drawVisualGameBuilding(context, hitAreas, {
     x: 182,
     y: 27,
@@ -10793,11 +10883,10 @@ function drawVisualGameScene(context, graph, time, hitAreas) {
     body: "#695b42",
     action: { kind: "main-view", view: "automations", label: "Schedule" },
   });
-  drawVisualGameWorkshop(context, graph, hitAreas, time);
-  drawVisualGameBrowserLab(context);
+  drawVisualGameWorkshop(context, hitAreas, time, deskAgents);
+  drawVisualGameBrowserLab(context, hitAreas, time, browserAgents);
   drawVisualGameDock(context);
 
-  const agents = getVisualGameAgents(graph, time);
   for (const agent of agents.sort((left, right) => left.y - right.y)) {
     drawVisualGameAgent(context, agent, time, hitAreas);
   }
@@ -10831,10 +10920,11 @@ function drawVisualGameGround(context, time) {
 }
 
 function drawVisualGamePaths(context) {
-  drawVisualGamePathRect(context, 58, 151, 350, 34);
-  drawVisualGamePathRect(context, 216, 51, 43, 178);
-  drawVisualGamePathRect(context, 88, 76, 172, 24);
-  drawVisualGamePathRect(context, 320, 151, 92, 25);
+  drawVisualGamePathRect(context, 64, 78, 174, 24);
+  drawVisualGamePathRect(context, 210, 72, 28, 76);
+  drawVisualGamePathRect(context, 58, 148, 392, 34);
+  drawVisualGamePathRect(context, 80, 181, 28, 19);
+  drawVisualGamePathRect(context, 414, 176, 26, 28);
 }
 
 function drawVisualGamePathRect(context, x, y, width, height) {
@@ -10851,58 +10941,133 @@ function drawVisualGamePathRect(context, x, y, width, height) {
   context.fillRect(x, y + height - 2, width, 2);
 }
 
+function drawVisualGameRoomFloor(context, x, y, width, height, options = {}) {
+  const floor = options.floor || "#72563a";
+  const wall = options.wall || "#7a4635";
+  const trim = options.trim || "#3d291d";
+  const entrance = options.entrance || "bottom";
+
+  drawVisualGameShadow(context, x + 3, y + height - 1, width, 7);
+  context.fillStyle = floor;
+  context.fillRect(x, y, width, height);
+  context.fillStyle = "rgba(255, 231, 159, 0.1)";
+  for (let row = y + 9; row < y + height - 6; row += 10) {
+    context.fillRect(x + 6, row, width - 12, 1);
+  }
+  context.fillStyle = "rgba(73, 46, 27, 0.18)";
+  for (let column = x + 14; column < x + width - 8; column += 21) {
+    context.fillRect(column, y + 6, 2, height - 12);
+  }
+
+  context.fillStyle = wall;
+  context.fillRect(x - 3, y - 3, width + 6, 7);
+  context.fillRect(x - 3, y - 3, 7, height + 6);
+  context.fillRect(x + width - 4, y - 3, 7, height + 6);
+  context.fillRect(x - 3, y + height - 4, width + 6, 7);
+  context.fillStyle = trim;
+  context.fillRect(x - 3, y - 3, width + 6, 2);
+  context.fillRect(x - 3, y + height + 1, width + 6, 2);
+
+  const openingWidth = Math.min(28, Math.max(16, Math.floor(width * 0.28)));
+  if (entrance === "bottom") {
+    const openingX = Math.round(x + width / 2 - openingWidth / 2);
+    context.fillStyle = floor;
+    context.fillRect(openingX, y + height - 4, openingWidth, 7);
+    context.fillStyle = "#d1af63";
+    context.fillRect(openingX + 2, y + height - 1, openingWidth - 4, 6);
+  } else if (entrance === "top") {
+    const openingX = Math.round(x + width / 2 - openingWidth / 2);
+    context.fillStyle = floor;
+    context.fillRect(openingX, y - 3, openingWidth, 7);
+    context.fillStyle = "#d1af63";
+    context.fillRect(openingX + 2, y - 5, openingWidth - 4, 6);
+  } else if (entrance === "left") {
+    const openingY = Math.round(y + height / 2 - openingWidth / 2);
+    context.fillStyle = floor;
+    context.fillRect(x - 3, openingY, 7, openingWidth);
+    context.fillStyle = "#d1af63";
+    context.fillRect(x - 5, openingY + 2, 6, openingWidth - 4);
+  }
+}
+
 function drawVisualGameBuilding(context, hitAreas, building) {
   const { x, y, width, height, label, meta, roof, body, action } = building;
-  drawVisualGameShadow(context, x + 4, y + height - 2, width, 8);
-  context.fillStyle = body;
-  context.fillRect(x, y + 12, width, height - 12);
-  context.fillStyle = "#553523";
-  context.fillRect(x, y + height - 5, width, 5);
-  context.fillStyle = roof;
-  context.fillRect(x - 5, y + 3, width + 10, 14);
-  context.fillStyle = "#4b211b";
-  context.fillRect(x - 1, y, width + 2, 5);
-  context.fillStyle = "rgba(255, 232, 159, 0.16)";
-  for (let row = y + 21; row < y + height - 8; row += 9) {
-    context.fillRect(x + 6, row, width - 12, 2);
-  }
-  context.fillStyle = "#2a1c18";
-  context.fillRect(x + width - 20, y + height - 21, 12, 16);
-  context.fillStyle = "#ffd37c";
-  context.fillRect(x + 12, y + 25, 13, 10);
-  context.fillStyle = "#49311f";
-  context.fillRect(x + 18, y + 25, 1, 10);
-  context.fillRect(x + 12, y + 30, 13, 1);
-  drawVisualGameText(context, label, x + 8, y + height - 18, "#fff3cf", 8);
-  drawVisualGameText(context, meta, x + 8, y + height - 8, "#d7c49c", 7);
+  drawVisualGameRoomFloor(context, x, y, width, height, {
+    floor: body,
+    wall: roof,
+    trim: "#4b2f22",
+    entrance: "bottom",
+  });
+  drawVisualGameBuildingSign(context, x + 8, y + 7, Math.min(width - 16, 88), 23, label, meta);
+
+  context.fillStyle = "rgba(255, 232, 159, 0.18)";
+  context.fillRect(x + width - 23, y + 16, 14, 8);
+  context.fillStyle = "#4f3322";
+  context.fillRect(x + width - 17, y + 16, 1, 8);
+  context.fillRect(x + width - 23, y + 20, 14, 1);
 
   if (action) {
     hitAreas.push({ x, y, width, height, ...action });
   }
 }
 
-function drawVisualGameWorkshop(context, graph, hitAreas, time) {
-  const x = 278;
-  const y = 31;
-  const width = 145;
-  const height = 118;
-  const agents = getVisualInterfaceAgents(graph);
-  const workingAgents = agents.filter((agent) => getVisualStatusClass(agent.status) === "working");
+function drawVisualGameLibrary(context, hitAreas, model, time, libraryAgents) {
+  const x = 34;
+  const y = 198;
+  const width = 118;
+  const height = 48;
+  const bookGlow = 0.14 + Math.sin(time / 260) * 0.04;
 
-  drawVisualGameShadow(context, x + 5, y + height - 3, width, 9);
-  context.fillStyle = "#171b1d";
-  context.fillRect(x, y + 13, width, height - 13);
-  context.fillStyle = "#6e392f";
-  context.fillRect(x - 5, y + 4, width + 10, 13);
-  context.fillStyle = "#301917";
-  context.fillRect(x, y, width, 5);
-  context.fillStyle = "#262d2d";
-  context.fillRect(x + 8, y + 23, width - 16, height - 33);
+  drawVisualGameRoomFloor(context, x, y, width, height, {
+    floor: "#8a6a42",
+    wall: "#744034",
+    trim: "#4b231d",
+    entrance: "top",
+  });
+  context.fillStyle = "#5f4229";
+  context.fillRect(x + 9, y + 14, width - 18, 11);
+  context.fillRect(x + 9, y + 33, width - 18, 6);
+  context.fillStyle = "#34231a";
+  context.fillRect(x + 9, y + 23, width - 18, 2);
+  context.fillRect(x + 9, y + 38, width - 18, 2);
+
+  const bookColors = ["#d9755b", "#f1c86f", "#80b877", "#79a7d8", "#c987bd"];
+  for (let index = 0; index < 27; index += 1) {
+    context.fillStyle = bookColors[index % bookColors.length];
+    context.fillRect(x + 14 + index * 3, y + 15 + (index % 3), 2, 8 - (index % 2));
+  }
+
+  context.fillStyle = `rgba(255, 219, 132, ${bookGlow})`;
+  context.fillRect(x + 12, y + 13, width - 24, 13);
+  drawVisualGameBuildingSign(
+    context,
+    x + 14,
+    y + height - 23,
+    76,
+    20,
+    "Library",
+    libraryAgents.length ? `${libraryAgents.length} reading` : `${model.pathBucketCount} notes`,
+  );
+
+  hitAreas.push({ x, y, width, height, kind: "main-view", view: "knowledge-base", label: "Library" });
+}
+
+function drawVisualGameWorkshop(context, hitAreas, time, workingAgents) {
+  const x = 270;
+  const y = 42;
+  const width = 126;
+  const height = 104;
+
+  drawVisualGameRoomFloor(context, x, y, width, height, {
+    floor: "#262d2d",
+    wall: "#6e392f",
+    trim: "#301917",
+    entrance: "bottom",
+  });
   context.fillStyle = "#3d2c21";
-  context.fillRect(x + 17, y + 69, width - 33, 10);
-  context.fillRect(x + 17, y + 109, width - 33, 10);
-  drawVisualGameText(context, "Workshop", x + 10, y + 27, "#fff3cf", 8);
-  drawVisualGameText(context, `${workingAgents.length} at computers`, x + 10, y + 38, "#d7c49c", 7);
+  context.fillRect(x + 15, y + 56, width - 30, 9);
+  context.fillRect(x + 15, y + 97, width - 30, 9);
+  drawVisualGamePaintedWallSign(context, x + 11, y + 14, 93, 23, "Workshop", `${workingAgents.length} at computers`);
 
   for (let index = 0; index < 6; index += 1) {
     const desk = getVisualGameDeskSpot(index);
@@ -10922,20 +11087,50 @@ function drawVisualGameWorkshop(context, graph, hitAreas, time) {
   hitAreas.push({ x, y, width, height, kind: "main-view", view: "visual-interface", label: "Workshop" });
 }
 
-function drawVisualGameBrowserLab(context) {
-  const x = 396;
-  const y = 76;
-  const width = 66;
-  const height = 54;
-  drawVisualGameShadow(context, x + 3, y + height - 1, width, 7);
-  context.fillStyle = "#253936";
-  context.fillRect(x, y + 10, width, height - 10);
-  context.fillStyle = "#4d795d";
-  context.fillRect(x + 8, y + 4, width - 16, 15);
-  context.fillStyle = "#6fa36f";
-  context.fillRect(x + 11, y + 7, width - 22, 8);
-  drawVisualGameText(context, "Browser", x + 9, y + height - 15, "#f4f3d2", 8);
-  drawVisualGameText(context, "Lab", x + 9, y + height - 6, "#d7c49c", 7);
+function drawVisualGameBrowserLab(context, hitAreas, time, browserAgents) {
+  const x = 406;
+  const y = 42;
+  const width = 58;
+  const height = 104;
+  drawVisualGameRoomFloor(context, x, y, width, height, {
+    floor: "#253936",
+    wall: "#4d795d",
+    trim: "#223a2c",
+    entrance: "bottom",
+  });
+  drawVisualGamePaintedWallSign(
+    context,
+    x + 7,
+    y + 13,
+    44,
+    24,
+    "Browser",
+    browserAgents.length ? `${browserAgents.length} task${browserAgents.length === 1 ? "" : "s"}` : "Lab",
+  );
+
+  context.fillStyle = "#20302f";
+  context.fillRect(x + 10, y + 70, width - 20, 8);
+  context.fillStyle = browserAgents.length ? "#94d785" : "#6fa36f";
+  context.fillRect(x + 10, y + 53, width - 20, 12);
+  if (browserAgents.length) {
+    context.fillStyle = `rgba(191, 255, 176, ${0.28 + Math.sin(time / 180) * 0.08})`;
+    context.fillRect(x + 8, y + 51, width - 16, 16);
+    context.fillStyle = "#dff8d0";
+    for (let index = 0; index < Math.min(browserAgents.length, 3); index += 1) {
+      context.fillRect(x + 14 + index * 9, y + 58 + (Math.floor(time / 220 + index) % 2), 5, 1);
+    }
+  }
+  if (browserAgents[0]?.browserUseSessionId) {
+    hitAreas.push({
+      x,
+      y,
+      width,
+      height,
+      kind: "browser",
+      browserUseSessionId: browserAgents[0].browserUseSessionId,
+      label: "Browser Lab",
+    });
+  }
 }
 
 function drawVisualGameDock(context) {
@@ -10952,8 +11147,7 @@ function drawVisualGameDock(context) {
   }
   context.fillStyle = "#2c2020";
   context.fillRect(x + 6, y + 18, width - 8, 3);
-  drawVisualGameText(context, "Port Dock", x + 1, y + 10, "#fff3cf", 8);
-  drawVisualGameText(context, isLocalhostAppsEnabled() ? `${state.ports.length} ports` : "off", x + 1, y + 20, "#d7c49c", 7);
+  drawVisualGameBuildingSign(context, x - 2, y + 2, 62, 22, "Port Dock", isLocalhostAppsEnabled() ? `${state.ports.length} ports` : "off");
 }
 
 function drawVisualGameForeground(context, time) {
@@ -10967,74 +11161,191 @@ function drawVisualGameForeground(context, time) {
 }
 
 function drawVisualGameAgent(context, agent, time, hitAreas) {
-  const palette = VISUAL_GAME_AGENT_PALETTES[agent.index % VISUAL_GAME_AGENT_PALETTES.length];
-  const bob = agent.statusClass === "working" ? Math.floor(Math.sin(time / 130 + agent.index) * 1) : Math.floor(Math.sin(time / 150 + agent.index) * 2);
+  const scale = agent.scale || 1;
+  const palette = VISUAL_GAME_AGENT_PALETTES[(agent.familyIndex ?? agent.index) % VISUAL_GAME_AGENT_PALETTES.length];
+  const isStationed = agent.destination === "desk" || agent.destination === "browser" || agent.destination === "library";
+  const bob = isStationed ? Math.floor(Math.sin(time / 190 + agent.index) * 1) : Math.floor(Math.sin(time / 150 + agent.index) * 2);
   const step = Math.floor(time / 180 + agent.index) % 4;
-  const x = Math.round(agent.x - VISUAL_GAME_AGENT_SIZE / 2);
-  const y = Math.round(agent.y - 25 + bob);
+  const spriteWidth = VISUAL_GAME_AGENT_SIZE * scale;
+  const x = Math.round(agent.x - spriteWidth / 2);
+  const y = Math.round(agent.y - 25 * scale + bob);
 
-  drawVisualGameShadow(context, x + 2, y + 27, 15, 4);
+  drawVisualGameShadow(context, x + 2 * scale, y + 27 * scale, 15 * scale, Math.max(3, 4 * scale));
+  context.save();
+  context.translate(x, y);
+  context.scale(scale, scale);
+
+  if (agent.destination === "desk") {
+    context.fillStyle = "#2b2018";
+    context.fillRect(2, 18, 15, 11);
+    context.fillStyle = "#624632";
+    context.fillRect(4, 16, 11, 4);
+  } else if (agent.destination === "library") {
+    context.fillStyle = "#5a3d27";
+    context.fillRect(2, 20, 15, 7);
+    context.fillStyle = "#e7c76f";
+    context.fillRect(4, 18, 10, 5);
+    context.fillStyle = "#8e5646";
+    context.fillRect(9, 18, 1, 5);
+  }
+
   context.fillStyle = palette.boots;
-  context.fillRect(x + 4, y + 25 + (step % 2), 4, 3);
-  context.fillRect(x + 11, y + 25 + ((step + 1) % 2), 4, 3);
+  if (isStationed) {
+    context.fillRect(4, 24, 4, 3);
+    context.fillRect(11, 24, 4, 3);
+  } else {
+    context.fillRect(4, 25 + (step % 2), 4, 3);
+    context.fillRect(11, 25 + ((step + 1) % 2), 4, 3);
+  }
   context.fillStyle = palette.pants;
-  context.fillRect(x + 5, y + 20, 4, 7);
-  context.fillRect(x + 10, y + 20, 4, 7);
+  context.fillRect(5, 20, 4, isStationed ? 5 : 7);
+  context.fillRect(10, 20, 4, isStationed ? 5 : 7);
   context.fillStyle = palette.coat;
-  context.fillRect(x + 3, y + 11, 13, 11);
+  context.fillRect(3, 11, 13, 11);
   context.fillStyle = palette.trim;
-  context.fillRect(x + 8, y + 12, 2, 10);
+  context.fillRect(8, 12, 2, 10);
   context.fillStyle = palette.skin;
-  context.fillRect(x + 5, y + 7, 9, 7);
+  context.fillRect(5, 7, 9, 7);
   context.fillStyle = palette.hair;
-  context.fillRect(x + 4, y + 6, 11, 3);
+  context.fillRect(4, 6, 11, 3);
   context.fillStyle = palette.hat;
-  context.fillRect(x + 3, y + 1, 13, 7);
-  context.fillRect(x + 5, y - 2, 9, 3);
+  context.fillRect(3, 1, 13, 7);
+  context.fillRect(5, -2, 9, 3);
   context.fillStyle = palette.brim;
-  context.fillRect(x + 1, y + 7, 17, 2);
+  context.fillRect(1, 7, 17, 2);
   context.fillStyle = "#fff0d6";
-  context.fillRect(x + 8, y + 10, 2, 2);
+  context.fillRect(8, 10, 2, 2);
   context.fillStyle = palette.skin;
-  context.fillRect(x + 1, y + 15 + (step % 2), 3, 7);
-  context.fillRect(x + 15, y + 15 + ((step + 1) % 2), 3, 7);
+  if (isStationed) {
+    const tap = Math.floor(time / 140 + agent.index) % 2;
+    context.fillRect(1, 16 + tap, 4, 3);
+    context.fillRect(14, 16 + (1 - tap), 4, 3);
+    context.fillStyle = agent.destination === "browser" ? "#bfffb0" : agent.destination === "library" ? "#f0cf72" : "#79bdf8";
+    context.fillRect(3, 22, 13, 1);
+  } else {
+    context.fillRect(1, 15 + (step % 2), 3, 7);
+    context.fillRect(15, 15 + ((step + 1) % 2), 3, 7);
+  }
 
   if (agent.statusClass === "failed") {
     context.fillStyle = "#ff7f79";
-    context.fillRect(x + 14, y, 4, 4);
+    context.fillRect(14, 0, 4, 4);
   } else if (agent.statusClass === "done") {
     context.fillStyle = "#9ad67f";
-    context.fillRect(x + 14, y, 4, 4);
+    context.fillRect(14, 0, 4, 4);
   } else if (agent.statusClass === "working") {
-    context.fillStyle = "#79bdf8";
-    context.fillRect(x + 14, y, 4, 4);
+    context.fillStyle = agent.destination === "browser" ? "#bfffb0" : agent.destination === "library" ? "#f0cf72" : "#79bdf8";
+    context.fillRect(14, 0, 4, 4);
   }
 
-  drawVisualGameNameplate(context, truncateSwarmLabel(agent.name, 14), x + 9, y + 34);
+  if (agent.isSubagent) {
+    context.fillStyle = "#fff0bd";
+    context.fillRect(2, -1, 3, 3);
+  }
+
+  context.restore();
+
+  if (agent.destination === "desk" || agent.destination === "browser") {
+    drawVisualGameNameplate(context, truncateSwarmLabel(agent.name, agent.isSubagent ? 12 : 14), x + 9 * scale, y + 34 * scale, scale);
+  }
   hitAreas.push({
-    x: x - 10,
-    y: y - 5,
-    width: 38,
-    height: 48,
-    kind: agent.browserUseSessionId ? "browser" : "session",
+    x: x - 10 * scale,
+    y: y - 5 * scale,
+    width: 38 * scale,
+    height: 48 * scale,
+    kind: agent.sessionId ? "session" : agent.browserUseSessionId ? "browser" : "session",
     sessionId: agent.sessionId || "",
     browserUseSessionId: agent.browserUseSessionId || "",
-    label: `${agent.name} - ${agent.statusClass === "working" ? "at computer" : "walking"}`,
+    label: getVisualGameAgentHoverLabel(agent),
   });
 }
 
-function drawVisualGameNameplate(context, text, centerX, y) {
-  const width = Math.max(34, text.length * 5 + 10);
+function getVisualGameAgentHoverLabel(agent) {
+  if (agent.destination === "browser") {
+    return `${agent.name} - browser lab`;
+  }
+
+  if (agent.destination === "desk") {
+    return `${agent.name} - typing at computer`;
+  }
+
+  if (agent.destination === "library") {
+    return `${agent.name} - at library`;
+  }
+
+  return `${agent.name} - walking`;
+}
+
+function drawVisualGameNameplate(context, text, centerX, y, scale = 1) {
+  const fontSize = Math.max(6, Math.round(7 * scale));
+  const width = Math.max(28, text.length * fontSize * 0.68 + 9);
   context.fillStyle = "rgba(12, 15, 16, 0.82)";
-  context.fillRect(Math.round(centerX - width / 2), y, width, 13);
-  drawVisualGameText(context, text, Math.round(centerX - width / 2) + 5, y + 9, "#f3f6e9", 7);
+  context.fillRect(Math.round(centerX - width / 2), Math.round(y), Math.round(width), fontSize + 6);
+  drawVisualGameText(context, text, Math.round(centerX - width / 2) + 5, Math.round(y) + fontSize + 2, "#f3f6e9", fontSize);
+}
+
+function drawVisualGameBuildingSign(context, x, y, width, height, label, meta) {
+  const signX = Math.round(x);
+  const signY = Math.round(y);
+  const signWidth = Math.round(width);
+  const signHeight = Math.round(height);
+
+  context.fillStyle = "rgba(47, 30, 19, 0.34)";
+  context.fillRect(signX + 2, signY + 2, signWidth, signHeight);
+  context.fillStyle = "#5a361f";
+  context.fillRect(signX, signY, signWidth, signHeight);
+  context.fillStyle = "#bd8a4e";
+  context.fillRect(signX + 2, signY + 2, signWidth - 4, signHeight - 4);
+  context.fillStyle = "#d0a05e";
+  context.fillRect(signX + 3, signY + 3, signWidth - 6, 4);
+  context.fillStyle = "rgba(84, 49, 28, 0.42)";
+  context.fillRect(signX + 3, signY + Math.floor(signHeight / 2), signWidth - 6, 1);
+  context.fillStyle = "#4a2b1b";
+  context.fillRect(signX + 4, signY + 4, 2, 2);
+  context.fillRect(signX + signWidth - 6, signY + 4, 2, 2);
+  context.fillRect(signX + 4, signY + signHeight - 6, 2, 2);
+  context.fillRect(signX + signWidth - 6, signY + signHeight - 6, 2, 2);
+
+  drawVisualGameSignText(context, label, signX + 6, signY + 12, "#20170f", 8, signWidth - 12);
+  drawVisualGameSignText(context, meta, signX + 6, signY + signHeight - 4, "#382515", 6, signWidth - 12);
+}
+
+function drawVisualGamePaintedWallSign(context, x, y, width, height, label, meta) {
+  const signX = Math.round(x);
+  const signY = Math.round(y);
+  const signWidth = Math.round(width);
+  const signHeight = Math.round(height);
+
+  context.fillStyle = "#1d2524";
+  context.fillRect(signX, signY, signWidth, signHeight);
+  context.fillStyle = "rgba(255, 229, 157, 0.08)";
+  context.fillRect(signX + 2, signY + 2, signWidth - 4, signHeight - 4);
+  context.fillStyle = "#39413d";
+  context.fillRect(signX + 2, signY + signHeight - 5, signWidth - 4, 2);
+  drawVisualGameText(context, label, signX + 5, signY + 12, "#fff6d8", 9);
+  drawVisualGameText(context, meta, signX + 5, signY + signHeight - 3, "#ffe4a6", 6);
+}
+
+function drawVisualGameSignText(context, text, x, y, color, size, maxWidth) {
+  const label = truncateSwarmLabel(String(text || ""), Math.max(4, Math.floor(Number(maxWidth || 40) / (size * 0.62))));
+  context.font = `${size}px "IBM Plex Mono", monospace`;
+  context.textBaseline = "alphabetic";
+  context.fillStyle = "rgba(255, 239, 184, 0.28)";
+  context.fillText(label, Math.round(x), Math.round(y) - 1);
+  context.fillStyle = color;
+  context.fillText(label, Math.round(x), Math.round(y));
 }
 
 function drawVisualGameText(context, text, x, y, color, size = 8) {
-  context.fillStyle = color;
+  const label = String(text || "");
   context.font = `${size}px "IBM Plex Mono", monospace`;
   context.textBaseline = "alphabetic";
-  context.fillText(String(text || ""), Math.round(x), Math.round(y));
+  context.lineJoin = "round";
+  context.lineWidth = size >= 8 ? 2.4 : 2;
+  context.strokeStyle = "rgba(5, 8, 8, 0.92)";
+  context.strokeText(label, Math.round(x), Math.round(y));
+  context.fillStyle = color;
+  context.fillText(label, Math.round(x), Math.round(y));
 }
 
 function drawVisualGameShadow(context, x, y, width, height) {
@@ -11043,44 +11354,171 @@ function drawVisualGameShadow(context, x, y, width, height) {
 }
 
 function getVisualGameAgents(graph, time) {
-  const workingIndex = { value: 0 };
+  const deskIndex = { value: 0 };
+  const browserIndex = { value: 0 };
+  const libraryIndex = { value: 0 };
+  const evidenceIndex = { value: 0 };
   const roamingIndex = { value: 0 };
   return getVisualInterfaceAgents(graph).map((agent, index) => {
     const statusClass = getVisualStatusClass(agent.status);
+    const destination = getVisualGameAgentDestination(agent, statusClass);
     const base = {
       ...agent,
       index,
       statusClass,
+      destination,
+      scale: agent.isSubagent ? 0.72 : 1,
+      key: getVisualGameAgentKey(agent, index),
     };
 
-    if (statusClass === "working") {
-      const desk = getVisualGameDeskSpot(workingIndex.value);
-      workingIndex.value += 1;
-      return {
-        ...base,
-        x: desk.x,
-        y: desk.y,
-      };
+    let target;
+    if (destination === "browser") {
+      target = getVisualGameBrowserSpot(browserIndex.value);
+      browserIndex.value += 1;
+    } else if (destination === "library") {
+      target = getVisualGameLibrarySpot(libraryIndex.value);
+      libraryIndex.value += 1;
+    } else if (destination === "desk") {
+      target = getVisualGameDeskSpot(deskIndex.value);
+      deskIndex.value += 1;
+    } else if (destination === "evidence") {
+      target = getVisualGameEvidenceSpot(evidenceIndex.value);
+      evidenceIndex.value += 1;
+    } else {
+      target = getVisualGameRoamSpot(base, roamingIndex.value, time);
+      roamingIndex.value += 1;
     }
 
-    const route = VISUAL_GAME_ROAM_ROUTES[roamingIndex.value % VISUAL_GAME_ROAM_ROUTES.length];
-    const seed = getVisualGameHash(index + 1, String(agent.name || "").length + 3);
-    const position = getVisualGameRoutePosition(route, time / (9000 + (seed % 5) * 900) + seed / 100);
-    roamingIndex.value += 1;
-    return {
-      ...base,
-      x: position.x,
-      y: position.y,
-    };
+    const position = getVisualGameAnimatedPosition(base, target, time);
+    return { ...base, ...position };
   });
+}
+
+function getVisualGameAgentDestination(agent, statusClass) {
+  if (agent.kind === "browser" && statusClass === "working") {
+    return "browser";
+  }
+
+  if (hasVisualGameLibraryActivity(agent)) {
+    return "library";
+  }
+
+  if (statusClass === "working") {
+    return "desk";
+  }
+
+  return "roam";
+}
+
+function hasVisualGameLibraryActivity(agent) {
+  const references = [
+    ...(Array.isArray(agent.paths) ? agent.paths : []),
+    ...(Array.isArray(agent.commands) ? agent.commands : []),
+  ];
+
+  return references.some(isVisualGameLibraryReference);
+}
+
+function isVisualGameLibraryReference(value) {
+  const text = String(value || "").toLowerCase();
+  return (
+    text.includes(".remote-vibes/wiki")
+    || text.includes("/wiki/")
+    || text.includes("knowledge")
+    || text.includes("library")
+    || text.includes("/docs/")
+    || text.includes("readme.md")
+    || text.includes("agents.md")
+    || text.includes("claude.md")
+    || text.includes("gemini.md")
+    || text.endsWith(".md")
+  );
+}
+
+function getVisualGameAgentKey(agent, index) {
+  return [
+    agent.browserUseSessionId || "",
+    agent.sessionId || "",
+    agent.parentSessionId || "",
+    agent.kind || "",
+    agent.name || "",
+    index,
+  ].join(":");
+}
+
+function getVisualGameAnimatedPosition(agent, target, time) {
+  if (agent.destination === "roam") {
+    state.visualGame.agentPositions.set(agent.key, { x: target.x, y: target.y, destination: agent.destination, updatedAt: time });
+    return target;
+  }
+
+  const previous = state.visualGame.agentPositions.get(agent.key);
+  const spawn = previous || { ...getVisualGameRoamSpot(agent, agent.index, time), destination: "roam" };
+  const easing = spawn.destination === agent.destination ? 0.18 : 0.045;
+  const next = {
+    x: spawn.x + (target.x - spawn.x) * easing,
+    y: spawn.y + (target.y - spawn.y) * easing,
+    destination: agent.destination,
+    updatedAt: time,
+  };
+
+  if (Math.hypot(target.x - next.x, target.y - next.y) < 0.35) {
+    next.x = target.x;
+    next.y = target.y;
+  }
+
+  state.visualGame.agentPositions.set(agent.key, next);
+  return { x: next.x, y: next.y };
+}
+
+function getVisualGameRoamSpot(agent, roamingIndex, time) {
+  const route = VISUAL_GAME_ROAM_ROUTES[(roamingIndex + Number(agent.familyIndex || 0)) % VISUAL_GAME_ROAM_ROUTES.length];
+  const seed = getVisualGameHash(agent.index + 1, String(agent.name || "").length + Number(agent.familyIndex || 0) + 3);
+  const position = getVisualGameRoutePosition(route, time / (9000 + (seed % 5) * 900) + seed / 100);
+
+  if (agent.isSubagent) {
+    return {
+      x: position.x + ((seed % 11) - 5),
+      y: position.y + 8 + (seed % 5),
+    };
+  }
+
+  return position;
 }
 
 function getVisualGameDeskSpot(index) {
   const column = index % 3;
   const row = Math.floor(index / 3) % 2;
   return {
-    x: 306 + column * 43,
-    y: 96 + row * 41,
+    x: 290 + column * 38 + (index >= 6 ? (index % 2) * 8 : 0),
+    y: 108 + row * 29 + (index >= 6 ? 6 : 0),
+  };
+}
+
+function getVisualGameBrowserSpot(index) {
+  const spot = VISUAL_GAME_BROWSER_SPOTS[index % VISUAL_GAME_BROWSER_SPOTS.length];
+  const row = Math.floor(index / VISUAL_GAME_BROWSER_SPOTS.length);
+  return {
+    x: spot.x - row * 7,
+    y: spot.y + row * 6,
+  };
+}
+
+function getVisualGameLibrarySpot(index) {
+  const spot = VISUAL_GAME_LIBRARY_SPOTS[index % VISUAL_GAME_LIBRARY_SPOTS.length];
+  const row = Math.floor(index / VISUAL_GAME_LIBRARY_SPOTS.length);
+  return {
+    x: spot.x + row * 8,
+    y: spot.y + row * 7,
+  };
+}
+
+function getVisualGameEvidenceSpot(index) {
+  const spot = VISUAL_GAME_EVIDENCE_SPOTS[index % VISUAL_GAME_EVIDENCE_SPOTS.length];
+  const row = Math.floor(index / VISUAL_GAME_EVIDENCE_SPOTS.length);
+  return {
+    x: spot.x + row * 10,
+    y: spot.y + row * 7,
   };
 }
 
@@ -12178,7 +12616,12 @@ function renderShell() {
     mountTerminal();
     refreshShellUi();
   } else {
-    disposeTerminal();
+    if (isVisualGameTerminalOpen()) {
+      mountTerminal();
+      refreshShellUi();
+    } else {
+      disposeTerminal();
+    }
     refreshKnowledgeBaseUi();
     if (isVisualInterfaceView()) {
       mountVisualPixelGame();
@@ -14648,6 +15091,10 @@ function isVisualInterfaceView(view = state.currentView) {
   return view === "visual-interface" || view === "swarm";
 }
 
+function isVisualGameTerminalOpen() {
+  return isVisualInterfaceView() && Boolean(state.visualGame.selectedSessionId);
+}
+
 function setCurrentView(nextView, { notePath = state.knowledgeBase.selectedNotePath } = {}) {
   if (nextView === "swarm") {
     nextView = "visual-interface";
@@ -15251,7 +15698,7 @@ function bindShellEvents() {
     refreshPluginSearchUi();
   });
 
-  if (state.currentView === "shell") {
+  if (state.currentView === "shell" || isVisualGameTerminalOpen()) {
     document.querySelector("#tab-button")?.addEventListener("click", () => sendTerminalInput("\t"));
     document.querySelector("#shift-tab-button")?.addEventListener("click", () => sendTerminalInput("\u001b[Z"));
     document.querySelector("#ctrl-p-button")?.addEventListener("click", () => sendTerminalInput("\u0010"));
@@ -15261,6 +15708,12 @@ function bindShellEvents() {
       scrollTerminalToBottom();
     });
   }
+
+  document.querySelector("#visual-game-close-session")?.addEventListener("click", () => {
+    state.visualGame.selectedSessionId = "";
+    state.visualGame.selectedBrowserUseSessionId = "";
+    renderShell();
+  });
 
   document.querySelector("#refresh-swarm-graph")?.addEventListener("click", () => {
     if (state.swarmGraph.projectCwd) {

@@ -2833,34 +2833,38 @@ button.visual-agent-tile:focus-visible,
 
 .visual-game-layout {
   display: grid;
-  grid-template-rows: auto auto;
+  grid-template-columns: minmax(0, 1fr);
+  grid-template-rows: minmax(0, 1fr);
+  align-content: stretch;
   gap: 12px;
+  height: 100%;
   min-width: 0;
   min-height: 0;
-  overflow: auto;
-  scrollbar-width: thin;
+  overflow: hidden;
 }
 
-.visual-game-layout > .visual-zone-evidence {
-  grid-area: auto;
-  width: 100%;
+.visual-game-layout.has-session-panel {
+  grid-template-columns: minmax(0, 1fr) minmax(340px, 400px);
 }
 
 .visual-game-stage {
   width: 100%;
+  height: 100%;
   min-width: 0;
-  overflow: auto;
+  min-height: 0;
+  overflow: hidden;
   scrollbar-width: thin;
 }
 
 .visual-game-frame {
   position: relative;
   width: 100%;
-  min-width: 760px;
-  aspect-ratio: 16 / 9;
+  height: 100%;
+  min-width: 0;
+  min-height: 0;
   overflow: hidden;
   border: 1px solid rgba(232, 212, 154, 0.25);
-  border-radius: 10px;
+  border-radius: 8px;
   background: #101616;
   box-shadow:
     inset 0 0 0 1px rgba(255, 255, 255, 0.04),
@@ -2880,56 +2884,76 @@ button.visual-agent-tile:focus-visible,
   cursor: pointer;
 }
 
-.visual-game-hud {
+.visual-game-hover {
   position: absolute;
-  right: 12px;
-  bottom: 12px;
+  top: 12px;
   left: 12px;
   z-index: 2;
-  display: flex;
-  align-items: end;
-  justify-content: space-between;
-  gap: 10px;
-  pointer-events: none;
-}
-
-.visual-game-hud > div {
-  display: grid;
-  gap: 2px;
-  min-width: 116px;
-  padding: 8px 10px;
-  border: 1px solid rgba(255, 255, 255, 0.1);
-  border-radius: 8px;
-  background: rgba(11, 13, 15, 0.76);
-  box-shadow: 0 10px 22px rgba(0, 0, 0, 0.18);
-}
-
-.visual-game-hud strong,
-.visual-game-hud span,
-.visual-game-hover {
+  max-width: min(320px, calc(100% - 24px));
   overflow: hidden;
+  padding: 7px 9px;
+  border: 1px solid rgba(255, 255, 255, 0.1);
+  border-radius: 6px;
+  background: rgba(11, 13, 15, 0.68);
+  color: #dff6d6;
+  font-family: "IBM Plex Mono", monospace;
+  font-size: 0.68rem;
+  pointer-events: none;
   text-overflow: ellipsis;
   white-space: nowrap;
 }
 
-.visual-game-hud strong {
-  color: var(--text);
-  font-size: 0.78rem;
+.visual-game-session-panel {
+  display: grid;
+  grid-template-rows: auto minmax(0, 1fr);
+  min-width: 0;
+  min-height: 0;
+  overflow: hidden;
+  border: 1px solid rgba(255, 255, 255, 0.1);
+  border-radius: 8px;
+  background: rgba(14, 16, 18, 0.96);
+  box-shadow: 0 18px 42px rgba(0, 0, 0, 0.28);
 }
 
-.visual-game-hud span {
-  color: var(--muted);
-  font-family: "IBM Plex Mono", monospace;
-  font-size: 0.62rem;
+.visual-game-session-head {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 10px;
+  min-width: 0;
+  padding: 10px;
+  border-bottom: 1px solid rgba(255, 255, 255, 0.08);
+  background: rgba(29, 29, 34, 0.86);
 }
 
-.visual-game-hud .visual-game-hover {
-  min-width: 150px;
-  max-width: 240px;
-  color: #dff6d6;
-  font-family: "IBM Plex Mono", monospace;
-  font-size: 0.68rem;
-  text-align: right;
+.visual-game-session-actions {
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 6px;
+  min-width: 0;
+  overflow-x: auto;
+  scrollbar-width: none;
+}
+
+.visual-game-session-actions::-webkit-scrollbar {
+  display: none;
+}
+
+.visual-game-session-actions > .icon-button,
+.visual-game-session-actions > .ghost-button {
+  flex: 0 0 auto;
+}
+
+.visual-game-session-panel .terminal-stack {
+  border: 0;
+  border-radius: 0;
+  box-shadow: none;
+}
+
+.visual-game-session-panel .terminal-mount,
+.visual-game-session-panel .terminal-transcript-scroll {
+  padding: 10px;
 }
 
 .visual-town-world {
@@ -7309,29 +7333,26 @@ select:disabled {
   }
 
   .visual-game-layout {
-    grid-template-rows: auto auto;
+    grid-template-rows: minmax(0, 1fr);
+  }
+
+  .visual-game-layout.has-session-panel {
+    grid-template-columns: minmax(0, 1fr);
+    grid-template-rows: minmax(0, 1fr) minmax(260px, 45vh);
   }
 
   .visual-game-stage {
-    overflow-x: auto;
+    overflow: auto;
   }
 
   .visual-game-frame {
     min-width: 640px;
+    min-height: 360px;
   }
 
-  .visual-game-hud {
-    right: 8px;
-    bottom: 8px;
+  .visual-game-hover {
+    top: 8px;
     left: 8px;
-  }
-
-  .visual-game-hud > div {
-    min-width: 104px;
-    padding: 7px 8px;
-  }
-
-  .visual-game-hud .visual-game-hover {
     max-width: 150px;
   }
 
