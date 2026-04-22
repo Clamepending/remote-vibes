@@ -5362,14 +5362,14 @@ Context:
 - Project folder: ${workspacePath}
 - Library folder: ${libraryPath || "not chosen yet"}
 
-Do not overload me with a full tour. Teach in mini bite-sized pieces: one small concept, one concrete action, and one gentle question at a time. Check in before moving to the next piece.
+Do not overload me with a full tour. Teach in mini bite-sized pieces: one small concept, one concrete action, and one gentle question at a time. Check in before moving to the next piece. When asking me to do something in the UI, ask me to say when it is done unless you have a real tool or API signal confirming it.
 
 Start by saying "This is our village!" in a warm way. Then ask what name I want you to use and what background or comfort level I am coming from. Ask whether it is okay to save a brief, non-sensitive preference note in the Library; if I agree, create or update a short Library note with my name, background, preferred pace, and what I want to do first. Do not record secrets, credentials, or private details.
 
 Use this map for the bite-sized walkthrough, but do not dump it all at once:
 1. Agent Town: agents live in the canvas, and buildings are tool/integration homes.
 2. Library: shared markdown memory that agents can read and update for continuity.
-3. Buildings: use the town builder to place cosmetic buildings for decoration and functional buildings for tools; functional buildings can be installed from BuildingHub, then placed or moved on the map.
+3. First building: guide me through one tiny win in the town builder: place one cosmetic building or install/place one functional building. Explain cosmetic versus functional only when it matters for that action.
 4. Agents: click an agent in Agent Town to open that agent's session and talk to them.
 5. Automations: open the Campanile/Automations building, choose a daily 9am schedule, and write a task prompt; give this concrete example: "Every morning at 9am, look through the Library and send me a summary of the day in my Agent Inbox."
 6. Occupations: the system prompts/roles that shape new agents.
@@ -14486,6 +14486,9 @@ function renderVisualPixelGame(graph) {
   const unplacedCount = getAgentTownUnplacedFunctionalPlugins().length;
   const builderOpen = isAgentTownBuilderOpen();
   const builderFeedback = getAgentTownBuilderFeedback();
+  const refreshLabel = state.swarmGraph.loading ? "Mapping Agent Town" : "Refresh Agent Town";
+  const editTownLabel = isAgentTownEditMode() ? "Finish editing town" : "Edit town layout";
+  const canRefreshSwarm = Boolean(state.swarmGraph.projectCwd || state.swarmGraph.sessionId);
 
   return `
     <section class="visual-game-stage" aria-label="Agent Town">
@@ -14500,6 +14503,16 @@ function renderVisualPixelGame(graph) {
           aria-label="${escapeHtml(`${workingCount} working agents, ${roamingCount} roaming agents in Agent Town`)}"
         ></canvas>
         <div class="visual-game-hover" aria-hidden="true">${escapeHtml(hoverLabel)}</div>
+        <div class="agent-town-floating-controls" aria-label="Agent Town controls">
+          <button class="icon-button toolbar-control hidden-desktop" type="button" id="open-sidebar" aria-label="Open sidebar" ${tooltipAttributes("Open sidebar")}>${renderIcon(Menu)}</button>
+          <button class="icon-button toolbar-control ${isAgentTownEditMode() ? "is-active" : ""}" type="button" id="visual-game-edit-town" aria-label="${escapeHtml(editTownLabel)}" aria-pressed="${isAgentTownEditMode() ? "true" : "false"}" ${tooltipAttributes(editTownLabel)}>${renderIcon(Pencil)}</button>
+          <button class="icon-button toolbar-control danger-icon-button" type="button" id="visual-game-reset-town-layout" aria-label="Reset town layout" ${tooltipAttributes("Reset town layout")} ${isAgentTownLayoutCustomized() ? "" : "disabled"}>${renderIcon(Trash2)}</button>
+          <button class="icon-button toolbar-control" type="button" id="visual-game-zoom-out" aria-label="Zoom out map" ${tooltipAttributes("Zoom out map")}>${renderIcon(ZoomOut)}</button>
+          <button class="icon-button toolbar-control" type="button" id="visual-game-reset-camera" aria-label="Reset map view" ${tooltipAttributes("Reset map view")}>${renderIcon(RefreshCw)}</button>
+          <button class="icon-button toolbar-control" type="button" id="visual-game-zoom-in" aria-label="Zoom in map" ${tooltipAttributes("Zoom in map")}>${renderIcon(ZoomIn)}</button>
+          <button class="icon-button toolbar-control" type="button" id="swarm-back-to-session" aria-label="Back to terminal" ${tooltipAttributes("Back to terminal")}>${renderIcon(Bot)}</button>
+          <button class="icon-button toolbar-control refresh-icon-button ${state.swarmGraph.loading ? "is-loading" : ""}" type="button" id="refresh-swarm-graph" aria-label="${escapeHtml(refreshLabel)}" ${tooltipAttributes(refreshLabel)} ${state.swarmGraph.loading || !canRefreshSwarm ? "disabled" : ""}>${renderIcon(RefreshCw)}</button>
+        </div>
         <div
           class="agent-town-builder-feedback ${builderFeedback ? `is-visible is-${escapeHtml(builderFeedback.tone)}` : ""}"
           data-agent-town-builder-feedback
@@ -20277,51 +20290,12 @@ function getVisualGameHash(a, b) {
 
 function renderSwarmGraphView() {
   const graph = state.swarmGraph.data;
-  const selectedSession = state.sessions.find((session) => session.id === state.swarmGraph.sessionId) || null;
-  const title =
-    state.swarmGraph.projectName
-    || (graph?.git?.root ? getWorkspacePathLeafName(graph.git.root) : "")
-    || selectedSession?.name
-    || graph?.sessions?.[0]?.name
-    || "Agent Town";
-  const refreshLabel = state.swarmGraph.loading ? "Mapping Agent Town" : "Refresh Agent Town";
-  const editTownLabel = isAgentTownEditMode() ? "Finish editing town" : "Edit town layout";
-  const meta = graph
-    ? `${graph.git?.isRepository ? "git" : "folder"} · ${graph.cwd || selectedSession?.cwd || state.defaultCwd}`
-    : selectedSession
-      ? `${selectedSession.providerLabel} · ${selectedSession.cwd}`
-      : state.swarmGraph.projectCwd
-        ? `project folder · ${state.swarmGraph.projectCwd}`
-        : "choose a project to open its town";
-  const canRefreshSwarm = Boolean(state.swarmGraph.projectCwd || state.swarmGraph.sessionId);
 
   return `
-    <section class="dashboard-panel main-view visual-interface-view" ${renderMainViewAttributes(
+    <section class="dashboard-panel main-view visual-interface-view is-map-only ${state.swarmGraph.error ? "has-visual-error" : ""}" ${renderMainViewAttributes(
       "visual-interface",
       `swarm:${state.swarmGraph.projectCwd || state.swarmGraph.sessionId || ""}`,
     )}>
-      <div class="dashboard-toolbar">
-        <button class="icon-button hidden-desktop" type="button" id="open-sidebar" aria-label="Open sidebar" ${tooltipAttributes("Open sidebar")}>${renderIcon(Menu)}</button>
-        <div class="dashboard-copy">
-          <strong>${escapeHtml(title)}</strong>
-          <div class="terminal-meta">Agent Town · ${escapeHtml(meta)}</div>
-        </div>
-        <div class="dashboard-actions">
-          ${
-            graph
-              ? `
-                <button class="icon-button toolbar-control ${isAgentTownEditMode() ? "is-active" : ""}" type="button" id="visual-game-edit-town" aria-label="${escapeHtml(editTownLabel)}" aria-pressed="${isAgentTownEditMode() ? "true" : "false"}" ${tooltipAttributes(editTownLabel)}>${renderIcon(Pencil)}</button>
-                <button class="icon-button toolbar-control danger-icon-button" type="button" id="visual-game-reset-town-layout" aria-label="Reset town layout" ${tooltipAttributes("Reset town layout")} ${isAgentTownLayoutCustomized() ? "" : "disabled"}>${renderIcon(Trash2)}</button>
-                <button class="icon-button toolbar-control" type="button" id="visual-game-zoom-out" aria-label="Zoom out map" ${tooltipAttributes("Zoom out map")}>${renderIcon(ZoomOut)}</button>
-                <button class="icon-button toolbar-control" type="button" id="visual-game-reset-camera" aria-label="Reset map view" ${tooltipAttributes("Reset map view")}>${renderIcon(RefreshCw)}</button>
-                <button class="icon-button toolbar-control" type="button" id="visual-game-zoom-in" aria-label="Zoom in map" ${tooltipAttributes("Zoom in map")}>${renderIcon(ZoomIn)}</button>
-              `
-              : ""
-          }
-          <button class="ghost-button toolbar-control" type="button" id="swarm-back-to-session">terminal</button>
-          <button class="icon-button toolbar-control refresh-icon-button ${state.swarmGraph.loading ? "is-loading" : ""}" type="button" id="refresh-swarm-graph" aria-label="${escapeHtml(refreshLabel)}" ${tooltipAttributes(refreshLabel)} ${state.swarmGraph.loading || !canRefreshSwarm ? "disabled" : ""}>${renderIcon(RefreshCw)}</button>
-        </div>
-      </div>
       ${
         state.swarmGraph.error
           ? `<div class="system-error-card">${escapeHtml(state.swarmGraph.error)}</div>`

@@ -5181,6 +5181,14 @@ input[readonly][data-folder-picker-target] {
     linear-gradient(180deg, rgba(16, 21, 19, 0.98), rgba(12, 13, 15, 0.98));
 }
 
+.visual-interface-view.is-map-only {
+  grid-template-rows: minmax(0, 1fr);
+}
+
+.visual-interface-view.is-map-only.has-visual-error {
+  grid-template-rows: auto minmax(0, 1fr);
+}
+
 .visual-village-layout,
 .visual-project-picker {
   display: grid;
@@ -5898,6 +5906,44 @@ button.visual-agent-tile:focus-visible,
   pointer-events: none;
   text-overflow: ellipsis;
   white-space: nowrap;
+}
+
+.agent-town-floating-controls {
+  position: absolute;
+  top: 10px;
+  right: 10px;
+  z-index: 4;
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  max-width: calc(100% - 120px);
+  gap: 6px;
+  min-width: 0;
+  overflow-x: auto;
+  padding: 6px;
+  border: 1px solid rgba(255, 255, 255, 0.1);
+  border-radius: 8px;
+  background: rgba(15, 16, 20, 0.66);
+  box-shadow: 0 10px 28px rgba(0, 0, 0, 0.22);
+  scrollbar-width: none;
+}
+
+.agent-town-floating-controls::-webkit-scrollbar {
+  display: none;
+}
+
+.agent-town-floating-controls > .icon-button {
+  flex: 0 0 auto;
+  width: 38px;
+  min-width: 38px;
+  height: 38px;
+  min-height: 38px;
+  padding: 0;
+  border-radius: 8px;
+}
+
+.agent-town-floating-controls > .hidden-desktop {
+  display: none;
 }
 
 .agent-town-builder-feedback {
@@ -11824,6 +11870,21 @@ select:disabled {
 
   .visual-game-layout {
     grid-template-rows: minmax(0, 1fr);
+  }
+
+  .agent-town-floating-controls {
+    right: 10px;
+    left: 10px;
+    max-width: none;
+  }
+
+  .agent-town-floating-controls > .hidden-desktop {
+    display: inline-grid;
+  }
+
+  .visual-game-hover {
+    top: 66px;
+    max-width: calc(100% - 24px);
   }
 
   .visual-game-layout.has-session-panel {
