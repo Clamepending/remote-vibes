@@ -1741,6 +1741,11 @@ export class SessionManager {
     this.wikiRootPath = wikiRootPath;
   }
 
+  setDefaultCwd(cwd) {
+    this.cwd = resolveCwd(cwd, this.cwd);
+    this.systemRootPath = path.resolve(this.cwd, this.systemRootPath);
+  }
+
   setEnvironment(env = process.env) {
     this.env = env && typeof env === "object" ? { ...env } : { ...process.env };
     this.tmuxAvailable = null;

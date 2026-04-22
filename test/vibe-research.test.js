@@ -57,6 +57,14 @@ async function createTempWorkspace(prefix) {
   return mkdtemp(path.join(os.tmpdir(), prefix));
 }
 
+function getWorkspaceLibraryDir(workspaceDir) {
+  return path.join(workspaceDir, "vibe-research", "buildings", "library");
+}
+
+function getWorkspaceAgentDir(workspaceDir) {
+  return path.join(workspaceDir, "vibe-research", "user");
+}
+
 async function removeTempWorkspace(workspaceDir) {
   for (let attempt = 0; attempt < 5; attempt += 1) {
     try {
@@ -236,7 +244,7 @@ test("state is available without authentication", async () => {
     assert.ok(state.urls.some((entry) => entry.url === state.preferredUrl));
     assert.equal(typeof state.agentPrompt.prompt, "string");
     assert.equal(state.agentPrompt.promptPath, ".vibe-research/agent-prompt.md");
-    assert.equal(state.agentPrompt.wikiRoot, ".vibe-research/wiki");
+    assert.equal(state.agentPrompt.wikiRoot, "vibe-research/buildings/library");
     assert.ok(Array.isArray(state.agentPrompt.targets));
     assert.equal(state.settings.preventSleepEnabled, true);
     assert.equal(state.settings.sleepPrevention.enabled, true);
@@ -247,7 +255,12 @@ test("state is available without authentication", async () => {
     assert.equal(state.settings.wikiGitRemoteName, "origin");
     assert.equal(state.settings.wikiGitRemoteUrl, "");
     assert.equal(state.settings.wikiBackupIntervalMs, 5 * 60 * 1000);
-    assert.equal(state.settings.wikiRelativeRoot, ".vibe-research/wiki");
+    assert.equal(state.settings.workspaceRootPath, workspaceDir);
+    assert.equal(state.settings.wikiPath, getWorkspaceLibraryDir(workspaceDir));
+    assert.equal(state.settings.agentSpawnPath, getWorkspaceAgentDir(workspaceDir));
+    assert.equal(state.defaultSessionCwd, await realpath(getWorkspaceAgentDir(workspaceDir)));
+    assert.equal(state.settings.wikiRelativeRoot, "vibe-research/buildings/library");
+    assert.equal(state.settings.agentSpawnRelativePath, "vibe-research/user");
     assert.equal(typeof state.settings.wikiPath, "string");
     assert.equal(state.settings.wikiPathConfigured, false);
     assert.deepEqual(state.settings.agentAutomations, []);
@@ -256,6 +269,48 @@ test("state is available without authentication", async () => {
 
     const gpuResponse = await fetch(`${baseUrl}/api/gpu`);
     assert.equal(gpuResponse.status, 404);
+  } finally {
+    await app.close();
+    await removeTempWorkspace(workspaceDir);
+  }
+});
+
+test("workspace folder setting derives Library and new agent folders", async () => {
+  const workspaceDir = await createTempWorkspace("vibe-research-workspace-setting-");
+  const selectedRoot = path.join(workspaceDir, "selected");
+  const { app, baseUrl } = await startApp({ cwd: workspaceDir });
+
+  try {
+    const settingsResponse = await fetch(`${baseUrl}/api/settings`, {
+      method: "PATCH",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        workspaceRootPath: selectedRoot,
+        wikiPathConfigured: true,
+      }),
+    });
+    assert.equal(settingsResponse.status, 200);
+    const settingsPayload = await settingsResponse.json();
+    const expectedLibraryDir = getWorkspaceLibraryDir(selectedRoot);
+    const expectedAgentDir = getWorkspaceAgentDir(selectedRoot);
+
+    assert.equal(settingsPayload.settings.workspaceRootPath, selectedRoot);
+    assert.equal(settingsPayload.settings.wikiPath, expectedLibraryDir);
+    assert.equal(settingsPayload.settings.agentSpawnPath, expectedAgentDir);
+    assert.equal(settingsPayload.settings.wikiRelativeRoot, path.relative(workspaceDir, expectedLibraryDir));
+    assert.equal(settingsPayload.settings.agentSpawnRelativePath, path.relative(workspaceDir, expectedAgentDir));
+    assert.deepEqual((await readdir(expectedLibraryDir)).sort(), ["experiments", "index.md", "log.md", "raw", "topics"]);
+    assert.deepEqual(await readdir(expectedAgentDir), []);
+
+    const createResponse = await fetch(`${baseUrl}/api/sessions`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ providerId: "shell", name: "default folder" }),
+    });
+    assert.equal(createResponse.status, 201);
+    const { session } = await createResponse.json();
+
+    assert.equal(await realpath(session.cwd), await realpath(expectedAgentDir));
   } finally {
     await app.close();
     await removeTempWorkspace(workspaceDir);
@@ -1029,7 +1084,7 @@ test("Library clone endpoint sets the Library from an existing git repo", async 
     });
     assert.equal(cloneResponse.status, 200);
     const clonePayload = await cloneResponse.json();
-    const canonicalBrainDir = await realpath(path.join(workspaceDir, "mac-brain"));
+    const canonicalBrainDir = await realpath(getWorkspaceLibraryDir(workspaceDir));
     assert.equal(clonePayload.settings.wikiPathConfigured, true);
     assert.equal(clonePayload.settings.wikiPath, canonicalBrainDir);
     assert.equal(clonePayload.settings.wikiGitRemoteEnabled, true);
@@ -1234,7 +1289,7 @@ test("occupations api creates Library scaffold and managed instruction files", a
     const managedAgents = await readFile(path.join(workspaceDir, "AGENTS.md"), "utf8");
     const managedClaude = await readFile(path.join(workspaceDir, "CLAUDE.md"), "utf8");
     const promptSource = await readFile(path.join(workspaceDir, ".vibe-research", "agent-prompt.md"), "utf8");
-    const wikiIndex = await readFile(path.join(workspaceDir, ".vibe-research", "wiki", "index.md"), "utf8");
+    const wikiIndex = await readFile(path.join(getWorkspaceLibraryDir(workspaceDir), "index.md"), "utf8");
 
     assert.match(managedAgents, /vibe-research:managed-agent-prompt/);
     assert.match(managedClaude, /vibe-research:managed-agent-prompt/);
@@ -1576,7 +1631,7 @@ test("occupation sync does not overwrite unmanaged instruction files", async () 
 
 test("library api indexes markdown notes and linked note content", async () => {
   const workspaceDir = await createTempWorkspace("vibe-research-knowledge-base-");
-  const wikiDir = path.join(workspaceDir, ".vibe-research", "wiki");
+  const wikiDir = getWorkspaceLibraryDir(workspaceDir);
   const topicsDir = path.join(wikiDir, "topics");
 
   await mkdir(topicsDir, { recursive: true });
@@ -1603,7 +1658,7 @@ test("library api indexes markdown notes and linked note content", async () => {
     assert.equal(indexResponse.status, 200);
     const indexPayload = await indexResponse.json();
 
-    assert.equal(indexPayload.relativeRoot, ".vibe-research/wiki");
+    assert.equal(indexPayload.relativeRoot, "vibe-research/buildings/library");
     assert.deepEqual(
       indexPayload.notes.map((note) => note.relativePath),
       ["index.md", "log.md", "topics/topic-a.md"],
@@ -1642,7 +1697,7 @@ test("library api indexes markdown notes and linked note content", async () => {
 
 test("library api skips inaccessible and system directories", async () => {
   const workspaceDir = await createTempWorkspace("vibe-research-knowledge-base-skip-");
-  const wikiDir = path.join(workspaceDir, ".vibe-research", "wiki");
+  const wikiDir = getWorkspaceLibraryDir(workspaceDir);
   const trashDir = path.join(wikiDir, ".Trash");
   const hiddenToolsDir = path.join(wikiDir, ".antigravity", "extensions", "example");
   const modulesDir = path.join(wikiDir, "node_modules", "pkg");
@@ -1680,7 +1735,7 @@ test("library api skips inaccessible and system directories", async () => {
 
 test("library api narrows broad roots to nested Vibe Research Library", async () => {
   const workspaceDir = await createTempWorkspace("vibe-research-knowledge-base-nested-");
-  const wikiDir = path.join(workspaceDir, ".vibe-research", "wiki");
+  const wikiDir = getWorkspaceLibraryDir(workspaceDir);
   await mkdir(wikiDir, { recursive: true });
   const canonicalWikiDir = await realpath(wikiDir);
 
@@ -1704,7 +1759,7 @@ test("library api narrows broad roots to nested Vibe Research Library", async ()
     const indexPayload = await indexResponse.json();
 
     assert.equal(indexPayload.rootPath, canonicalWikiDir);
-    assert.equal(indexPayload.relativeRoot, ".vibe-research/wiki");
+    assert.equal(indexPayload.relativeRoot, "vibe-research/buildings/library");
     assert.deepEqual(
       indexPayload.notes.map((note) => note.relativePath),
       ["index.md", "log.md"],
@@ -2278,20 +2333,16 @@ test("visual graph empty canvas click closes the selected session panel and dele
   }
 });
 
-test("fresh browser starts on Library folder setup until a folder is chosen", async (t) => {
+test("fresh browser starts on workspace folder setup until a folder is chosen", async (t) => {
   const executablePath = await resolveBrowserExecutablePath({ env: process.env });
   if (!executablePath) {
-    t.skip("No local Chromium/Chrome executable is available for the Library setup smoke.");
+    t.skip("No local Chromium/Chrome executable is available for the workspace setup smoke.");
     return;
   }
 
   const workspaceDir = await createTempWorkspace("vibe-research-brain-setup-");
-  const { remoteDir } = await createBrainGitRemote(workspaceDir, "brain-remote");
-  const brainDir = path.join(workspaceDir, "brain-repo");
-  await mkdir(brainDir, { recursive: true });
-  await writeFile(path.join(brainDir, "index.md"), "# Local Library\n", "utf8");
-  await execFileAsync("git", ["-C", brainDir, "init", "-b", "main"]);
-  await execFileAsync("git", ["-C", brainDir, "remote", "add", "origin", remoteDir]);
+  const selectedWorkspaceDir = path.join(workspaceDir, "workspace-root");
+  await mkdir(selectedWorkspaceDir, { recursive: true });
   const { app, baseUrl } = await startApp({ cwd: workspaceDir });
   let browser = null;
 
@@ -2300,17 +2351,17 @@ test("fresh browser starts on Library folder setup until a folder is chosen", as
     const page = await browser.newPage();
     await page.goto(baseUrl, { waitUntil: "domcontentloaded" });
     await page.waitForSelector(".brain-setup-screen", { timeout: 10_000 });
-    await page.waitForSelector("text=Select a Library folder", { timeout: 10_000 });
+    await page.waitForSelector("text=Select a workspace folder", { timeout: 10_000 });
     await page.waitForSelector("text=Insert GitHub URL", { timeout: 10_000 });
     assert.equal(await page.locator(".app-shell").count(), 0);
 
     await page.locator(".brain-setup-button").click();
     await page.waitForSelector(".folder-picker-modal", { timeout: 10_000 });
-    await page.locator(".folder-picker-tree-row", { hasText: "brain-repo" }).click();
-    await page.waitForFunction(() => document.querySelector(".folder-picker-path")?.textContent?.includes("brain-repo"), null, {
+    await page.locator(".folder-picker-tree-row", { hasText: "workspace-root" }).click();
+    await page.waitForFunction(() => document.querySelector(".folder-picker-path")?.textContent?.includes("workspace-root"), null, {
       timeout: 10_000,
     });
-    const canonicalBrainDir = await realpath(brainDir);
+    const canonicalWorkspaceRoot = await realpath(selectedWorkspaceDir);
 
     await page.click("#folder-picker-select");
     await page.waitForSelector(".app-shell", { timeout: 10_000 });
@@ -2320,8 +2371,10 @@ test("fresh browser starts on Library folder setup until a folder is chosen", as
     assert.equal(settingsResponse.status, 200);
     const settingsPayload = await settingsResponse.json();
     assert.equal(settingsPayload.settings.wikiPathConfigured, true);
-    assert.equal(settingsPayload.settings.wikiPath, canonicalBrainDir);
-    assert.equal(settingsPayload.settings.wikiGitRemoteUrl, remoteDir);
+    assert.equal(settingsPayload.settings.workspaceRootPath, canonicalWorkspaceRoot);
+    assert.equal(settingsPayload.settings.wikiPath, getWorkspaceLibraryDir(canonicalWorkspaceRoot));
+    assert.equal(settingsPayload.settings.agentSpawnPath, getWorkspaceAgentDir(canonicalWorkspaceRoot));
+    assert.equal(settingsPayload.settings.wikiGitRemoteUrl, "");
   } finally {
     await browser?.close().catch(() => {});
     await app.close();
@@ -2358,7 +2411,7 @@ test("Library setup can clone an existing git Library from the browser", async (
     const settingsResponse = await fetch(`${baseUrl}/api/settings`);
     assert.equal(settingsResponse.status, 200);
     const settingsPayload = await settingsResponse.json();
-    const canonicalBrainDir = await realpath(path.join(workspaceDir, "existing-brain"));
+    const canonicalBrainDir = await realpath(getWorkspaceLibraryDir(workspaceDir));
     assert.equal(settingsPayload.settings.wikiPathConfigured, true);
     assert.equal(settingsPayload.settings.wikiPath, canonicalBrainDir);
     assert.equal(settingsPayload.settings.wikiGitRemoteUrl, remoteDir);
@@ -2379,7 +2432,7 @@ test("brain setup remains scrollable on short viewports", async (t) => {
   const workspaceDir = await createTempWorkspace("vibe-research-brain-scroll-ui-");
   const stateDir = path.join(workspaceDir, ".vibe-research");
   const appDir = path.join(stateDir, "app");
-  const expectedClonePath = path.join(workspaceDir, "mac-brain");
+  const expectedClonePath = path.join(appDir, "vibe-research", "buildings", "library");
   await mkdir(appDir, { recursive: true });
   const { app, baseUrl } = await startApp({ cwd: appDir, stateDir });
   let browser = null;
@@ -2735,8 +2788,8 @@ test("{{LIBRARY}} placeholder stays in source but expands in managed files and t
 
     const defaultManaged = await readFile(path.join(workspaceDir, "CLAUDE.md"), "utf8");
     assert.ok(!defaultManaged.includes("{{LIBRARY}}"), "managed file should not contain raw placeholders");
-    assert.match(defaultManaged, /`\.vibe-research\/wiki\/experiments\/`/);
-    assert.match(defaultManaged, /`\.vibe-research\/wiki\/log\.md`/);
+    assert.match(defaultManaged, /`vibe-research\/buildings\/library\/experiments\/`/);
+    assert.match(defaultManaged, /`vibe-research\/buildings\/library\/log\.md`/);
 
     const moveResponse = await fetch(`${baseUrl}/api/settings`, {
       method: "PATCH",
@@ -2769,7 +2822,7 @@ test("{{LIBRARY}} placeholder stays in source but expands in managed files and t
 test("Library backup endpoint initializes git and commits Library changes", async () => {
   const workspaceDir = await createTempWorkspace("vibe-research-wiki-backup-");
   const { app, baseUrl } = await startApp({ cwd: workspaceDir });
-  const wikiDir = path.join(workspaceDir, ".vibe-research", "wiki");
+  const wikiDir = getWorkspaceLibraryDir(workspaceDir);
 
   try {
     const firstBackupResponse = await fetch(`${baseUrl}/api/wiki/backup`, {
@@ -2801,7 +2854,7 @@ test("Library backup endpoint can push to a configured private remote", async ()
   const workspaceDir = await createTempWorkspace("vibe-research-wiki-remote-backup-");
   const remoteDir = path.join(workspaceDir, "private-wiki.git");
   const { app, baseUrl } = await startApp({ cwd: workspaceDir });
-  const wikiDir = path.join(workspaceDir, ".vibe-research", "wiki");
+  const wikiDir = getWorkspaceLibraryDir(workspaceDir);
 
   try {
     await execFileAsync("git", ["init", "--bare", remoteDir]);
@@ -4544,6 +4597,7 @@ test("workspace file api lists directories, edits text files, and serves image f
       rootPayload.entries.map((entry) => ({ name: entry.name, type: entry.type })),
       [
         { name: "graphs", type: "directory" },
+        { name: "vibe-research", type: "directory" },
         { name: "notes.txt", type: "file" },
       ],
     );

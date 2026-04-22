@@ -82,7 +82,7 @@ function stripDeprecatedPromptSections(prompt) {
   return match ? normalizePrompt(normalized.slice(0, match.index)) : normalized;
 }
 
-function getWikiV2Section({ wikiRootLabel = ".vibe-research/wiki" } = {}) {
+function getWikiV2Section({ wikiRootLabel = "vibe-research/buildings/library" } = {}) {
   return normalizePrompt(`
 ${WIKI_V2_MARKER}
 
@@ -178,7 +178,7 @@ Do not leave contradictory notes side by side without explanation.
 
 const WIKI_PLACEHOLDER_PATTERN = /\{\{\s*(?:WIKI|LIBRARY)\s*\}\}/g;
 
-function substitutePromptPlaceholders(prompt, { wikiRootLabel = ".vibe-research/wiki" } = {}) {
+function substitutePromptPlaceholders(prompt, { wikiRootLabel = "vibe-research/buildings/library" } = {}) {
   return String(prompt ?? "").replace(WIKI_PLACEHOLDER_PATTERN, wikiRootLabel);
 }
 

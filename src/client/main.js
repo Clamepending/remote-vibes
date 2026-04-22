@@ -278,6 +278,9 @@ const TERMINAL_TRANSCRIPT_BASIC_COLOR_NAMES = [
   "bright-white",
 ];
 const VIBE_RESEARCH_SYSTEM_FOLDER_NAME = "vibe-research-system";
+const WORKSPACE_LIBRARY_RELATIVE_PATH = "vibe-research/buildings/library";
+const WORKSPACE_USER_RELATIVE_PATH = "vibe-research/user";
+const LEGACY_WORKSPACE_LIBRARY_RELATIVE_PATH = ".vibe-research/wiki";
 const SYSTEM_CHART_WIDTH = 560;
 const SYSTEM_CHART_HEIGHT = 150;
 const SYSTEM_HISTORY_RANGES = [
@@ -802,7 +805,7 @@ const state = {
   agentPromptSelectedId: "researcher",
   agentPromptEditable: false,
   agentPromptPresets: [],
-  agentPromptWikiRoot: ".vibe-research/wiki",
+  agentPromptWikiRoot: WORKSPACE_LIBRARY_RELATIVE_PATH,
   agentPromptTargets: [],
   swarmGraph: {
     sessionId: null,
@@ -889,9 +892,13 @@ const state = {
     installedPluginIds: [],
     preventSleepEnabled: true,
     sleepPrevention: null,
+    workspaceRootPath: "",
+    workspaceRelativeRoot: "",
+    agentSpawnPath: "",
+    agentSpawnRelativePath: "",
     wikiPath: "",
     wikiPathConfigured: false,
-    wikiRelativeRoot: ".vibe-research/wiki",
+    wikiRelativeRoot: WORKSPACE_LIBRARY_RELATIVE_PATH,
     wikiGitBackupEnabled: true,
     wikiGitRemoteBranch: "main",
     wikiGitRemoteEnabled: true,
@@ -937,7 +944,7 @@ const state = {
   buildingWorkspaceReturnId: "",
   knowledgeBase: {
     rootPath: "",
-    relativeRoot: ".vibe-research/wiki",
+    relativeRoot: WORKSPACE_LIBRARY_RELATIVE_PATH,
     notes: [],
     edges: [],
     loading: false,
@@ -3896,11 +3903,15 @@ function getMainViewUrl(view) {
 
 function getFolderPickerTitle() {
   if (state.folderPicker.target === "wiki-onboarding") {
-    return "select Library folder";
+    return "select workspace folder";
   }
 
   if (state.folderPicker.target === "wiki") {
     return "choose Library folder";
+  }
+
+  if (state.folderPicker.target === "agent-spawn") {
+    return "choose new agent folder";
   }
 
   if (state.folderPicker.target === "files") {
@@ -4057,6 +4068,10 @@ function getFolderPickerTargetInput() {
 
   if (state.folderPicker.target === "wiki-onboarding") {
     return document.querySelector("#brain-folder-input");
+  }
+
+  if (state.folderPicker.target === "agent-spawn") {
+    return document.querySelector("#agent-spawn-path-input");
   }
 
   if (state.folderPicker.target === "files") {
@@ -4694,7 +4709,7 @@ async function createSessionInFolder(cwd, { providerId = getSelectedSessionProvi
     body: JSON.stringify({ providerId, cwd: selectedCwd, name }),
   });
 
-  state.defaultCwd = selectedCwd;
+  state.defaultCwd = getAgentSpawnPath() || selectedCwd;
   state.defaultProviderId = providerId;
   state.folderPicker.open = false;
   state.sessions = [payload.session, ...state.sessions];
@@ -4761,6 +4776,9 @@ async function applyFolderPickerSelection() {
 
   if (state.folderPicker.target === "wiki") {
     state.settings.wikiPath = selectedPath || state.settings.wikiPath;
+  } else if (state.folderPicker.target === "agent-spawn") {
+    state.settings.agentSpawnPath = selectedPath || state.settings.agentSpawnPath;
+    state.defaultCwd = state.settings.agentSpawnPath || state.defaultCwd;
   } else if (state.folderPicker.target === "files") {
     state.filesRootOverride = normalizeWorkspaceRoot(selectedPath) || null;
     syncFilesRoot({ force: true });
@@ -4827,10 +4845,17 @@ function inferWikiPathConfigured(settings) {
   }
 
   const relativeRoot = String(settings.wikiRelativeRoot || settings.wikiRelativePath || "");
-  const defaultWikiPath = state.defaultCwd
-    ? normalizeWorkspaceRoot(`${state.defaultCwd.replace(/\/+$/, "")}/.vibe-research/wiki`)
+  const workspaceRoot = normalizeWorkspaceRoot(settings.workspaceRootPath || state.settings.workspaceRootPath || "");
+  const workspaceWikiPath = getWorkspaceLibraryPath(workspaceRoot);
+  const legacyWikiPath = state.defaultCwd
+    ? joinConfiguredWorkspacePath(state.defaultCwd, LEGACY_WORKSPACE_LIBRARY_RELATIVE_PATH)
     : "";
-  if (relativeRoot === ".vibe-research/wiki" || (defaultWikiPath && wikiPath === defaultWikiPath)) {
+  if (
+    relativeRoot === WORKSPACE_LIBRARY_RELATIVE_PATH ||
+    relativeRoot === LEGACY_WORKSPACE_LIBRARY_RELATIVE_PATH ||
+    (workspaceWikiPath && wikiPath === workspaceWikiPath) ||
+    (legacyWikiPath && wikiPath === legacyWikiPath)
+  ) {
     return false;
   }
 
@@ -4838,12 +4863,19 @@ function inferWikiPathConfigured(settings) {
 }
 
 function getDefaultBrainClonePathHint() {
-  const stateDirParent = getParentPathForDisplay(state.stateDir);
-  if (stateDirParent) {
-    return `${stateDirParent}/mac-brain`;
+  const configuredWikiPath = normalizeWorkspaceRoot(state.settings.wikiPath || "");
+  if (configuredWikiPath) {
+    return configuredWikiPath;
   }
 
-  return state.defaultCwd ? `${state.defaultCwd.replace(/\/+$/, "")}/mac-brain` : "mac-brain";
+  const workspaceRoot = normalizeWorkspaceRoot(state.settings.workspaceRootPath || "");
+  const workspaceWikiPath = getWorkspaceLibraryPath(workspaceRoot);
+  if (workspaceWikiPath) {
+    return workspaceWikiPath;
+  }
+
+  const defaultWorkspaceWikiPath = getWorkspaceLibraryPath(state.defaultCwd);
+  return defaultWorkspaceWikiPath || WORKSPACE_LIBRARY_RELATIVE_PATH;
 }
 
 function getParentPathForDisplay(value) {
@@ -5114,6 +5146,35 @@ function normalizeWorkspaceRoot(value) {
   }
 
   return trimmed.replace(/\/+$/, "") || "/";
+}
+
+function joinConfiguredWorkspacePath(root, relativePath) {
+  const normalizedRoot = normalizeWorkspaceRoot(root);
+  const normalizedRelativePath = normalizeFileTreePath(relativePath);
+
+  if (!normalizedRoot) {
+    return "";
+  }
+
+  if (!normalizedRelativePath) {
+    return normalizedRoot;
+  }
+
+  return normalizedRoot === "/"
+    ? `/${normalizedRelativePath}`
+    : `${normalizedRoot}/${normalizedRelativePath}`;
+}
+
+function getWorkspaceLibraryPath(root) {
+  return joinConfiguredWorkspacePath(root, WORKSPACE_LIBRARY_RELATIVE_PATH);
+}
+
+function getWorkspaceUserPath(root) {
+  return joinConfiguredWorkspacePath(root, WORKSPACE_USER_RELATIVE_PATH);
+}
+
+function getAgentSpawnPath() {
+  return normalizeWorkspaceRoot(state.settings.agentSpawnPath || state.defaultCwd || "");
 }
 
 function normalizePosixSegments(value) {
@@ -7094,7 +7155,7 @@ function createKnowledgeBaseGraphLayout(notes, edges) {
 function applyKnowledgeBaseIndexState(payload) {
   teardownKnowledgeBaseGraphInteractions();
   state.knowledgeBase.rootPath = payload?.rootPath || "";
-  state.knowledgeBase.relativeRoot = payload?.relativeRoot || ".vibe-research/wiki";
+  state.knowledgeBase.relativeRoot = payload?.relativeRoot || WORKSPACE_LIBRARY_RELATIVE_PATH;
   state.knowledgeBase.notes = Array.isArray(payload?.notes) ? payload.notes : [];
   state.knowledgeBase.edges = Array.isArray(payload?.edges) ? payload.edges : [];
   state.knowledgeBase.graphLayout = createKnowledgeBaseGraphLayout(
@@ -8012,7 +8073,7 @@ function renderKnowledgeSettingsForm({ popover = false, remoteControls = true } 
             name="wikiPath"
             type="text"
             value="${escapeHtml(state.settings.wikiPath || "")}"
-            placeholder="${escapeHtml(state.defaultCwd || "library folder")}"
+            placeholder="${escapeHtml(getWorkspaceLibraryPath(state.settings.workspaceRootPath) || state.defaultCwd || "library folder")}"
             readonly
             data-folder-picker-target="wiki"
             autocomplete="off"
@@ -8021,6 +8082,24 @@ function renderKnowledgeSettingsForm({ popover = false, remoteControls = true } 
             spellcheck="false"
           />
           <button class="ghost-button folder-browse-button" type="button" data-folder-picker-target="wiki">choose</button>
+        </div>
+        <label class="field-label" for="agent-spawn-path-input">new agent folder</label>
+        <div class="folder-input-row">
+          <input
+            class="file-root-input"
+            id="agent-spawn-path-input"
+            name="agentSpawnPath"
+            type="text"
+            value="${escapeHtml(state.settings.agentSpawnPath || state.defaultCwd || "")}"
+            placeholder="${escapeHtml(getWorkspaceUserPath(state.settings.workspaceRootPath) || state.defaultCwd || "new agent folder")}"
+            readonly
+            data-folder-picker-target="agent-spawn"
+            autocomplete="off"
+            autocorrect="off"
+            autocapitalize="none"
+            spellcheck="false"
+          />
+          <button class="ghost-button folder-browse-button" type="button" data-folder-picker-target="agent-spawn">choose</button>
         </div>
         <div class="knowledge-settings-options">
           <label class="checkbox-row">
@@ -8887,7 +8966,7 @@ function renderSidebarNav() {
           <span class="sidebar-nav-icon" aria-hidden="true">${renderIcon(Plus)}</span>
           <span class="sidebar-nav-copy">
             <span class="sidebar-nav-label">New Agent</span>
-            <span class="sidebar-nav-meta">${escapeHtml(`${getSelectedProviderLabel()} · choose folder`)}</span>
+            <span class="sidebar-nav-meta">${escapeHtml(`${getSelectedProviderLabel()} · agent folder`)}</span>
           </span>
         </button>
         <form class="session-form session-launcher" id="session-form">
@@ -9407,7 +9486,7 @@ function getBuildingIssueById(buildingId) {
 
   if (normalizeBuildingId(buildingId) === "knowledge-base" && (!state.settings.wikiPathConfigured || !state.settings.wikiPath)) {
     return {
-      detail: "Choose a Library folder.",
+      detail: "Choose a workspace folder.",
       label: "not configured",
     };
   }
@@ -10517,7 +10596,7 @@ function renderSettingsView() {
         <button class="icon-button hidden-desktop" type="button" id="open-sidebar" aria-label="Open sidebar" ${tooltipAttributes("Open sidebar")}>${renderIcon(Menu)}</button>
         <div class="dashboard-copy">
           <strong>Settings</strong>
-          <div class="terminal-meta">credentials, Library folder, and local runtime defaults</div>
+          <div class="terminal-meta">credentials, Library and agent folders, and local runtime defaults</div>
         </div>
       </div>
       <div class="settings-layout">
@@ -12419,7 +12498,7 @@ function renderVisualWorkshop(graph) {
 
 function renderVisualMissionBoard() {
   const missions = [
-    { label: "New run", meta: "choose project", icon: MessageSquarePlus, attrs: `data-folder-picker-target="session"` },
+    { label: "New run", meta: "agent folder", icon: MessageSquarePlus, attrs: `data-folder-picker-target="session"` },
     { label: "Findings", meta: "open library", icon: BookOpen, attrs: `data-visual-building-open="knowledge-base"` },
     { label: "Buildings", meta: "installed", icon: Plug, attrs: `data-open-main-view="plugins"` },
     { label: "Schedule", meta: "automations", icon: CalendarClock, attrs: `data-visual-building-open="automations"` },
@@ -12590,7 +12669,7 @@ function renderVisualProjectPicker() {
     return `
       <div class="visual-project-empty">
         <strong>No Agent Towns yet</strong>
-        <button class="primary-button" type="button" data-folder-picker-target="session">start a project</button>
+        <button class="primary-button" type="button" data-folder-picker-target="session">start an agent</button>
       </div>
     `;
   }
@@ -14200,7 +14279,7 @@ async function handleVisualGameHit(hit) {
 
   if (hit.kind === "new-session") {
     state.defaultProviderId = getSelectedSessionProviderId();
-    await loadFolderPicker(state.defaultCwd, { target: "session" });
+    await createSessionInFolder(getAgentSpawnPath());
   }
 }
 
@@ -15869,6 +15948,7 @@ function isVisualGameLibraryReference(value) {
   const text = String(value || "").toLowerCase();
   return (
     text.includes(".vibe-research/wiki")
+    || text.includes("vibe-research/buildings/library")
     || text.includes("/wiki/")
     || text.includes("knowledge-base")
     || text.includes("knowledge_base")
@@ -17582,7 +17662,7 @@ function renderFolderPickerModal() {
   const chooseLabel = isSessionTarget
     ? "choose folder"
     : state.folderPicker.target === "wiki-onboarding"
-      ? "use this Library"
+      ? "use this workspace"
       : "choose this folder";
   const dragStyle = renderFolderPickerDragStyle();
 
@@ -17796,31 +17876,33 @@ function renderUpdateBanner() {
 }
 
 function renderBrainSetupScreen() {
-  document.title = "Set Library Folder · Vibe Research";
+  document.title = "Set Workspace Folder · Vibe Research";
 
   app.innerHTML = `
     <main class="screen brain-setup-screen">
       <section class="brain-setup-card" aria-labelledby="brain-setup-title">
         <span class="brain-setup-eyebrow">Vibe Research</span>
-        <h1 id="brain-setup-title">Choose your Library</h1>
+        <h1 id="brain-setup-title">Choose your workspace</h1>
         <p>
-          Vibe Research needs one markdown Library folder for shared memory. Select an
-          existing local folder, or clone one from GitHub.
+          Vibe Research stores its shared Library and new agent work inside one
+          workspace folder. Select an existing local folder, or clone a Library
+          from GitHub.
         </p>
         <div class="brain-setup-picker">
-          <h2>Select a Library folder</h2>
+          <h2>Select a workspace folder</h2>
           <p>
-            If the folder is already a git repo, Vibe Research will detect its origin
-            remote and use it for private backups.
+            The Library will live in ${escapeHtml(WORKSPACE_LIBRARY_RELATIVE_PATH)} and
+            new agents will start in ${escapeHtml(WORKSPACE_USER_RELATIVE_PATH)} under
+            the folder you choose.
           </p>
-          <label class="field-label" for="brain-folder-input">Library folder</label>
+          <label class="field-label" for="brain-folder-input">workspace folder</label>
           <div class="folder-input-row">
             <input
               id="brain-folder-input"
               class="file-root-input"
               type="text"
-              value="${escapeHtml(state.settings.wikiPathConfigured ? state.settings.wikiPath || "" : "")}"
-              placeholder="${escapeHtml(state.defaultCwd || "choose a folder")}"
+              value="${escapeHtml(state.settings.wikiPathConfigured ? state.settings.workspaceRootPath || "" : "")}"
+              placeholder="${escapeHtml(state.settings.workspaceRootPath || state.defaultCwd || "choose a folder")}"
               readonly
               data-folder-picker-target="wiki-onboarding"
               autocomplete="off"
@@ -17828,7 +17910,7 @@ function renderBrainSetupScreen() {
               autocapitalize="none"
               spellcheck="false"
             />
-            <button class="primary-button brain-setup-button" type="button" data-folder-picker-target="wiki-onboarding">select folder</button>
+            <button class="primary-button brain-setup-button" type="button" data-folder-picker-target="wiki-onboarding">select workspace</button>
           </div>
         </div>
         <div class="brain-setup-divider"><span>or</span></div>
@@ -17836,8 +17918,8 @@ function renderBrainSetupScreen() {
           <div>
             <h2>Insert GitHub URL</h2>
             <p>
-              Paste a GitHub repo URL and Vibe Research will clone it locally, set it
-              as the active Library, and use its origin remote for backups.
+              Paste a GitHub repo URL and Vibe Research will clone it into the
+              workspace Library, then use its origin remote for backups.
             </p>
           </div>
           <label class="field-label" for="brain-git-url">GitHub repo URL</label>
@@ -20864,7 +20946,7 @@ function bindWorkspaceTabEvents() {
         saveWorkspaceGroupsState();
       }
       state.defaultProviderId = getSelectedSessionProviderId();
-      await loadFolderPicker(state.defaultCwd, { target: "session" });
+      await createSessionInFolder(getAgentSpawnPath());
     });
   });
 }
@@ -21480,7 +21562,7 @@ function applyAgentPromptState(payload) {
   state.agentPromptSelectedId = payload?.selectedPromptId || "researcher";
   state.agentPromptEditable = Boolean(payload?.editable);
   state.agentPromptPresets = Array.isArray(payload?.presets) ? payload.presets : [];
-  state.agentPromptWikiRoot = payload?.wikiRoot || state.settings.wikiRelativeRoot || ".vibe-research/wiki";
+  state.agentPromptWikiRoot = payload?.wikiRoot || state.settings.wikiRelativeRoot || WORKSPACE_LIBRARY_RELATIVE_PATH;
   state.agentPromptTargets = Array.isArray(payload?.targets) ? payload.targets : [];
 }
 
@@ -21635,13 +21717,29 @@ function applySettingsState(payload) {
         ? state.settings.preventSleepEnabled
         : Boolean(settings.preventSleepEnabled),
     sleepPrevention: sleepPrevention || null,
+    workspaceRootPath:
+      settings.workspaceRootPath === undefined
+        ? state.settings.workspaceRootPath || ""
+        : String(settings.workspaceRootPath || ""),
+    workspaceRelativeRoot:
+      settings.workspaceRelativeRoot === undefined
+        ? state.settings.workspaceRelativeRoot || ""
+        : String(settings.workspaceRelativeRoot || ""),
+    agentSpawnPath:
+      settings.agentSpawnPath === undefined
+        ? state.settings.agentSpawnPath || ""
+        : String(settings.agentSpawnPath || ""),
+    agentSpawnRelativePath:
+      settings.agentSpawnRelativePath === undefined
+        ? state.settings.agentSpawnRelativePath || ""
+        : String(settings.agentSpawnRelativePath || ""),
     wikiPath: settings.wikiPath || state.settings.wikiPath || "",
     wikiPathConfigured: inferWikiPathConfigured(settings),
     wikiRelativeRoot:
       settings.wikiRelativeRoot ||
       settings.wikiRelativePath ||
       state.settings.wikiRelativeRoot ||
-      ".vibe-research/wiki",
+      WORKSPACE_LIBRARY_RELATIVE_PATH,
     wikiGitBackupEnabled:
       settings.wikiGitBackupEnabled === undefined
         ? state.settings.wikiGitBackupEnabled
@@ -21660,6 +21758,9 @@ function applySettingsState(payload) {
       5 * 60 * 1000,
     wikiBackup: backup || null,
   };
+  if (settings.agentSpawnPath !== undefined && state.settings.agentSpawnPath) {
+    state.defaultCwd = state.settings.agentSpawnPath;
+  }
   state.agentPromptWikiRoot = state.settings.wikiRelativeRoot;
 }
 
@@ -22255,6 +22356,8 @@ function bindShellEvents() {
       const isWikiTarget = target === "wiki" || target === "wiki-onboarding";
       if (target === "session") {
         state.defaultProviderId = getSelectedSessionProviderId();
+        await createSessionInFolder(getAgentSpawnPath());
+        return;
       }
 
       const input =
@@ -22262,6 +22365,8 @@ function bindShellEvents() {
           ? document.querySelector("#brain-folder-input")
           : target === "wiki"
             ? document.querySelector("#wiki-path-input")
+          : target === "agent-spawn"
+            ? document.querySelector("#agent-spawn-path-input")
           : target === "files"
             ? document.querySelector("#files-root-input")
             : null;
@@ -22270,8 +22375,10 @@ function bindShellEvents() {
           ? input.value.trim()
           : isWikiTarget
             ? target === "wiki-onboarding"
-              ? state.defaultCwd || state.settings.wikiPath
+              ? state.settings.workspaceRootPath || state.defaultCwd || state.settings.wikiPath
               : state.settings.wikiPath || state.defaultCwd
+          : target === "agent-spawn"
+            ? state.settings.agentSpawnPath || state.defaultCwd
             : target === "files"
               ? state.filesRoot || state.defaultCwd
               : state.defaultCwd;
@@ -23870,6 +23977,7 @@ async function loadFolderPickerTreePath(relativePath = "", { force = false } = {
 async function saveSettingsFromForm(form) {
   const formData = new FormData(form);
   const wikiPath = String(formData.get("wikiPath") || "");
+  const agentSpawnPath = String(formData.get("agentSpawnPath") || "");
   const hasField = (name) => Boolean(form.querySelector(`[name="${name}"]`));
   const body = {};
 
@@ -23902,6 +24010,10 @@ async function saveSettingsFromForm(form) {
     body.wikiPathConfigured = Boolean(wikiPath.trim());
   }
 
+  if (hasField("agentSpawnPath")) {
+    body.agentSpawnPath = agentSpawnPath;
+  }
+
   if (hasField("buildingHubEnabled")) {
     body.buildingHubEnabled = formData.get("buildingHubEnabled") === "on";
   }
@@ -23923,6 +24035,10 @@ async function saveSettingsFromForm(form) {
   if (hasField("wikiPath")) {
     state.settings.wikiPath = wikiPath;
     state.settings.wikiPathConfigured = true;
+  }
+  if (hasField("agentSpawnPath")) {
+    state.settings.agentSpawnPath = payload.settings?.agentSpawnPath || agentSpawnPath || state.settings.agentSpawnPath;
+    state.defaultCwd = state.settings.agentSpawnPath || state.defaultCwd;
   }
   applyAgentPromptState(payload.agentPrompt);
   state.knowledgeBase.noteCache = {};
@@ -23955,21 +24071,25 @@ async function saveAgentCredentialsFromForm(form) {
 }
 
 async function saveBrainFolderSelection(selectedPath) {
-  const wikiPath = normalizeWorkspaceRoot(selectedPath);
-  if (!wikiPath) {
-    throw new Error("Choose or create a Library folder first.");
+  const workspaceRootPath = normalizeWorkspaceRoot(selectedPath);
+  if (!workspaceRootPath) {
+    throw new Error("Choose or create a workspace folder first.");
   }
 
   const payload = await fetchJson("/api/settings", {
     method: "PATCH",
     body: JSON.stringify({
-      wikiPath,
+      workspaceRootPath,
       wikiPathConfigured: true,
     }),
   });
 
   applySettingsState(payload.settings);
-  state.settings.wikiPath = payload.settings?.wikiPath || state.settings.wikiPath;
+  state.settings.workspaceRootPath = payload.settings?.workspaceRootPath || state.settings.workspaceRootPath;
+  state.settings.wikiPath = payload.settings?.wikiPath || getWorkspaceLibraryPath(state.settings.workspaceRootPath) || state.settings.wikiPath;
+  state.settings.agentSpawnPath =
+    payload.settings?.agentSpawnPath || getWorkspaceUserPath(state.settings.workspaceRootPath) || state.settings.agentSpawnPath;
+  state.defaultCwd = state.settings.agentSpawnPath || state.defaultCwd;
   state.settings.wikiPathConfigured = true;
   applyAgentPromptState(payload.agentPrompt);
   state.knowledgeBase.noteCache = {};
@@ -24204,7 +24324,7 @@ async function bootstrapApp() {
   state.providers = payload.providers;
   state.sessions = payload.sessions;
   pruneSessionReadState();
-  state.defaultCwd = payload.cwd;
+  state.defaultCwd = payload.defaultSessionCwd || payload.cwd;
   state.stateDir = payload.stateDir || "";
   state.defaultProviderId = payload.defaultProviderId;
   applySettingsState(payload.settings);

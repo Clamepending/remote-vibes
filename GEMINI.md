@@ -205,12 +205,12 @@ You are not a status reporter. You are an operator inside a research loop.
 
 ## Library Model
 
-Use `.vibe-research/wiki` as the workspace Library. Treat it as a living shared Library that helps future agents avoid rediscovering the same things.
+Use `vibe-research/buildings/library` as the workspace Library: a living shared memory system that helps future agents avoid rediscovering the same things. Say "Library" in user-facing communication; if internal paths, environment variables, or APIs say "wiki", treat that as the same Library for backward compatibility.
 
-- `.vibe-research/wiki/` is the synthesized Library layer for durable notes.
-- `.vibe-research/wiki/index.md` is the entrypoint, not the entire memory system.
-- `.vibe-research/wiki/log.md` is chronological and append-only.
-- Use `.vibe-research/wiki/raw/sources/` for exact source manifests, commands, commits, paths, and artifact pointers when provenance matters.
+- `vibe-research/buildings/library/` is the synthesized Library layer for durable notes.
+- `vibe-research/buildings/library/index.md` is the Library entrypoint, not the entire memory system.
+- `vibe-research/buildings/library/log.md` is chronological and append-only.
+- Use `vibe-research/buildings/library/raw/sources/` for exact source manifests, commands, commits, paths, and artifact pointers when provenance matters.
 
 Prefer promoting useful findings into durable notes over leaving them trapped in terminal output.
 
@@ -221,7 +221,7 @@ Not all information is equally durable.
 - Keep immediate session findings lightweight at first.
 - Crystallize reusable conclusions into durable notes after meaningful work.
 - Prefer updating canonical notes over creating near-duplicates.
-- Preserve exact provenance in `.vibe-research/wiki/raw/sources/` when it matters.
+- Preserve exact provenance in `vibe-research/buildings/library/raw/sources/` when it matters.
 - Keep session-local scratch local unless it becomes useful to other agents.
 
 ## Note Shapes
@@ -239,8 +239,8 @@ You do not need rigid schemas everywhere, but write notes intentionally.
 ## Writing Rules
 
 - Distinguish observation from interpretation.
-- Prefer one page per experiment family under `.vibe-research/wiki/experiments/`.
-- Use `.vibe-research/wiki/topics/` for cross-cutting knowledge.
+- Prefer one page per experiment family under `vibe-research/buildings/library/experiments/`.
+- Use `vibe-research/buildings/library/topics/` for cross-cutting knowledge.
 - Record relevant commits, branches, run ids, output directories, artifact paths, and commands when they matter.
 - Link graphs, images, logs, notebooks, and outputs instead of pasting bulky data.
 - Prefer fewer, better notes.

@@ -572,7 +572,8 @@ install_systemd_service() {
 
   service_user="$(id -un)"
   state_dir="${VIBE_RESEARCH_STATE_DIR:-${REMOTE_VIBES_STATE_DIR:-$HOME/.vibe-research}}"
-  wiki_dir="${VIBE_RESEARCH_WIKI_DIR:-${REMOTE_VIBES_WIKI_DIR:-$HOME/mac-brain}}"
+  wiki_dir="${VIBE_RESEARCH_WIKI_DIR:-${REMOTE_VIBES_WIKI_DIR:-}}"
+  workspace_dir="${VIBE_RESEARCH_WORKSPACE_DIR:-${REMOTE_VIBES_WORKSPACE_DIR:-$HOME/vibe-projects}}"
   port="${VIBE_RESEARCH_PORT:-${REMOTE_VIBES_PORT:-4123}}"
   service_file="$SYSTEMD_SERVICE_DIR/${SERVICE_NAME}.service"
   temp_file="$(mktemp)"
@@ -588,7 +589,8 @@ Type=forking
 User=$service_user
 WorkingDirectory=$INSTALL_DIR
 Environment=VIBE_RESEARCH_STATE_DIR=$state_dir
-Environment=VIBE_RESEARCH_WIKI_DIR=$wiki_dir
+Environment=VIBE_RESEARCH_WORKSPACE_DIR=$workspace_dir
+$(if [ -n "$wiki_dir" ]; then printf 'Environment=VIBE_RESEARCH_WIKI_DIR=%s\n' "$wiki_dir"; fi)
 Environment=VIBE_RESEARCH_PORT=$port
 ExecStart=$INSTALL_DIR/start.sh
 PIDFile=$state_dir/server.pid

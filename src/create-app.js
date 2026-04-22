@@ -2,7 +2,7 @@ import { execFile } from "node:child_process";
 import { randomUUID } from "node:crypto";
 import httpProxy from "http-proxy";
 import { mkdir, readdir, readFile, realpath, rename, rm, stat, writeFile } from "node:fs/promises";
-import { networkInterfaces } from "node:os";
+import { homedir, networkInterfaces } from "node:os";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { promisify } from "node:util";
@@ -67,6 +67,46 @@ const ATTACHMENT_IMAGE_EXTENSIONS_BY_MIME_TYPE = new Map([
   ["image/tiff", ".tiff"],
   ["image/webp", ".webp"],
 ]);
+
+function expandHomePath(input) {
+  const value = String(input || "").trim();
+  if (!value) {
+    return "";
+  }
+
+  if (value === "~") {
+    return homedir();
+  }
+
+  if (value.startsWith("~/")) {
+    return path.join(homedir(), value.slice(2));
+  }
+
+  return value;
+}
+
+function resolveDefaultSessionCwd(input, fallbackCwd) {
+  const expandedInput = expandHomePath(input);
+  return expandedInput ? path.resolve(expandedInput) : fallbackCwd;
+}
+
+async function ensureDefaultSessionCwd(input, fallbackCwd) {
+  const fallback = path.resolve(fallbackCwd);
+  const target = resolveDefaultSessionCwd(input, fallback);
+
+  try {
+    await mkdir(target, { recursive: true });
+    const targetStats = await stat(target);
+
+    if (targetStats.isDirectory()) {
+      return realpath(target);
+    }
+  } catch {
+    // Fall back to the app workspace if the preferred agent folder is not usable.
+  }
+
+  return fallback;
+}
 
 function buildHttpError(message, statusCode = 400) {
   const error = new Error(message);
@@ -530,6 +570,7 @@ export async function createVibeResearchApp({
   systemMetricsProvider = collectSystemMetrics,
   systemMetricsSampleIntervalMs = 60_000,
   updateManager = new UpdateManager({ cwd, stateDir, port }),
+  defaultSessionCwd = process.env.VIBE_RESEARCH_DEFAULT_CWD || process.env.REMOTE_VIBES_DEFAULT_CWD || "",
 } = {}) {
   const providers = Array.isArray(providerOverrides) ? providerOverrides : await detectProviders();
   const defaultProviderId = getDefaultProviderId(providers);
@@ -537,10 +578,11 @@ export async function createVibeResearchApp({
   const serverEnv = { ...process.env };
   const agentRunStore = new AgentRunStore({ stateDir });
   const systemRootPath = getVibeResearchSystemDir({ cwd, stateDir });
-  const settingsStore = new SettingsStore({ cwd, stateDir, env: serverEnv });
+  const settingsStore = new SettingsStore({ cwd, stateDir, env: serverEnv, defaultAgentSpawnPath: defaultSessionCwd });
   const systemMetricsHistoryStore = new SystemMetricsHistoryStore({ stateDir });
   const portAliasStore = new PortAliasStore({ stateDir });
   await settingsStore.initialize();
+  let sessionDefaultCwd = await ensureDefaultSessionCwd(settingsStore.settings.agentSpawnPath || defaultSessionCwd, cwd);
   await mkdir(systemRootPath, { recursive: true });
   await systemMetricsHistoryStore.initialize();
   const buildingHubService =
@@ -576,7 +618,7 @@ export async function createVibeResearchApp({
   const sleepPreventionService = sleepPreventionFactory(settingsStore.settings);
   let videoMemoryService = null;
   const sessionManager = new SessionManager({
-    cwd,
+    cwd: sessionDefaultCwd,
     providers,
     env: buildAgentCredentialEnv(settingsStore.settings, serverEnv),
     persistSessions,
@@ -754,6 +796,8 @@ export async function createVibeResearchApp({
   }
 
   async function applyRuntimeSettings(settings, { backupReason = "settings" } = {}) {
+    sessionDefaultCwd = await ensureDefaultSessionCwd(settings.agentSpawnPath, cwd);
+    sessionManager.setDefaultCwd(sessionDefaultCwd);
     const wikiRootChanged = settings.wikiPath !== agentPromptStore.wikiRootPath;
     agentPromptStore.setWikiRootPath(settings.wikiPath);
     sessionManager.setWikiRootPath(settings.wikiPath);
@@ -820,6 +864,47 @@ export async function createVibeResearchApp({
     }
   }
 
+  async function directoryHasOnlyEntries(directoryPath, allowedEntries) {
+    const entries = await readdir(directoryPath).catch(() => []);
+    return entries
+      .filter((entry) => entry !== ".DS_Store")
+      .every((entry) => allowedEntries.has(entry));
+  }
+
+  async function isManagedLibraryScaffold(targetPath, entries) {
+    const allowedEntries = new Set(["experiments", "index.md", "log.md", "raw", "topics"]);
+    const meaningfulEntries = entries.filter((entry) => entry !== ".DS_Store");
+    if (
+      meaningfulEntries.length === 0 ||
+      meaningfulEntries.some((entry) => !allowedEntries.has(entry)) ||
+      !meaningfulEntries.includes("index.md") ||
+      !meaningfulEntries.includes("log.md")
+    ) {
+      return false;
+    }
+
+    try {
+      const indexContent = await readFile(path.join(targetPath, "index.md"), "utf8");
+      const logContent = await readFile(path.join(targetPath, "log.md"), "utf8");
+      if (
+        !indexContent.includes("# Library Index") ||
+        !indexContent.includes("Add experiment pages under `experiments/`") ||
+        !logContent.includes("# Library Log")
+      ) {
+        return false;
+      }
+
+      return (
+        await directoryHasOnlyEntries(path.join(targetPath, "experiments"), new Set([".gitkeep"])) &&
+        await directoryHasOnlyEntries(path.join(targetPath, "topics"), new Set([".gitkeep"])) &&
+        await directoryHasOnlyEntries(path.join(targetPath, "raw"), new Set(["sources"])) &&
+        await directoryHasOnlyEntries(path.join(targetPath, "raw", "sources"), new Set([".gitkeep"]))
+      );
+    } catch {
+      return false;
+    }
+  }
+
   async function prepareBrainCloneTarget(targetPath, remoteUrl) {
     await mkdir(path.dirname(targetPath), { recursive: true });
 
@@ -844,6 +929,12 @@ export async function createVibeResearchApp({
       }
 
       if (await isInstallerBrainScaffold(targetPath, entries)) {
+        const backupPath = createCloneBackupPath(targetPath);
+        await rename(targetPath, backupPath);
+        return { action: "clone", backupPath, existed: false };
+      }
+
+      if (await isManagedLibraryScaffold(targetPath, entries)) {
         const backupPath = createCloneBackupPath(targetPath);
         await rename(targetPath, backupPath);
         return { action: "clone", backupPath, existed: false };
@@ -937,6 +1028,7 @@ export async function createVibeResearchApp({
         status: buildingHubService.getStatus(),
       },
       cwd,
+      defaultSessionCwd: sessionDefaultCwd,
       defaultProviderId,
       providers,
       sessions: sessionManager.listSessions(),
@@ -1144,6 +1236,8 @@ export async function createVibeResearchApp({
         videoMemoryEnabled: request.body?.videoMemoryEnabled,
         videoMemoryProviderId: request.body?.videoMemoryProviderId,
         installedPluginIds: request.body?.installedPluginIds,
+        workspaceRootPath: request.body?.workspaceRootPath,
+        agentSpawnPath: request.body?.agentSpawnPath,
         wikiGitBackupEnabled: request.body?.wikiGitBackupEnabled,
         wikiGitRemoteBranch: request.body?.wikiGitRemoteBranch,
         wikiGitRemoteEnabled: request.body?.wikiGitRemoteEnabled,
@@ -1170,7 +1264,18 @@ export async function createVibeResearchApp({
 
     try {
       const remoteUrl = normalizeGitCloneRemoteUrl(request.body?.remoteUrl);
-      const defaultFolder = path.join(path.dirname(stateDir), getGitRepoFolderName(remoteUrl));
+      const legacyDefaultFolder = path.join(path.dirname(stateDir), getGitRepoFolderName(remoteUrl));
+      let defaultFolder = settingsStore.settings.wikiPath || legacyDefaultFolder;
+      if (!String(request.body?.wikiPath || "").trim()) {
+        try {
+          const entries = await readdir(legacyDefaultFolder);
+          if (await isInstallerBrainScaffold(legacyDefaultFolder, entries)) {
+            defaultFolder = legacyDefaultFolder;
+          }
+        } catch {
+          // Use the workspace-relative Library by default unless an old installer scaffold exists.
+        }
+      }
       targetPath = settingsStore.normalizeWikiPath(request.body?.wikiPath || defaultFolder);
       cloneTarget = await prepareBrainCloneTarget(targetPath, remoteUrl);
 
@@ -2234,6 +2339,7 @@ export async function createVibeResearchApp({
       appName: "Vibe Research",
       agentPrompt: await agentPromptStore.getState(),
       cwd,
+      defaultSessionCwd: sessionDefaultCwd,
       defaultProviderId,
       host,
       port: resolvedPort,

@@ -6,6 +6,7 @@ Minimal browser terminal to vibe code on your server/cluster/Mac/Raspberry Pi vi
 
 1. On the machine you want to control, run `curl -fsSL https://vibe-research.net/install.sh | bash`
 2. Install the [Tailscale app](https://tailscale.com/download) on your laptop/phone, sign into the same account, then open the Tailscale URL or scan the QR printed by step 1.
+3. Choose a workspace folder during onboarding. Vibe Research will put the shared Library in `<workspace>/vibe-research/buildings/library` and new agent work in `<workspace>/vibe-research/user`.
 
 ## Claude Code Install
 
@@ -26,9 +27,9 @@ The installer handles Tailscale, git, build tools, Node.js 22.x, Vibe Research, 
 
 By default, the installer uses the latest GitHub Release when one exists, then falls back to `main` while the project is still bootstrapping. Set `VIBE_RESEARCH_UPDATE_CHANNEL=branch` or `VIBE_RESEARCH_REF=<branch-or-tag>` before running the installer if you intentionally want a dev checkout.
 
-The install command now launches Vibe Research as a background server, so it keeps running even after the SSH session or terminal closes. The app checkout lives under `~/.vibe-research/app`, and settings, logs, session history, and the managed pid live under `~/.vibe-research/`. On Linux installs, `tmux` is installed too; coding-agent terminals use it when available so Vibe Research restarts can reattach to live agent work instead of merely replaying a transcript.
+The install command now launches Vibe Research as a background server, so it keeps running even after the SSH session or terminal closes. The app checkout lives under `~/.vibe-research/app`, and settings, logs, session history, and the managed pid live under `~/.vibe-research/`. Onboarding chooses the workspace folder where Library and agent-created files live. On Linux installs, `tmux` is installed too; coding-agent terminals use it when available so Vibe Research restarts can reattach to live agent work instead of merely replaying a transcript.
 
-New sessions can be started by choosing a folder from the browser, then picking the agent provider. The Library folder is configurable in the sidebar settings; by default, Vibe Research keeps local git backups of the Library every 10 minutes. To back the Library up off-machine, create a private Git repo, paste its SSH or credential-helper remote URL into the sidebar's private remote backup field, enable remote push, and Vibe Research will push Library backup commits there on each backup run.
+New agents start in the configured new-agent folder without asking for a folder each time. The Library folder and new-agent folder are configurable in Settings; by default, Vibe Research keeps local git backups of the Library every 10 minutes. To back the Library up off-machine, create a private Git repo, paste its SSH or credential-helper remote URL into the sidebar's private remote backup field, enable remote push, and Vibe Research will push Library backup commits there on each backup run.
 
 ## Releases
 

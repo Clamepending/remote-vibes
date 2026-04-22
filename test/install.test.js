@@ -702,6 +702,7 @@ test("install.sh enables a systemd service on Linux after launch", async () => {
   const serviceDir = path.join(installRoot, "systemd");
   const systemctlLog = path.join(installRoot, "systemctl.log");
   const stateDir = path.join(installRoot, "state");
+  const workspaceDir = path.join(installRoot, "workspace");
   const wikiDir = path.join(installRoot, "wiki");
 
   try {
@@ -741,6 +742,7 @@ exit 0
         VIBE_RESEARCH_SYSTEMD_SERVICE_DIR: serviceDir,
         VIBE_RESEARCH_SERVICE_NAME: "vibe-research-test",
         VIBE_RESEARCH_STATE_DIR: stateDir,
+        VIBE_RESEARCH_WORKSPACE_DIR: workspaceDir,
         VIBE_RESEARCH_WIKI_DIR: wikiDir,
         VIBE_RESEARCH_PORT: "4999",
       }),
@@ -754,6 +756,7 @@ exit 0
     assert.match(unit, new RegExp(`WorkingDirectory=${escapeRegExp(installDir)}`));
     assert.match(unit, new RegExp(`ExecStart=${escapeRegExp(path.join(installDir, "start.sh"))}`));
     assert.match(unit, new RegExp(`Environment=VIBE_RESEARCH_STATE_DIR=${escapeRegExp(stateDir)}`));
+    assert.match(unit, new RegExp(`Environment=VIBE_RESEARCH_WORKSPACE_DIR=${escapeRegExp(workspaceDir)}`));
     assert.match(unit, new RegExp(`Environment=VIBE_RESEARCH_WIKI_DIR=${escapeRegExp(wikiDir)}`));
     assert.match(unit, /Environment=VIBE_RESEARCH_PORT=4999/);
     assert.match(unit, new RegExp(`PIDFile=${escapeRegExp(path.join(stateDir, "server.pid"))}`));
