@@ -14,6 +14,13 @@ PID_FILE="$RUNTIME_DIR/server.pid"
 LOG_FILE="$RUNTIME_DIR/server.log"
 NPM_STAMP_FILE="$RUNTIME_DIR/npm-install.stamp"
 READY_TIMEOUT_SECONDS="${VIBE_RESEARCH_READY_TIMEOUT_SECONDS:-${REMOTE_VIBES_READY_TIMEOUT_SECONDS:-30}}"
+NPM_INSTALL_ATTEMPTS="${VIBE_RESEARCH_NPM_INSTALL_ATTEMPTS:-${REMOTE_VIBES_NPM_INSTALL_ATTEMPTS:-3}}"
+NPM_INSTALL_RETRY_DELAY_SECONDS="${VIBE_RESEARCH_NPM_INSTALL_RETRY_DELAY_SECONDS:-${REMOTE_VIBES_NPM_INSTALL_RETRY_DELAY_SECONDS:-5}}"
+NPM_FETCH_RETRIES="${VIBE_RESEARCH_NPM_FETCH_RETRIES:-${REMOTE_VIBES_NPM_FETCH_RETRIES:-5}}"
+NPM_FETCH_RETRY_FACTOR="${VIBE_RESEARCH_NPM_FETCH_RETRY_FACTOR:-${REMOTE_VIBES_NPM_FETCH_RETRY_FACTOR:-2}}"
+NPM_FETCH_RETRY_MINTIMEOUT="${VIBE_RESEARCH_NPM_FETCH_RETRY_MINTIMEOUT:-${REMOTE_VIBES_NPM_FETCH_RETRY_MINTIMEOUT:-20000}}"
+NPM_FETCH_RETRY_MAXTIMEOUT="${VIBE_RESEARCH_NPM_FETCH_RETRY_MAXTIMEOUT:-${REMOTE_VIBES_NPM_FETCH_RETRY_MAXTIMEOUT:-120000}}"
+NPM_FETCH_TIMEOUT="${VIBE_RESEARCH_NPM_FETCH_TIMEOUT:-${REMOTE_VIBES_NPM_FETCH_TIMEOUT:-300000}}"
 export VIBE_RESEARCH_STATE_DIR="$RUNTIME_DIR"
 export REMOTE_VIBES_STATE_DIR="${REMOTE_VIBES_STATE_DIR:-$RUNTIME_DIR}"
 if [ -n "$WIKI_DIR" ]; then
@@ -342,6 +349,50 @@ dependencies_need_install() {
   return 1
 }
 
+positive_int_or_default() {
+  local value="$1"
+  local default_value="$2"
+
+  case "$value" in
+    ''|*[!0-9]*|0)
+      printf '%s\n' "$default_value"
+      ;;
+    *)
+      printf '%s\n' "$value"
+      ;;
+  esac
+}
+
+nonnegative_int_or_default() {
+  local value="$1"
+  local default_value="$2"
+
+  case "$value" in
+    ''|*[!0-9]*)
+      printf '%s\n' "$default_value"
+      ;;
+    *)
+      printf '%s\n' "$value"
+      ;;
+  esac
+}
+
+run_npm_dependency_install() {
+  local command
+  if [ -f package-lock.json ]; then
+    command="ci"
+  else
+    command="install"
+  fi
+
+  npm "$command" \
+    --fetch-retries "$(positive_int_or_default "$NPM_FETCH_RETRIES" 5)" \
+    --fetch-retry-factor "$(positive_int_or_default "$NPM_FETCH_RETRY_FACTOR" 2)" \
+    --fetch-retry-mintimeout "$(positive_int_or_default "$NPM_FETCH_RETRY_MINTIMEOUT" 20000)" \
+    --fetch-retry-maxtimeout "$(positive_int_or_default "$NPM_FETCH_RETRY_MAXTIMEOUT" 120000)" \
+    --fetch-timeout "$(positive_int_or_default "$NPM_FETCH_TIMEOUT" 300000)"
+}
+
 ensure_dependencies_installed() {
   ensure_runtime_dir
 
@@ -349,13 +400,26 @@ ensure_dependencies_installed() {
     return
   fi
 
+  local attempt max_attempts retry_delay
+  max_attempts="$(positive_int_or_default "$NPM_INSTALL_ATTEMPTS" 3)"
+  retry_delay="$(nonnegative_int_or_default "$NPM_INSTALL_RETRY_DELAY_SECONDS" 5)"
+
   echo "Installing dependencies..."
-  if [ -f package-lock.json ]; then
-    npm ci
-  else
-    npm install
-  fi
-  touch "$NPM_STAMP_FILE"
+  for attempt in $(seq 1 "$max_attempts"); do
+    if run_npm_dependency_install; then
+      touch "$NPM_STAMP_FILE"
+      return
+    fi
+
+    if [ "$attempt" -ge "$max_attempts" ]; then
+      fail "Dependency install failed after $max_attempts attempts. Check npm network connectivity, then rerun start.sh."
+    fi
+
+    log "Dependency install failed; retrying ($((attempt + 1))/$max_attempts)"
+    if [ "$retry_delay" -gt 0 ]; then
+      sleep $((attempt * retry_delay))
+    fi
+  done
 }
 
 read_pid_file() {

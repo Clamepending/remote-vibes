@@ -1283,6 +1283,123 @@ test("start.sh keeps the same workspace running when state already matches", asy
   }
 });
 
+test("start.sh retries dependency install after a transient npm network failure", async () => {
+  const { tempRoot, repoDir } = await createWorkingTreeRepoSnapshot();
+  const canonicalRepoDir = await realpath(repoDir);
+  const port = await getFreePort();
+  const fakeBin = path.join(tempRoot, "bin");
+  const npmLog = path.join(tempRoot, "npm.log");
+  const npmAttemptState = path.join(tempRoot, "npm-attempts");
+  const stateDir = path.join(tempRoot, "state");
+
+  try {
+    await mkdir(fakeBin, { recursive: true });
+    await writeFile(path.join(repoDir, "scripts", "build-client.mjs"), "console.log('build skipped for npm retry test');\n");
+    await writeFile(
+      path.join(repoDir, "src", "server.js"),
+      `import http from "node:http";
+
+const port = Number(process.env.VIBE_RESEARCH_PORT || process.env.REMOTE_VIBES_PORT || 4123);
+const server = http.createServer((request, response) => {
+  if (request.url === "/api/state") {
+    response.setHeader("Content-Type", "application/json");
+    response.end(JSON.stringify({
+      appName: "Vibe Research",
+      cwd: process.cwd(),
+      stateDir: process.env.VIBE_RESEARCH_STATE_DIR,
+    }));
+    return;
+  }
+
+  if (request.url === "/api/terminate" && request.method === "POST") {
+    response.setHeader("Content-Type", "application/json");
+    response.end("{}");
+    setImmediate(() => server.close(() => process.exit(0)));
+    return;
+  }
+
+  response.statusCode = 404;
+  response.end("not found");
+});
+
+server.listen(port, "127.0.0.1");
+`,
+    );
+    await writeFile(
+      path.join(fakeBin, "npm"),
+      `#!/usr/bin/env bash
+set -euo pipefail
+if [ "\${1:-}" = "-v" ] || [ "\${1:-}" = "--version" ]; then
+  printf '10.9.7\\n'
+  exit 0
+fi
+printf '%s\\n' "$*" >> ${JSON.stringify(npmLog)}
+if [ "\${1:-}" != "ci" ]; then
+  printf 'unexpected npm command: %s\\n' "$*" >&2
+  exit 64
+fi
+attempt=0
+if [ -f ${JSON.stringify(npmAttemptState)} ]; then
+  attempt="$(cat ${JSON.stringify(npmAttemptState)})"
+fi
+attempt=$((attempt + 1))
+printf '%s\\n' "$attempt" > ${JSON.stringify(npmAttemptState)}
+if [ "$attempt" -eq 1 ]; then
+  printf 'npm error code ETIMEDOUT\\n' >&2
+  printf 'npm error network read ETIMEDOUT\\n' >&2
+  exit 110
+fi
+mkdir -p node_modules/playwright-core
+printf '{}\\n' > node_modules/playwright-core/package.json
+`,
+    );
+    await execFile("chmod", ["+x", path.join(fakeBin, "npm")]);
+
+    const result = await execFile("bash", [path.join(repoDir, "start.sh")], {
+      env: installTestEnv({
+        PATH: `${fakeBin}${path.delimiter}${process.env.PATH || ""}`,
+        VIBE_RESEARCH_PORT: String(port),
+        VIBE_RESEARCH_READY_TIMEOUT_SECONDS: "30",
+        VIBE_RESEARCH_STATE_DIR: stateDir,
+        VIBE_RESEARCH_WIKI_DIR: path.join(tempRoot, "mac-brain"),
+        VIBE_RESEARCH_NPM_INSTALL_ATTEMPTS: "2",
+        VIBE_RESEARCH_NPM_INSTALL_RETRY_DELAY_SECONDS: "0",
+      }),
+      timeout: 60_000,
+    });
+    const combinedOutput = `${result.stdout}${result.stderr}`;
+
+    assert.match(combinedOutput, /Installing dependencies/);
+    assert.match(combinedOutput, /npm error network read ETIMEDOUT/);
+    assert.match(combinedOutput, /Dependency install failed; retrying \(2\/2\)/);
+
+    const npmCommands = (await readFile(npmLog, "utf8")).trim().split("\n");
+    assert.equal(npmCommands.length, 2);
+    assert.ok(npmCommands.every((command) => command.startsWith("ci --fetch-retries 5 ")));
+    assert.ok(npmCommands.every((command) => command.includes("--fetch-retry-mintimeout 20000")));
+    assert.ok(npmCommands.every((command) => command.includes("--fetch-retry-maxtimeout 120000")));
+    assert.ok(npmCommands.every((command) => command.includes("--fetch-timeout 300000")));
+
+    const response = await fetch(`http://127.0.0.1:${port}/api/state`);
+    assert.equal(response.status, 200);
+    const payload = await response.json();
+    assert.equal(payload.appName, "Vibe Research");
+    assert.equal(payload.cwd, canonicalRepoDir);
+    assert.equal(payload.stateDir, stateDir);
+  } finally {
+    try {
+      await fetch(`http://127.0.0.1:${port}/api/terminate`, {
+        method: "POST",
+      });
+      await waitForShutdown(`http://127.0.0.1:${port}/api/state`);
+    } catch {
+      // Server may have already exited.
+    }
+
+    await rm(tempRoot, { recursive: true, force: true });
+  }
+});
+
 test("install.sh can launch vibe research in one command", async () => {
   const { tempRoot, repoDir } = await createWorkingTreeRepoSnapshot();
   const installRoot = await mkdtemp(path.join(os.tmpdir(), "vibe-research-launch-"));
