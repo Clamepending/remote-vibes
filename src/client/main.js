@@ -14259,7 +14259,7 @@ function isVisualGameLiveSubagent(subagent) {
 }
 
 function isClaudeCodeProviderAgent(agent) {
-  return String(agent?.providerId || "").toLowerCase() === "claude";
+  return ["claude", "claude-ollama"].includes(String(agent?.providerId || "").toLowerCase());
 }
 
 function isOpenClawProviderId(providerId) {
@@ -16697,12 +16697,13 @@ function getAgentTownProviderDisplayLabel(provider) {
 }
 
 function getAgentTownProviderPriority(provider) {
-  const priority = ["claude", "codex", "openclaw", "ml-intern", "opencode", "gemini"];
+  const priority = ["claude", "claude-ollama", "codex", "openclaw", "ml-intern", "opencode", "gemini"];
   const index = priority.indexOf(provider?.id || "");
   return index >= 0 ? index : priority.length;
 }
 
 function getAgentTownProviderDormPalette(providerId) {
+  const normalizedProviderId = providerId === "claude-ollama" ? "claude" : providerId;
   const palettes = {
     claude: {
       floor: "#8a5a3e",
@@ -16757,7 +16758,7 @@ function getAgentTownProviderDormPalette(providerId) {
     },
   };
 
-  return palettes[providerId] || {
+  return palettes[normalizedProviderId] || {
     floor: "#826449",
     wall: "#63463b",
     trim: "#3b2a22",
@@ -16767,6 +16768,7 @@ function getAgentTownProviderDormPalette(providerId) {
 }
 
 function getVisualGameProviderAgentPalette(providerId) {
+  const normalizedProviderId = providerId === "claude-ollama" ? "claude" : providerId;
   const palettes = {
     claude: {
       hat: "#b65d3d",
@@ -16830,7 +16832,7 @@ function getVisualGameProviderAgentPalette(providerId) {
     },
   };
 
-  return palettes[providerId] || null;
+  return palettes[normalizedProviderId] || null;
 }
 
 function getAgentTownProviderDorms() {

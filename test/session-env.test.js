@@ -129,6 +129,46 @@ test("buildSessionEnv does not inject external social or device connector creden
   assert.deepEqual(connectorKeys, []);
 });
 
+test("buildSessionEnv routes local Claude Code sessions through Ollama", () => {
+  const rootDir = "/tmp/vibe-research-test-root";
+  const stateDir = "/tmp/vibe-research-test-state";
+  const wikiRoot = "/tmp/vibe-research-test-wiki";
+  const systemRoot = "/tmp/vibe-research-test-system";
+  const env = buildSessionEnv(
+    "session-local-claude",
+    "claude-ollama",
+    [],
+    rootDir,
+    stateDir,
+    {
+      ANTHROPIC_API_KEY: "sk-ant-real-key",
+      ANTHROPIC_BASE_URL: "https://api.anthropic.com",
+      PATH: "/usr/bin:/bin",
+      VIBE_RESEARCH_CLAUDE_OLLAMA_BASE_URL: "http://127.0.0.1:11435/",
+      VIBE_RESEARCH_CLAUDE_OLLAMA_MODEL: "qwen2.5-coder:7b",
+      NO_PROXY: "example.test,localhost",
+    },
+    wikiRoot,
+    systemRoot,
+  );
+
+  assert.equal(env.ANTHROPIC_AUTH_TOKEN, "ollama");
+  assert.equal(env.ANTHROPIC_API_KEY, "local");
+  assert.equal(env.ANTHROPIC_BASE_URL, "http://127.0.0.1:11435");
+  assert.equal(env.ANTHROPIC_MODEL, "qwen2.5-coder:7b");
+  assert.equal(env.ANTHROPIC_DEFAULT_HAIKU_MODEL, "qwen2.5-coder:7b");
+  assert.equal(env.ANTHROPIC_DEFAULT_OPUS_MODEL, "qwen2.5-coder:7b");
+  assert.equal(env.ANTHROPIC_DEFAULT_SONNET_MODEL, "qwen2.5-coder:7b");
+  assert.equal(env.CLAUDE_CODE_SUBAGENT_MODEL, "qwen2.5-coder:7b");
+  assert.equal(env.CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC, "1");
+  assert.equal(env.CLAUDE_CODE_DISABLE_EXPERIMENTAL_BETAS, "1");
+  assert.equal(env.CLAUDE_CODE_DISABLE_THINKING, "1");
+  assert.equal(env.DISABLE_INTERLEAVED_THINKING, "1");
+  assert.equal(env.DISABLE_PROMPT_CACHING, "1");
+  assert.equal(env.NO_PROXY, "example.test,localhost,127.0.0.1,::1");
+  assert.equal(env.no_proxy, "example.test,localhost,127.0.0.1,::1");
+});
+
 test("buildSessionEnv strips inherited NO_COLOR and enables terminal colors", () => {
   const stateDir = path.join(rootDir, ".vibe-research");
   const env = buildSessionEnv(

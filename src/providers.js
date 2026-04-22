@@ -29,6 +29,32 @@ export const providerDefinitions = [
     ],
   },
   {
+    id: "claude-ollama",
+    label: "Local Claude Code (Ollama)",
+    command: "claude",
+    launchCommand: "claude",
+    defaultName: "Local Claude",
+    verifyArgs: ["--version"],
+    preferPathHints: true,
+    npmPackage: {
+      name: "@anthropic-ai/claude-code",
+      bin: "claude",
+    },
+    requiredCommands: [
+      {
+        command: "ollama",
+        verifyArgs: ["--version"],
+      },
+    ],
+    installCommand:
+      '((if command -v timeout >/dev/null 2>&1; then timeout 600s bash -c \'curl -fsSL https://claude.ai/install.sh | bash\'; else bash -c \'curl -fsSL https://claude.ai/install.sh | bash\'; fi) || (mkdir -p "$HOME/.local" && NPM_CONFIG_PREFIX="$HOME/.local" npm install -g @anthropic-ai/claude-code --no-audit --no-fund --fetch-retries=5 --fetch-retry-maxtimeout=120000 --fetch-timeout=300000)) && export PATH="$HOME/.local/bin:$PATH" && hash -r && claude --version && (command -v ollama >/dev/null 2>&1 || curl -fsSL https://ollama.com/install.sh | sh) && ollama --version && ollama pull "${VIBE_RESEARCH_CLAUDE_OLLAMA_MODEL:-${REMOTE_VIBES_CLAUDE_OLLAMA_MODEL:-qwen3-coder}}"',
+    pathHints: [
+      "~/.local/bin/claude",
+      "/opt/homebrew/bin/claude",
+      "/usr/local/bin/claude",
+    ],
+  },
+  {
     id: "codex",
     label: "Codex",
     command: "codex",
@@ -212,6 +238,38 @@ async function verifyResolvedCommand(provider, resolvedCommand, env = process.en
   }
 }
 
+async function resolveCommandRequirement(requirement, env = process.env) {
+  if (!requirement?.command) {
+    return true;
+  }
+
+  const shellResolved = await findCommandInShell(requirement.command, env);
+  if (shellResolved && await verifyResolvedCommand(requirement, shellResolved, env)) {
+    return true;
+  }
+
+  const hintedCommand = await findCommandInHints(requirement.pathHints, env);
+  return Boolean(hintedCommand && await verifyResolvedCommand(requirement, hintedCommand, env));
+}
+
+async function buildResolvedProviderCommandResult(provider, resolvedCommand, env = process.env) {
+  if (Array.isArray(provider.requiredCommands)) {
+    for (const requirement of provider.requiredCommands) {
+      if (!await resolveCommandRequirement(requirement, env)) {
+        return {
+          available: false,
+          resolvedCommand: null,
+        };
+      }
+    }
+  }
+
+  return {
+    available: true,
+    resolvedCommand,
+  };
+}
+
 export async function resolveProviderCommand(provider, env = process.env) {
   if (!provider.command) {
     return {
@@ -223,37 +281,25 @@ export async function resolveProviderCommand(provider, env = process.env) {
   if (provider.preferPathHints) {
     const hintedCommand = await findCommandInHints(provider.pathHints, env);
     if (hintedCommand && await verifyResolvedCommand(provider, hintedCommand, env)) {
-      return {
-        available: true,
-        resolvedCommand: hintedCommand,
-      };
+      return buildResolvedProviderCommandResult(provider, hintedCommand, env);
     }
   }
 
   const shellResolved = await findCommandInShell(provider.command, env);
   if (shellResolved && await verifyResolvedCommand(provider, shellResolved, env)) {
-    return {
-      available: true,
-      resolvedCommand: shellResolved,
-    };
+    return buildResolvedProviderCommandResult(provider, shellResolved, env);
   }
 
   if (!provider.preferPathHints) {
     const hintedCommand = await findCommandInHints(provider.pathHints, env);
     if (hintedCommand && await verifyResolvedCommand(provider, hintedCommand, env)) {
-      return {
-        available: true,
-        resolvedCommand: hintedCommand,
-      };
+      return buildResolvedProviderCommandResult(provider, hintedCommand, env);
     }
   }
 
   const npmPackageCommand = await resolveNpmPackageCommand(provider.npmPackage, env);
   if (npmPackageCommand && await verifyResolvedCommand(provider, npmPackageCommand, env)) {
-    return {
-      available: true,
-      resolvedCommand: npmPackageCommand,
-    };
+    return buildResolvedProviderCommandResult(provider, npmPackageCommand, env);
   }
 
   return {

@@ -34,6 +34,19 @@ VIBE_RESEARCH_INSTALL_CLAUDE_CODE=1 curl -fsSL https://vibe-research.net/install
 
 The onboarding UI also offers Claude Code, Codex, OpenClaw, OpenCode, Gemini CLI, and ML Intern install/detection from the provider picker.
 
+### Local Claude Code with Ollama
+
+Vibe Research also detects a local-only `Local Claude Code (Ollama)` provider when both `claude` and `ollama` are installed. Sessions launched through this provider keep the Claude Code UI and Vibe Research wrapper, but route model traffic to Ollama with:
+
+```bash
+ANTHROPIC_AUTH_TOKEN=ollama
+ANTHROPIC_API_KEY=local
+ANTHROPIC_BASE_URL=http://localhost:11434
+CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC=1
+```
+
+The provider launches Claude Code with `--model "${VIBE_RESEARCH_CLAUDE_OLLAMA_MODEL:-qwen3-coder}"`. Pull the model before using an air-gapped machine, for example `ollama pull qwen3-coder`, or set `VIBE_RESEARCH_CLAUDE_OLLAMA_MODEL=qwen2.5-coder:7b` to use a different local model. Make sure Ollama is running (`ollama serve` or the desktop app), and set `VIBE_RESEARCH_CLAUDE_OLLAMA_BASE_URL` if it listens somewhere other than `http://localhost:11434`.
+
 ## Details...
 
 Use the `vibe-research.net` installer URL directly. It is a small stable wrapper around the canonical installer in this repo. If a very minimal machine does not have `curl` yet, install `curl` first and rerun the quickstart command.
