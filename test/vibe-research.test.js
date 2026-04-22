@@ -447,8 +447,8 @@ test("image attachments are saved under the Vibe Research state directory", asyn
     assert.equal(unsupportedTypeResponse.status, 415);
   } finally {
     await app.close();
-    await rm(workspaceDir, { recursive: true, force: true });
-    await rm(stateDir, { recursive: true, force: true });
+    await removeTempWorkspace(workspaceDir);
+    await removeTempWorkspace(stateDir);
   }
 });
 
@@ -629,8 +629,8 @@ test("terminal paste and drop insert safe saved image markdown references", asyn
   } finally {
     await browser?.close().catch(() => {});
     await app.close();
-    await rm(workspaceDir, { recursive: true, force: true });
-    await rm(stateDir, { recursive: true, force: true });
+    await removeTempWorkspace(workspaceDir);
+    await removeTempWorkspace(stateDir);
   }
 });
 
@@ -1145,8 +1145,8 @@ test("settings api stores agent credentials redacted and injects them into new s
     assert.match(capturedEnv, /hf=hf_test_agent/);
   } finally {
     await app.close();
-    await rm(workspaceDir, { recursive: true, force: true });
-    await rm(stateDir, { recursive: true, force: true });
+    await removeTempWorkspace(workspaceDir);
+    await removeTempWorkspace(stateDir);
   }
 });
 
@@ -1207,7 +1207,7 @@ test("Library clone endpoint sets the Library from an existing git repo", async 
     assert.ok(indexPayload.notes.some((note) => note.relativePath === "log.md"));
   } finally {
     await app.close();
-    await rm(workspaceDir, { recursive: true, force: true });
+    await removeTempWorkspace(workspaceDir);
   }
 });
 
@@ -1302,7 +1302,7 @@ test("update endpoints report status and schedule restart", async () => {
     assert.equal(applyCalls, 1);
   } finally {
     await app.close();
-    await rm(workspaceDir, { recursive: true, force: true });
+    await removeTempWorkspace(workspaceDir);
   }
 });
 
@@ -1372,7 +1372,7 @@ test("system endpoint reports host storage and utilization metrics", async () =>
     assert.equal(calls, 1);
   } finally {
     await app.close();
-    await rm(workspaceDir, { recursive: true, force: true });
+    await removeTempWorkspace(workspaceDir);
   }
 });
 
@@ -1447,7 +1447,7 @@ test("occupations api creates Library scaffold and managed instruction files", a
     assert.doesNotMatch(updatedManagedAgents, /vr-mailwatch/);
   } finally {
     await app.close();
-    await rm(workspaceDir, { recursive: true, force: true });
+    await removeTempWorkspace(workspaceDir);
   }
 });
 
@@ -1529,7 +1529,7 @@ test("occupation presets switch active system prompts and only custom is editabl
     assert.match(researcherPayload.customPrompt, /Ship the smallest complete fix/);
   } finally {
     await app.close();
-    await rm(workspaceDir, { recursive: true, force: true });
+    await removeTempWorkspace(workspaceDir);
   }
 });
 
@@ -1568,7 +1568,7 @@ test("occupation save preserves edits inside the current Library protocol sectio
     assert.match(managedClaude, /Prefer fewer, better durable notes/);
   } finally {
     await app.close();
-    await rm(workspaceDir, { recursive: true, force: true });
+    await removeTempWorkspace(workspaceDir);
   }
 });
 
@@ -1609,7 +1609,7 @@ test("existing prompt files are upgraded with the current built-in Library proto
     assert.doesNotMatch(managedGemini, /reply_to/);
   } finally {
     await app.close();
-    await rm(workspaceDir, { recursive: true, force: true });
+    await removeTempWorkspace(workspaceDir);
   }
 });
 
@@ -1662,7 +1662,7 @@ Old mailbox guidance.
     assert.match(savedPrompt, /Library Model/);
   } finally {
     await app.close();
-    await rm(workspaceDir, { recursive: true, force: true });
+    await removeTempWorkspace(workspaceDir);
   }
 });
 
@@ -1713,7 +1713,7 @@ Old guidance.
     assert.doesNotMatch(managedAgents, /remote-vibes:managed-agent-prompt/);
   } finally {
     await app.close();
-    await rm(workspaceDir, { recursive: true, force: true });
+    await removeTempWorkspace(workspaceDir);
   }
 });
 
@@ -1734,7 +1734,7 @@ test("occupation sync does not overwrite unmanaged instruction files", async () 
     assert.equal(await readFile(path.join(workspaceDir, "AGENTS.md"), "utf8"), "# User-owned instructions\n");
   } finally {
     await app.close();
-    await rm(workspaceDir, { recursive: true, force: true });
+    await removeTempWorkspace(workspaceDir);
   }
 });
 
@@ -1800,7 +1800,7 @@ test("library api indexes markdown notes and linked note content", async () => {
     assert.match((await invalidNoteResponse.json()).error, /escapes the library root/i);
   } finally {
     await app.close();
-    await rm(workspaceDir, { recursive: true, force: true });
+    await removeTempWorkspace(workspaceDir);
   }
 });
 
@@ -1838,7 +1838,7 @@ test("library api skips inaccessible and system directories", async () => {
   } finally {
     await chmod(lockedDir, 0o700).catch(() => {});
     await app.close();
-    await rm(workspaceDir, { recursive: true, force: true });
+    await removeTempWorkspace(workspaceDir);
   }
 });
 
@@ -1875,7 +1875,7 @@ test("library api narrows broad roots to nested Vibe Research Library", async ()
     );
   } finally {
     await app.close();
-    await rm(workspaceDir, { recursive: true, force: true });
+    await removeTempWorkspace(workspaceDir);
   }
 });
 
@@ -1927,7 +1927,7 @@ test("library search ranks prefix markdown notes with BM25", async (t) => {
   } finally {
     await browser?.close().catch(() => {});
     await app.close();
-    await rm(workspaceDir, { recursive: true, force: true });
+    await removeTempWorkspace(workspaceDir);
   }
 });
 
@@ -2014,7 +2014,7 @@ test("library graph highlights linked notes on hover and can pulse physics", asy
   } finally {
     await browser?.close().catch(() => {});
     await app.close();
-    await rm(workspaceDir, { recursive: true, force: true });
+    await removeTempWorkspace(workspaceDir);
   }
 });
 
@@ -2283,7 +2283,7 @@ test("library graph keeps dense replay inside the viewport", async (t) => {
   } finally {
     await browser?.close().catch(() => {});
     await app.close();
-    await rm(workspaceDir, { recursive: true, force: true });
+    await removeTempWorkspace(workspaceDir);
   }
 });
 
@@ -2489,7 +2489,7 @@ test("fresh browser starts on workspace folder setup until a folder is chosen", 
   } finally {
     await browser?.close().catch(() => {});
     await app.close();
-    await rm(workspaceDir, { recursive: true, force: true });
+    await removeTempWorkspace(workspaceDir);
   }
 });
 
@@ -2549,7 +2549,7 @@ test("New Agent starts in the configured agent folder without opening the folder
   } finally {
     await browser?.close().catch(() => {});
     await app.close();
-    await rm(workspaceDir, { recursive: true, force: true });
+    await removeTempWorkspace(workspaceDir);
   }
 });
 
@@ -2589,7 +2589,7 @@ test("Library setup can clone an existing git Library from the browser", async (
   } finally {
     await browser?.close().catch(() => {});
     await app.close();
-    await rm(workspaceDir, { recursive: true, force: true });
+    await removeTempWorkspace(workspaceDir);
   }
 });
 
@@ -2676,7 +2676,7 @@ test("brain setup remains scrollable on short viewports", async (t) => {
   } finally {
     await browser?.close().catch(() => {});
     await app.close();
-    await rm(workspaceDir, { recursive: true, force: true });
+    await removeTempWorkspace(workspaceDir);
   }
 });
 
@@ -2745,7 +2745,7 @@ test("library markdown viewer renders GitHub-style tables", async (t) => {
   } finally {
     await browser?.close().catch(() => {});
     await app.close();
-    await rm(workspaceDir, { recursive: true, force: true });
+    await removeTempWorkspace(workspaceDir);
   }
 });
 
@@ -2857,7 +2857,7 @@ test("library markdown viewer renders image, GIF, and video media links", async 
   } finally {
     await browser?.close().catch(() => {});
     await app.close();
-    await rm(workspaceDir, { recursive: true, force: true });
+    await removeTempWorkspace(workspaceDir);
   }
 });
 
@@ -2926,7 +2926,7 @@ test("settings api moves the Library folder, refreshes agent instructions, and t
     );
   } finally {
     await app.close();
-    await rm(workspaceDir, { recursive: true, force: true });
+    await removeTempWorkspace(workspaceDir);
   }
 });
 
@@ -2986,7 +2986,7 @@ test("{{LIBRARY}} placeholder stays in source but expands in managed files and t
     assert.match(movedManaged, /`mac-brain\/log\.md`/);
   } finally {
     await app.close();
-    await rm(workspaceDir, { recursive: true, force: true });
+    await removeTempWorkspace(workspaceDir);
   }
 });
 
@@ -3017,7 +3017,7 @@ test("Library backup endpoint initializes git and commits Library changes", asyn
     assert.ok(stdout.trim().split("\n").length >= 2);
   } finally {
     await app.close();
-    await rm(workspaceDir, { recursive: true, force: true });
+    await removeTempWorkspace(workspaceDir);
   }
 });
 
@@ -3067,7 +3067,7 @@ test("Library backup endpoint can push to a configured private remote", async ()
     assert.match(stdout, /Vibe Research Library backup/);
   } finally {
     await app.close();
-    await rm(workspaceDir, { recursive: true, force: true });
+    await removeTempWorkspace(workspaceDir);
   }
 });
 
@@ -3131,7 +3131,7 @@ test("folder browser api lists selectable folders and supports parent navigation
     assert.match((await traversalResponse.json()).error, /single folder name/i);
   } finally {
     await app.close();
-    await rm(workspaceDir, { recursive: true, force: true });
+    await removeTempWorkspace(workspaceDir);
   }
 });
 
@@ -3189,7 +3189,7 @@ test("vibe research api header keeps folder picker requests out of proxied apps"
   } finally {
     await app.close();
     await new Promise((resolve) => proxyTarget.close(resolve));
-    await rm(workspaceDir, { recursive: true, force: true });
+    await removeTempWorkspace(workspaceDir);
   }
 });
 
@@ -3500,7 +3500,7 @@ test("mobile terminal stays usable while the keyboard viewport resizes", async (
     }
     await browser?.close().catch(() => {});
     await app.close();
-    await rm(workspaceDir, { recursive: true, force: true });
+    await removeTempWorkspace(workspaceDir);
   }
 });
 
@@ -3639,7 +3639,7 @@ test("terminal wheel opens a scrollable transcript history", async (t) => {
     }
     await browser?.close().catch(() => {});
     await app.close();
-    await rm(workspaceDir, { recursive: true, force: true });
+    await removeTempWorkspace(workspaceDir);
   }
 });
 
@@ -3768,7 +3768,7 @@ test("terminal keyboard scroll chords move history without stealing plain arrows
     }
     await browser?.close().catch(() => {});
     await app.close();
-    await rm(workspaceDir, { recursive: true, force: true });
+    await removeTempWorkspace(workspaceDir);
   }
 });
 
@@ -3909,7 +3909,7 @@ test("terminal wheel without xterm scrollback opens transcript instead of sendin
     }
     await browser?.close().catch(() => {});
     await app.close();
-    await rm(workspaceDir, { recursive: true, force: true });
+    await removeTempWorkspace(workspaceDir);
   }
 });
 
@@ -4063,7 +4063,7 @@ test("vr-session-name falls back to a filesystem request when localhost is unrea
     );
   } finally {
     await app.close();
-    await rm(workspaceDir, { recursive: true, force: true });
+    await removeTempWorkspace(workspaceDir);
   }
 });
 
@@ -4289,7 +4289,7 @@ done
     } else {
       process.env.FAKE_CLAUDE_MEMORY_DIR = previousMemoryDir;
     }
-    await rm(workspaceDir, { recursive: true, force: true });
+    await removeTempWorkspace(workspaceDir);
   }
 });
 
@@ -4379,7 +4379,7 @@ test("ports are discoverable and proxy through localhost", async () => {
     await app.close();
     await new Promise((resolve) => previewServer.close(resolve));
     await new Promise((resolve) => forbiddenServer.close(resolve));
-    await rm(workspaceDir, { recursive: true, force: true });
+    await removeTempWorkspace(workspaceDir);
   }
 });
 
@@ -4478,7 +4478,7 @@ test("ports prefer direct tailnet URLs and can expose localhost-only ports with 
     assert.equal(exposePayload.port.preferredUrl, "http://100.64.0.5:3200/");
   } finally {
     await app.close();
-    await rm(workspaceDir, { recursive: true, force: true });
+    await removeTempWorkspace(workspaceDir);
   }
 });
 
@@ -4671,7 +4671,7 @@ test("running sessions are restored with their transcript after restart", async 
       await secondApp.close();
     }
 
-    await rm(workspaceDir, { recursive: true, force: true });
+    await removeTempWorkspace(workspaceDir);
   }
 });
 
@@ -4739,7 +4739,7 @@ test("renamed sessions keep their updated name after restart", async () => {
       await secondApp.close();
     }
 
-    await rm(workspaceDir, { recursive: true, force: true });
+    await removeTempWorkspace(workspaceDir);
   }
 });
 
@@ -4819,7 +4819,7 @@ test("workspace file api lists directories, edits text files, and serves image f
     assert.equal(imageBuffer.compare(PNG_FIXTURE), 0);
   } finally {
     await app.close();
-    await rm(workspaceDir, { recursive: true, force: true });
+    await removeTempWorkspace(workspaceDir);
   }
 });
 
@@ -4877,7 +4877,7 @@ test("deleted persisted sessions do not come back after restart", async () => {
       await secondApp.close();
     }
 
-    await rm(workspaceDir, { recursive: true, force: true });
+    await removeTempWorkspace(workspaceDir);
   }
 });
 
@@ -4946,7 +4946,7 @@ test("persisted sessions with missing workspaces stay visible and show restore f
     await once(websocket, "close");
   } finally {
     await app.close();
-    await rm(workspaceDir, { recursive: true, force: true });
+    await removeTempWorkspace(workspaceDir);
   }
 });
 
@@ -5018,7 +5018,7 @@ test("workspace file api rejects traversal and invalid entry types", async () =>
     assert.match((await internalTextResponse.json()).error, /not available in the workspace browser/i);
   } finally {
     await app.close();
-    await rm(workspaceDir, { recursive: true, force: true });
+    await removeTempWorkspace(workspaceDir);
   }
 });
 
@@ -5046,6 +5046,6 @@ test("workspace file api serves content from hidden install roots", async () => 
     assert.equal(imageBuffer.compare(PNG_FIXTURE), 0);
   } finally {
     await app.close();
-    await rm(parentDir, { recursive: true, force: true });
+    await removeTempWorkspace(parentDir);
   }
 });
