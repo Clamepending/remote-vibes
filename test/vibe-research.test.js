@@ -2734,6 +2734,24 @@ test("visual graph empty canvas click closes the selected session panel and dele
     const agentPoint = await findCanvasHoverPoint(page, "Canvas Agent");
     await clickCanvasPoint(page, agentPoint.x, agentPoint.y);
     await page.waitForSelector(".visual-game-session-panel", { timeout: 10_000 });
+    await page.waitForSelector(".visual-game-session-panel .agent-profile-panel", { timeout: 10_000 });
+    const profileText = await page.locator(".visual-game-session-panel .agent-profile-panel").textContent();
+    assert.match(profileText || "", /Canvas Agent/);
+    assert.match(profileText || "", /Researcher|Agent/);
+    const profilePlacement = await page.evaluate(() => {
+      const terminal = document.querySelector(".visual-game-session-panel .terminal-stack")?.getBoundingClientRect();
+      const profile = document.querySelector(".visual-game-session-panel .agent-profile-panel")?.getBoundingClientRect();
+      return {
+        terminalRight: terminal?.right || 0,
+        profileLeft: profile?.left || 0,
+        profileWidth: profile?.width || 0,
+      };
+    });
+    assert.ok(profilePlacement.profileWidth > 0, "agent profile should be visible");
+    assert.ok(
+      profilePlacement.profileLeft >= profilePlacement.terminalRight - 1,
+      "agent profile should sit to the right of the terminal",
+    );
     const sessionPanelShape = await assertCanvasTracksFrame(page, "visual game canvas with session panel");
     const panelWidthBeforeResize = await page.locator(".visual-game-session-panel").evaluate((panel) => (
       panel.getBoundingClientRect().width

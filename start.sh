@@ -21,6 +21,9 @@ NPM_FETCH_RETRY_FACTOR="${VIBE_RESEARCH_NPM_FETCH_RETRY_FACTOR:-${REMOTE_VIBES_N
 NPM_FETCH_RETRY_MINTIMEOUT="${VIBE_RESEARCH_NPM_FETCH_RETRY_MINTIMEOUT:-${REMOTE_VIBES_NPM_FETCH_RETRY_MINTIMEOUT:-20000}}"
 NPM_FETCH_RETRY_MAXTIMEOUT="${VIBE_RESEARCH_NPM_FETCH_RETRY_MAXTIMEOUT:-${REMOTE_VIBES_NPM_FETCH_RETRY_MAXTIMEOUT:-120000}}"
 NPM_FETCH_TIMEOUT="${VIBE_RESEARCH_NPM_FETCH_TIMEOUT:-${REMOTE_VIBES_NPM_FETCH_TIMEOUT:-300000}}"
+NODE_MAJOR="${VIBE_RESEARCH_NODE_MAJOR:-${REMOTE_VIBES_NODE_MAJOR:-22}}"
+MIN_NODE_MAJOR=20
+AUTO_INSTALL_NODE="${VIBE_RESEARCH_AUTO_INSTALL_NODE:-${REMOTE_VIBES_AUTO_INSTALL_NODE:-1}}"
 export VIBE_RESEARCH_STATE_DIR="$RUNTIME_DIR"
 export REMOTE_VIBES_STATE_DIR="${REMOTE_VIBES_STATE_DIR:-$RUNTIME_DIR}"
 if [ -n "$WIKI_DIR" ]; then
@@ -36,6 +39,48 @@ log() {
 fail() {
   printf '[vibe-research] %s\n' "$*" >&2
   exit 1
+}
+
+node_major_version() {
+  if ! command -v node >/dev/null 2>&1; then
+    return 1
+  fi
+
+  node -p 'Number(process.versions.node.split(".")[0])' 2>/dev/null || return 1
+}
+
+node_is_supported() {
+  local major
+  major="$(node_major_version 2>/dev/null || true)"
+  [ -n "$major" ] && [ "$major" -ge "$MIN_NODE_MAJOR" ]
+}
+
+ensure_node_runtime() {
+  if node_is_supported && command -v npm >/dev/null 2>&1; then
+    return
+  fi
+
+  if [ "$AUTO_INSTALL_NODE" = "0" ]; then
+    fail "Missing Node.js >=${MIN_NODE_MAJOR} and npm. Install Node.js ${NODE_MAJOR}.x, then rerun start.sh."
+  fi
+
+  if [ ! -f "$ROOT_DIR/install.sh" ]; then
+    fail "Missing Node.js >=${MIN_NODE_MAJOR} and npm, and install.sh was not found. Install Node.js ${NODE_MAJOR}.x, then rerun start.sh."
+  fi
+
+  log "Node.js >=${MIN_NODE_MAJOR} and npm are required; running the installer Node.js step"
+  VIBE_RESEARCH_ENSURE_NODE_ONLY=1 REMOTE_VIBES_ENSURE_NODE_ONLY=1 bash "$ROOT_DIR/install.sh" --ensure-node-only
+  hash -r 2>/dev/null || true
+
+  if ! node_is_supported; then
+    fail "Node.js $(node -v 2>/dev/null || printf 'missing') is not supported. Vibe Research needs Node.js >=${MIN_NODE_MAJOR}."
+  fi
+
+  if ! command -v npm >/dev/null 2>&1; then
+    fail "npm is missing after Node.js setup."
+  fi
+
+  log "Using Node $(node -v) and npm $(npm -v)"
 }
 
 expand_home_path() {
@@ -753,6 +798,7 @@ if [ -n "$WIKI_DIR" ]; then
 fi
 migrate_legacy_runtime_dir
 migrate_home_checkout_to_app
+ensure_node_runtime
 ensure_vibe_research_settings_repo
 ensure_mac_brain_wiki
 ensure_default_session_cwd

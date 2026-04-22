@@ -557,6 +557,137 @@ exit 0
   }
 });
 
+test("start.sh bootstraps Node.js through the installer when launched from a checkout", async () => {
+  const { tempRoot, repoDir } = await createWorkingTreeRepoSnapshot();
+  const installRoot = await mkdtemp(path.join(os.tmpdir(), "vibe-research-start-node-install-"));
+  const fakeBin = path.join(installRoot, "bin");
+  const nodeInstalledState = path.join(installRoot, "node-installed");
+  const nodePkg = "node-v22.99.0.pkg";
+  const port = await getFreePort();
+  const realNode = process.execPath;
+  const realCurl = (await execFile("bash", ["-lc", "command -v curl"])).stdout.trim();
+
+  try {
+    await mkdir(fakeBin, { recursive: true });
+    await writeFile(path.join(fakeBin, "uname"), "#!/usr/bin/env sh\nprintf 'Darwin\\n'\n");
+    await writeFile(
+      path.join(fakeBin, "node"),
+      `#!/usr/bin/env sh
+if [ ! -f ${JSON.stringify(nodeInstalledState)} ]; then
+  exit 127
+fi
+case "\${1:-}" in
+  -p)
+    printf '22\\n'
+    exit 0
+    ;;
+  -v|--version)
+    printf 'v22.99.0\\n'
+    exit 0
+    ;;
+esac
+exec ${JSON.stringify(realNode)} "$@"
+`,
+    );
+    await writeFile(
+      path.join(fakeBin, "npm"),
+      `#!/usr/bin/env sh
+if [ ! -f ${JSON.stringify(nodeInstalledState)} ]; then
+  exit 127
+fi
+case "\${1:-}" in
+  -v|--version)
+    printf '10.9.9\\n'
+    exit 0
+    ;;
+  ci|install)
+    ln -sfn ${JSON.stringify(path.join(rootDir, "node_modules"))} node_modules
+    exit 0
+    ;;
+esac
+exit 0
+`,
+    );
+    await writeFile(
+      path.join(fakeBin, "curl"),
+      `#!/usr/bin/env bash
+set -euo pipefail
+original_args=("$@")
+url=""
+output=""
+while [ "$#" -gt 0 ]; do
+  case "$1" in
+    -o)
+      output="$2"
+      shift 2
+      ;;
+    -*)
+      shift
+      ;;
+    *)
+      url="$1"
+      shift
+      ;;
+  esac
+done
+case "$url" in
+  *SHASUMS256.txt)
+    printf 'abc  ${nodePkg}\\n'
+    ;;
+  *${nodePkg})
+    printf 'node package' > "$output"
+    ;;
+  *)
+    exec ${JSON.stringify(realCurl)} "\${original_args[@]}"
+    ;;
+esac
+`,
+    );
+    await writeFile(
+      path.join(fakeBin, "installer"),
+      `#!/usr/bin/env sh
+: > ${JSON.stringify(nodeInstalledState)}
+exit 0
+`,
+    );
+    await writeFile(path.join(fakeBin, "sudo"), "#!/usr/bin/env sh\nexec \"$@\"\n");
+    await execFile("chmod", ["+x", ...["uname", "node", "npm", "curl", "installer", "sudo"].map((name) => path.join(fakeBin, name))]);
+
+    const result = await execFile("bash", [path.join(repoDir, "start.sh")], {
+      env: installTestEnv({
+        PATH: `${fakeBin}${path.delimiter}${process.env.PATH || ""}`,
+        VIBE_RESEARCH_PORT: String(port),
+        VIBE_RESEARCH_READY_TIMEOUT_SECONDS: "30",
+        VIBE_RESEARCH_STATE_DIR: path.join(installRoot, "state"),
+        VIBE_RESEARCH_WIKI_DIR: path.join(installRoot, "mac-brain"),
+      }),
+      timeout: 60_000,
+    });
+    const combinedOutput = `${result.stdout}${result.stderr}`;
+
+    assert.match(combinedOutput, /running the installer Node\.js step/);
+    assert.match(combinedOutput, /Installing Node\.js 22\.x for macOS/);
+    assert.match(combinedOutput, /Using Node v22\.99\.0 and npm 10\.9\.9/);
+
+    const response = await fetch(`http://127.0.0.1:${port}/api/state`);
+    assert.equal(response.status, 200);
+    const payload = await response.json();
+    assert.equal(payload.appName, "Vibe Research");
+  } finally {
+    try {
+      await fetch(`http://127.0.0.1:${port}/api/terminate`, {
+        method: "POST",
+      });
+      await waitForShutdown(`http://127.0.0.1:${port}/api/state`);
+    } catch {
+      // Server may not have started.
+    }
+
+    await rm(tempRoot, { recursive: true, force: true });
+    await rm(installRoot, { recursive: true, force: true });
+  }
+});
+
 test("install.sh starts Tailscale onboarding when Tailscale is installed but logged out", async () => {
   const { tempRoot, repoDir } = await createSourceRepo();
   const installRoot = await mkdtemp(path.join(os.tmpdir(), "vibe-research-tailscale-install-"));

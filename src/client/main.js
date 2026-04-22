@@ -36,6 +36,7 @@ import {
   Plug,
   Plus,
   RefreshCw,
+  RotateCcw,
   Search,
   ServerCog,
   Settings,
@@ -594,6 +595,9 @@ const AGENT_TOWN_BUILDER_COSMETIC_ITEMS = Object.freeze([
   },
 ]);
 const AGENT_TOWN_PLACE_COLLISION_GAP = 2;
+const AGENT_TOWN_BUILDER_FEEDBACK_MS = 1500;
+const AGENT_TOWN_BUILDER_PULSE_MS = 720;
+const AGENT_TOWN_BUILDER_GRID_SIZE = 10;
 const AGENT_TOWN_DEFAULT_THEME_ID = "default";
 const AGENT_TOWN_THEMES = Object.freeze([
   {
@@ -1162,6 +1166,11 @@ const state = {
     inProgress: false,
     toast: null,
   },
+  agentProfile: {
+    sessionId: "",
+    subagentId: "",
+    browserUseSessionId: "",
+  },
   swarmGraph: {
     sessionId: null,
     projectCwd: "",
@@ -1187,6 +1196,8 @@ const state = {
     builderOpen: false,
     builderTab: AGENT_TOWN_BUILDER_DEFAULT_TAB,
     builderPlacement: null,
+    builderFeedback: null,
+    builderPulse: null,
     selectedSessionId: "",
     selectedBrowserUseSessionId: "",
     selectedBuildingId: "",
@@ -5351,16 +5362,22 @@ Context:
 - Project folder: ${workspacePath}
 - Library folder: ${libraryPath || "not chosen yet"}
 
-Walk me through Vibe Research in plain language:
+Do not overload me with a full tour. Teach in mini bite-sized pieces: one small concept, one concrete action, and one gentle question at a time. Check in before moving to the next piece.
+
+Start by saying "This is our village!" in a warm way. Then ask what name I want you to use and what background or comfort level I am coming from. Ask whether it is okay to save a brief, non-sensitive preference note in the Library; if I agree, create or update a short Library note with my name, background, preferred pace, and what I want to do first. Do not record secrets, credentials, or private details.
+
+Use this map for the bite-sized walkthrough, but do not dump it all at once:
 1. Agent Town: agents live in the canvas, and buildings are tool/integration homes.
 2. Library: shared markdown memory that agents can read and update for continuity.
-3. Settings: credentials, runtime defaults, local access, and app configuration.
-4. Occupations: the system prompts/roles that shape new agents.
-5. Automations: recurring helpers that can run on a schedule.
-6. Toolshed and BuildingHub: how new buildings are drafted, validated, and shared.
-7. Telegram and Phone/iMessage: optional communication bridges I can connect later.
+3. Buildings: use the town builder to place cosmetic buildings for decoration and functional buildings for tools; functional buildings can be installed from BuildingHub, then placed or moved on the map.
+4. Agents: click an agent in Agent Town to open that agent's session and talk to them.
+5. Automations: open the Campanile/Automations building, choose a daily 9am schedule, and write a task prompt; give this concrete example: "Every morning at 9am, look through the Library and send me a summary of the day in my Agent Inbox."
+6. Occupations: the system prompts/roles that shape new agents.
+7. Settings: credentials, runtime defaults, local access, and app configuration.
+8. Toolshed and BuildingHub: how new buildings are drafted, validated, and shared.
+9. Telegram and Phone/iMessage: optional communication bridges I can connect later.
 
-Then ask me one question: what kind of thing do I want to accomplish first, and do I want help connecting Telegram or phone access? Keep it warm, concrete, and brief. Do not start doing work until I answer.`;
+After the name/background step, ask what kind of thing I want to accomplish first. Keep it warm, concrete, and brief. Do not start doing project work until I answer.`;
 }
 
 function getWikiConflictAgentPrompt() {
@@ -9486,7 +9503,7 @@ function renderSessionCard(session) {
     </article>
     ${
       visibleSubagents.length
-        ? `<div class="session-subagents" aria-label="Session subagents">${visibleSubagents.map((subagent) => renderSessionSubagentCard(subagent)).join("")}</div>`
+        ? `<div class="session-subagents" aria-label="Session subagents">${visibleSubagents.map((subagent) => renderSessionSubagentCard(subagent, session)).join("")}</div>`
         : ""
     }
   `;
@@ -9529,7 +9546,313 @@ function getSubagentLabel(subagent) {
   return { className: "read", title: `${subagent?.agentType || "subagent"} finished` };
 }
 
-function renderSessionSubagentCard(subagent) {
+function titleCaseWords(value) {
+  return String(value || "")
+    .replace(/[-_]+/g, " ")
+    .replace(/\s+/g, " ")
+    .trim()
+    .replace(/\b[a-z]/g, (character) => character.toUpperCase());
+}
+
+function getOccupationDisplayLabel(occupationId) {
+  const normalized = String(occupationId || "").trim();
+  const preset = getAgentPromptPresetList().find((entry) => entry.id === normalized);
+  if (preset?.label) {
+    return preset.label;
+  }
+
+  return normalized ? titleCaseWords(normalized) : "Agent";
+}
+
+function getAgentProfileSubagentKind(subagent) {
+  if (subagent?.videoMemoryMonitorId) {
+    return "VideoMemory monitor";
+  }
+
+  if (subagent?.ottoAuthSessionId) {
+    return "OttoAuth";
+  }
+
+  if (subagent?.browserUseSessionId) {
+    return "Browser Use";
+  }
+
+  if (subagent?.source === "claude") {
+    return "Claude subagent";
+  }
+
+  return `${subagent?.agentType || "Agent"} subagent`;
+}
+
+function getAgentProfileStatusText(profileStatus, fallback = "idle") {
+  const normalized = String(profileStatus || fallback || "idle").trim().toLowerCase();
+  if (normalized === "read") {
+    return "idle";
+  }
+  if (normalized === "unread") {
+    return "done";
+  }
+  return normalized || "idle";
+}
+
+function getSelectedAgentProfileSubagent(session, selection = state.agentProfile) {
+  const subagents = Array.isArray(session?.subagents) ? session.subagents : [];
+  const subagentId = String(selection?.subagentId || "").trim();
+  const browserUseSessionId = String(selection?.browserUseSessionId || "").trim();
+
+  if (subagentId) {
+    const match = subagents.find((subagent) => (
+      subagent?.id === subagentId
+      || subagent?.agentId === subagentId
+    ));
+    if (match) {
+      return match;
+    }
+  }
+
+  if (browserUseSessionId) {
+    return subagents.find((subagent) => subagent?.browserUseSessionId === browserUseSessionId) || null;
+  }
+
+  return null;
+}
+
+function getAgentProfilePalette(profile) {
+  const providerPalette = getVisualGameProviderAgentPalette(profile?.providerId || "");
+  if (providerPalette) {
+    return providerPalette;
+  }
+
+  const paletteIndex = hashString(profile?.key || profile?.name || "") % VISUAL_GAME_AGENT_PALETTES.length;
+  return VISUAL_GAME_AGENT_PALETTES[paletteIndex] || VISUAL_GAME_AGENT_PALETTES[0];
+}
+
+function getAgentProfilePaletteStyle(profile) {
+  const palette = getAgentProfilePalette(profile);
+  const hatColors = getVisualGameAgentHatColors(palette);
+  const entries = [
+    ["--agent-profile-hat", hatColors.fill],
+    ["--agent-profile-brim", hatColors.dark],
+    ["--agent-profile-hair", palette.hair],
+    ["--agent-profile-skin", palette.skin],
+    ["--agent-profile-coat", palette.coat],
+    ["--agent-profile-trim", palette.trim],
+    ["--agent-profile-pants", palette.pants],
+    ["--agent-profile-boots", palette.boots],
+  ];
+
+  return entries
+    .filter(([, value]) => value)
+    .map(([name, value]) => `${name}:${value}`)
+    .join(";");
+}
+
+function getAgentInitials(name) {
+  const words = String(name || "")
+    .replace(/[^A-Za-z0-9 ]+/g, " ")
+    .trim()
+    .split(/\s+/)
+    .filter(Boolean);
+
+  if (!words.length) {
+    return "AI";
+  }
+
+  return words
+    .slice(0, 2)
+    .map((word) => word[0]?.toUpperCase() || "")
+    .join("") || "AI";
+}
+
+function getAgentProfileForSession(session, selection = state.agentProfile) {
+  if (!session?.id || selection?.sessionId !== session.id) {
+    return null;
+  }
+
+  const subagent = getSelectedAgentProfileSubagent(session, selection);
+  const projectLabel = getWorkspacePathLeafName(session.cwd || "") || "workspace";
+
+  if (subagent) {
+    const status = getSubagentLabel(subagent);
+    const statusText = getAgentProfileStatusText(subagent.status, "done");
+    const toolUseCount = Number(subagent.toolUseCount);
+    const messageCount = Number(subagent.messageCount);
+    const facts = [
+      { label: "occupation", value: subagent.agentType || getOccupationDisplayLabel(session.occupationId) },
+      { label: "status", value: statusText, statusClass: status.className, statusTitle: status.title },
+      { label: "project", value: projectLabel },
+      { label: "parent", value: session.name || session.providerLabel || "Agent" },
+      subagent.updatedAt ? { label: "updated", value: relativeTimeAgo(subagent.updatedAt) || relativeTime(subagent.updatedAt) } : null,
+      subagent.toolUseCount != null && Number.isFinite(toolUseCount) ? { label: "tools", value: String(toolUseCount) } : null,
+      subagent.messageCount != null && Number.isFinite(messageCount) ? { label: "messages", value: String(messageCount) } : null,
+    ].filter(Boolean);
+
+    return {
+      key: `subagent:${session.id}:${subagent.id || subagent.agentId || subagent.name || ""}`,
+      name: subagent.name || subagent.description || "Helper agent",
+      eyebrow: getAgentProfileSubagentKind(subagent),
+      description: subagent.description && subagent.description !== subagent.name ? subagent.description : "",
+      occupationId: subagent.promptId || session.occupationId || state.agentPromptSelectedId || "",
+      occupationLabel: subagent.agentType || getOccupationDisplayLabel(session.occupationId),
+      statusClass: status.className,
+      statusText,
+      statusTitle: status.title,
+      providerId: session.providerId || subagent.source || "",
+      facts,
+      initials: getAgentInitials(subagent.name || subagent.description),
+    };
+  }
+
+  const status = getSessionLabel(session);
+  const statusText = getAgentProfileStatusText(status.text, session.status || "idle");
+  const subagents = Array.isArray(session.subagents) ? session.subagents : [];
+  const workingSubagentCount = subagents.filter((entry) => entry?.status === "working").length;
+  const facts = [
+    { label: "occupation", value: getOccupationDisplayLabel(session.occupationId || state.agentPromptSelectedId) },
+    { label: "status", value: statusText, statusClass: status.className, statusTitle: status.title },
+    { label: "provider", value: session.providerLabel || session.providerId || "agent" },
+    { label: "project", value: projectLabel },
+    session.lastOutputAt || session.updatedAt
+      ? { label: "updated", value: relativeTimeAgo(session.lastOutputAt || session.updatedAt) || relativeTime(session.lastOutputAt || session.updatedAt) }
+      : null,
+    subagents.length ? { label: "helpers", value: workingSubagentCount ? `${workingSubagentCount}/${subagents.length} working` : String(subagents.length) } : null,
+  ].filter(Boolean);
+
+  return {
+    key: `session:${session.id}`,
+    name: session.name || session.providerLabel || "Agent",
+    eyebrow: session.providerLabel || "Agent",
+    description: session.cwd || "",
+    occupationId: session.occupationId || state.agentPromptSelectedId || "",
+    occupationLabel: getOccupationDisplayLabel(session.occupationId || state.agentPromptSelectedId),
+    statusClass: status.className,
+    statusText,
+    statusTitle: status.title,
+    providerId: session.providerId || "",
+    facts,
+    initials: getAgentInitials(session.name || session.providerLabel),
+  };
+}
+
+function renderAgentProfileAvatar(profile) {
+  const hatKind = getOccupationHatKind({
+    id: profile?.occupationId || "",
+    label: profile?.occupationLabel || "",
+  });
+
+  return `
+    <span
+      class="agent-profile-avatar agent-profile-avatar-${escapeHtml(profile.statusClass || "read")} agent-profile-hat-${escapeHtml(hatKind)}"
+      style="${escapeHtml(getAgentProfilePaletteStyle(profile))}"
+      aria-hidden="true"
+    >
+      <span class="agent-profile-avatar-backdrop"></span>
+      <span class="agent-profile-avatar-portrait">
+        <i class="agent-profile-avatar-hair"></i>
+        <i class="agent-profile-avatar-face"></i>
+        <i class="agent-profile-avatar-eye agent-profile-avatar-eye-left"></i>
+        <i class="agent-profile-avatar-eye agent-profile-avatar-eye-right"></i>
+        <i class="agent-profile-avatar-mouth"></i>
+        <i class="agent-profile-avatar-hat"></i>
+        <i class="agent-profile-avatar-brim"></i>
+        <i class="agent-profile-avatar-coat"></i>
+      </span>
+      <span class="agent-profile-avatar-initials">${escapeHtml(profile.initials || "AI")}</span>
+    </span>
+  `;
+}
+
+function renderAgentProfileFact(fact) {
+  const value = fact.statusClass
+    ? `
+      <span class="agent-profile-status-value">
+        <span class="session-activity-dot ${escapeHtml(fact.statusClass)}" aria-hidden="true"${getSessionActivityStyle({ className: fact.statusClass })}></span>
+        <span>${escapeHtml(fact.value)}</span>
+      </span>
+    `
+    : escapeHtml(fact.value);
+
+  return `
+    <div class="agent-profile-fact">
+      <dt>${escapeHtml(fact.label)}</dt>
+      <dd title="${escapeHtml(fact.value)}">${value}</dd>
+    </div>
+  `;
+}
+
+function renderAgentProfilePanel(session, { surface = "workspace" } = {}) {
+  const profile = getAgentProfileForSession(session);
+  if (!profile) {
+    return "";
+  }
+
+  return `
+    <aside class="agent-profile-panel agent-profile-panel-${escapeHtml(surface)}" data-agent-profile-panel aria-label="Agent profile">
+      <div class="agent-profile-head">
+        ${renderAgentProfileAvatar(profile)}
+        <div class="agent-profile-title">
+          <span>${escapeHtml(profile.eyebrow)}</span>
+          <strong>${escapeHtml(profile.name)}</strong>
+          <em>${escapeHtml(profile.occupationLabel)}</em>
+        </div>
+        <button class="icon-button agent-profile-close" type="button" data-close-agent-profile aria-label="Close profile" ${tooltipAttributes("Close profile")}>${renderIcon(X)}</button>
+      </div>
+      <dl class="agent-profile-facts">
+        ${profile.facts.map(renderAgentProfileFact).join("")}
+      </dl>
+      ${
+        profile.description
+          ? `<p class="agent-profile-note" title="${escapeHtml(profile.description)}">${escapeHtml(profile.description)}</p>`
+          : ""
+      }
+    </aside>
+  `;
+}
+
+function setAgentProfileSelection({ sessionId = "", subagentId = "", browserUseSessionId = "" } = {}) {
+  state.agentProfile = {
+    sessionId: String(sessionId || ""),
+    subagentId: String(subagentId || ""),
+    browserUseSessionId: String(browserUseSessionId || ""),
+  };
+}
+
+function clearAgentProfileSelection() {
+  setAgentProfileSelection();
+}
+
+function rerenderTerminalSurface() {
+  renderShell();
+  if (state.activeSessionId && (state.currentView === "shell" || isVisualGameTerminalOpen())) {
+    connectToSession(state.activeSessionId);
+  }
+}
+
+function openAgentProfileForSession(sessionId, { subagentId = "", browserUseSessionId = "" } = {}) {
+  if (!sessionId) {
+    closeMobileSidebar();
+    return;
+  }
+
+  if (state.currentView !== "shell") {
+    setCurrentView("shell");
+  }
+
+  markSessionRead(sessionId, { refresh: false });
+  state.activeSessionId = sessionId;
+  setAgentProfileSelection({ sessionId, subagentId, browserUseSessionId });
+
+  const nextSession = state.sessions.find((session) => session.id === sessionId);
+  if (nextSession) {
+    expandSessionProject(nextSession.cwd);
+  }
+
+  renderShell();
+  connectToSession(state.activeSessionId);
+  closeMobileSidebar();
+}
+
+function renderSessionSubagentCard(subagent, session) {
   const status = getSubagentLabel(subagent);
   const isBrowserUseSubagent = Boolean(subagent.browserUseSessionId);
   const isOttoAuthSubagent = Boolean(subagent.ottoAuthSessionId);
@@ -9552,6 +9875,13 @@ function renderSessionSubagentCard(subagent) {
       : isVideoMemorySubagent
       ? `VideoMemory monitor: ${subagent.description || subagent.name || "Camera monitor"}`
       : `Claude subagent: ${subagent.description || subagent.name || "subagent"}`;
+  const profileAttributes = session?.id
+    ? `
+      data-agent-profile-session="${escapeHtml(session.id)}"
+      data-agent-profile-subagent="${escapeHtml(subagent.id || subagent.agentId || "")}"
+      data-agent-profile-browser-use="${escapeHtml(subagent.browserUseSessionId || "")}"
+    `
+    : "";
 
   if (isBrowserUseSubagent) {
     const browserUseSessionId = escapeHtml(subagent.browserUseSessionId);
@@ -9579,7 +9909,7 @@ function renderSessionSubagentCard(subagent) {
 
   if (isVideoMemorySubagent) {
     return `
-      <div class="session-subagent-card is-videomemory" title="${escapeHtml(title)}">
+      <button class="session-subagent-card is-videomemory" type="button" title="${escapeHtml(title)}" ${profileAttributes}>
         <span class="session-activity-dot ${status.className}" role="img" aria-label="${escapeHtml(status.title)}" title="${escapeHtml(status.title)}"${getSessionActivityStyle(status)}></span>
         <div class="session-main">
           <div class="session-name">${escapeHtml(subagent.name || "camera monitor")}</div>
@@ -9589,13 +9919,13 @@ function renderSessionSubagentCard(subagent) {
           <span class="session-time">${relativeTime(subagent.updatedAt)}</span>
           <span class="session-subagent-open" aria-hidden="true">${renderIcon(Camera)}</span>
         </span>
-      </div>
+      </button>
     `;
   }
 
   if (isOttoAuthSubagent) {
     return `
-      <div class="session-subagent-card is-ottoauth" title="${escapeHtml(title)}">
+      <button class="session-subagent-card is-ottoauth" type="button" title="${escapeHtml(title)}" ${profileAttributes}>
         <span class="session-activity-dot ${status.className}" role="img" aria-label="${escapeHtml(status.title)}" title="${escapeHtml(status.title)}"${getSessionActivityStyle(status)}></span>
         <div class="session-main">
           <div class="session-name">${escapeHtml(subagent.name || "OttoAuth task")}</div>
@@ -9605,12 +9935,12 @@ function renderSessionSubagentCard(subagent) {
           <span class="session-time">${relativeTime(subagent.updatedAt)}</span>
           <span class="session-subagent-open" aria-hidden="true">${renderIcon(ShoppingCart)}</span>
         </span>
-      </div>
+      </button>
     `;
   }
 
   return `
-    <div class="session-subagent-card is-provider-subagent" title="${escapeHtml(title)}">
+    <button class="session-subagent-card is-provider-subagent" type="button" title="${escapeHtml(title)}" ${profileAttributes}>
       <span class="session-activity-dot ${status.className}" role="img" aria-label="${escapeHtml(status.title)}" title="${escapeHtml(status.title)}"${getSessionActivityStyle(status)}></span>
       <div class="session-main">
         <div class="session-name">${escapeHtml(subagent.name || "subagent")}</div>
@@ -9619,7 +9949,7 @@ function renderSessionSubagentCard(subagent) {
       <span class="session-subagent-trailing">
         <span class="session-time">${relativeTime(subagent.updatedAt)}</span>
       </span>
-    </div>
+    </button>
   `;
 }
 
@@ -13566,6 +13896,7 @@ function pruneVisualGameSessionSelection() {
 
   state.visualGame.selectedSessionId = "";
   state.visualGame.selectedBrowserUseSessionId = "";
+  clearAgentProfileSelection();
   return true;
 }
 
@@ -13699,12 +14030,35 @@ function isVisualGameLiveSubagent(subagent) {
   return statusClass === "working";
 }
 
+function isClaudeCodeProviderAgent(agent) {
+  return String(agent?.providerId || "").toLowerCase() === "claude";
+}
+
+function renderClaudeCodeAvatarMarkup() {
+  return `
+    <span class="claude-code-avatar" aria-hidden="true">
+      <i class="claude-code-avatar-top"></i>
+      <i class="claude-code-avatar-left-arm"></i>
+      <i class="claude-code-avatar-mid"></i>
+      <i class="claude-code-avatar-right-arm"></i>
+      <i class="claude-code-avatar-base"></i>
+      <i class="claude-code-avatar-leg claude-code-avatar-leg-one"></i>
+      <i class="claude-code-avatar-leg claude-code-avatar-leg-two"></i>
+      <i class="claude-code-avatar-leg claude-code-avatar-leg-three"></i>
+      <i class="claude-code-avatar-leg claude-code-avatar-leg-four"></i>
+      <i class="claude-code-avatar-eye claude-code-avatar-eye-left"></i>
+      <i class="claude-code-avatar-eye claude-code-avatar-eye-right"></i>
+    </span>
+  `;
+}
+
 function renderVisualAgentTile(agent, index) {
   const statusClass = getVisualStatusClass(agent.status);
   const icon = agent.kind === "camera" ? Camera : agent.kind === "ottoauth" ? ShoppingCart : agent.kind === "browser" ? AppWindow : agent.kind === "helper" ? Zap : Bot;
+  const isClaudeAgent = isClaudeCodeProviderAgent(agent);
   const content = `
-    <span class="visual-agent-sprite visual-agent-sprite-${escapeHtml(statusClass)}" aria-hidden="true">
-      ${renderIcon(icon)}
+    <span class="visual-agent-sprite visual-agent-sprite-${escapeHtml(statusClass)} ${isClaudeAgent ? "visual-agent-sprite-claude" : ""}" aria-hidden="true">
+      ${isClaudeAgent ? renderClaudeCodeAvatarMarkup() : renderIcon(icon)}
     </span>
     <span class="visual-agent-copy">
       <strong>${escapeHtml(agent.name)}</strong>
@@ -14017,6 +14371,7 @@ function getVisualTownAgentPlacement(agent, index) {
 function renderVisualTownAgent(agent, index) {
   const placement = getVisualTownAgentPlacement(agent, index);
   const icon = agent.kind === "camera" ? Camera : agent.kind === "ottoauth" ? ShoppingCart : agent.kind === "browser" ? AppWindow : agent.kind === "helper" ? Zap : Bot;
+  const isClaudeAgent = isClaudeCodeProviderAgent(agent);
   const isWorking = placement.statusClass === "working";
   const label = truncateSwarmLabel(agent.name || "agent", isWorking ? 28 : 18);
   const style = [
@@ -14027,14 +14382,14 @@ function renderVisualTownAgent(agent, index) {
     `--wander-speed:${placement.speed}`,
   ].join(";");
   const content = `
-    <span class="visual-town-agent-body" aria-hidden="true">${renderIcon(icon)}</span>
+    <span class="visual-town-agent-body" aria-hidden="true">${isClaudeAgent ? renderClaudeCodeAvatarMarkup() : renderIcon(icon)}</span>
     <span class="visual-town-agent-shadow" aria-hidden="true"></span>
     <span class="visual-town-agent-label">
       <strong>${escapeHtml(label)}</strong>
       <em>${escapeHtml(isWorking ? "at computer" : "walking")}</em>
     </span>
   `;
-  const attributes = `class="visual-town-agent visual-status-${escapeHtml(placement.statusClass)} ${isWorking ? "is-working" : "is-roaming"}" style="${escapeHtml(style)}"`;
+  const attributes = `class="visual-town-agent visual-status-${escapeHtml(placement.statusClass)} ${isWorking ? "is-working" : "is-roaming"} ${isClaudeAgent ? "visual-provider-claude" : ""}" style="${escapeHtml(style)}"`;
 
   if (agent.browserUseSessionId) {
     return `
@@ -14130,6 +14485,7 @@ function renderVisualPixelGame(graph) {
   const hoverLabel = placementLabel ? `place ${placementLabel}` : isAgentTownEditMode() ? "edit town: drag buildings or paths" : "agent town";
   const unplacedCount = getAgentTownUnplacedFunctionalPlugins().length;
   const builderOpen = isAgentTownBuilderOpen();
+  const builderFeedback = getAgentTownBuilderFeedback();
 
   return `
     <section class="visual-game-stage" aria-label="Agent Town">
@@ -14144,6 +14500,12 @@ function renderVisualPixelGame(graph) {
           aria-label="${escapeHtml(`${workingCount} working agents, ${roamingCount} roaming agents in Agent Town`)}"
         ></canvas>
         <div class="visual-game-hover" aria-hidden="true">${escapeHtml(hoverLabel)}</div>
+        <div
+          class="agent-town-builder-feedback ${builderFeedback ? `is-visible is-${escapeHtml(builderFeedback.tone)}` : ""}"
+          data-agent-town-builder-feedback
+          role="status"
+          aria-live="polite"
+        >${escapeHtml(builderFeedback?.message || "")}</div>
         <button
           class="agent-town-builder-button ${builderOpen ? "is-active" : ""} ${unplacedCount ? "has-alert" : ""}"
           type="button"
@@ -14225,9 +14587,10 @@ function renderVisualGameSessionDrawer(graph) {
     ? [selectedSession.providerLabel, selectedSession.cwd].filter(Boolean).join(" · ")
     : "session unavailable";
   const browserUseSessionId = state.visualGame.selectedBrowserUseSessionId || "";
+  const agentProfilePanel = renderAgentProfilePanel(selectedSession, { surface: "visual" });
 
   return `
-    <aside class="visual-game-session-panel visual-game-side-panel" aria-label="Agent terminal">
+    <aside class="visual-game-session-panel visual-game-side-panel" aria-label="Agent terminal and profile">
       <div class="visual-game-session-head visual-game-terminal-head">
         <div class="terminal-copy">
           <strong>${escapeHtml(title)}</strong>
@@ -14247,17 +14610,20 @@ function renderVisualGameSessionDrawer(graph) {
           <button class="ghost-button toolbar-control terminal-control-button" type="button" id="ctrl-c-button" data-terminal-control aria-label="Send Control C" ${tooltipAttributes("Send Control C")} ${selectedSession ? "" : "disabled"}>${renderIcon(CircleStop)}</button>
         </div>
       </div>
-      <div class="terminal-stack visual-game-terminal-stack">
-        <div class="terminal-mount" id="terminal-mount"></div>
-        <div class="terminal-transcript-scroll" id="terminal-transcript-scroll" tabindex="0" aria-label="Terminal transcript history">
-          <pre class="terminal-transcript-pre" id="terminal-transcript-pre"></pre>
+      <div class="visual-game-terminal-body ${agentProfilePanel ? "has-agent-profile" : ""}">
+        <div class="terminal-stack visual-game-terminal-stack">
+          <div class="terminal-mount" id="terminal-mount"></div>
+          <div class="terminal-transcript-scroll" id="terminal-transcript-scroll" tabindex="0" aria-label="Terminal transcript history">
+            <pre class="terminal-transcript-pre" id="terminal-transcript-pre"></pre>
+          </div>
+          <button class="jump-bottom-button ${selectedSession && state.terminalShowJumpToBottom ? "is-visible" : ""}" type="button" id="jump-to-bottom" aria-label="Jump to bottom" ${tooltipAttributes("Jump to bottom")} ${selectedSession ? "" : "disabled"}>
+            bottom
+          </button>
+          <div class="empty-state ${selectedSession ? "hidden" : ""}" id="empty-state">
+            <p class="empty-state-copy">session no longer available</p>
+          </div>
         </div>
-        <button class="jump-bottom-button ${selectedSession && state.terminalShowJumpToBottom ? "is-visible" : ""}" type="button" id="jump-to-bottom" aria-label="Jump to bottom" ${tooltipAttributes("Jump to bottom")} ${selectedSession ? "" : "disabled"}>
-          bottom
-        </button>
-        <div class="empty-state ${selectedSession ? "hidden" : ""}" id="empty-state">
-          <p class="empty-state-copy">session no longer available</p>
-        </div>
+        ${agentProfilePanel}
       </div>
     </aside>
   `;
@@ -14723,24 +15089,38 @@ function renderAgentTownBuilderCosmeticPreview(item) {
 }
 
 function renderAgentTownBuilderCosmeticTab() {
+  const placedCount = getAgentTownDecorations().length;
   return `
-    <div class="agent-town-builder-list" role="list">
-      ${AGENT_TOWN_BUILDER_COSMETIC_ITEMS.map((item) => `
-        <button
-          class="agent-town-builder-card ${state.visualGame.builderPlacement?.kind === "cosmetic" && state.visualGame.builderPlacement.itemId === item.id ? "is-active" : ""}"
-          type="button"
-          draggable="true"
-          data-agent-town-builder-place-cosmetic="${escapeHtml(item.id)}"
-          aria-label="${escapeHtml(`Place ${item.label}`)}"
-        >
-          ${renderAgentTownBuilderCosmeticPreview(item)}
-          <span class="agent-town-builder-card-copy">
-            <strong>${escapeHtml(item.label)}</strong>
-            <em>${escapeHtml(item.meta)}</em>
-          </span>
-          <span class="agent-town-builder-card-action">Place</span>
-        </button>
-      `).join("")}
+    <div class="agent-town-builder-tab-panel">
+      ${
+        placedCount
+          ? `
+            <div class="agent-town-builder-quick-actions">
+              <span>${escapeHtml(`${placedCount} placed`)}</span>
+              <button class="icon-button toolbar-control" type="button" data-agent-town-builder-undo-cosmetic aria-label="Undo last cosmetic" ${tooltipAttributes("Undo last cosmetic")}>${renderIcon(RotateCcw)}</button>
+              <button class="icon-button toolbar-control" type="button" data-agent-town-builder-clear-cosmetics aria-label="Clear cosmetics" ${tooltipAttributes("Clear cosmetics")}>${renderIcon(Trash2)}</button>
+            </div>
+          `
+          : ""
+      }
+      <div class="agent-town-builder-list" role="list">
+        ${AGENT_TOWN_BUILDER_COSMETIC_ITEMS.map((item) => `
+          <button
+            class="agent-town-builder-card ${state.visualGame.builderPlacement?.kind === "cosmetic" && state.visualGame.builderPlacement.itemId === item.id ? "is-active" : ""}"
+            type="button"
+            draggable="true"
+            data-agent-town-builder-place-cosmetic="${escapeHtml(item.id)}"
+            aria-label="${escapeHtml(`Place ${item.label}`)}"
+          >
+            ${renderAgentTownBuilderCosmeticPreview(item)}
+            <span class="agent-town-builder-card-copy">
+              <strong>${escapeHtml(item.label)}</strong>
+              <em>${escapeHtml(item.meta)}</em>
+            </span>
+            <span class="agent-town-builder-card-action">Place</span>
+          </button>
+        `).join("")}
+      </div>
     </div>
   `;
 }
@@ -14808,8 +15188,10 @@ function renderAgentTownBuilderFunctionalCard(plugin) {
 function renderAgentTownBuilderFunctionalTab() {
   const plugins = getAgentTownFunctionalPlugins();
   return `
-    <div class="agent-town-builder-list" role="list">
-      ${plugins.map(renderAgentTownBuilderFunctionalCard).join("")}
+    <div class="agent-town-builder-tab-panel">
+      <div class="agent-town-builder-list" role="list">
+        ${plugins.map(renderAgentTownBuilderFunctionalCard).join("")}
+      </div>
     </div>
   `;
 }
@@ -14894,6 +15276,7 @@ function clearVisualGameSelection({ render = true } = {}) {
   );
   state.visualGame.selectedSessionId = "";
   state.visualGame.selectedBrowserUseSessionId = "";
+  clearAgentProfileSelection();
   state.visualGame.selectedBuildingId = "";
 
   if (render && hadSelection) {
@@ -14917,6 +15300,7 @@ function openVisualGameBuildingPanel(buildingId, { render = true } = {}) {
   closeAgentTownBuilder({ render: false });
   state.visualGame.selectedSessionId = "";
   state.visualGame.selectedBrowserUseSessionId = "";
+  clearAgentProfileSelection();
   state.visualGame.selectedBuildingId = normalizedBuildingId;
 
   if (!isVisualInterfaceView()) {
@@ -15009,6 +15393,95 @@ function isAgentTownBuilderOpen() {
   return Boolean(state.visualGame.builderOpen);
 }
 
+function getAgentTownBuilderNow() {
+  return typeof performance !== "undefined" && typeof performance.now === "function" ? performance.now() : Date.now();
+}
+
+function getAgentTownBuilderFeedback() {
+  const feedback = state.visualGame.builderFeedback;
+  if (!feedback?.message) {
+    return null;
+  }
+
+  if (Number(feedback.expiresAt || 0) <= Date.now()) {
+    state.visualGame.builderFeedback = null;
+    return null;
+  }
+
+  return feedback;
+}
+
+function syncAgentTownBuilderFeedbackElement() {
+  const element = document.querySelector("[data-agent-town-builder-feedback]");
+  if (!(element instanceof HTMLElement)) {
+    return;
+  }
+
+  const feedback = getAgentTownBuilderFeedback();
+  element.className = `agent-town-builder-feedback${feedback ? ` is-visible is-${feedback.tone || "info"}` : ""}`;
+  element.textContent = feedback?.message || "";
+}
+
+function setAgentTownBuilderFeedback(message, tone = "info", { render = false } = {}) {
+  const text = String(message || "").trim();
+  if (!text) {
+    state.visualGame.builderFeedback = null;
+    syncAgentTownBuilderFeedbackElement();
+    return;
+  }
+
+  const expiresAt = Date.now() + AGENT_TOWN_BUILDER_FEEDBACK_MS;
+  state.visualGame.builderFeedback = {
+    message: text,
+    tone: ["blocked", "success", "info"].includes(tone) ? tone : "info",
+    expiresAt,
+  };
+  if (render) {
+    renderShell();
+  } else {
+    syncAgentTownBuilderFeedbackElement();
+  }
+
+  window.setTimeout(() => {
+    if (state.visualGame.builderFeedback?.expiresAt === expiresAt) {
+      state.visualGame.builderFeedback = null;
+      syncAgentTownBuilderFeedbackElement();
+    }
+  }, AGENT_TOWN_BUILDER_FEEDBACK_MS + 40);
+}
+
+function setAgentTownBuilderPulse(rect, tone = "success") {
+  if (!rect) {
+    state.visualGame.builderPulse = null;
+    return;
+  }
+
+  state.visualGame.builderPulse = {
+    x: rect.x,
+    y: rect.y,
+    width: rect.width,
+    height: rect.height,
+    tone: tone === "blocked" ? "blocked" : "success",
+    startedAt: getAgentTownBuilderNow(),
+  };
+}
+
+function primeAgentTownBuilderPlacementPreview() {
+  const placement = state.visualGame.builderPlacement;
+  if (!placement) {
+    return null;
+  }
+
+  const viewport = state.visualGame.viewport || getVisualGameDefaultViewport();
+  const camera = getVisualGameCamera(viewport);
+  const preview = updateAgentTownBuilderPlacementPreview({
+    x: camera.x + viewport.width / camera.zoom / 2,
+    y: camera.y + viewport.height / camera.zoom / 2,
+  });
+  placement.centerOnNextFrame = true;
+  return preview;
+}
+
 function openAgentTownBuilder({ tab = state.visualGame.builderTab, render = true } = {}) {
   clearVisualGameSelection({ render: false });
   state.visualGame.builderOpen = true;
@@ -15029,7 +15502,9 @@ function closeAgentTownBuilder({ render = true, clearPlacement = true } = {}) {
   state.visualGame.builderOpen = false;
   if (clearPlacement) {
     state.visualGame.builderPlacement = null;
+    state.visualGame.builderFeedback = null;
   }
+  state.visualGame.builderPulse = null;
   if (render && hadBuilder) {
     renderShell();
   }
@@ -15064,6 +15539,7 @@ function createAgentTownBuilderPlacement(kind, id) {
       height: item.height,
       cursorRect: null,
       blocked: false,
+      centerOnNextFrame: true,
     };
   }
 
@@ -15080,6 +15556,7 @@ function createAgentTownBuilderPlacement(kind, id) {
     height: AGENT_TOWN_FUNCTIONAL_BUILDING_SIZE.height,
     cursorRect: null,
     blocked: false,
+    centerOnNextFrame: true,
   };
 }
 
@@ -15090,6 +15567,8 @@ function startAgentTownBuilderPlacement(kind, id, { render = true } = {}) {
   }
 
   state.visualGame.builderPlacement = placement;
+  primeAgentTownBuilderPlacementPreview();
+  setAgentTownBuilderFeedback(`${placement.label} selected`, "info");
   openAgentTownBuilder({
     tab: kind === "functional" ? "functional" : "cosmetic",
     render,
@@ -15102,6 +15581,8 @@ function clearAgentTownBuilderPlacement({ render = true } = {}) {
     return false;
   }
   state.visualGame.builderPlacement = null;
+  state.visualGame.builderPulse = null;
+  setAgentTownBuilderFeedback("");
   if (render) {
     renderShell();
   }
@@ -15151,6 +15632,7 @@ function updateAgentTownBuilderPlacementPreview(point) {
   placement.cursorRect = rect;
   placement.blocked = Boolean(blocker);
   placement.blockedLabel = blocker?.label || "";
+  placement.centerOnNextFrame = false;
   return { rect, blocker };
 }
 
@@ -15162,6 +15644,11 @@ function commitAgentTownBuilderPlacement(point) {
 
   const preview = updateAgentTownBuilderPlacementPreview(point);
   if (!preview?.rect || preview.blocker) {
+    if (preview?.rect) {
+      setAgentTownBuilderPulse(preview.rect, "blocked");
+    }
+    const blockedLabel = preview?.blocker?.label || "that spot";
+    setAgentTownBuilderFeedback(`Blocked by ${blockedLabel}`, "blocked");
     return false;
   }
 
@@ -15169,6 +15656,8 @@ function commitAgentTownBuilderPlacement(point) {
     if (!setAgentTownFunctionalPlacement(placement.pluginId, preview.rect)) {
       return false;
     }
+    setAgentTownBuilderPulse(preview.rect, "success");
+    setAgentTownBuilderFeedback(`${placement.label} placed`, "success");
     state.visualGame.builderPlacement = null;
     saveAgentTownLayoutPreferences();
     renderShell();
@@ -15176,6 +15665,11 @@ function commitAgentTownBuilderPlacement(point) {
   }
 
   const decoration = addAgentTownDecoration(placement.itemId, preview.rect);
+  if (decoration) {
+    setAgentTownBuilderPulse(preview.rect, "success");
+    setAgentTownBuilderFeedback(`${placement.label} placed`, "success");
+    renderShell();
+  }
   return Boolean(decoration);
 }
 
@@ -15272,6 +15766,8 @@ function setAgentTownDogName(value, { render = true } = {}) {
 function resetAgentTownLayout({ render = true } = {}) {
   state.visualGame.customLayout = { places: {}, roads: {}, decorations: [], functional: {}, pendingFunctional: [] };
   state.visualGame.builderPlacement = null;
+  state.visualGame.builderFeedback = null;
+  state.visualGame.builderPulse = null;
   saveAgentTownLayoutPreferences();
   if (render) {
     renderShell();
@@ -15341,6 +15837,26 @@ function addAgentTownDecoration(itemId, rect) {
   getAgentTownDecorations().push(decoration);
   saveAgentTownLayoutPreferences();
   return decoration;
+}
+
+function removeLastAgentTownDecoration() {
+  const decorations = getAgentTownDecorations();
+  const removed = decorations.pop() || null;
+  if (removed) {
+    saveAgentTownLayoutPreferences();
+  }
+  return removed;
+}
+
+function clearAgentTownDecorations() {
+  const decorations = getAgentTownDecorations();
+  if (!decorations.length) {
+    return false;
+  }
+
+  state.visualGame.customLayout.decorations = [];
+  saveAgentTownLayoutPreferences();
+  return true;
 }
 
 function getAgentTownFunctionalPlacements() {
@@ -15772,9 +16288,14 @@ function getAgentTownDormForAgent(agent) {
   return dorms.find((dorm) => dorm.providerId && dorm.providerId === agent.providerId) || dorms[agent.familyIndex % dorms.length] || dorms[0];
 }
 
+function isAgentTownPluginBuilding(plugin) {
+  const pluginId = getPluginId(plugin);
+  return Boolean(pluginId && !AGENT_TOWN_SPECIAL_BUILDING_IDS.has(pluginId));
+}
+
 function isAgentTownFunctionalPlugin(plugin) {
   const pluginId = getPluginId(plugin);
-  return Boolean(pluginId && pluginId !== "buildinghub" && !AGENT_TOWN_SPECIAL_BUILDING_IDS.has(pluginId));
+  return Boolean(isAgentTownPluginBuilding(plugin) && pluginId !== "buildinghub");
 }
 
 function getAgentTownFunctionalPlugins() {
@@ -15812,8 +16333,11 @@ function getAgentTownPlacedFunctionalPluginIds() {
 function getAgentTownPluginBuildingBlueprints() {
   const installedPlugins = PLUGIN_CATALOG
     .filter((plugin) => isPluginInstalled(plugin))
-    .filter(isAgentTownFunctionalPlugin)
-    .filter((plugin) => !isAgentTownFunctionalPending(getPluginId(plugin)));
+    .filter(isAgentTownPluginBuilding)
+    .filter((plugin) => {
+      const pluginId = getPluginId(plugin);
+      return pluginId === "buildinghub" || !isAgentTownFunctionalPending(pluginId);
+    });
 
   let autoSlotIndex = 0;
   return installedPlugins.map((plugin) => {
@@ -16475,6 +16999,14 @@ function mountVisualPixelGame() {
 
     commitBuilderPlacementFromEvent(event);
   };
+  const onKeyDown = (event) => {
+    if (event.key !== "Escape" || !state.visualGame.builderPlacement) {
+      return;
+    }
+
+    event.preventDefault();
+    clearAgentTownBuilderPlacement();
+  };
 
   canvas.addEventListener("pointerdown", onPointerDown);
   canvas.addEventListener("pointermove", onPointerMove);
@@ -16486,6 +17018,7 @@ function mountVisualPixelGame() {
   canvas.addEventListener("wheel", onWheel, { passive: false });
   canvas.addEventListener("dragover", onDragOver);
   canvas.addEventListener("drop", onDrop);
+  window.addEventListener("keydown", onKeyDown);
   zoomInButton?.addEventListener("click", onZoomInClick);
   zoomOutButton?.addEventListener("click", onZoomOutClick);
   resetCameraButton?.addEventListener("click", resetCamera);
@@ -16502,6 +17035,12 @@ function mountVisualPixelGame() {
       width: viewport.width / camera.zoom,
       height: viewport.height / camera.zoom,
     };
+    if (state.visualGame.builderPlacement?.centerOnNextFrame) {
+      updateAgentTownBuilderPlacementPreview({
+        x: visibleWorld.x + visibleWorld.width / 2,
+        y: visibleWorld.y + visibleWorld.height / 2,
+      });
+    }
     context.setTransform(1, 0, 0, 1, 0, 0);
     context.clearRect(0, 0, canvas.width, canvas.height);
     context.setTransform(
@@ -16530,6 +17069,7 @@ function mountVisualPixelGame() {
     canvas.removeEventListener("wheel", onWheel);
     canvas.removeEventListener("dragover", onDragOver);
     canvas.removeEventListener("drop", onDrop);
+    window.removeEventListener("keydown", onKeyDown);
     zoomInButton?.removeEventListener("click", onZoomInClick);
     zoomOutButton?.removeEventListener("click", onZoomOutClick);
     resetCameraButton?.removeEventListener("click", resetCamera);
@@ -16548,6 +17088,11 @@ async function handleVisualGameHit(hit) {
     state.visualGame.selectedSessionId = hit.sessionId;
     state.visualGame.selectedBrowserUseSessionId = hit.browserUseSessionId || "";
     state.visualGame.selectedBuildingId = "";
+    setAgentProfileSelection({
+      sessionId: hit.sessionId,
+      subagentId: hit.subagentId || hit.agentId || "",
+      browserUseSessionId: hit.browserUseSessionId || "",
+    });
     const nextSession = state.sessions.find((session) => session.id === hit.sessionId);
     if (nextSession) {
       expandSessionProject(nextSession.cwd);
@@ -16678,6 +17223,7 @@ function drawVisualGameScene(context, graph, model, time, hitAreas, visibleWorld
     drawAgentTownEditOutlines(context, hitAreas);
   }
 
+  drawAgentTownBuilderPlacementPulse(context, time);
   drawAgentTownBuilderPlacementPreview(context, time);
 
   for (const agent of agents.sort((left, right) => left.y - right.y)) {
@@ -17021,6 +17567,88 @@ function drawAgentTownCosmeticStructure(context, structure, palette, time) {
   context.fillRect(x + Math.floor(width * 0.22) + 2, bodyTop + 8, 1, 5);
 }
 
+function drawAgentTownBuilderPlacementPulse(context, time) {
+  const pulse = state.visualGame.builderPulse;
+  if (!pulse) {
+    return;
+  }
+
+  const elapsed = time - Number(pulse.startedAt || 0);
+  if (!Number.isFinite(elapsed) || elapsed < 0 || elapsed > AGENT_TOWN_BUILDER_PULSE_MS) {
+    state.visualGame.builderPulse = null;
+    return;
+  }
+
+  const progress = clamp(elapsed / AGENT_TOWN_BUILDER_PULSE_MS, 0, 1);
+  const outset = 3 + progress * 12;
+  const alpha = 1 - progress;
+  context.save();
+  context.lineWidth = 2;
+  context.strokeStyle = pulse.tone === "blocked"
+    ? `rgba(255, 105, 105, ${0.78 * alpha})`
+    : `rgba(126, 213, 255, ${0.86 * alpha})`;
+  context.fillStyle = pulse.tone === "blocked"
+    ? `rgba(255, 84, 84, ${0.14 * alpha})`
+    : `rgba(98, 181, 255, ${0.15 * alpha})`;
+  context.fillRect(pulse.x - outset, pulse.y - outset, pulse.width + outset * 2, pulse.height + outset * 2);
+  context.strokeRect(
+    pulse.x - outset + 0.5,
+    pulse.y - outset + 0.5,
+    pulse.width + outset * 2 - 1,
+    pulse.height + outset * 2 - 1,
+  );
+  context.restore();
+}
+
+function drawAgentTownBuilderFootprintGrid(context, rect, blocked, time) {
+  const phase = Math.floor(time / 180) % 2;
+  context.fillStyle = blocked ? "rgba(255, 90, 90, 0.27)" : "rgba(61, 157, 255, 0.34)";
+  context.fillRect(rect.x - 4, rect.y - 4, rect.width + 8, rect.height + 8);
+  context.fillStyle = blocked ? "rgba(255, 90, 90, 0.3)" : "rgba(88, 180, 255, 0.38)";
+  context.fillRect(rect.x, rect.y, rect.width, rect.height);
+  context.fillStyle = blocked ? "rgba(255, 213, 213, 0.46)" : "rgba(229, 247, 255, 0.52)";
+  for (let x = rect.x; x <= rect.x + rect.width; x += AGENT_TOWN_BUILDER_GRID_SIZE) {
+    context.fillRect(Math.round(x), rect.y, 1, rect.height);
+  }
+  for (let y = rect.y; y <= rect.y + rect.height; y += AGENT_TOWN_BUILDER_GRID_SIZE) {
+    context.fillRect(rect.x, Math.round(y), rect.width, 1);
+  }
+  context.fillStyle = blocked ? "rgba(255, 226, 226, 0.84)" : "rgba(224, 244, 255, 0.9)";
+  for (let x = rect.x + 5 + phase * 2; x < rect.x + rect.width - 2; x += 12) {
+    context.fillRect(x, rect.y + 4 + Math.floor(Math.sin(time / 280 + x) * 1), 6, 2);
+  }
+  for (let y = rect.y + 5; y < rect.y + rect.height - 2; y += 12) {
+    context.fillRect(rect.x + 4, y, 2, 6);
+    context.fillRect(rect.x + rect.width - 6, y, 2, 6);
+  }
+}
+
+function drawAgentTownBuilderPlacementGhost(context, placement, rect, time) {
+  if (placement.kind === "cosmetic") {
+    const item = getAgentTownCosmeticItem(placement.itemId);
+    if (!item) {
+      return;
+    }
+    drawAgentTownCosmeticItem(context, item, rect, getAgentTownSceneryPalette(), time);
+    return;
+  }
+
+  const plugin = getPluginById(placement.pluginId);
+  const palette = getAgentTownPluginBuildingPalette(placement.pluginId);
+  const building = {
+    ...palette,
+    rect,
+    pluginId: placement.pluginId,
+    label: plugin?.name || placement.label,
+    meta: plugin?.category || "building",
+  };
+  if (plugin && getPluginBuildingShape(plugin) === "portal") {
+    drawVisualGamePortalBuilding(context, [], building, time);
+  } else {
+    drawVisualGameBuilding(context, [], building);
+  }
+}
+
 function drawAgentTownBuilderPlacementPreview(context, time) {
   const placement = state.visualGame.builderPlacement;
   const rect = placement?.cursorRect;
@@ -17030,18 +17658,37 @@ function drawAgentTownBuilderPlacementPreview(context, time) {
 
   const blocked = Boolean(placement.blocked);
   context.save();
-  context.fillStyle = blocked ? "rgba(255, 90, 90, 0.24)" : "rgba(88, 167, 255, 0.24)";
-  context.strokeStyle = blocked ? "rgba(255, 120, 120, 0.92)" : "rgba(114, 190, 255, 0.96)";
+  drawAgentTownBuilderFootprintGrid(context, rect, blocked, time);
+
+  context.save();
+  context.globalAlpha = blocked ? 0.42 : 0.58;
+  drawAgentTownBuilderPlacementGhost(context, placement, rect, time);
+  context.restore();
+
+  context.strokeStyle = blocked ? "rgba(255, 120, 120, 0.96)" : "rgba(114, 190, 255, 0.98)";
+  context.lineWidth = 3;
+  context.strokeRect(rect.x - 3, rect.y - 3, rect.width + 6, rect.height + 6);
   context.lineWidth = 2;
-  context.fillRect(rect.x, rect.y, rect.width, rect.height);
   context.strokeRect(rect.x + 1, rect.y + 1, Math.max(0, rect.width - 2), Math.max(0, rect.height - 2));
-  context.fillStyle = blocked ? "rgba(255, 212, 212, 0.82)" : "rgba(212, 238, 255, 0.86)";
-  for (let x = rect.x + 5; x < rect.x + rect.width - 2; x += 12) {
-    context.fillRect(x, rect.y + 4 + Math.floor(Math.sin(time / 280 + x) * 1), 6, 2);
-  }
-  for (let y = rect.y + 5; y < rect.y + rect.height - 2; y += 12) {
-    context.fillRect(rect.x + 4, y, 2, 6);
-    context.fillRect(rect.x + rect.width - 6, y, 2, 6);
+  context.fillStyle = blocked ? "rgba(255, 216, 216, 0.92)" : "rgba(229, 248, 255, 0.96)";
+  const cornerSize = 7;
+  context.fillRect(rect.x - 3, rect.y - 3, cornerSize, 3);
+  context.fillRect(rect.x - 3, rect.y - 3, 3, cornerSize);
+  context.fillRect(rect.x + rect.width - cornerSize + 3, rect.y - 3, cornerSize, 3);
+  context.fillRect(rect.x + rect.width, rect.y - 3, 3, cornerSize);
+  context.fillRect(rect.x - 3, rect.y + rect.height, cornerSize, 3);
+  context.fillRect(rect.x - 3, rect.y + rect.height - cornerSize + 3, 3, cornerSize);
+  context.fillRect(rect.x + rect.width - cornerSize + 3, rect.y + rect.height, cornerSize, 3);
+  context.fillRect(rect.x + rect.width, rect.y + rect.height - cornerSize + 3, 3, cornerSize);
+  if (blocked) {
+    context.strokeStyle = "rgba(255, 216, 216, 0.88)";
+    context.lineWidth = 2;
+    context.beginPath();
+    context.moveTo(rect.x + 7, rect.y + 7);
+    context.lineTo(rect.x + rect.width - 7, rect.y + rect.height - 7);
+    context.moveTo(rect.x + rect.width - 7, rect.y + 7);
+    context.lineTo(rect.x + 7, rect.y + rect.height - 7);
+    context.stroke();
   }
   context.restore();
 }
@@ -18576,11 +19223,137 @@ function drawVisualGameOccupationHat(context, kind, { x = 0, y = 0, scale = 1, c
   context.restore();
 }
 
+function drawVisualGameClaudeCodeStationProp(context, visualDestination) {
+  if (visualDestination === "desk") {
+    context.fillStyle = "#2b2018";
+    context.fillRect(7, 20, 20, 9);
+    context.fillStyle = "#624632";
+    context.fillRect(9, 18, 16, 4);
+  } else if (visualDestination === "library") {
+    context.fillStyle = "#5a3d27";
+    context.fillRect(7, 21, 20, 7);
+    context.fillStyle = "#e7c76f";
+    context.fillRect(10, 18, 13, 5);
+    context.fillStyle = "#8e5646";
+    context.fillRect(16, 18, 1, 5);
+  } else if (visualDestination === "camera") {
+    context.fillStyle = "#27343c";
+    context.fillRect(7, 20, 20, 8);
+    context.fillStyle = "#6ec7d6";
+    context.fillRect(11, 16, 12, 6);
+    context.fillStyle = "#1e262d";
+    context.fillRect(15, 17, 4, 3);
+  } else if (visualDestination === "ottoauth") {
+    context.fillStyle = "#2f2638";
+    context.fillRect(7, 20, 20, 8);
+    context.fillStyle = "#e0ad62";
+    context.fillRect(11, 15, 12, 8);
+    context.fillStyle = "#f8d27a";
+    context.fillRect(14, 12, 6, 4);
+    context.fillStyle = "#3a2b42";
+    context.fillRect(14, 19, 6, 2);
+  }
+}
+
+function drawVisualGameClaudeCodeAvatar(context, x, y, {
+  color = "#d77b4a",
+  dark = "#050609",
+  legPhase = 0,
+  sleeping = false,
+} = {}) {
+  const legLift = sleeping ? 0 : Math.max(0, Math.floor(legPhase) % 2);
+  const blocks = [
+    [8, 3, 18, 8],
+    [1, 12, 8, 5],
+    [5, 11, 24, 9],
+    [25, 12, 8, 5],
+    [8, 20, 18, 4],
+    [8, 24 + legLift, 4, 5],
+    [13, 24 + (sleeping ? 0 : 1 - legLift), 4, 5],
+    [22, 24 + (sleeping ? 0 : 1 - legLift), 4, 5],
+    [27, 24 + legLift, 4, 5],
+  ];
+
+  context.fillStyle = "rgba(5, 6, 9, 0.38)";
+  for (const [blockX, blockY, blockWidth, blockHeight] of blocks) {
+    context.fillRect(x + blockX + 1, y + blockY + 1, blockWidth, blockHeight);
+  }
+
+  context.fillStyle = color;
+  for (const [blockX, blockY, blockWidth, blockHeight] of blocks) {
+    context.fillRect(x + blockX, y + blockY, blockWidth, blockHeight);
+  }
+
+  context.fillStyle = "rgba(255, 224, 194, 0.2)";
+  context.fillRect(x + 9, y + 4, 16, 1);
+  context.fillRect(x + 6, y + 12, 22, 1);
+
+  context.fillStyle = dark;
+  if (sleeping) {
+    context.fillRect(x + 11, y + 9, 4, 1);
+    context.fillRect(x + 22, y + 9, 4, 1);
+  } else {
+    context.fillRect(x + 11, y + 7, 3, 6);
+    context.fillRect(x + 22, y + 7, 3, 6);
+  }
+}
+
+function drawVisualGameClaudeCodeAgentSprite(context, agent, time, visualDestination, {
+  isStationed = false,
+  isRoamingIdle = false,
+  palette = null,
+  step = 0,
+} = {}) {
+  const color = palette?.coat || "#d77b4a";
+  const legPhase = isStationed || isRoamingIdle ? 0 : step;
+
+  if (visualDestination === "sleep") {
+    context.fillStyle = "#332519";
+    context.fillRect(1, 15, 32, 12);
+    context.fillStyle = "#5b3f29";
+    context.fillRect(3, 13, 28, 4);
+    context.fillStyle = "#2a1d15";
+    context.fillRect(3, 25, 27, 3);
+    context.fillStyle = "#f0d9ad";
+    context.fillRect(3, 10, 9, 7);
+    context.save();
+    context.translate(7, 6);
+    context.scale(0.74, 0.74);
+    drawVisualGameClaudeCodeAvatar(context, 0, 0, { color, sleeping: true });
+    context.restore();
+    context.fillStyle = "#f7efba";
+    context.fillRect(25, 8, 2, 2);
+    context.fillRect(27, 6, 2, 2);
+    context.fillRect(29, 4, 2, 2);
+    return;
+  }
+
+  drawVisualGameClaudeCodeStationProp(context, visualDestination);
+  drawVisualGameClaudeCodeAvatar(context, 0, 1, { color, legPhase });
+
+  if (isStationed) {
+    context.fillStyle =
+      agent.destination === "browser"
+        ? "#bfffb0"
+        : agent.destination === "ottoauth"
+          ? "#ffd27a"
+        : agent.destination === "camera"
+          ? "#7ce7f0"
+          : agent.destination === "library" ? "#f0cf72" : "#79bdf8";
+    context.fillRect(9, 25, 16, 1);
+    context.fillStyle = color;
+    const tap = Math.floor(time / 140 + agent.index) % 2;
+    context.fillRect(3, 17 + tap, 4, 3);
+    context.fillRect(27, 17 + (1 - tap), 4, 3);
+  }
+}
+
 function drawVisualGameAgent(context, agent, time, hitAreas) {
   const scale = agent.scale || 1;
   const palette = getVisualGameAgentPalette(agent);
   const hatKind = getVisualGameAgentHatKind(agent);
   const hatColors = getVisualGameAgentHatColors(palette);
+  const isClaudeCodeAgent = isClaudeCodeProviderAgent(agent);
   const isWalking = Boolean(agent.walking);
   const visualDestination = isWalking ? "roam" : agent.destination;
   const isRoamingIdle = agent.destination === "roam" && !isWalking;
@@ -18598,23 +19371,44 @@ function drawVisualGameAgent(context, agent, time, hitAreas) {
     ? Math.floor(Math.sin(time / 220 + agent.index) * 1)
     : Math.floor(Math.sin(time / 150 + agent.index) * 2);
   const step = Math.floor(time / 180 + agent.index) % 4;
-  const spriteWidth = VISUAL_GAME_AGENT_SIZE * scale;
-  const spriteTopOffset = visualDestination === "sleep" ? 17 : 25;
+  const spriteBaseWidth = isClaudeCodeAgent ? 34 : VISUAL_GAME_AGENT_SIZE;
+  const spriteWidth = spriteBaseWidth * scale;
+  const spriteTopOffset = visualDestination === "sleep"
+    ? isClaudeCodeAgent ? 18 : 17
+    : isClaudeCodeAgent ? 25 : 25;
   const x = Math.round(agent.x - spriteWidth / 2);
   const y = Math.round(agent.y - spriteTopOffset * scale + bob);
+  const shadowX = x + (isClaudeCodeAgent ? 4 : 1) * scale;
+  const shadowY = y + (
+    visualDestination === "sleep"
+      ? isClaudeCodeAgent ? 25 : 24
+      : isClaudeCodeAgent ? 29 : 27
+  ) * scale;
+  const shadowWidth = (
+    visualDestination === "sleep"
+      ? isClaudeCodeAgent ? 27 : 22
+      : isClaudeCodeAgent ? 26 : 15
+  ) * scale;
 
   drawVisualGameShadow(
     context,
-    x + 1 * scale,
-    y + (visualDestination === "sleep" ? 24 : 27) * scale,
-    (visualDestination === "sleep" ? 22 : 15) * scale,
+    shadowX,
+    shadowY,
+    shadowWidth,
     Math.max(3, 4 * scale),
   );
   context.save();
   context.translate(x, y);
   context.scale(scale, scale);
 
-  if (visualDestination === "sleep") {
+  if (isClaudeCodeAgent) {
+    drawVisualGameClaudeCodeAgentSprite(context, agent, time, visualDestination, {
+      isStationed,
+      isRoamingIdle,
+      palette,
+      step,
+    });
+  } else if (visualDestination === "sleep") {
     context.fillStyle = "#332519";
     context.fillRect(0, 13, 23, 13);
     context.fillStyle = "#5b3f29";
@@ -18673,7 +19467,7 @@ function drawVisualGameAgent(context, agent, time, hitAreas) {
     context.fillRect(7, 19, 5, 2);
   }
 
-  if (visualDestination !== "sleep") {
+  if (!isClaudeCodeAgent && visualDestination !== "sleep") {
     context.fillStyle = palette.boots;
     if (isStationed || isRoamingIdle) {
       context.fillRect(4, 24, 4, 3);
@@ -18719,12 +19513,14 @@ function drawVisualGameAgent(context, agent, time, hitAreas) {
     }
   }
 
+  const statusBadgeX = isClaudeCodeAgent ? 28 : 14;
+  const statusBadgeY = isClaudeCodeAgent ? 2 : 0;
   if (agent.statusClass === "failed") {
     context.fillStyle = "#ff7f79";
-    context.fillRect(14, 0, 4, 4);
+    context.fillRect(statusBadgeX, statusBadgeY, 4, 4);
   } else if (agent.statusClass === "done") {
     context.fillStyle = "#9ad67f";
-    context.fillRect(14, 0, 4, 4);
+    context.fillRect(statusBadgeX, statusBadgeY, 4, 4);
   } else if (agent.statusClass === "working") {
     context.fillStyle =
       agent.destination === "browser"
@@ -18734,26 +19530,37 @@ function drawVisualGameAgent(context, agent, time, hitAreas) {
         : agent.destination === "camera"
           ? "#7ce7f0"
           : agent.destination === "library" ? "#f0cf72" : "#79bdf8";
-    context.fillRect(14, 0, 4, 4);
+    context.fillRect(statusBadgeX, statusBadgeY, 4, 4);
   }
 
   if (agent.isSubagent) {
     context.fillStyle = "#fff0bd";
-    context.fillRect(2, -1, 3, 3);
+    context.fillRect(isClaudeCodeAgent ? 4 : 2, isClaudeCodeAgent ? 1 : -1, 3, 3);
   }
 
   context.restore();
 
   if (!isWalking && (agent.destination === "desk" || agent.destination === "browser" || agent.destination === "ottoauth" || agent.destination === "camera")) {
-    drawVisualGameNameplate(context, truncateSwarmLabel(agent.name, agent.isSubagent ? 12 : 14), x + 9 * scale, y + 34 * scale, scale);
+    drawVisualGameNameplate(
+      context,
+      truncateSwarmLabel(agent.name, agent.isSubagent ? 12 : 14),
+      x + (isClaudeCodeAgent ? 17 : 9) * scale,
+      y + 34 * scale,
+      scale,
+    );
   }
+  const hitPaddingX = (isClaudeCodeAgent ? 9 : 10) * scale;
+  const hitWidth = (isClaudeCodeAgent ? 52 : 38) * scale;
+  const hitHeight = (isClaudeCodeAgent ? 50 : 48) * scale;
   hitAreas.push({
-    x: x - 10 * scale,
+    x: x - hitPaddingX,
     y: y - 5 * scale,
-    width: 38 * scale,
-    height: 48 * scale,
+    width: hitWidth,
+    height: hitHeight,
     kind: agent.sessionId ? "session" : agent.browserUseSessionId ? "browser" : "session",
     sessionId: agent.sessionId || "",
+    subagentId: agent.subagentId || "",
+    agentId: agent.agentId || "",
     browserUseSessionId: agent.browserUseSessionId || "",
     label: getVisualGameAgentHoverLabel(agent),
   });
@@ -20534,6 +21341,13 @@ function renderTerminalPanel(activeSession) {
     return renderBrowserUseView();
   }
 
+  const agentProfilePanel = renderAgentProfilePanel(activeSession, { surface: "workspace" });
+  const workspaceSplitClass = [
+    "workspace-split",
+    state.openFileTabs.length ? "has-file-preview" : "",
+    agentProfilePanel ? "has-agent-profile" : "",
+  ].filter(Boolean).join(" ");
+
   return `
     <section class="terminal-panel" ${renderMainViewAttributes("shell", `shell:${activeSession?.id || ""}`)}>
       <div class="terminal-toolbar">
@@ -20554,7 +21368,7 @@ function renderTerminalPanel(activeSession) {
         </div>
       </div>
 
-      <div class="workspace-split ${state.openFileTabs.length ? "has-file-preview" : ""}" id="workspace-split" style="${renderWorkspaceSplitStyle()}">
+      <div class="${workspaceSplitClass}" id="workspace-split" style="${renderWorkspaceSplitStyle()}">
         <div class="terminal-stack">
           <div class="terminal-mount" id="terminal-mount"></div>
           <div class="terminal-transcript-scroll" id="terminal-transcript-scroll" tabindex="0" aria-label="Terminal transcript history">
@@ -20567,6 +21381,7 @@ function renderTerminalPanel(activeSession) {
             <p class="empty-state-copy">choose an agent, then start a session in the default folder</p>
           </div>
         </div>
+        ${agentProfilePanel}
         ${renderWorkspaceResizeHandle()}
         ${renderFilePreviewPane()}
       </div>
@@ -21723,6 +22538,17 @@ function bindSessionEvents() {
     });
   });
 
+  document.querySelectorAll("[data-agent-profile-session]").forEach((button) => {
+    button.addEventListener("click", (event) => {
+      event.preventDefault();
+      event.stopPropagation();
+      openAgentProfileForSession(button.getAttribute("data-agent-profile-session") || "", {
+        subagentId: button.getAttribute("data-agent-profile-subagent") || "",
+        browserUseSessionId: button.getAttribute("data-agent-profile-browser-use") || "",
+      });
+    });
+  });
+
   document.querySelectorAll("[data-mark-session-read]").forEach((button) => {
     button.addEventListener("click", (event) => {
       event.preventDefault();
@@ -21751,32 +22577,7 @@ function bindSessionEvents() {
       }
 
       const nextSessionId = element.getAttribute("data-session-id");
-      if (!nextSessionId) {
-        closeMobileSidebar();
-        return;
-      }
-
-      if (state.currentView !== "shell") {
-        setCurrentView("shell");
-      }
-
-      markSessionRead(nextSessionId, { refresh: false });
-
-      if (nextSessionId === state.activeSessionId) {
-        renderShell();
-        connectToSession(state.activeSessionId);
-        closeMobileSidebar();
-        return;
-      }
-
-      state.activeSessionId = nextSessionId;
-      const nextSession = state.sessions.find((session) => session.id === nextSessionId);
-      if (nextSession) {
-        expandSessionProject(nextSession.cwd);
-      }
-      renderShell();
-      connectToSession(state.activeSessionId);
-      closeMobileSidebar();
+      openAgentProfileForSession(nextSessionId || "");
     });
   });
 
@@ -22120,9 +22921,13 @@ async function setPluginInstalled(pluginId, installed, { force = false, placeAft
       saveAgentTownLayoutPreferences();
     }
 
-    if (installed && isAgentTownFunctionalPlugin(plugin) && (placeAfterInstall || !wasInstalled)) {
-      startAgentTownFunctionalPlacement(normalizedPluginId, { markPending: true });
-      return;
+    if (installed && isAgentTownFunctionalPlugin(plugin) && !wasInstalled) {
+      if (placeAfterInstall) {
+        startAgentTownFunctionalPlacement(normalizedPluginId, { markPending: true });
+        return;
+      }
+      setAgentTownFunctionalPending(normalizedPluginId, true);
+      saveAgentTownLayoutPreferences();
     }
 
     if (surfaceOpen) {
@@ -25720,6 +26525,22 @@ function bindAgentTownBuilderEvents() {
     });
   });
 
+  document.querySelectorAll("[data-agent-town-builder-undo-cosmetic]").forEach((button) => {
+    button.addEventListener("click", (event) => {
+      event.preventDefault();
+      const removed = removeLastAgentTownDecoration();
+      setAgentTownBuilderFeedback(removed ? "Last cosmetic removed" : "Nothing to undo", removed ? "success" : "info", { render: true });
+    });
+  });
+
+  document.querySelectorAll("[data-agent-town-builder-clear-cosmetics]").forEach((button) => {
+    button.addEventListener("click", (event) => {
+      event.preventDefault();
+      const cleared = clearAgentTownDecorations();
+      setAgentTownBuilderFeedback(cleared ? "Cosmetics cleared" : "No cosmetics placed", cleared ? "success" : "info", { render: true });
+    });
+  });
+
   document.querySelectorAll("[data-agent-town-builder-place-functional]").forEach((button) => {
     const pluginId = button.getAttribute("data-agent-town-builder-place-functional") || "";
     button.addEventListener("click", (event) => {
@@ -25969,6 +26790,15 @@ function bindShellEvents() {
 
   document.querySelector("#visual-game-close-session")?.addEventListener("click", () => {
     clearVisualGameSelection();
+  });
+
+  document.querySelectorAll("[data-close-agent-profile]").forEach((button) => {
+    button.addEventListener("click", (event) => {
+      event.preventDefault();
+      event.stopPropagation();
+      clearAgentProfileSelection();
+      rerenderTerminalSurface();
+    });
   });
 
   document.querySelector("#visual-game-close-building")?.addEventListener("click", () => {

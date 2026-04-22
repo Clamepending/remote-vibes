@@ -19,6 +19,7 @@ CLAUDE_CODE_INSTALL_TIMEOUT_SECONDS="${VIBE_RESEARCH_CLAUDE_CODE_INSTALL_TIMEOUT
 INSTALL_UI="${VIBE_RESEARCH_INSTALL_UI:-${REMOTE_VIBES_INSTALL_UI:-auto}}"
 INSTALL_ANIMATION="${VIBE_RESEARCH_INSTALL_ANIMATION:-${REMOTE_VIBES_INSTALL_ANIMATION:-auto}}"
 INSTALL_SERVICE="${VIBE_RESEARCH_INSTALL_SERVICE:-${REMOTE_VIBES_INSTALL_SERVICE:-1}}"
+ENSURE_NODE_ONLY="${VIBE_RESEARCH_ENSURE_NODE_ONLY:-${REMOTE_VIBES_ENSURE_NODE_ONLY:-0}}"
 TAILSCALE_UP="${VIBE_RESEARCH_TAILSCALE_UP:-${REMOTE_VIBES_TAILSCALE_UP:-1}}"
 TAILSCALE_COMMAND="${VIBE_RESEARCH_TAILSCALE_COMMAND:-${REMOTE_VIBES_TAILSCALE_COMMAND:-tailscale}}"
 CLAUDE_COMMAND="${VIBE_RESEARCH_CLAUDE_COMMAND:-${REMOTE_VIBES_CLAUDE_COMMAND:-claude}}"
@@ -44,6 +45,13 @@ INSTALL_CYAN=""
 INSTALL_GREEN=""
 INSTALL_RED=""
 INSTALL_YELLOW=""
+
+case "${1:-}" in
+  --ensure-node-only)
+    ENSURE_NODE_ONLY=1
+    shift
+    ;;
+esac
 
 terminal_ui_enabled() {
   case "$INSTALL_UI" in
@@ -1264,6 +1272,17 @@ launch_vibe_research() {
 main() {
   init_terminal_ui
   trap cleanup_terminal_ui EXIT
+
+  if [ "$ENSURE_NODE_ONLY" = "1" ]; then
+    INSTALL_TOTAL_STEPS=3
+    print_installer_banner
+    run_step "Terminal locale" normalize_macos_locale
+    run_step "System packages" ensure_base_packages
+    run_step "Node.js runtime" ensure_node
+    print_installer_footer
+    return
+  fi
+
   print_installer_banner
   run_step "Terminal locale" normalize_macos_locale
   run_step "System packages" ensure_base_packages
