@@ -3668,6 +3668,13 @@ input[readonly][data-folder-picker-target] {
   --town-room-screen: #fff0a8;
 }
 
+.plugin-building-buildinghub.plugin-building-shape-plugin {
+  --town-room-floor: #6c6043;
+  --town-room-trim: #332b20;
+  --town-room-fixture: #315f68;
+  --town-room-screen: #fff0b8;
+}
+
 .plugin-building-doghouse.plugin-building-shape-doghouse {
   --building-body: #7e5435;
   --building-roof: #9a5639;

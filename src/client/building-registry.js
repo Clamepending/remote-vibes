@@ -489,7 +489,7 @@ const CORE_BUILDING_MANIFESTS = [
     name: "BuildingHub",
     category: "Community",
     description: "Load manifest-only community buildings from a local or remote BuildingHub catalog.",
-    icon: Plug,
+    icon: Wrench,
     install: {
       system: true,
     },

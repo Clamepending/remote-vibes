@@ -15036,6 +15036,12 @@ function getAgentTownPluginBuildingPalette(pluginId) {
       fixture: "#315f68",
       screen: "#fff0b8",
     },
+    buildinghub: {
+      body: "#6c6043",
+      trim: "#332b20",
+      fixture: "#315f68",
+      screen: "#fff0b8",
+    },
     agentmall: {
       body: "#72513d",
       trim: "#3d2b27",
@@ -15965,19 +15971,70 @@ function drawVisualGameBuilding(context, hitAreas, building) {
     trim: trim || "#4b2f22",
     entrance: "bottom",
   });
-  drawVisualGameBuildingSign(context, x + 8, y + 7, Math.min(width - 16, 88), 23, label, meta);
 
-  context.fillStyle = screen || "rgba(255, 232, 159, 0.16)";
-  context.fillRect(x + width - 24, y + height - 18, 15, 7);
-  context.fillStyle = fixture || "rgba(79, 51, 34, 0.42)";
-  context.fillRect(x + width - 17, y + height - 18, 1, 7);
-  context.fillRect(x + width - 24, y + height - 15, 15, 1);
+  if (building.pluginId === "buildinghub") {
+    drawVisualGameBuildingHubWorkshop(context, rect, {
+      trim: trim || "#4b2f22",
+      fixture: fixture || "#4f3322",
+      screen: screen || "#ffd88a",
+    });
+  } else {
+    context.fillStyle = screen || "rgba(255, 232, 159, 0.16)";
+    context.fillRect(x + width - 24, y + height - 18, 15, 7);
+    context.fillStyle = fixture || "rgba(79, 51, 34, 0.42)";
+    context.fillRect(x + width - 17, y + height - 18, 1, 7);
+    context.fillRect(x + width - 24, y + height - 15, 15, 1);
+  }
+
+  drawVisualGameBuildingSign(context, x + 8, y + 7, Math.min(width - 16, 88), 23, label, meta);
 
   if (issue) {
     drawVisualGameBuildingIssueBadge(context, rect);
   }
 
   pushAgentTownPlaceHit(hitAreas, { ...building, rect, baseRect: building.baseRect || rect }, action);
+}
+
+function drawVisualGameBuildingHubWorkshop(context, rect, palette = {}) {
+  const { x, y, width, height } = rect;
+  const trim = palette.trim || "#4b2f22";
+  const fixture = palette.fixture || "#4f3322";
+  const screen = palette.screen || "#ffd88a";
+  const benchY = y + height - 18;
+
+  context.fillStyle = "rgba(35, 22, 15, 0.32)";
+  context.fillRect(x + 10, benchY + 5, width - 20, 5);
+  context.fillStyle = fixture;
+  context.fillRect(x + 12, benchY, width - 24, 7);
+  context.fillStyle = "rgba(255, 241, 184, 0.28)";
+  context.fillRect(x + 15, benchY + 2, width - 30, 2);
+  context.fillStyle = trim;
+  context.fillRect(x + 17, benchY + 7, 4, 8);
+  context.fillRect(x + width - 21, benchY + 7, 4, 8);
+
+  context.fillStyle = "#d1af63";
+  context.fillRect(x + 12, y + height - 31, 15, 12);
+  context.fillStyle = "rgba(47, 30, 19, 0.34)";
+  context.fillRect(x + 15, y + height - 28, 9, 1);
+  context.fillRect(x + 18, y + height - 31, 1, 12);
+
+  context.fillStyle = screen;
+  context.fillRect(x + width - 41, y + height - 31, 6, 6);
+  context.fillStyle = trim;
+  context.fillRect(x + width - 40, y + height - 29, 4, 2);
+
+  context.save();
+  context.translate(x + width - 24, y + height - 22);
+  context.rotate(-0.62);
+  context.fillStyle = "rgba(36, 23, 16, 0.38)";
+  context.fillRect(-2, -12, 5, 23);
+  context.fillRect(-8, -15, 15, 5);
+  context.fillStyle = screen;
+  context.fillRect(-1, -11, 3, 21);
+  context.fillRect(-7, -14, 12, 3);
+  context.fillRect(-8, -18, 3, 7);
+  context.fillRect(4, -18, 3, 7);
+  context.restore();
 }
 
 function drawVisualGamePortalBuilding(context, hitAreas, building, time = 0) {
