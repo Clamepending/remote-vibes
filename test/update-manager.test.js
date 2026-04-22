@@ -8,6 +8,7 @@ import { promisify } from "node:util";
 import { getGitHubHttpsRemoteUrl, UpdateManager } from "../src/update-manager.js";
 
 const execFile = promisify(execFileCallback);
+const releaseChannelUrl = "https://raw.githubusercontent.com/Clamepending/vibe-research/main/release-channel.json";
 const MANAGED_PROMPT_MARKER = "<!-- vibe-research:managed-agent-prompt -->";
 const LEGACY_MANAGED_PROMPT_MARKER = "<!-- remote-vibes:managed-agent-prompt -->";
 
@@ -296,7 +297,7 @@ test("UpdateManager prefers the static release channel when available", async ()
       stateDir: path.join(tempRoot, "state"),
       cacheMs: 0,
       fetch: async (url) => {
-        assert.equal(url, "https://raw.githubusercontent.com/Clamepending/vibe-research/main/release-channel.json");
+        assert.equal(url, releaseChannelUrl);
         return {
           ok: true,
           status: 200,
@@ -353,7 +354,7 @@ test("UpdateManager prefers GitHub Releases and schedules a tag checkout", async
       cacheMs: 0,
       port: 49124,
       fetch: async (url) => {
-        if (url === "https://raw.githubusercontent.com/Clamepending/vibe-research/main/release-channel.json") {
+        if (url === releaseChannelUrl) {
           return {
             ok: false,
             status: 404,
@@ -435,7 +436,7 @@ test("UpdateManager falls back to remote version tags for detached release check
       port: 49125,
       fetch: async (url) => ({
         ok: false,
-        status: url.includes("raw.githubusercontent.com") ? 404 : 403,
+        status: url === releaseChannelUrl ? 404 : 403,
       }),
       execFile(command, args, options) {
         if (
@@ -502,7 +503,7 @@ test("UpdateManager does not offer to downgrade branch checkouts ahead of the la
       stateDir: path.join(tempRoot, "state"),
       cacheMs: 0,
       fetch: async (url) => {
-        if (url.includes("raw.githubusercontent.com")) {
+        if (url === releaseChannelUrl) {
           return {
             ok: false,
             status: 404,

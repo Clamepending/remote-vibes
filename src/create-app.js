@@ -7,6 +7,7 @@ import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { promisify } from "node:util";
 import express from "express";
+import { rateLimit } from "express-rate-limit";
 import { WebSocketServer } from "ws";
 import {
   buildPortUrlFromBase,
@@ -55,6 +56,8 @@ const TAILSCALE_HTTPS_SERVE_ENABLED =
   (process.env.VIBE_RESEARCH_TAILSCALE_HTTPS ?? process.env.REMOTE_VIBES_TAILSCALE_HTTPS) !== "0";
 const DEFAULT_TAILSCALE_HTTPS_SERVE_PORTS = [443, 8443, 10000];
 const JSON_BODY_LIMIT = "25mb";
+const WIKI_CLONE_RATE_LIMIT_WINDOW_MS = 60 * 1000;
+const WIKI_CLONE_RATE_LIMIT_MAX = 5;
 const ATTACHMENTS_SUBDIR = "attachments";
 const MAX_ATTACHMENT_IMAGE_BYTES = 15 * 1024 * 1024;
 const ATTACHMENT_IMAGE_EXTENSIONS_BY_MIME_TYPE = new Map([
@@ -577,6 +580,13 @@ export async function createVibeResearchApp({
   const providers = Array.isArray(providerOverrides) ? providerOverrides : await detectProviders();
   const defaultProviderId = getDefaultProviderId(providers);
   const app = express();
+  const wikiCloneRateLimit = rateLimit({
+    windowMs: WIKI_CLONE_RATE_LIMIT_WINDOW_MS,
+    limit: WIKI_CLONE_RATE_LIMIT_MAX,
+    standardHeaders: true,
+    legacyHeaders: false,
+    message: { error: "Too many Library clone requests. Try again shortly." },
+  });
   const serverEnv = { ...process.env };
   const agentRunStore = new AgentRunStore({ stateDir });
   const systemRootPath = getVibeResearchSystemDir({ cwd, stateDir });
@@ -1293,7 +1303,7 @@ export async function createVibeResearchApp({
     }
   });
 
-  app.post("/api/wiki/clone", async (request, response) => {
+  app.post("/api/wiki/clone", wikiCloneRateLimit, async (request, response) => {
     let targetPath = "";
     let cloneTarget = null;
 

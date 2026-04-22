@@ -5597,6 +5597,29 @@ button.visual-agent-tile:focus-visible,
   padding: 14px;
 }
 
+.visual-building-buildinghub-panel .mcp-import-card,
+.visual-building-buildinghub-panel .main-search-shell {
+  border-radius: 8px;
+}
+
+.visual-building-buildinghub-panel .main-search-shell {
+  position: sticky;
+  top: 0;
+  z-index: 2;
+}
+
+.visual-buildinghub-grid.plugin-store-grid {
+  grid-template-columns: minmax(0, 1fr);
+}
+
+.visual-buildinghub-grid .plugin-building-lot {
+  min-height: 118px;
+}
+
+.visual-buildinghub-grid .plugin-card-main {
+  grid-template-columns: minmax(0, 1fr);
+}
+
 .visual-building-toolshed-panel {
   gap: 14px;
 }

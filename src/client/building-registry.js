@@ -306,11 +306,15 @@ const CORE_BUILDING_MANIFESTS = [
     description: "Load manifest-only community buildings from a local or remote BuildingHub catalog.",
     icon: Plug,
     install: {
-      enabledSetting: "buildingHubEnabled",
-      storedFallback: false,
+      system: true,
     },
     status: "catalog ready",
     source: "vibe-research",
+    ui: {
+      entryView: "building-catalog",
+      mode: "workspace",
+      workspaceView: "plugins",
+    },
     visual: {
       shape: "plugin",
     },
@@ -324,7 +328,8 @@ const CORE_BUILDING_MANIFESTS = [
         { label: "Remote catalog", setting: "buildingHubCatalogUrl", required: false },
       ],
       steps: [
-        { title: "Enable BuildingHub", detail: "Turn on community building catalogs.", completeWhen: { type: "installed" } },
+        { title: "Open BuildingHub", detail: "Use the BuildingHub building for the local building catalog.", completeWhen: { type: "installed" } },
+        { title: "Enable community catalogs", detail: "Turn on reviewed community catalog loading only when you want shared manifest-only buildings.", completeWhen: { setting: "buildingHubEnabled" } },
         {
           title: "Choose a source",
           detail: "Point Vibe Research at a local BuildingHub checkout or a reviewed registry JSON URL.",

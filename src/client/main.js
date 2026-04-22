@@ -4491,8 +4491,8 @@ function getBuildingHubStatusText() {
   const status = state.settings.buildingHubStatus || state.buildingHub.status || {};
   if (!state.settings.buildingHubEnabled) {
     return state.settings.buildingHubCatalogPath || state.settings.buildingHubCatalogUrl
-      ? "configured but disabled"
-      : "not configured";
+      ? "community catalogs disabled"
+      : "community catalogs off";
   }
 
   if (status.lastRefreshError) {
@@ -4844,7 +4844,7 @@ function hasNonInstallerAgentSession() {
 }
 
 function getAgentSpawnPath() {
-  return normalizeWorkspaceRoot(state.settings.agentSpawnPath || state.defaultCwd || "");
+  return normalizeWorkspaceRoot(state.settings.agentSpawnPath || state.defaultCwd || state.settings.workspaceRootPath || "");
 }
 
 async function createSessionInFolder(
@@ -4904,7 +4904,7 @@ async function startNewAgentInDefaultFolder({ openInTown = false } = {}) {
   const provider = getProviderById(providerId);
   const cwd = getAgentSpawnPath();
   const shouldRunFirstSessionOnboarding =
-    state.sessions.length === 0 && providerId !== "shell" && provider?.available !== false;
+    !hasNonInstallerAgentSession() && providerId !== "shell" && provider?.available !== false;
 
   state.defaultProviderId = providerId;
   await createSessionInFolder(cwd, {
@@ -4916,6 +4916,14 @@ async function startNewAgentInDefaultFolder({ openInTown = false } = {}) {
     initialInputDelayMs: 1400,
     openInTown: openInTown || shouldRunFirstSessionOnboarding,
   });
+}
+
+async function startNewAgentFromUi({ openInTown = false } = {}) {
+  try {
+    await startNewAgentInDefaultFolder({ openInTown });
+  } catch (error) {
+    window.alert(error.message);
+  }
 }
 
 async function startProviderInstallSession(provider) {
@@ -9110,12 +9118,6 @@ function renderSidebarNav() {
       meta: getAgentInboxNavMeta(),
     },
     {
-      view: "plugins",
-      icon: Plug,
-      label: "Buildings",
-      meta: "MCPs and integrations",
-    },
-    {
       view: "settings",
       icon: Settings,
       label: "Settings",
@@ -9161,11 +9163,11 @@ function renderSidebarNav() {
   return `
     <div class="sidebar-nav-stack">
       <nav class="sidebar-nav sidebar-primary-nav" aria-label="Main views">
-        <button class="sidebar-nav-item sidebar-nav-button" type="button" data-folder-picker-target="session" ${tooltipAttributes("New Agent", "right")}>
+        <button class="sidebar-nav-item sidebar-nav-button" type="button" data-start-new-agent ${tooltipAttributes("New Agent", "right")}>
           <span class="sidebar-nav-icon" aria-hidden="true">${renderIcon(Plus)}</span>
           <span class="sidebar-nav-copy">
             <span class="sidebar-nav-label">New Agent</span>
-            <span class="sidebar-nav-meta">${escapeHtml(`${getSelectedProviderLabel()} · agent folder`)}</span>
+            <span class="sidebar-nav-meta">${escapeHtml(`${getSelectedProviderLabel()} · default folder`)}</span>
           </span>
         </button>
         <form class="session-form session-launcher" id="session-form">
@@ -9410,6 +9412,16 @@ function openPluginDetail(pluginId) {
   const plugin = getPluginById(pluginId);
   if (!plugin) {
     return false;
+  }
+
+  if (getPluginId(plugin) === "buildinghub") {
+    state.currentView = "plugins";
+    state.pluginDetailId = "";
+    state.pluginOnboardingOpenId = "";
+    updateRoute({ view: "plugins", buildingId: "" });
+    closeMobileSidebar();
+    renderShell();
+    return true;
   }
 
   state.currentView = "plugins";
@@ -10286,7 +10298,7 @@ function renderPluginDetailView(plugin) {
     )}>
       <div class="dashboard-toolbar">
         <button class="icon-button hidden-desktop" type="button" id="open-sidebar" aria-label="Open sidebar" ${tooltipAttributes("Open sidebar")}>${renderIcon(Menu)}</button>
-        <button class="ghost-button toolbar-control" type="button" data-plugin-detail-back aria-label="Back to Buildings" ${tooltipAttributes("Back to Buildings")}>
+        <button class="ghost-button toolbar-control" type="button" data-plugin-detail-back aria-label="Back to BuildingHub" ${tooltipAttributes("Back to BuildingHub")}>
           ${renderIcon(ChevronLeft)}
           <span>Back</span>
         </button>
@@ -10370,7 +10382,7 @@ function renderAgentCredentialsSettingsPanel() {
 }
 
 function renderBuildingHubPluginPanel({ install = false } = {}) {
-  const actionLabel = install ? "save and install" : "save BuildingHub";
+  const actionLabel = install ? "save community catalogs" : "save BuildingHub";
   const status = state.settings.buildingHubStatus || state.buildingHub.status || {};
   const sourceSummary = Array.isArray(status.sources) && status.sources.length
     ? status.sources.map((source) => `${source.label || source.kind}: ${source.status || "pending"}`).join(" · ")
@@ -10809,8 +10821,8 @@ function renderPluginsView() {
       <div class="dashboard-toolbar">
         <button class="icon-button hidden-desktop" type="button" id="open-sidebar" aria-label="Open sidebar" ${tooltipAttributes("Open sidebar")}>${renderIcon(Menu)}</button>
         <div class="dashboard-copy">
-          <strong>Buildings</strong>
-          <div class="terminal-meta">installable town buildings for MCPs, integrations, and built-in Vibe Research tools</div>
+          <strong>BuildingHub</strong>
+          <div class="terminal-meta">building catalog for system tools, integrations, and opt-in community buildings</div>
         </div>
       </div>
       <div class="main-search-shell">
@@ -10820,16 +10832,16 @@ function renderPluginsView() {
           class="main-search-input"
           type="search"
           value="${escapeHtml(state.pluginSearchQuery)}"
-          placeholder="Search buildings"
+          placeholder="Search building catalog"
           autocomplete="off"
           autocorrect="off"
           autocapitalize="none"
           spellcheck="false"
         />
-        <span class="main-search-count">${escapeHtml(`${getFilteredPlugins().length} shown`)}</span>
+        <span class="main-search-count" data-plugin-search-count>${escapeHtml(`${getFilteredPlugins().length} shown`)}</span>
       </div>
       <div class="plugins-layout">
-        <section class="plugin-grid plugin-store-grid" id="plugin-results">${renderPluginCards()}</section>
+        <section class="plugin-grid plugin-store-grid" id="plugin-results" data-plugin-results>${renderPluginCards()}</section>
       </div>
     </section>
   `;
@@ -12852,9 +12864,9 @@ function renderVisualWorkshop(graph) {
 
 function renderVisualMissionBoard() {
   const missions = [
-    { label: "New run", meta: "agent folder", icon: MessageSquarePlus, attrs: `data-folder-picker-target="session"` },
+    { label: "New run", meta: "default folder", icon: MessageSquarePlus, attrs: `data-start-new-agent="town"` },
     { label: "Findings", meta: "open library", icon: BookOpen, attrs: `data-visual-building-open="knowledge-base"` },
-    { label: "Buildings", meta: "installed", icon: Plug, attrs: `data-open-main-view="plugins"` },
+    { label: "BuildingHub", meta: "catalog", icon: Plug, attrs: `data-visual-building-open="buildinghub"` },
     { label: "Schedule", meta: "automations", icon: CalendarClock, attrs: `data-visual-building-open="automations"` },
   ];
 
@@ -13051,10 +13063,10 @@ function renderVisualProjectPicker() {
     return `
       <div class="visual-project-empty">
         <span class="main-search-kind">first agent</span>
-        <strong>Choose an agent, then start in the agent folder.</strong>
+        <strong>Choose an agent, then start in the default folder.</strong>
         <p>Ready agents are marked green. Missing agents open a terminal, run the installer, then start that agent's login flow.</p>
         ${renderOnboardingProviderChoices()}
-        <button class="ghost-button" type="button" data-folder-picker-target="session">start selected agent</button>
+        <button class="ghost-button" type="button" data-start-new-agent="town">start selected agent</button>
       </div>
     `;
   }
@@ -13176,7 +13188,7 @@ function renderVisualTownWorld(graph) {
         <div class="visual-town-grid" aria-hidden="true"></div>
         <div class="visual-town-path visual-town-path-main" aria-hidden="true"></div>
         <div class="visual-town-path visual-town-path-cross" aria-hidden="true"></div>
-        <button class="visual-town-building visual-building-mission" type="button" data-folder-picker-target="session">
+        <button class="visual-town-building visual-building-mission" type="button" data-start-new-agent="town">
           <span class="visual-building-roof" aria-hidden="true"></span>
           <strong>Mission Board</strong>
           <em>start work</em>
@@ -13434,15 +13446,53 @@ function renderVisualGameLibraryBuildingPanel() {
   `;
 }
 
+function renderBuildingHubCatalogPanel() {
+  return `
+    <div class="visual-building-panel-scroll visual-building-buildinghub-panel">
+      <section class="visual-building-summary">
+        <span class="main-search-kind">system building</span>
+        <strong>Building catalog</strong>
+        <div class="visual-building-library-actions">
+          <button
+            class="primary-button toolbar-control"
+            type="button"
+            data-open-building-workspace="buildinghub"
+            data-building-workspace-view="plugins"
+          >
+            <span aria-hidden="true">${renderIcon(Plug)}</span>
+            <span>Open full catalog</span>
+          </button>
+        </div>
+      </section>
+      ${renderBuildingHubPluginPanel()}
+      <div class="main-search-shell visual-buildinghub-search">
+        <span class="main-search-icon" aria-hidden="true">${renderIcon(Plug)}</span>
+        <input
+          id="plugin-search-input"
+          class="main-search-input"
+          type="search"
+          value="${escapeHtml(state.pluginSearchQuery)}"
+          placeholder="Search building catalog"
+          autocomplete="off"
+          autocorrect="off"
+          autocapitalize="none"
+          spellcheck="false"
+        />
+        <span class="main-search-count" data-plugin-search-count>${escapeHtml(`${getFilteredPlugins().length} shown`)}</span>
+      </div>
+      <section class="plugin-grid plugin-store-grid visual-buildinghub-grid" data-plugin-results>${renderPluginCards()}</section>
+    </div>
+  `;
+}
+
 function renderToolshedBuildingPanel() {
-  const buildingHubStatus = getBuildingHubStatusText();
   const mapCards = [
     {
-      label: "Buildings",
-      meta: "tool homes",
+      label: "BuildingHub",
+      meta: "catalog",
       icon: Plug,
-      detail: "Buildings package setup notes, credentials, status, and Agent Town presence for tools agents can use.",
-      attrs: `data-open-main-view="plugins"`,
+      detail: "Browse system buildings, integrations, and opt-in community catalog entries.",
+      attrs: `data-visual-building-open="buildinghub"`,
     },
     {
       label: "Library",
@@ -13472,13 +13522,6 @@ function renderToolshedBuildingPanel() {
       detail: "Automations run scheduled helper tasks from the clock tower so maintenance work can keep going.",
       attrs: `data-visual-building-open="automations"`,
     },
-    {
-      label: "BuildingHub",
-      meta: buildingHubStatus,
-      icon: Plug,
-      detail: "BuildingHub is the reviewed community catalog for manifest-only buildings that can be shared safely.",
-      attrs: `data-visual-building-open="buildinghub"`,
-    },
   ];
   const publishSteps = [
     "Copy a BuildingHub template or draft a first-party manifest with a stable id, description, visual shape, and setup checklist.",
@@ -13493,7 +13536,7 @@ function renderToolshedBuildingPanel() {
         <span class="main-search-kind">builder guide</span>
         <strong>Make new buildings and share the safe ones.</strong>
         <div class="visual-building-library-actions">
-          <button class="primary-button toolbar-control" type="button" data-folder-picker-target="session">
+          <button class="primary-button toolbar-control" type="button" data-start-new-agent="town">
             <span aria-hidden="true">${renderIcon(MessageSquarePlus)}</span>
             <span>Ask an agent</span>
           </button>
@@ -13569,6 +13612,10 @@ function renderVisualGameBuildingPanelContent(buildingId, plugin) {
 
   if (buildingId === "knowledge-base") {
     return renderVisualGameLibraryBuildingPanel();
+  }
+
+  if (buildingId === "buildinghub") {
+    return renderBuildingHubCatalogPanel();
   }
 
   if (plugin) {
@@ -14796,7 +14843,7 @@ async function handleVisualGameHit(hit) {
   }
 
   if (hit.kind === "new-session") {
-    await startNewAgentInDefaultFolder({ openInTown: true });
+    await startNewAgentFromUi({ openInTown: true });
   }
 }
 
@@ -17297,7 +17344,7 @@ function getWorkspaceViewTabConfig(view) {
     "agent-prompt": { label: "Occupations", meta: "prompts", icon: FilePenLine },
     "agent-inbox": { label: "Agent Inbox", meta: "attention", icon: Inbox },
     search: { label: "Search", meta: "global", icon: Search },
-    plugins: { label: "Buildings", meta: "integrations", icon: Plug },
+    plugins: { label: "BuildingHub", meta: "catalog", icon: Plug },
     settings: { label: "Settings", meta: "app", icon: Settings },
     automations: { label: "Automations", meta: "scheduled", icon: CalendarClock },
     system: { label: "System", meta: "metrics", icon: ServerCog },
@@ -17978,7 +18025,7 @@ function renderTerminalPanel(activeSession) {
             bottom
           </button>
           <div class="empty-state ${activeSession ? "hidden" : ""}" id="empty-state">
-            <p class="empty-state-copy">open the menu, choose a CLI, then pick or create a folder to start a session</p>
+            <p class="empty-state-copy">choose an agent, then start a session in the default folder</p>
           </div>
         </div>
         ${renderWorkspaceResizeHandle()}
@@ -18638,7 +18685,7 @@ function renderShell() {
     "knowledge-base": "Library · Vibe Research",
     "agent-prompt": "Occupations · Vibe Research",
     search: "Search · Vibe Research",
-    plugins: "Buildings · Vibe Research",
+    plugins: "BuildingHub · Vibe Research",
     settings: "Settings · Vibe Research",
     "agent-inbox": "Agent Inbox · Vibe Research",
     automations: "Automations · Vibe Research",
@@ -18648,7 +18695,7 @@ function renderShell() {
     "browser-use": "Browser Use · Vibe Research",
   };
   const detailPlugin = state.currentView === "plugins" ? getCurrentPluginDetail() : null;
-  document.title = detailPlugin ? `${detailPlugin.name} · Buildings · Vibe Research` : viewTitles[state.currentView] || "Vibe Research";
+  document.title = detailPlugin ? `${detailPlugin.name} · BuildingHub · Vibe Research` : viewTitles[state.currentView] || "Vibe Research";
   ensureVisualGameSimulationLoop();
 
   const activeSession = state.sessions.find((session) => session.id === state.activeSessionId) || null;
@@ -18675,7 +18722,7 @@ function renderShell() {
             <div class="section-head">
               <span>Threads</span>
               <div class="section-actions">
-                <button class="icon-button sidebar-head-button" type="button" data-folder-picker-target="session" aria-label="New agent" ${tooltipAttributes("New agent")}>${renderIcon(FolderPlus)}</button>
+                <button class="icon-button sidebar-head-button" type="button" data-start-new-agent aria-label="New agent" ${tooltipAttributes("New agent")}>${renderIcon(FolderPlus)}</button>
               </div>
             </div>
             <div class="list-shell" id="sessions-list">${renderSessionCards()}</div>
@@ -19395,17 +19442,18 @@ function refreshGlobalSearchUi() {
 }
 
 function refreshPluginSearchUi() {
-  const count = document.querySelector(".plugins-view .main-search-count");
-  if (count) {
+  document.querySelectorAll("[data-plugin-search-count]").forEach((count) => {
     count.textContent = `${getFilteredPlugins().length} shown`;
-  }
+  });
 
-  const results = document.querySelector("#plugin-results");
-  if (!results) {
+  const resultContainers = document.querySelectorAll("[data-plugin-results]");
+  if (!resultContainers.length) {
     return;
   }
 
-  results.innerHTML = renderPluginCards();
+  resultContainers.forEach((results) => {
+    results.innerHTML = renderPluginCards();
+  });
   bindPluginCardEvents();
   bindBrowserUseForm();
   bindOttoAuthForm();
@@ -21627,7 +21675,7 @@ function bindWorkspaceTabEvents() {
         state.activeWorkspaceGroupId = group.dataset.workspaceGroup || state.activeWorkspaceGroupId;
         saveWorkspaceGroupsState();
       }
-      await startNewAgentInDefaultFolder();
+      await startNewAgentFromUi();
     });
   });
 }
@@ -22451,7 +22499,10 @@ function syncViewFromLocation() {
   const route = getRouteState();
   const previousView = state.currentView;
   state.currentView = route.view;
-  state.pluginDetailId = route.view === "plugins" && getPluginById(route.buildingId) ? normalizeBuildingId(route.buildingId) : "";
+  state.pluginDetailId =
+    route.view === "plugins" && normalizeBuildingId(route.buildingId) !== "buildinghub" && getPluginById(route.buildingId)
+      ? normalizeBuildingId(route.buildingId)
+      : "";
 
   if (route.view === "knowledge-base") {
     if (previousView !== "knowledge-base") {
@@ -22500,7 +22551,10 @@ function setCurrentView(nextView, {
 
   if (ROUTED_MAIN_VIEWS.has(nextView)) {
     state.currentView = nextView;
-    state.pluginDetailId = nextView === "plugins" && getPluginById(buildingId) ? normalizeBuildingId(buildingId) : "";
+    state.pluginDetailId =
+      nextView === "plugins" && normalizeBuildingId(buildingId) !== "buildinghub" && getPluginById(buildingId)
+        ? normalizeBuildingId(buildingId)
+        : "";
     updateRoute({ view: nextView, buildingId: state.pluginDetailId });
     return;
   }
@@ -23050,7 +23104,16 @@ function bindShellEvents() {
       }
 
       state.defaultProviderId = providerId;
-      await startNewAgentInDefaultFolder({ openInTown: true });
+      await startNewAgentFromUi({ openInTown: true });
+    });
+  });
+
+  document.querySelectorAll("[data-start-new-agent]").forEach((button) => {
+    button.addEventListener("click", async (event) => {
+      event.preventDefault();
+      await startNewAgentFromUi({
+        openInTown: button.getAttribute("data-start-new-agent") === "town",
+      });
     });
   });
 
@@ -23070,7 +23133,7 @@ function bindShellEvents() {
       const target = button.getAttribute("data-folder-picker-target") || "session";
       const isWikiTarget = target === "wiki" || target === "wiki-onboarding";
       if (target === "session") {
-        await startNewAgentInDefaultFolder();
+        await startNewAgentFromUi();
         return;
       }
 

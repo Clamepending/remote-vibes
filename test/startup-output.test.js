@@ -38,9 +38,9 @@ test("buildStartupOutput includes a terminal QR block for the preferred phone UR
   });
 
   assert.match(output, /Scan on phone: http:\/\/100\.106\.229\.117:4123/);
-  assert.match(output, /Local URL on this machine/);
+  assert.match(output, /Open the clickable URL above/);
   assert.match(output, /Tap New Agent/);
-  assert.match(output, /project folder under \/home\/friend\/vibe-projects/);
+  assert.match(output, /default agent folder: \/home\/friend\/vibe-projects/);
   assert.match(output, /If Claude asks you to sign in/);
   assert.match(output, /Remote access is optional/);
   assert.match(output, /\u001b\[47m/);

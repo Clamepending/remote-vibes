@@ -114,12 +114,12 @@ export function buildStartupOutput(config) {
 
   lines.push("");
   lines.push("Get started:");
-  lines.push("1. Open the Local URL on this machine. From another device, use a LAN/Tailscale URL above or scan the QR code.");
-  lines.push("2. Tap New Agent.");
+  lines.push("1. Open the clickable URL above. From another device, use a LAN/Tailscale URL or scan the QR code.");
+  lines.push("2. Choose Claude Code in the agent selector if it is not already selected.");
   lines.push(
-    `3. Create or choose a project folder${config.defaultSessionCwd ? ` under ${config.defaultSessionCwd}` : ""}.`,
+    `3. Tap New Agent. Vibe Research starts it in the default agent folder${config.defaultSessionCwd ? `: ${config.defaultSessionCwd}` : ""}.`,
   );
-  lines.push("4. Choose Claude Code. If Claude asks you to sign in, follow the prompt in that session.");
+  lines.push("4. If Claude asks you to sign in, follow the prompt in that session.");
   lines.push("Remote access is optional: if Tailscale is already connected, its URL appears automatically.");
 
   lines.push("");

@@ -811,7 +811,7 @@ test("Telegram building detail saves through fetch without expanding settings in
     await page.waitForFunction(() => new URL(window.location.href).searchParams.get("building") === "telegram");
     await page.getByLabel("Telegram bot token").waitFor({ timeout: 10_000 });
 
-    await page.getByRole("button", { name: "Back to Buildings", exact: true }).click();
+    await page.getByRole("button", { name: "Back to BuildingHub", exact: true }).click();
     await page.waitForFunction(() => !new URL(window.location.href).searchParams.has("building"));
     assert.equal(await page.locator("#plugin-results .communications-form").count(), 0);
     assert.equal(await page.locator(".plugin-card .plugin-onboarding").count(), 0);
@@ -888,8 +888,63 @@ test("Google Drive building opens as a host connector without fake local-agent i
     assert.equal(await page.getByRole("button", { name: "Install Google Drive" }).count(), 0);
     assert.equal(await page.getByRole("button", { name: /finish install/i }).count(), 0);
 
-    await page.getByRole("button", { name: "Back to Buildings", exact: true }).click();
+    await page.getByRole("button", { name: "Back to BuildingHub", exact: true }).click();
     await page.waitForFunction(() => !new URL(window.location.href).searchParams.has("building"));
+  } finally {
+    await browser?.close().catch(() => {});
+    await app.close();
+    await removeTempWorkspace(workspaceDir);
+    await removeTempWorkspace(stateDir);
+  }
+});
+
+test("BuildingHub is the catalog entry point instead of an installable detail", async (t) => {
+  const executablePath = await resolveBrowserExecutablePath({ env: process.env });
+  if (!executablePath) {
+    t.skip("No local Chromium/Chrome executable is available for the BuildingHub catalog smoke.");
+    return;
+  }
+
+  const workspaceDir = await createTempWorkspace("vibe-research-buildinghub-catalog-ui-");
+  const stateDir = await createTempWorkspace("vibe-research-buildinghub-catalog-state-");
+  const wikiDir = path.join(workspaceDir, "brain");
+  await mkdir(wikiDir, { recursive: true });
+  await mkdir(stateDir, { recursive: true });
+  await writeFile(
+    path.join(stateDir, "settings.json"),
+    `${JSON.stringify(
+      {
+        version: 1,
+        settings: {
+          preventSleepEnabled: false,
+          wikiGitRemoteEnabled: false,
+          wikiPath: wikiDir,
+          wikiPathConfigured: true,
+        },
+      },
+      null,
+      2,
+    )}\n`,
+    "utf8",
+  );
+  const { app, baseUrl } = await startApp({ cwd: workspaceDir, stateDir });
+  let browser = null;
+
+  try {
+    browser = await chromium.launch({ executablePath, headless: true });
+    const page = await browser.newPage();
+    await page.goto(`${baseUrl}/?view=plugins`, { waitUntil: "domcontentloaded" });
+    await page.locator(".dashboard-copy strong").getByText("BuildingHub", { exact: true }).waitFor({ timeout: 10_000 });
+    assert.equal(await page.locator('.sidebar-primary-nav [data-open-main-view="plugins"]').count(), 0);
+    assert.equal(await page.getByRole("button", { name: "Install BuildingHub" }).count(), 0);
+
+    await page.getByRole("button", { name: "Open BuildingHub building" }).click();
+    await page.waitForFunction(() => {
+      const url = new URL(window.location.href);
+      return url.searchParams.get("view") === "plugins" && !url.searchParams.has("building");
+    });
+    assert.equal(await page.getByRole("button", { name: "Back to BuildingHub", exact: true }).count(), 0);
+    await page.locator("#plugin-results").getByText("BuildingHub", { exact: true }).waitFor({ timeout: 10_000 });
   } finally {
     await browser?.close().catch(() => {});
     await app.close();
@@ -968,7 +1023,7 @@ test("external connector buildings open details and install from their building 
       await page.locator(".dashboard-actions .plugin-install-button").getByText("Uninstall", { exact: true }).waitFor({ timeout: 10_000 });
       await page.locator(".plugin-detail-copy .plugin-status").getByText("installed", { exact: true }).waitFor({ timeout: 10_000 });
       assert.equal(await page.getByRole("button", { name: /finish install/i }).count(), 0);
-      await page.getByRole("button", { name: "Back to Buildings", exact: true }).click();
+      await page.getByRole("button", { name: "Back to BuildingHub", exact: true }).click();
       await page.waitForFunction(() => !new URL(window.location.href).searchParams.has("building"));
       assert.equal(await page.locator("#plugin-results .plugin-onboarding").count(), 0);
     }
@@ -2431,6 +2486,66 @@ test("fresh browser starts on workspace folder setup until a folder is chosen", 
     assert.equal(settingsPayload.settings.wikiPath, expectedWikiDir);
     assert.equal(settingsPayload.settings.agentSpawnPath, expectedAgentDir);
     assert.equal(settingsPayload.settings.wikiGitRemoteUrl, "");
+  } finally {
+    await browser?.close().catch(() => {});
+    await app.close();
+    await rm(workspaceDir, { recursive: true, force: true });
+  }
+});
+
+test("New Agent starts in the configured agent folder without opening the folder picker", async (t) => {
+  const executablePath = await resolveBrowserExecutablePath({ env: process.env });
+  if (!executablePath) {
+    t.skip("No local Chromium/Chrome executable is available for the new agent smoke.");
+    return;
+  }
+
+  const workspaceDir = await createTempWorkspace("vibe-research-new-agent-default-");
+  const selectedRoot = path.join(workspaceDir, "workspace-home");
+  const expectedAgentDir = getWorkspaceAgentDir(selectedRoot);
+  const { app, baseUrl } = await startApp({
+    cwd: workspaceDir,
+    providers: [
+      {
+        id: "shell",
+        label: "Vanilla Shell",
+        defaultName: "Shell",
+        available: true,
+        command: null,
+        launchCommand: null,
+      },
+    ],
+  });
+  let browser = null;
+
+  try {
+    const settingsResponse = await fetch(`${baseUrl}/api/settings`, {
+      method: "PATCH",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        workspaceRootPath: selectedRoot,
+        wikiPathConfigured: true,
+      }),
+    });
+    assert.equal(settingsResponse.status, 200);
+
+    browser = await chromium.launch({ executablePath, headless: true });
+    const page = await browser.newPage();
+    await page.goto(baseUrl, { waitUntil: "commit", timeout: 10_000 });
+    await page.waitForSelector(".app-shell", { timeout: 10_000 });
+
+    await page.locator("[data-start-new-agent]").first().click();
+    await page.waitForFunction(async () => {
+      const response = await fetch("/api/sessions");
+      const payload = await response.json();
+      return payload.sessions.length === 1;
+    }, null, { timeout: 10_000 });
+
+    assert.equal(await page.locator(".folder-picker-modal").count(), 0);
+    const sessionsResponse = await fetch(`${baseUrl}/api/sessions`);
+    assert.equal(sessionsResponse.status, 200);
+    const sessionsPayload = await sessionsResponse.json();
+    assert.equal(await realpath(sessionsPayload.sessions[0].cwd), await realpath(expectedAgentDir));
   } finally {
     await browser?.close().catch(() => {});
     await app.close();

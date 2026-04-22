@@ -519,6 +519,7 @@ test("install.sh starts tailscaled before Tailscale login on Linux", async () =>
     await mkdir(fakeBin, { recursive: true });
     await writeFile(path.join(fakeBin, "uname"), "#!/usr/bin/env sh\nprintf 'Linux\\n'\n");
     await writeFile(path.join(fakeBin, "sudo"), "#!/usr/bin/env sh\nexec \"$@\"\n");
+    await writeFile(path.join(fakeBin, "service"), "#!/usr/bin/env sh\nexit 1\n");
     await writeFile(
       path.join(fakeBin, "systemctl"),
       `#!/usr/bin/env bash
@@ -564,7 +565,10 @@ fi
 exit 0
 `,
     );
-    await execFile("chmod", ["+x", ...["uname", "sudo", "systemctl", "tailscale"].map((name) => path.join(fakeBin, name))]);
+    await execFile("chmod", [
+      "+x",
+      ...["uname", "sudo", "service", "systemctl", "tailscale"].map((name) => path.join(fakeBin, name)),
+    ]);
 
     const result = await execFile("bash", [installScript], {
       env: installTestEnv({
@@ -612,6 +616,7 @@ test("install.sh retries Tailscale login after a tailscaled startup race", async
     await mkdir(fakeBin, { recursive: true });
     await writeFile(path.join(fakeBin, "uname"), "#!/usr/bin/env sh\nprintf 'Linux\\n'\n");
     await writeFile(path.join(fakeBin, "sudo"), "#!/usr/bin/env sh\nexec \"$@\"\n");
+    await writeFile(path.join(fakeBin, "service"), "#!/usr/bin/env sh\nexit 1\n");
     await writeFile(
       path.join(fakeBin, "systemctl"),
       `#!/usr/bin/env bash
@@ -665,7 +670,10 @@ fi
 exit 0
 `,
     );
-    await execFile("chmod", ["+x", ...["uname", "sudo", "systemctl", "tailscale"].map((name) => path.join(fakeBin, name))]);
+    await execFile("chmod", [
+      "+x",
+      ...["uname", "sudo", "service", "systemctl", "tailscale"].map((name) => path.join(fakeBin, name)),
+    ]);
 
     const result = await execFile("bash", [installScript], {
       env: installTestEnv({
@@ -718,6 +726,7 @@ test("install.sh falls back to userspace tailscaled when service startup cannot 
   try {
     await mkdir(fakeBin, { recursive: true });
     await writeFile(path.join(fakeBin, "uname"), "#!/usr/bin/env sh\nprintf 'Linux\\n'\n");
+    await writeFile(path.join(fakeBin, "service"), "#!/usr/bin/env sh\nexit 1\n");
     await writeFile(
       path.join(fakeBin, "sudo"),
       `#!/usr/bin/env bash
@@ -783,7 +792,10 @@ fi
 exit 0
 `,
     );
-    await execFile("chmod", ["+x", ...["uname", "sudo", "systemctl", "tailscaled", "tailscale"].map((name) => path.join(fakeBin, name))]);
+    await execFile("chmod", [
+      "+x",
+      ...["uname", "sudo", "service", "systemctl", "tailscaled", "tailscale"].map((name) => path.join(fakeBin, name)),
+    ]);
 
     const result = await execFile("bash", [installScript], {
       env: installTestEnv({
