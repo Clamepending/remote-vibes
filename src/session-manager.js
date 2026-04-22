@@ -38,6 +38,21 @@ const SESSION_AUTO_NAME_BUFFER_LIMIT = 240;
 const SESSION_ACTIVITY_IDLE_MS = Number(
   process.env.VIBE_RESEARCH_SESSION_ACTIVITY_IDLE_MS || process.env.REMOTE_VIBES_SESSION_ACTIVITY_IDLE_MS || 15_000,
 );
+const INITIAL_PROMPT_DELAY_MS = Number(
+  process.env.VIBE_RESEARCH_INITIAL_PROMPT_DELAY_MS || process.env.REMOTE_VIBES_INITIAL_PROMPT_DELAY_MS || 1_400,
+);
+const INITIAL_PROMPT_READY_IDLE_MS = Number(
+  process.env.VIBE_RESEARCH_INITIAL_PROMPT_READY_IDLE_MS || process.env.REMOTE_VIBES_INITIAL_PROMPT_READY_IDLE_MS || 1_200,
+);
+const INITIAL_PROMPT_READY_TIMEOUT_MS = Number(
+  process.env.VIBE_RESEARCH_INITIAL_PROMPT_READY_TIMEOUT_MS || process.env.REMOTE_VIBES_INITIAL_PROMPT_READY_TIMEOUT_MS || 45_000,
+);
+const INITIAL_PROMPT_RETRY_MS = Number(
+  process.env.VIBE_RESEARCH_INITIAL_PROMPT_RETRY_MS || process.env.REMOTE_VIBES_INITIAL_PROMPT_RETRY_MS || 500,
+);
+const INITIAL_PROMPT_SUBMIT_DELAY_MS = Number(
+  process.env.VIBE_RESEARCH_INITIAL_PROMPT_SUBMIT_DELAY_MS || process.env.REMOTE_VIBES_INITIAL_PROMPT_SUBMIT_DELAY_MS || 350,
+);
 const PROVIDER_SESSION_LIST_LIMIT = 50;
 const PROVIDER_SESSION_CAPTURE_ATTEMPTS = 16;
 const PROVIDER_SESSION_CAPTURE_INTERVAL_MS = 250;
@@ -351,6 +366,73 @@ function consumePromptInput(buffer, input) {
     buffer: nextBuffer,
     interrupted,
   };
+}
+
+function normalizeTerminalText(value) {
+  return String(value || "")
+    .replace(/\x1B\][^\x07]*(?:\x07|\x1B\\)/g, " ")
+    .replace(/\x1B\[[0-?]*[ -/]*[@-~]/g, " ")
+    .replace(/\x1B[@-Z\\-_]/g, " ")
+    .replace(/[\u0000-\u001f\u007f]+/g, " ")
+    .replace(/\s+/g, " ")
+    .trim();
+}
+
+function parseSessionTimestamp(value, fallback) {
+  const parsed = Date.parse(value || "");
+  return Number.isFinite(parsed) ? parsed : fallback;
+}
+
+function normalizeInitialPrompt(value) {
+  return String(value || "")
+    .replace(/\r\n/g, "\n")
+    .replace(/\r+$/g, "")
+    .trimEnd();
+}
+
+function normalizePromptDelayMs(value, fallback = INITIAL_PROMPT_DELAY_MS) {
+  if (value == null || value === "") {
+    return Math.max(0, Number(fallback) || 0);
+  }
+
+  return Math.max(0, Number(value) || 0);
+}
+
+function hasClaudeWorkspaceTrustPrompt(buffer) {
+  const text = normalizeTerminalText(buffer);
+  return /Quick\s*safety\s*check|Yes,\s*I\s*trust\s*this\s*folder|Claude\s*Code'll\s*be\s*able\s*to\s*read/i.test(text);
+}
+
+function providerHasReadyHint(providerId, buffer) {
+  const text = normalizeTerminalText(buffer);
+  if (!text) {
+    return false;
+  }
+
+  if (providerId === "claude") {
+    if (hasClaudeWorkspaceTrustPrompt(text)) {
+      return false;
+    }
+    return /Claude\s*Code\s*v|bypass\s*permissions|❯|Welcome back/i.test(text);
+  }
+
+  if (providerId === "codex") {
+    return /Ask for follow-up changes|Full access|GPT-|❯|›/i.test(text);
+  }
+
+  if (providerId === "gemini") {
+    return /Gemini|Type your message|❯|>/i.test(text);
+  }
+
+  if (providerId === "opencode") {
+    return /OpenCode\s*v|opencode\s*v|❯|>/i.test(text);
+  }
+
+  if (providerId === "ml-intern") {
+    return /ML\s*Intern|Hugging\s*Face\s*Agent|>\s*$/i.test(text);
+  }
+
+  return true;
 }
 
 function isAgentActivitySession(session) {
@@ -1771,6 +1853,11 @@ export class SessionManager {
     userHomeDir = env?.HOME || os.homedir(),
     setTimeoutFn = setTimeout,
     clearTimeoutFn = clearTimeout,
+    initialPromptDelayMs = INITIAL_PROMPT_DELAY_MS,
+    initialPromptReadyIdleMs = INITIAL_PROMPT_READY_IDLE_MS,
+    initialPromptReadyTimeoutMs = INITIAL_PROMPT_READY_TIMEOUT_MS,
+    initialPromptRetryMs = INITIAL_PROMPT_RETRY_MS,
+    initialPromptSubmitDelayMs = INITIAL_PROMPT_SUBMIT_DELAY_MS,
   }) {
     this.cwd = cwd;
     this.providers = providers;
@@ -1787,6 +1874,11 @@ export class SessionManager {
     this.sessionActivityIdleMs = Math.max(500, Number(sessionActivityIdleMs) || SESSION_ACTIVITY_IDLE_MS);
     this.setTimeoutFn = setTimeoutFn;
     this.clearTimeoutFn = clearTimeoutFn;
+    this.initialPromptDelayMs = Math.max(0, Number(initialPromptDelayMs) || 0);
+    this.initialPromptReadyIdleMs = Math.max(0, Number(initialPromptReadyIdleMs) || 0);
+    this.initialPromptReadyTimeoutMs = Math.max(0, Number(initialPromptReadyTimeoutMs) || 0);
+    this.initialPromptRetryMs = Math.max(1, Number(initialPromptRetryMs) || INITIAL_PROMPT_RETRY_MS);
+    this.initialPromptSubmitDelayMs = Math.max(0, Number(initialPromptSubmitDelayMs) || 0);
     this.sessionStore = new SessionStore({
       enabled: persistSessions,
       stateDir,
@@ -2305,7 +2397,79 @@ export class SessionManager {
     });
   }
 
-  createSession({ providerId, name, cwd, occupationId }) {
+  queueInitialPromptForSession(session, provider, prompt, { delayMs = this.initialPromptDelayMs } = {}) {
+    const normalizedPrompt = normalizeInitialPrompt(prompt);
+    const providerId = provider?.id || session?.providerId || "";
+    if (!session?.id || !normalizedPrompt || providerId === "shell" || !provider?.launchCommand) {
+      return false;
+    }
+
+    const startedAt = Date.now();
+    const normalizedDelayMs = normalizePromptDelayMs(delayMs, this.initialPromptDelayMs);
+    let answeredWorkspaceTrust = false;
+
+    const submitPrompt = () => {
+      const currentSession = this.sessions.get(session.id);
+      if (currentSession !== session || session.status === "exited" || !session.pty) {
+        return false;
+      }
+
+      if (providerId === "claude") {
+        const pasted = this.write(session.id, normalizedPrompt);
+        if (!pasted) {
+          return false;
+        }
+
+        this.setTimeoutFn(() => {
+          const nextSession = this.sessions.get(session.id);
+          if (nextSession !== session || session.status === "exited" || !session.pty) {
+            return;
+          }
+
+          this.write(session.id, "\r");
+        }, this.initialPromptSubmitDelayMs);
+        return true;
+      }
+
+      return this.write(session.id, `${normalizedPrompt}\r`);
+    };
+
+    const attempt = () => {
+      const currentSession = this.sessions.get(session.id);
+      if (currentSession !== session || session.status === "exited" || !session.pty) {
+        return;
+      }
+
+      const now = Date.now();
+      const lastOutputAt = parseSessionTimestamp(session.lastOutputAt || session.updatedAt || session.createdAt, startedAt);
+      const elapsedMs = now - startedAt;
+      const idleMs = now - lastOutputAt;
+
+      if (providerId === "claude" && !answeredWorkspaceTrust && hasClaudeWorkspaceTrustPrompt(session.buffer)) {
+        answeredWorkspaceTrust = true;
+        this.write(session.id, "1\r");
+        this.setTimeoutFn(attempt, this.initialPromptRetryMs);
+        return;
+      }
+
+      const isReady =
+        elapsedMs >= normalizedDelayMs &&
+        idleMs >= this.initialPromptReadyIdleMs &&
+        providerHasReadyHint(providerId, session.buffer);
+
+      if (isReady || elapsedMs >= this.initialPromptReadyTimeoutMs) {
+        submitPrompt();
+        return;
+      }
+
+      this.setTimeoutFn(attempt, this.initialPromptRetryMs);
+    };
+
+    this.setTimeoutFn(attempt, Math.min(this.initialPromptRetryMs, normalizedDelayMs));
+    return true;
+  }
+
+  createSession({ providerId, name, cwd, occupationId, initialPrompt = "", initialPromptDelayMs = null }) {
     const provider = this.getProvider(providerId);
 
     if (!provider) {
@@ -2339,6 +2503,10 @@ export class SessionManager {
       this.schedulePersist({ immediate: true });
       throw error;
     }
+
+    this.queueInitialPromptForSession(session, provider, initialPrompt, {
+      delayMs: initialPromptDelayMs,
+    });
 
     this.schedulePersist({ immediate: true });
     return this.serializeSession(session);

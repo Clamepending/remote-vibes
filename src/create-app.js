@@ -58,6 +58,16 @@ const DEFAULT_TAILSCALE_HTTPS_SERVE_PORTS = [443, 8443, 10000];
 const JSON_BODY_LIMIT = "25mb";
 const WIKI_CLONE_RATE_LIMIT_WINDOW_MS = 60 * 1000;
 const WIKI_CLONE_RATE_LIMIT_MAX = 5;
+const LIBRARY_SYNC_SETTING_KEYS = new Set([
+  "wikiGitBackupEnabled",
+  "wikiGitRemoteBranch",
+  "wikiGitRemoteEnabled",
+  "wikiGitRemoteName",
+  "wikiGitRemoteUrl",
+  "wikiPath",
+  "wikiPathConfigured",
+  "workspaceRootPath",
+]);
 const ATTACHMENTS_SUBDIR = "attachments";
 const MAX_ATTACHMENT_IMAGE_BYTES = 15 * 1024 * 1024;
 const ATTACHMENT_IMAGE_EXTENSIONS_BY_MIME_TYPE = new Map([
@@ -527,6 +537,11 @@ function getPortHosts(portEntry) {
   return Array.isArray(portEntry.hosts) ? portEntry.hosts : [];
 }
 
+function shouldSyncLibraryForSettingsPatch(body = {}) {
+  const entries = Object.entries(body && typeof body === "object" ? body : {});
+  return entries.some(([key, value]) => value !== undefined && LIBRARY_SYNC_SETTING_KEYS.has(key));
+}
+
 function isLocalOnlyPort(portEntry) {
   const hosts = getPortHosts(portEntry);
   return hosts.length > 0 && hosts.every((host) => isLoopbackHost(host));
@@ -572,6 +587,7 @@ export async function createVibeResearchApp({
   ottoAuthServiceFactory = null,
   telegramServiceFactory = null,
   videoMemoryServiceFactory = null,
+  wikiBackupServiceFactory = null,
   systemMetricsProvider = collectSystemMetrics,
   systemMetricsSampleIntervalMs = 60_000,
   updateManager = new UpdateManager({ cwd, stateDir, port }),
@@ -618,7 +634,7 @@ export async function createVibeResearchApp({
           settings: settingsStore.settings,
           stateDir,
         });
-  const wikiBackupService = new WikiBackupService({
+  const wikiBackupConfig = {
     enabled: settingsStore.settings.wikiGitBackupEnabled,
     intervalMs: settingsStore.settings.wikiBackupIntervalMs,
     remoteBranch: settingsStore.settings.wikiGitRemoteBranch,
@@ -626,7 +642,11 @@ export async function createVibeResearchApp({
     remoteName: settingsStore.settings.wikiGitRemoteName,
     remoteUrl: settingsStore.settings.wikiGitRemoteUrl,
     wikiPath: settingsStore.settings.wikiPath,
-  });
+  };
+  const wikiBackupService =
+    typeof wikiBackupServiceFactory === "function"
+      ? wikiBackupServiceFactory(wikiBackupConfig, { cwd, stateDir })
+      : new WikiBackupService(wikiBackupConfig);
   const sleepPreventionService = sleepPreventionFactory(settingsStore.settings);
   let videoMemoryService = null;
   const sessionManager = new SessionManager({
@@ -1292,7 +1312,9 @@ export async function createVibeResearchApp({
         wikiPathConfigured: request.body?.wikiPathConfigured,
       });
 
-      await applyRuntimeSettings(settingsStore.settings, { backupReason: "settings" });
+      await applyRuntimeSettings(settingsStore.settings, {
+        backupReason: shouldSyncLibraryForSettingsPatch(request.body) ? "settings" : false,
+      });
 
       response.json({
         settings: getSettingsState(),
@@ -2061,6 +2083,8 @@ export async function createVibeResearchApp({
         name: request.body?.name,
         cwd: request.body?.cwd,
         occupationId: agentPromptStore.selectedPromptId,
+        initialPrompt: request.body?.initialPrompt,
+        initialPromptDelayMs: request.body?.initialPromptDelayMs,
       });
 
       response.status(201).json({ session });

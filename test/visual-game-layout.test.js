@@ -131,6 +131,54 @@ test("visual game map has a Campanile-style Automations tower reachable from tow
   assert.deepEqual(route.at(-1), getVisualGamePlaceAnchor(automations));
 });
 
+test("visual game map has an Occupations school reachable from town roads", () => {
+  const occupations = getVisualGamePlace(VISUAL_GAME_MAP_LAYOUT, "occupations");
+  const workshop = getVisualGamePlace(VISUAL_GAME_MAP_LAYOUT, "workshop");
+  const roadRects = getVisualGameRoadRects(VISUAL_GAME_MAP_LAYOUT);
+  const route = findVisualGameRoadRoute(
+    getVisualGamePlaceAnchor(workshop),
+    getVisualGamePlaceAnchor(occupations),
+    roadRects,
+  );
+
+  assert.equal(occupations.label, "School");
+  assert.ok(route.length > 2);
+  assert.deepEqual(route[0], getVisualGamePlaceAnchor(workshop));
+  assert.deepEqual(route.at(-1), getVisualGamePlaceAnchor(occupations));
+});
+
+test("visual game map has a Doghouse building reachable from town roads", () => {
+  const doghouse = getVisualGamePlace(VISUAL_GAME_MAP_LAYOUT, "doghouse");
+  const workshop = getVisualGamePlace(VISUAL_GAME_MAP_LAYOUT, "workshop");
+  const roadRects = getVisualGameRoadRects(VISUAL_GAME_MAP_LAYOUT);
+  const route = findVisualGameRoadRoute(
+    getVisualGamePlaceAnchor(workshop),
+    getVisualGamePlaceAnchor(doghouse),
+    roadRects,
+  );
+
+  assert.equal(doghouse.label, "Doghouse");
+  assert.ok(route.length > 2);
+  assert.deepEqual(route[0], getVisualGamePlaceAnchor(workshop));
+  assert.deepEqual(route.at(-1), getVisualGamePlaceAnchor(doghouse));
+});
+
+test("visual game map has a System building reachable from town roads", () => {
+  const system = getVisualGamePlace(VISUAL_GAME_MAP_LAYOUT, "system");
+  const workshop = getVisualGamePlace(VISUAL_GAME_MAP_LAYOUT, "workshop");
+  const roadRects = getVisualGameRoadRects(VISUAL_GAME_MAP_LAYOUT);
+  const route = findVisualGameRoadRoute(
+    getVisualGamePlaceAnchor(workshop),
+    getVisualGamePlaceAnchor(system),
+    roadRects,
+  );
+
+  assert.equal(system.label, "System");
+  assert.ok(route.length > 2);
+  assert.deepEqual(route[0], getVisualGamePlaceAnchor(workshop));
+  assert.deepEqual(route.at(-1), getVisualGamePlaceAnchor(system));
+});
+
 test("visual game pathfinding falls back to direct routes without roads", () => {
   const route = findVisualGameRoadRoute({ x: 5, y: 6 }, { x: 40, y: 44 }, []);
 
@@ -140,10 +188,10 @@ test("visual game pathfinding falls back to direct routes without roads", () => 
   ]);
 });
 
-test("visual game machine slots scale to stay inside the GPU yard", () => {
-  const yard = getVisualGamePlace(VISUAL_GAME_MAP_LAYOUT, "gpuYard");
-  const factory = yard.factory;
-  const packed = getVisualGamePlaceItemSlots(VISUAL_GAME_MAP_LAYOUT, "gpuYard", factory.maxVisible, {
+test("visual game machine slots scale to stay inside the System building", () => {
+  const system = getVisualGamePlace(VISUAL_GAME_MAP_LAYOUT, "system");
+  const factory = system.factory;
+  const packed = getVisualGamePlaceItemSlots(VISUAL_GAME_MAP_LAYOUT, "system", factory.maxVisible, {
     gap: factory.gap,
     itemSize: factory.size,
     maxColumns: factory.columns,
@@ -155,17 +203,17 @@ test("visual game machine slots scale to stay inside the GPU yard", () => {
   assert.equal(packed.hiddenCount, 0);
   assert.ok(packed.slots.some((slot) => slot.scale < 1));
   for (const slot of packed.slots) {
-    assert.ok(slot.x >= yard.rect.x);
-    assert.ok(slot.y >= yard.rect.y);
-    assert.ok(slot.x + slot.width <= yard.rect.x + yard.rect.width);
-    assert.ok(slot.y + slot.height <= yard.rect.y + yard.rect.height);
+    assert.ok(slot.x >= system.rect.x);
+    assert.ok(slot.y >= system.rect.y);
+    assert.ok(slot.x + slot.width <= system.rect.x + system.rect.width);
+    assert.ok(slot.y + slot.height <= system.rect.y + system.rect.height);
   }
 });
 
 test("visual game machine slots summarize overflow devices", () => {
-  const yard = getVisualGamePlace(VISUAL_GAME_MAP_LAYOUT, "gpuYard");
-  const factory = yard.factory;
-  const packed = getVisualGamePlaceItemSlots(VISUAL_GAME_MAP_LAYOUT, "gpuYard", 20, {
+  const system = getVisualGamePlace(VISUAL_GAME_MAP_LAYOUT, "system");
+  const factory = system.factory;
+  const packed = getVisualGamePlaceItemSlots(VISUAL_GAME_MAP_LAYOUT, "system", 20, {
     gap: factory.gap,
     itemSize: factory.size,
     maxColumns: factory.columns,

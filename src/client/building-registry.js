@@ -9,6 +9,7 @@ import {
   CalendarDays,
   Clapperboard,
   Database,
+  Dog,
   GitPullRequest,
   Inbox,
   Lightbulb,
@@ -16,8 +17,11 @@ import {
   MessageCircle,
   MessagesSquare,
   Notebook,
+  Palette,
   Plug,
+  School,
   Send,
+  ServerCog,
   ShoppingCart,
   Smartphone,
   Waypoints,
@@ -218,6 +222,135 @@ const CORE_BUILDING_MANIFESTS = [
     },
   },
   {
+    id: "agentmall",
+    name: "AgentMall",
+    category: "Vibe Research",
+    description: "Browse Agent Town theme skins and switch the game between the default, snowy, and desert looks.",
+    icon: Palette,
+    install: {
+      system: true,
+    },
+    status: "built in",
+    source: "vibe-research",
+    visual: {
+      shape: "market",
+    },
+    access: {
+      label: "Local browser theme",
+      detail: "Uses browser-local Agent Town preferences only. No credentials or external services are required.",
+    },
+    onboarding: {
+      variables: [
+        { label: "Theme catalog", value: "default, snowy, desert", required: true },
+        { label: "Persistence", value: "browser local storage", required: true },
+      ],
+      steps: [
+        { title: "Open AgentMall", detail: "Pick a theme from the Agent Town building panel." },
+        { title: "Apply a theme", detail: "The selected look is saved for this browser and used by the game canvas." },
+      ],
+    },
+    agentGuide: {
+      summary: "Use AgentMall when work involves Agent Town visual themes, game skins, or theme catalog behavior.",
+      useCases: [
+        "Check which built-in Agent Town themes are available.",
+        "Modify theme palettes for the visual game canvas.",
+        "Verify the selected theme persists in browser-local preferences.",
+      ],
+      setup: [
+        "Open Agent Town and use the AgentMall building panel to change the active theme.",
+        "Keep theme data client-side unless a future task explicitly asks for shared settings.",
+      ],
+    },
+  },
+  {
+    id: "doghouse",
+    name: "Doghouse",
+    category: "Vibe Research",
+    description: "Adds a tiny doghouse to Agent Town with a dog that wanders around the map.",
+    icon: Dog,
+    install: {
+      system: true,
+    },
+    status: "built in",
+    source: "vibe-research",
+    visual: {
+      shape: "doghouse",
+      specialTownPlace: true,
+    },
+    access: {
+      label: "Agent Town companion",
+      detail: "Uses only the local Agent Town canvas. No setup, network access, or credentials are required.",
+    },
+    onboarding: {
+      variables: [
+        { label: "Town canvas", value: "local Agent Town visual interface", required: true },
+      ],
+      steps: [
+        { title: "Open Agent Town", detail: "The doghouse appears on the map automatically.", completeWhen: { type: "installed" } },
+        { title: "Watch the patrol", detail: "The town dog leaves the doghouse and wanders nearby while the map is open." },
+      ],
+    },
+    agentGuide: {
+      summary: "Use Doghouse when work involves the decorative Agent Town doghouse or roaming dog animation.",
+      useCases: [
+        "Verify Agent Town decorative sprites render correctly.",
+        "Adjust the doghouse placement or dog patrol route.",
+        "Check that map hit areas still open the Doghouse building panel.",
+      ],
+    },
+  },
+  {
+    id: "system",
+    name: "System",
+    category: "Vibe Research",
+    description: "Inspect this host's storage, CPU, memory, GPU utilization, accelerators, and agent usage.",
+    icon: ServerCog,
+    install: {
+      system: true,
+    },
+    status: "built in",
+    source: "vibe-research",
+    ui: {
+      entryView: "system",
+      mode: "workspace",
+      workspaceView: "system",
+    },
+    visual: {
+      shape: "plugin",
+      specialTownPlace: true,
+    },
+    access: {
+      label: "Host metrics",
+      detail: "Uses the local system metrics sampler for host storage, CPU, memory, GPU, accelerator, and Vibe Research agent usage data. No extra credentials are required.",
+    },
+    agentGuide: {
+      summary: "Use System when an agent needs to inspect host capacity, GPU availability, storage pressure, or local Vibe Research agent usage.",
+      useCases: [
+        "Check GPU utilization and ownership before starting heavy experiments.",
+        "Review CPU, memory, storage, and accelerator inventory for the local machine.",
+        "Inspect recent system metric history when diagnosing host pressure.",
+      ],
+      commands: [
+        { label: "Read current metrics", command: "curl -s http://127.0.0.1:${VIBE_RESEARCH_PORT:-4123}/api/system -H 'X-Vibe-Research-API: 1'", detail: "Shows current storage, CPU, memory, GPU, accelerator, and agent usage metrics." },
+        { label: "Read one-hour history", command: "curl -s 'http://127.0.0.1:${VIBE_RESEARCH_PORT:-4123}/api/system/history?range=1h' -H 'X-Vibe-Research-API: 1'", detail: "Shows the sampled history backing the System charts." },
+      ],
+      env: [
+        { name: "VIBE_RESEARCH_PORT", detail: "Current Vibe Research server port when available." },
+        { name: "VIBE_RESEARCH_SYSTEM_DIR", detail: "Local system workspace directory for generated guides and communication state." },
+      ],
+    },
+    onboarding: {
+      variables: [
+        { label: "Metrics endpoint", value: "/api/system", required: true },
+        { label: "History endpoint", value: "/api/system/history", required: true },
+      ],
+      steps: [
+        { title: "Open System", detail: "Use the System building to inspect host storage, CPU, memory, GPU, accelerator, and agent usage metrics.", completeWhen: { type: "installed" } },
+        { title: "Check GPU ownership", detail: "Review which GPU processes belong to Vibe Research sessions before scheduling heavy work." },
+      ],
+    },
+  },
+  {
     id: "wandb",
     name: "W&B",
     category: "Observability",
@@ -242,6 +375,58 @@ const CORE_BUILDING_MANIFESTS = [
         { title: "Authenticate wandb", detail: "Log in or provide WANDB_API_KEY in the environment used by the training agent." },
         { title: "Declare the project", detail: "Tell agents which entity/project to log to before long runs start." },
         { title: "Install the building", detail: "Add W&B to Agent Town once experiment logging is configured.", completeWhen: { type: "installed" } },
+      ],
+    },
+  },
+  {
+    id: "occupations",
+    name: "Occupations",
+    category: "Vibe Research",
+    description: "Edit the school of system prompt roles that shape new agents before they start work.",
+    icon: School,
+    install: {
+      system: true,
+    },
+    status: "built in",
+    source: "vibe-research",
+    ui: {
+      entryView: "occupations",
+      mode: "workspace",
+      workspaceView: "agent-prompt",
+    },
+    visual: {
+      shape: "school",
+      specialTownPlace: true,
+    },
+    access: {
+      label: "Managed prompts",
+      detail: "Uses the local Occupations prompt store and syncs managed instructions into AGENTS.md, CLAUDE.md, and GEMINI.md so Codex, Claude, Gemini, and OpenCode sessions receive the same role guidance.",
+    },
+    agentGuide: {
+      summary: "Use Occupations when an agent needs to inspect or explain the shared role prompt that will be injected into new sessions.",
+      useCases: [
+        "Check which occupation is selected before starting a new agent.",
+        "Inspect the managed prompt source and synced AGENTS.md, CLAUDE.md, and GEMINI.md files.",
+        "Diagnose prompt sync conflicts without writing secrets or credentials into managed instruction files.",
+      ],
+      commands: [
+        { label: "Read current occupation", command: "curl -s http://127.0.0.1:${VIBE_RESEARCH_PORT:-4123}/api/agent-prompt -H 'X-Vibe-Research-API: 1'", detail: "Shows the selected occupation, source path, and managed target files." },
+        { label: "Open prompt source", command: "sed -n '1,220p' \"$VIBE_RESEARCH_AGENT_PROMPT_PATH\"", detail: "Read the active prompt file from the agent environment when available." },
+      ],
+      env: [
+        { name: "VIBE_RESEARCH_AGENT_PROMPT_PATH", detail: "Path to the active Occupations prompt file for this session." },
+      ],
+    },
+    onboarding: {
+      variables: [
+        { label: "Selected occupation", value: "Researcher, Engineer, or Custom", required: true },
+        { label: "Prompt source", value: ".vibe-research/agent-prompt.md", required: true },
+        { label: "Managed files", value: "AGENTS.md, CLAUDE.md, GEMINI.md", required: true },
+      ],
+      steps: [
+        { title: "Choose an occupation", detail: "Pick the role prompt that should shape newly launched agents.", completeWhen: { type: "installed" } },
+        { title: "Edit custom guidance", detail: "Use the custom occupation when the built-in researcher or engineer prompt needs project-specific instructions." },
+        { title: "Review managed files", detail: "Check conflicts before overwriting AGENTS.md, CLAUDE.md, or GEMINI.md." },
       ],
     },
   },

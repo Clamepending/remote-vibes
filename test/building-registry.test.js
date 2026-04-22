@@ -15,6 +15,8 @@ test("building registry exposes core building manifests", () => {
   assert.ok(ids.includes("agent-inbox"));
   assert.ok(ids.includes("ci-repair-shop"));
   assert.ok(ids.includes("toolshed"));
+  assert.ok(ids.includes("agentmall"));
+  assert.ok(ids.includes("doghouse"));
   assert.ok(ids.includes("tailscale"));
   assert.ok(ids.includes("google-drive"));
   assert.ok(ids.includes("ottoauth"));
@@ -25,6 +27,8 @@ test("building registry exposes core building manifests", () => {
   assert.ok(ids.includes("sora"));
   assert.ok(ids.includes("nano-banana"));
   assert.ok(ids.includes("wandb"));
+  assert.ok(ids.includes("system"));
+  assert.ok(ids.includes("occupations"));
   assert.ok(ids.includes("phone-imessage"));
   assert.ok(ids.includes("home-automation"));
 
@@ -60,6 +64,29 @@ test("building registry exposes core building manifests", () => {
   assert.match(toolshed.description, /BuildingHub/i);
   assert.match(toolshed.access.detail, /Building SDK|BuildingHub/i);
 
+  const agentMall = BUILDING_CATALOG.find((building) => building.id === "agentmall");
+  assert.equal(agentMall.install.system, true);
+  assert.equal(agentMall.install.enabledSetting, "");
+  assert.equal(agentMall.category, "Vibe Research");
+  assert.equal(agentMall.visual.shape, "market");
+  assert.match(agentMall.description, /theme skins/i);
+  assert.match(agentMall.access.detail, /browser-local/i);
+
+  const doghouse = BUILDING_CATALOG.find((building) => building.id === "doghouse");
+  assert.equal(doghouse.install.system, true);
+  assert.equal(doghouse.visual.shape, "doghouse");
+  assert.ok(AGENT_TOWN_SPECIAL_BUILDING_IDS.has("doghouse"));
+  assert.match(doghouse.description, /doghouse/i);
+  assert.match(doghouse.access.detail, /Agent Town canvas/i);
+
+  const system = BUILDING_CATALOG.find((building) => building.id === "system");
+  assert.equal(system.install.system, true);
+  assert.equal(system.ui.mode, "workspace");
+  assert.equal(system.ui.workspaceView, "system");
+  assert.ok(AGENT_TOWN_SPECIAL_BUILDING_IDS.has("system"));
+  assert.match(system.description, /GPU utilization/i);
+  assert.ok(system.agentGuide.commands.some((command) => command.command.includes("/api/system")));
+
   const tailscale = BUILDING_CATALOG.find((building) => building.id === "tailscale");
   assert.equal(tailscale.install.system, true);
   assert.equal(tailscale.category, "Networking");
@@ -86,6 +113,15 @@ test("building registry exposes core building manifests", () => {
   assert.equal(wandb.visual.shape, "studio");
   assert.match(wandb.access.detail, /WANDB_API_KEY/i);
   assert.ok(wandb.onboarding.steps.some((step) => step.completeWhen?.type === "installed"));
+
+  const occupations = BUILDING_CATALOG.find((building) => building.id === "occupations");
+  assert.equal(occupations.install.system, true);
+  assert.equal(occupations.ui.mode, "workspace");
+  assert.equal(occupations.ui.workspaceView, "agent-prompt");
+  assert.equal(occupations.visual.shape, "school");
+  assert.ok(AGENT_TOWN_SPECIAL_BUILDING_IDS.has("occupations"));
+  assert.match(occupations.access.detail, /AGENTS\.md, CLAUDE\.md, and GEMINI\.md/i);
+  assert.ok(occupations.agentGuide.commands.some((command) => command.command.includes("/api/agent-prompt")));
 
   const externalConnectorIds = ["discord", "moltbook", "twitter", "phone-imessage", "home-automation"];
   for (const connectorId of externalConnectorIds) {

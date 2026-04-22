@@ -31,6 +31,7 @@ import {
   Menu,
   MessageSquarePlus,
   PanelLeftClose,
+  Palette,
   Pencil,
   Plug,
   Plus,
@@ -149,6 +150,8 @@ const VISUAL_GAME_MIN_VIEWPORT_WIDTH = 120;
 const VISUAL_GAME_MIN_VIEWPORT_HEIGHT = 90;
 const VISUAL_GAME_CAMERA_MIN_PADDING_X = 160;
 const VISUAL_GAME_CAMERA_MIN_PADDING_Y = 96;
+const VISUAL_GAME_SYSTEM_BUILDING_ID = "system";
+const VISUAL_GAME_DOGHOUSE_BUILDING_ID = "doghouse";
 const VISUAL_GAME_GPU_ACTIVE_THRESHOLD = 5;
 const VISUAL_GAME_MIN_ZOOM = 0.5;
 const VISUAL_GAME_MAX_ZOOM = 3.2;
@@ -162,6 +165,8 @@ const VISUAL_GAME_AGENT_ARRIVAL_DISTANCE = 0.85;
 const VISUAL_GAME_AGENT_ROUTE_EPSILON = 0.5;
 const VISUAL_GAME_AGENT_ROAM_BASE_DWELL_MS = 980;
 const VISUAL_GAME_AGENT_ROAM_DWELL_STEP_MS = 180;
+const VISUAL_GAME_DOG_ROUTE_DURATION_MS = 19_000;
+const VISUAL_GAME_DOG_DIRECTION_LOOKAHEAD = 0.006;
 const VISUAL_GAME_AGENT_PALETTES = [
   { hat: "#263a78", brim: "#17204e", hair: "#33231c", skin: "#f2c29a", coat: "#173a67", trim: "#f3d49a", pants: "#2e2b32", boots: "#5c3a21" },
   { hat: "#6b2f56", brim: "#3f1f38", hair: "#18151d", skin: "#d99f7a", coat: "#5c1f3a", trim: "#d6edf6", pants: "#2f2735", boots: "#482c1d" },
@@ -183,11 +188,11 @@ const VISUAL_GAME_CAMERA_SCREEN_COLUMNS = 6;
 const VISUAL_GAME_CAMERA_SCREEN_GAP = 4;
 const VISUAL_GAME_CAMERA_SCREEN_MAX_VISIBLE = 12;
 const VISUAL_GAME_CAMERA_SCREEN_SIZE = { width: 12, height: 11 };
-const VISUAL_GAME_GPU_FACTORY_COLUMNS = VISUAL_GAME_MAP_LAYOUT.places.gpuYard.factory.columns;
-const VISUAL_GAME_GPU_FACTORY_GAP = VISUAL_GAME_MAP_LAYOUT.places.gpuYard.factory.gap;
-const VISUAL_GAME_GPU_FACTORY_MAX_VISIBLE = VISUAL_GAME_MAP_LAYOUT.places.gpuYard.factory.maxVisible;
-const VISUAL_GAME_GPU_FACTORY_PADDING = VISUAL_GAME_MAP_LAYOUT.places.gpuYard.factory.padding;
-const VISUAL_GAME_GPU_FACTORY_SIZE = VISUAL_GAME_MAP_LAYOUT.places.gpuYard.factory.size;
+const VISUAL_GAME_GPU_FACTORY_COLUMNS = VISUAL_GAME_MAP_LAYOUT.places.system.factory.columns;
+const VISUAL_GAME_GPU_FACTORY_GAP = VISUAL_GAME_MAP_LAYOUT.places.system.factory.gap;
+const VISUAL_GAME_GPU_FACTORY_MAX_VISIBLE = VISUAL_GAME_MAP_LAYOUT.places.system.factory.maxVisible;
+const VISUAL_GAME_GPU_FACTORY_PADDING = VISUAL_GAME_MAP_LAYOUT.places.system.factory.padding;
+const VISUAL_GAME_GPU_FACTORY_SIZE = VISUAL_GAME_MAP_LAYOUT.places.system.factory.size;
 const VISUAL_GAME_DOCK_MAX_SHIPS = 16;
 const VISUAL_GAME_DOCK_SHIP_WIDTH = 30;
 const VISUAL_GAME_DOCK_SHIP_HEIGHT = 18;
@@ -460,6 +465,7 @@ const OPEN_FILE_TAB_ORDER_STORAGE_KEY = "vibe-research-open-file-tab-order-v1";
 const WORKSPACE_TABS_STORAGE_KEY = "vibe-research-workspace-tabs-v1";
 const WORKSPACE_GROUPS_STORAGE_KEY = "vibe-research-workspace-groups-v1";
 const AGENT_TOWN_LAYOUT_STORAGE_KEY = "vibe-research-agent-town-layout-v1";
+const AGENT_TOWN_THEME_STORAGE_KEY = "vibe-research-agent-town-theme-v1";
 const SIDEBAR_DEFAULT_WIDTH = 276;
 const SIDEBAR_MIN_WIDTH = 220;
 const SIDEBAR_MAX_WIDTH = 520;
@@ -467,6 +473,11 @@ const SIDEBAR_COLLAPSED_RAIL_WIDTH = 0;
 const WORKSPACE_FILE_PREVIEW_DEFAULT_WIDTH = 460;
 const WORKSPACE_FILE_PREVIEW_MIN_WIDTH = 280;
 const WORKSPACE_TERMINAL_MIN_WIDTH = 320;
+const VISUAL_GAME_SIDE_PANEL_DEFAULT_WIDTH = 460;
+const VISUAL_GAME_SIDE_PANEL_MIN_WIDTH = 340;
+const VISUAL_GAME_SIDE_PANEL_MAX_WIDTH = 760;
+const VISUAL_GAME_SIDE_PANEL_HANDLE_WIDTH = 12;
+const VISUAL_GAME_STAGE_MIN_WIDTH = 320;
 const LAYOUT_RESIZE_KEYBOARD_STEP = 16;
 const FILE_PREVIEW_TAB_REORDER_KEYBOARD_STEP = 1;
 const FILE_PREVIEW_TAB_REORDER_DRAG_SLOP_PX = 6;
@@ -496,6 +507,138 @@ const AGENT_TOWN_PLUGIN_BUILDING_RECTS = [
   { x: 616, y: 470, width: 82, height: 58 },
 ];
 const AGENT_TOWN_PLACE_COLLISION_GAP = 2;
+const AGENT_TOWN_DEFAULT_THEME_ID = "default";
+const AGENT_TOWN_THEMES = Object.freeze([
+  {
+    id: AGENT_TOWN_DEFAULT_THEME_ID,
+    name: "Default",
+    meta: "classic",
+    description: "Default skins and green town map.",
+    preview: {
+      ground: "#31694b",
+      path: "#d1af63",
+      building: "#7a5940",
+      accent: "#79bdf8",
+    },
+    ground: {
+      base: "#2f6849",
+      tiles: ["#34714f", "#2b6046", "#31694b"],
+      detail: "#3d8356",
+      sparkle: "#e7ca79",
+    },
+    path: {
+      edge: "#c09a52",
+      fill: "#d1af63",
+      detail: "#a87b3f",
+      shadow: "rgba(82, 58, 31, 0.2)",
+    },
+    room: {
+      floor: "#72563a",
+      trim: "#3d291d",
+      highlight: "rgba(255, 231, 159, 0.12)",
+      line: "rgba(255, 231, 159, 0.12)",
+      shadow: "rgba(73, 46, 27, 0.18)",
+      edgeShadow: "rgba(10, 13, 11, 0.16)",
+      edgeLight: "rgba(255, 238, 176, 0.16)",
+    },
+    foreground: {
+      plant: "#235e42",
+      accent: "#d5c967",
+    },
+    agent: null,
+  },
+  {
+    id: "snowy",
+    name: "Snowdrift",
+    meta: "snowy",
+    description: "Frosted roads, blue shadows, and cold-weather outfits.",
+    preview: {
+      ground: "#dcebf0",
+      path: "#a9c4d6",
+      building: "#496375",
+      accent: "#8fd7ee",
+    },
+    ground: {
+      base: "#dcebf0",
+      tiles: ["#f0f7f8", "#cfe1e8", "#d8edf2"],
+      detail: "#8eb7be",
+      sparkle: "#fff4bc",
+    },
+    path: {
+      edge: "#819fb3",
+      fill: "#a9c4d6",
+      detail: "#6f8fa4",
+      shadow: "rgba(44, 76, 94, 0.18)",
+    },
+    room: {
+      floor: "#566d78",
+      trim: "#263943",
+      highlight: "rgba(219, 246, 255, 0.14)",
+      line: "rgba(219, 246, 255, 0.12)",
+      shadow: "rgba(19, 35, 43, 0.2)",
+      edgeShadow: "rgba(11, 23, 29, 0.2)",
+      edgeLight: "rgba(243, 252, 255, 0.2)",
+    },
+    foreground: {
+      plant: "#5d8790",
+      accent: "#f6f0b8",
+    },
+    agent: {
+      hat: "#6e91a4",
+      brim: "#364e5b",
+      coat: "#7299ad",
+      trim: "#e3f8ff",
+      pants: "#273743",
+      boots: "#1b2a31",
+    },
+  },
+  {
+    id: "desert",
+    name: "Desert",
+    meta: "dunes",
+    description: "Warm sand, clay paths, teal shade, and sun-faded outfits.",
+    preview: {
+      ground: "#cda96b",
+      path: "#b66f45",
+      building: "#7a5940",
+      accent: "#3c8b8a",
+    },
+    ground: {
+      base: "#cda96b",
+      tiles: ["#d7b978", "#c79a5b", "#e0c483"],
+      detail: "#8f7b45",
+      sparkle: "#fff1a8",
+    },
+    path: {
+      edge: "#8e5435",
+      fill: "#b66f45",
+      detail: "#6f422a",
+      shadow: "rgba(74, 42, 22, 0.2)",
+    },
+    room: {
+      floor: "#7a5940",
+      trim: "#3f2a22",
+      highlight: "rgba(255, 222, 152, 0.14)",
+      line: "rgba(255, 222, 152, 0.12)",
+      shadow: "rgba(78, 43, 25, 0.2)",
+      edgeShadow: "rgba(49, 28, 18, 0.18)",
+      edgeLight: "rgba(255, 236, 178, 0.18)",
+    },
+    foreground: {
+      plant: "#536c45",
+      accent: "#3c8b8a",
+    },
+    agent: {
+      hat: "#a46b3f",
+      brim: "#6c3e25",
+      coat: "#c68a4d",
+      trim: "#f4d487",
+      pants: "#3d4c45",
+      boots: "#3a271d",
+    },
+  },
+]);
+const AGENT_TOWN_THEME_BY_ID = new Map(AGENT_TOWN_THEMES.map((theme) => [theme.id, theme]));
 
 function loadSessionReadState() {
   try {
@@ -729,6 +872,10 @@ function loadLayoutPreferences() {
       sidebarCollapsed: Boolean(parsed.sidebarCollapsed),
       sidebarWidth: getStoredLayoutNumber(parsed.sidebarWidth, SIDEBAR_DEFAULT_WIDTH),
       filePreviewWidth: getStoredLayoutNumber(parsed.filePreviewWidth, WORKSPACE_FILE_PREVIEW_DEFAULT_WIDTH),
+      visualGameSidePanelWidth: getStoredLayoutNumber(
+        parsed.visualGameSidePanelWidth,
+        VISUAL_GAME_SIDE_PANEL_DEFAULT_WIDTH,
+      ),
     };
   } catch {
     return {};
@@ -783,8 +930,22 @@ function loadAgentTownLayoutPreferences() {
   }
 }
 
+function normalizeAgentTownThemeId(value) {
+  const themeId = normalizeBuildingId(value);
+  return AGENT_TOWN_THEME_BY_ID.has(themeId) ? themeId : AGENT_TOWN_DEFAULT_THEME_ID;
+}
+
+function loadAgentTownThemePreference() {
+  try {
+    return normalizeAgentTownThemeId(window.localStorage.getItem(AGENT_TOWN_THEME_STORAGE_KEY));
+  } catch {
+    return AGENT_TOWN_DEFAULT_THEME_ID;
+  }
+}
+
 const layoutPreferences = loadLayoutPreferences();
 const agentTownLayoutPreferences = loadAgentTownLayoutPreferences();
+const agentTownThemePreference = loadAgentTownThemePreference();
 
 const state = {
   providers: [],
@@ -802,6 +963,7 @@ const state = {
   pluginDetailId: "",
   pluginInstallActions: {},
   pluginOnboardingOpenId: "",
+  buildingHubAdvancedOpen: false,
   brainSetupCloneUrl: "",
   brainSetupClonePath: "",
   brainSetupCloning: false,
@@ -835,6 +997,7 @@ const state = {
     viewport: null,
     editMode: false,
     customLayout: agentTownLayoutPreferences,
+    themeId: agentTownThemePreference,
     selectedSessionId: "",
     selectedBrowserUseSessionId: "",
     selectedBuildingId: "",
@@ -1015,6 +1178,7 @@ const state = {
   sidebarCollapsed: Boolean(layoutPreferences.sidebarCollapsed),
   sidebarWidth: layoutPreferences.sidebarWidth || SIDEBAR_DEFAULT_WIDTH,
   filePreviewWidth: layoutPreferences.filePreviewWidth || WORKSPACE_FILE_PREVIEW_DEFAULT_WIDTH,
+  visualGameSidePanelWidth: layoutPreferences.visualGameSidePanelWidth || VISUAL_GAME_SIDE_PANEL_DEFAULT_WIDTH,
   terminalResizeObserver: null,
   terminalSelectionDisposable: null,
   terminalFitFrame: null,
@@ -1063,6 +1227,7 @@ function saveLayoutPreferences() {
         sidebarCollapsed: state.sidebarCollapsed,
         sidebarWidth: state.sidebarWidth,
         filePreviewWidth: state.filePreviewWidth,
+        visualGameSidePanelWidth: state.visualGameSidePanelWidth,
       }),
     );
   } catch {
@@ -1279,6 +1444,26 @@ function getWorkspaceFilePreviewWidth(split = document.querySelector("#workspace
   return Math.round(clamp(Number(state.filePreviewWidth) || WORKSPACE_FILE_PREVIEW_DEFAULT_WIDTH, min, max));
 }
 
+function getVisualGameSidePanelBounds(layout = document.querySelector(".visual-game-layout.has-session-panel")) {
+  const layoutWidth = layout instanceof HTMLElement ? layout.getBoundingClientRect().width : getViewportWidth();
+  const available = Math.max(0, layoutWidth - VISUAL_GAME_STAGE_MIN_WIDTH - VISUAL_GAME_SIDE_PANEL_HANDLE_WIDTH);
+  const max = Math.max(
+    VISUAL_GAME_SIDE_PANEL_MIN_WIDTH,
+    Math.min(VISUAL_GAME_SIDE_PANEL_MAX_WIDTH, available || VISUAL_GAME_SIDE_PANEL_DEFAULT_WIDTH),
+  );
+
+  return { min: Math.min(VISUAL_GAME_SIDE_PANEL_MIN_WIDTH, max), max };
+}
+
+function getVisualGameSidePanelWidth(layout = document.querySelector(".visual-game-layout.has-session-panel")) {
+  const { min, max } = getVisualGameSidePanelBounds(layout);
+  return Math.round(clamp(
+    Number(state.visualGameSidePanelWidth) || VISUAL_GAME_SIDE_PANEL_DEFAULT_WIDTH,
+    min,
+    max,
+  ));
+}
+
 function renderAppShellStyle() {
   return `--sidebar-width: ${getSidebarWidth()}px; --sidebar-rail-width: ${SIDEBAR_COLLAPSED_RAIL_WIDTH}px;`;
 }
@@ -1332,6 +1517,23 @@ function renderWorkspaceResizeHandle() {
       aria-valuenow="${getWorkspaceFilePreviewWidth()}"
       tabindex="${active ? "0" : "-1"}"
       data-layout-resize="workspace"
+    ></div>
+  `;
+}
+
+function renderVisualGameSidePanelResizeHandle() {
+  const { min, max } = getVisualGameSidePanelBounds();
+  return `
+    <div
+      class="layout-resize-handle visual-game-side-resize-handle"
+      role="separator"
+      aria-label="Resize Agent Town side panel"
+      aria-orientation="vertical"
+      aria-valuemin="${min}"
+      aria-valuemax="${max}"
+      aria-valuenow="${getVisualGameSidePanelWidth()}"
+      tabindex="0"
+      data-visual-game-panel-resize
     ></div>
   `;
 }
@@ -1755,6 +1957,24 @@ function refreshWorkspaceResizeHandleUi() {
   handle.tabIndex = active ? 0 : -1;
 }
 
+function refreshVisualGameSidePanelLayout() {
+  const layout = document.querySelector(".visual-game-layout.has-session-panel");
+  if (!(layout instanceof HTMLElement)) {
+    return;
+  }
+
+  state.visualGameSidePanelWidth = getVisualGameSidePanelWidth(layout);
+  layout.style.setProperty("--visual-game-side-panel-width", `${state.visualGameSidePanelWidth}px`);
+
+  const handle = layout.querySelector("[data-visual-game-panel-resize]");
+  if (handle instanceof HTMLElement) {
+    const { min, max } = getVisualGameSidePanelBounds(layout);
+    handle.setAttribute("aria-valuemin", String(min));
+    handle.setAttribute("aria-valuemax", String(max));
+    handle.setAttribute("aria-valuenow", String(state.visualGameSidePanelWidth));
+  }
+}
+
 function refreshLayoutUi() {
   state.sidebarWidth = getSidebarWidth();
 
@@ -1774,6 +1994,7 @@ function refreshLayoutUi() {
   refreshSidebarToggleButtons();
   refreshSidebarResizeHandleUi();
   refreshWorkspaceResizeHandleUi();
+  refreshVisualGameSidePanelLayout();
   fitTerminalSoon();
 }
 
@@ -1797,6 +2018,19 @@ function setWorkspaceFilePreviewWidth(width, { persist = false, split = document
   const { min, max } = getWorkspaceFilePreviewBounds(split);
   state.filePreviewWidth = Math.round(clamp(width, min, max));
   refreshLayoutUi();
+  if (persist) {
+    saveLayoutPreferences();
+  }
+}
+
+function setVisualGameSidePanelWidth(width, {
+  persist = false,
+  layout = document.querySelector(".visual-game-layout.has-session-panel"),
+} = {}) {
+  const { min, max } = getVisualGameSidePanelBounds(layout);
+  state.visualGameSidePanelWidth = Math.round(clamp(width, min, max));
+  refreshVisualGameSidePanelLayout();
+  fitTerminalSoon();
   if (persist) {
     saveLayoutPreferences();
   }
@@ -1916,6 +2150,93 @@ function handleLayoutResizeKeydown(event, kind) {
   event.preventDefault();
 }
 
+function resetVisualGameSidePanelResizeTarget(layout = document.querySelector(".visual-game-layout.has-session-panel")) {
+  setVisualGameSidePanelWidth(VISUAL_GAME_SIDE_PANEL_DEFAULT_WIDTH, { persist: true, layout });
+}
+
+function beginVisualGameSidePanelResize(event) {
+  if (event.button !== undefined && event.button !== 0) {
+    return;
+  }
+
+  const handle = event.currentTarget;
+  if (!(handle instanceof HTMLElement)) {
+    return;
+  }
+
+  const layout = handle.closest(".visual-game-layout.has-session-panel");
+  if (!(layout instanceof HTMLElement)) {
+    return;
+  }
+
+  const pointerId = event.pointerId;
+  const startClientX = event.clientX;
+  const startWidth = getVisualGameSidePanelWidth(layout);
+  const controller = new AbortController();
+
+  rememberTerminalResizeScrollAnchor();
+  document.body.classList.add("is-resizing-layout", "is-resizing-visual-game-panel");
+  handle.classList.add("is-dragging");
+
+  const onPointerMove = (moveEvent) => {
+    if (moveEvent.pointerId !== pointerId) {
+      return;
+    }
+
+    setVisualGameSidePanelWidth(startWidth - (moveEvent.clientX - startClientX), { layout });
+    moveEvent.preventDefault();
+  };
+
+  const onPointerEnd = (endEvent) => {
+    if (endEvent.pointerId !== pointerId) {
+      return;
+    }
+
+    handle.classList.remove("is-dragging");
+    document.body.classList.remove("is-resizing-layout", "is-resizing-visual-game-panel");
+    saveLayoutPreferences();
+    controller.abort();
+    fitTerminalSoon();
+  };
+
+  window.addEventListener("pointermove", onPointerMove, { signal: controller.signal });
+  window.addEventListener("pointerup", onPointerEnd, { signal: controller.signal });
+  window.addEventListener("pointercancel", onPointerEnd, { signal: controller.signal });
+
+  try {
+    handle.setPointerCapture(pointerId);
+  } catch {
+    // Pointer capture is best-effort; window listeners still keep the drag alive.
+  }
+
+  event.preventDefault();
+}
+
+function handleVisualGameSidePanelResizeKeydown(event) {
+  const handle = event.currentTarget;
+  const layout = handle instanceof HTMLElement ? handle.closest(".visual-game-layout.has-session-panel") : null;
+  if (!(layout instanceof HTMLElement)) {
+    return;
+  }
+
+  const { min, max } = getVisualGameSidePanelBounds(layout);
+  const step = event.shiftKey ? LAYOUT_RESIZE_KEYBOARD_STEP * 4 : LAYOUT_RESIZE_KEYBOARD_STEP;
+
+  if (event.key === "ArrowLeft") {
+    setVisualGameSidePanelWidth(getVisualGameSidePanelWidth(layout) + step, { persist: true, layout });
+  } else if (event.key === "ArrowRight") {
+    setVisualGameSidePanelWidth(getVisualGameSidePanelWidth(layout) - step, { persist: true, layout });
+  } else if (event.key === "Home") {
+    setVisualGameSidePanelWidth(min, { persist: true, layout });
+  } else if (event.key === "End") {
+    setVisualGameSidePanelWidth(max, { persist: true, layout });
+  } else {
+    return;
+  }
+
+  event.preventDefault();
+}
+
 function bindLayoutResizeEvents() {
   document.querySelectorAll("[data-sidebar-toggle]").forEach((button) => {
     button.addEventListener("click", () => toggleSidebarCollapsed());
@@ -1930,6 +2251,15 @@ function bindLayoutResizeEvents() {
     handle.addEventListener("pointerdown", (event) => beginLayoutResize(event, kind));
     handle.addEventListener("keydown", (event) => handleLayoutResizeKeydown(event, kind));
     handle.addEventListener("dblclick", () => resetLayoutResizeTarget(kind));
+  });
+
+  document.querySelectorAll("[data-visual-game-panel-resize]").forEach((handle) => {
+    handle.addEventListener("pointerdown", beginVisualGameSidePanelResize);
+    handle.addEventListener("keydown", handleVisualGameSidePanelResizeKeydown);
+    handle.addEventListener("dblclick", () => {
+      const layout = handle instanceof HTMLElement ? handle.closest(".visual-game-layout.has-session-panel") : null;
+      resetVisualGameSidePanelResizeTarget(layout instanceof HTMLElement ? layout : undefined);
+    });
   });
 }
 
@@ -4837,7 +5167,27 @@ Walk me through Vibe Research in plain language:
 6. Toolshed and BuildingHub: how new buildings are drafted, validated, and shared.
 7. Telegram and Phone/iMessage: optional communication bridges I can connect later.
 
-Then ask me one question: what kind of thing do I want to accomplish first, and do I want help connecting Telegram or phone access? Keep it warm, concrete, and brief. Do not start doing work until I answer.\r`;
+Then ask me one question: what kind of thing do I want to accomplish first, and do I want help connecting Telegram or phone access? Keep it warm, concrete, and brief. Do not start doing work until I answer.`;
+}
+
+function getWikiConflictAgentPrompt() {
+  const backup = state.settings.wikiBackup || {};
+  const conflictFiles = Array.isArray(backup.conflictFiles) ? backup.conflictFiles : [];
+  const conflictList = conflictFiles.length
+    ? conflictFiles.map((filePath) => `- ${filePath}`).join("\n")
+    : "- No specific conflict files were reported.";
+  const message = getWikiBackupFailureMessage(backup);
+
+  return `The Vibe Research Library sync hit a git conflict.
+
+Library folder: ${state.settings.wikiPath || "(unknown)"}
+Remote URL: ${state.settings.wikiGitRemoteUrl || "(not configured in visible settings)"}
+Conflict summary: ${message || "Library sync failed."}
+
+Conflicted files:
+${conflictList}
+
+Please inspect the Library git status, preserve all human work, resolve the conflict, commit the Library if appropriate, and report exactly what changed. Do not use git reset --hard or discard local changes without asking.`;
 }
 
 function hasNonInstallerAgentSession() {
@@ -4861,6 +5211,8 @@ async function createSessionInFolder(
     name = "",
     initialInput = "",
     initialInputDelayMs = 900,
+    initialPrompt = "",
+    initialPromptDelayMs = 1400,
     openInTown = false,
     rememberProvider = true,
   } = {},
@@ -4871,9 +5223,15 @@ async function createSessionInFolder(
     throw new Error("Choose a folder before starting a session.");
   }
 
+  const requestBody = { providerId, cwd: selectedCwd, name };
+  if (initialPrompt) {
+    requestBody.initialPrompt = initialPrompt;
+    requestBody.initialPromptDelayMs = initialPromptDelayMs;
+  }
+
   const payload = await fetchJson("/api/sessions", {
     method: "POST",
-    body: JSON.stringify({ providerId, cwd: selectedCwd, name }),
+    body: JSON.stringify(requestBody),
   });
 
   state.defaultCwd = getAgentSpawnPath() || selectedCwd;
@@ -4917,10 +5275,10 @@ async function startNewAgentInDefaultFolder({ openInTown = false } = {}) {
   await createSessionInFolder(cwd, {
     providerId,
     name: shouldRunFirstSessionOnboarding ? "Onboarding guide" : "",
-    initialInput: shouldRunFirstSessionOnboarding
+    initialPrompt: shouldRunFirstSessionOnboarding
       ? getFirstSessionOnboardingPrompt({ cwd, providerId })
       : "",
-    initialInputDelayMs: 1400,
+    initialPromptDelayMs: 1400,
     openInTown: openInTown || shouldRunFirstSessionOnboarding,
   });
 }
@@ -5000,10 +5358,10 @@ async function applyFolderPickerSelection() {
     await createSessionInFolder(selectedPath, {
       providerId,
       name: shouldRunFirstSessionOnboarding ? "Onboarding guide" : "",
-      initialInput: shouldRunFirstSessionOnboarding
+      initialPrompt: shouldRunFirstSessionOnboarding
         ? getFirstSessionOnboardingPrompt({ cwd: selectedPath, providerId })
         : "",
-      initialInputDelayMs: 1400,
+      initialPromptDelayMs: 1400,
       openInTown: shouldRunFirstSessionOnboarding,
     });
     return;
@@ -9157,12 +9515,6 @@ function renderSidebarNav() {
       label: "Settings",
       meta: getAgentCredentialsStatusText(),
     },
-    {
-      view: "system",
-      icon: ServerCog,
-      label: "System",
-      meta: "storage, CPU, GPU",
-    },
   ];
   const workspaceItems = [
     {
@@ -10415,12 +10767,97 @@ function renderAgentCredentialsSettingsPanel() {
   `;
 }
 
-function renderBuildingHubPluginPanel({ install = false } = {}) {
-  const actionLabel = install ? "save community catalogs" : "save BuildingHub";
+function getBuildingHubSourceSummary() {
   const status = state.settings.buildingHubStatus || state.buildingHub.status || {};
-  const sourceSummary = Array.isArray(status.sources) && status.sources.length
+  return Array.isArray(status.sources) && status.sources.length
     ? status.sources.map((source) => `${source.label || source.kind}: ${source.status || "pending"}`).join(" · ")
     : "local folder or registry JSON";
+}
+
+function renderBuildingHubSourceSettings({ idPrefix = "", actionLabel = "save BuildingHub" } = {}) {
+  return `
+    <label class="field-label" for="${escapeHtml(idPrefix)}buildinghub-catalog-path">local catalog folder</label>
+    <input
+      class="file-root-input"
+      id="${escapeHtml(idPrefix)}buildinghub-catalog-path"
+      name="buildingHubCatalogPath"
+      type="text"
+      value="${escapeHtml(state.settings.buildingHubCatalogPath || "")}"
+      placeholder="/Users/mark/Desktop/projects/buildinghub"
+      autocomplete="off"
+      autocorrect="off"
+      autocapitalize="none"
+      spellcheck="false"
+    />
+    <label class="field-label" for="${escapeHtml(idPrefix)}buildinghub-catalog-url">remote registry JSON</label>
+    <input
+      class="file-root-input"
+      id="${escapeHtml(idPrefix)}buildinghub-catalog-url"
+      name="buildingHubCatalogUrl"
+      type="url"
+      value="${escapeHtml(state.settings.buildingHubCatalogUrl || "")}"
+      placeholder="https://example.com/buildinghub/registry.json"
+      autocomplete="off"
+      autocorrect="off"
+      autocapitalize="none"
+      spellcheck="false"
+    />
+    <div class="knowledge-settings-actions">
+      <button class="primary-button settings-save-button" type="submit">${escapeHtml(actionLabel)}</button>
+      <div class="settings-status">${escapeHtml(getBuildingHubStatusText())}</div>
+    </div>
+  `;
+}
+
+function renderBuildingHubCatalogAdvancedPanel() {
+  return `
+    <section class="buildinghub-catalog-advanced-panel" aria-label="BuildingHub advanced settings">
+      <form class="settings-form buildinghub-form buildinghub-catalog-advanced-form" data-settings-form>
+        ${renderBuildingHubSourceSettings({ idPrefix: "catalog-advanced-", actionLabel: "save advanced settings" })}
+      </form>
+      <p class="mcp-import-paths">${escapeHtml(getBuildingHubSourceSummary())}</p>
+    </section>
+  `;
+}
+
+function renderBuildingHubCatalogControls() {
+  const enabled = state.settings.buildingHubEnabled;
+
+  return `
+    <div class="buildinghub-catalog-controls">
+      <form class="buildinghub-catalog-toggle-form" data-settings-form>
+        <label class="checkbox-row buildinghub-catalog-toggle-box" for="buildinghub-community-enabled">
+          <input
+            id="buildinghub-community-enabled"
+            type="checkbox"
+            name="buildingHubEnabled"
+            aria-label="community buildings"
+            data-buildinghub-community-toggle
+            ${enabled ? "checked" : ""}
+          />
+          <span class="buildinghub-catalog-toggle-copy">
+            <strong>community buildings</strong>
+            <em>${enabled ? "on" : "off by default"}</em>
+          </span>
+        </label>
+        <span class="settings-status" data-buildinghub-status>${escapeHtml(getBuildingHubStatusText())}</span>
+      </form>
+      <button
+        class="ghost-button toolbar-control buildinghub-advanced-toggle"
+        type="button"
+        data-buildinghub-advanced-toggle
+        aria-expanded="${state.buildingHubAdvancedOpen ? "true" : "false"}"
+      >
+        ${renderIcon(Settings)}
+        <span>advanced settings</span>
+      </button>
+    </div>
+    ${state.buildingHubAdvancedOpen ? renderBuildingHubCatalogAdvancedPanel() : ""}
+  `;
+}
+
+function renderBuildingHubPluginPanel({ install = false } = {}) {
+  const actionLabel = install ? "save community catalogs" : "save BuildingHub";
 
   return `
     <aside class="mcp-import-card buildinghub-plugin-card">
@@ -10430,40 +10867,11 @@ function renderBuildingHubPluginPanel({ install = false } = {}) {
       <form class="settings-form buildinghub-form ${install ? "plugin-install-form" : ""}" ${install ? "" : "id=\"buildinghub-form\""} data-settings-form>
         <label class="checkbox-row browser-use-compact-checkbox">
           <input type="checkbox" name="buildingHubEnabled" ${state.settings.buildingHubEnabled ? "checked" : ""} />
-          <span>enable community building catalogs</span>
+          <span>community buildings</span>
         </label>
-        <label class="field-label" for="${install ? "install-" : ""}buildinghub-catalog-path">local catalog folder</label>
-        <input
-          class="file-root-input"
-          id="${install ? "install-" : ""}buildinghub-catalog-path"
-          name="buildingHubCatalogPath"
-          type="text"
-          value="${escapeHtml(state.settings.buildingHubCatalogPath || "")}"
-          placeholder="/Users/mark/Desktop/projects/buildinghub"
-          autocomplete="off"
-          autocorrect="off"
-          autocapitalize="none"
-          spellcheck="false"
-        />
-        <label class="field-label" for="${install ? "install-" : ""}buildinghub-catalog-url">remote registry JSON</label>
-        <input
-          class="file-root-input"
-          id="${install ? "install-" : ""}buildinghub-catalog-url"
-          name="buildingHubCatalogUrl"
-          type="url"
-          value="${escapeHtml(state.settings.buildingHubCatalogUrl || "")}"
-          placeholder="https://example.com/buildinghub/registry.json"
-          autocomplete="off"
-          autocorrect="off"
-          autocapitalize="none"
-          spellcheck="false"
-        />
-        <div class="knowledge-settings-actions">
-          <button class="primary-button settings-save-button" type="submit">${escapeHtml(actionLabel)}</button>
-          <div class="settings-status">${escapeHtml(getBuildingHubStatusText())}</div>
-        </div>
+        ${renderBuildingHubSourceSettings({ idPrefix: install ? "install-" : "", actionLabel })}
       </form>
-      <p class="mcp-import-paths">${escapeHtml(sourceSummary)}</p>
+      <p class="mcp-import-paths">${escapeHtml(getBuildingHubSourceSummary())}</p>
     </aside>
   `;
 }
@@ -10841,6 +11249,19 @@ function renderVideoMemoryPluginPanel() {
   `;
 }
 
+function renderAppManagementSettingsPanel() {
+  return `
+    <aside class="mcp-import-card app-management-card">
+      <span class="main-search-kind">local app</span>
+      <strong>App management</strong>
+      <p>Stop Vibe Research on this laptop.</p>
+      <div class="knowledge-settings-actions settings-app-actions">
+        <button class="danger-button terminate-button" type="button" id="terminate-app">uninstall</button>
+      </div>
+    </aside>
+  `;
+}
+
 function renderPluginsView() {
   const detailPlugin = getCurrentPluginDetail();
   if (detailPlugin) {
@@ -10859,20 +11280,23 @@ function renderPluginsView() {
           <div class="terminal-meta">building catalog for system tools, integrations, and opt-in community buildings</div>
         </div>
       </div>
-      <div class="main-search-shell">
-        <span class="main-search-icon" aria-hidden="true">${renderIcon(Plug)}</span>
-        <input
-          id="plugin-search-input"
-          class="main-search-input"
-          type="search"
-          value="${escapeHtml(state.pluginSearchQuery)}"
-          placeholder="Search building catalog"
-          autocomplete="off"
-          autocorrect="off"
-          autocapitalize="none"
-          spellcheck="false"
-        />
-        <span class="main-search-count" data-plugin-search-count>${escapeHtml(`${getFilteredPlugins().length} shown`)}</span>
+      <div class="buildinghub-catalog-toolbar">
+        <div class="main-search-shell">
+          <span class="main-search-icon" aria-hidden="true">${renderIcon(Plug)}</span>
+          <input
+            id="plugin-search-input"
+            class="main-search-input"
+            type="search"
+            value="${escapeHtml(state.pluginSearchQuery)}"
+            placeholder="Search building catalog"
+            autocomplete="off"
+            autocorrect="off"
+            autocapitalize="none"
+            spellcheck="false"
+          />
+          <span class="main-search-count" data-plugin-search-count>${escapeHtml(`${getFilteredPlugins().length} shown`)}</span>
+        </div>
+        ${renderBuildingHubCatalogControls()}
       </div>
       <div class="plugins-layout">
         <section class="plugin-grid plugin-store-grid" id="plugin-results" data-plugin-results>${renderPluginCards()}</section>
@@ -10911,6 +11335,7 @@ function renderSettingsView() {
             ${renderCommunicationsPluginPanel()}
             ${renderBrowserUsePluginPanel()}
             ${renderVideoMemoryPluginPanel()}
+            ${renderAppManagementSettingsPanel()}
           </div>
         </details>
       </div>
@@ -12900,7 +13325,7 @@ function renderVisualMissionBoard() {
   const missions = [
     { label: "New run", meta: "default folder", icon: MessageSquarePlus, attrs: `data-start-new-agent="town"` },
     { label: "Findings", meta: "open library", icon: BookOpen, attrs: `data-visual-building-open="knowledge-base"` },
-    { label: "BuildingHub", meta: "catalog", icon: Plug, attrs: `data-visual-building-open="buildinghub"` },
+    { label: "BuildingHub", meta: "catalog", icon: Plug, attrs: `data-open-buildinghub-catalog` },
     { label: "Schedule", meta: "automations", icon: CalendarClock, attrs: `data-visual-building-open="automations"` },
   ];
 
@@ -13277,6 +13702,7 @@ function renderVisualPixelGame(graph) {
         <canvas
           id="visual-game-canvas"
           class="visual-game-canvas"
+          data-agent-town-theme="${escapeHtml(normalizeAgentTownThemeId(state.visualGame.themeId))}"
           width="${VISUAL_GAME_WIDTH * VISUAL_GAME_RENDER_SCALE}"
           height="${VISUAL_GAME_HEIGHT * VISUAL_GAME_RENDER_SCALE}"
           role="img"
@@ -13346,12 +13772,13 @@ function renderVisualGameSessionDrawer(graph) {
   const browserUseSessionId = state.visualGame.selectedBrowserUseSessionId || "";
 
   return `
-    <aside class="visual-game-session-panel" aria-label="Agent terminal">
-      <div class="visual-game-session-head">
+    <aside class="visual-game-session-panel visual-game-side-panel" aria-label="Agent terminal">
+      <div class="visual-game-session-head visual-game-terminal-head">
         <div class="terminal-copy">
           <strong>${escapeHtml(title)}</strong>
           <div class="terminal-meta">${escapeHtml(meta)}</div>
         </div>
+        <button class="icon-button toolbar-control visual-game-panel-close-button" type="button" id="visual-game-close-session" aria-label="Close agent terminal" ${tooltipAttributes("Close agent terminal")}>${renderIcon(X)}</button>
         <div class="visual-game-session-actions">
           ${
             browserUseSessionId
@@ -13363,7 +13790,6 @@ function renderVisualGameSessionDrawer(graph) {
           <button class="ghost-button toolbar-control terminal-control-button" type="button" id="ctrl-p-button" data-terminal-control aria-label="Send Control P" ${tooltipAttributes("Send Control P")} ${selectedSession ? "" : "disabled"}>${renderIcon(ArrowUp)}</button>
           <button class="ghost-button toolbar-control terminal-control-button" type="button" id="ctrl-t-button" data-terminal-control aria-label="Send Control T" ${tooltipAttributes("Send Control T")} ${selectedSession ? "" : "disabled"}>${renderIcon(Type)}</button>
           <button class="ghost-button toolbar-control terminal-control-button" type="button" id="ctrl-c-button" data-terminal-control aria-label="Send Control C" ${tooltipAttributes("Send Control C")} ${selectedSession ? "" : "disabled"}>${renderIcon(CircleStop)}</button>
-          <button class="icon-button toolbar-control" type="button" id="visual-game-close-session" aria-label="Close agent terminal" ${tooltipAttributes("Close agent terminal")}>${renderIcon(X)}</button>
         </div>
       </div>
       <div class="terminal-stack visual-game-terminal-stack">
@@ -13480,41 +13906,57 @@ function renderVisualGameLibraryBuildingPanel() {
   `;
 }
 
-function renderBuildingHubCatalogPanel() {
+function getSystemBuildingStatusText(system = state.systemMetrics) {
+  if (state.systemMetricsLoading && !system) {
+    return "sampling metrics";
+  }
+
+  if (!system) {
+    return "host metrics";
+  }
+
+  const gpuCount = Array.isArray(system.gpus) ? system.gpus.length : 0;
+  const cpuPercent = getFiniteMetricPercent(system.cpu?.utilizationPercent);
+  const memoryPercent = getFiniteMetricPercent(system.memory?.usedPercent);
+  const cpuLabel = cpuPercent === null ? "not exposed" : formatCompactPercent(cpuPercent);
+  const memoryLabel = memoryPercent === null ? "not exposed" : formatCompactPercent(memoryPercent);
+  if (gpuCount > 0) {
+    return `${gpuCount} GPU${gpuCount === 1 ? "" : "s"} · CPU ${cpuLabel}`;
+  }
+  if (cpuPercent !== null || memoryPercent !== null) {
+    return `CPU ${cpuLabel} · memory ${memoryLabel}`;
+  }
+
+  return `${system.platform || "host"} metrics`;
+}
+
+function renderSystemBuildingPanel() {
+  const system = state.systemMetrics;
+  const updatedAge = system?.checkedAt ? relativeTime(system.checkedAt) : "";
+  const updated = updatedAge ? (updatedAge === "live" ? "updated just now" : `updated ${updatedAge} ago`) : "waiting for first sample";
+
   return `
-    <div class="visual-building-panel-scroll visual-building-buildinghub-panel">
+    <div class="visual-building-panel-scroll visual-building-system-panel">
       <section class="visual-building-summary">
-        <span class="main-search-kind">system building</span>
-        <strong>Building catalog</strong>
+        <span class="main-search-kind">host metrics</span>
+        <strong>${escapeHtml(system?.hostname || "System")}</strong>
+        <p>${escapeHtml(system ? `${system.platform || "unknown"} · uptime ${formatUptime(system.uptimeSeconds)} · ${updated}` : "Sampling storage, CPU, memory, GPU, accelerator, and agent usage metrics.")}</p>
         <div class="visual-building-library-actions">
           <button
             class="primary-button toolbar-control"
             type="button"
-            data-open-building-workspace="buildinghub"
-            data-building-workspace-view="plugins"
+            data-open-building-workspace="system"
+            data-building-workspace-view="system"
           >
-            <span aria-hidden="true">${renderIcon(Plug)}</span>
-            <span>Open full catalog</span>
+            <span aria-hidden="true">${renderIcon(ServerCog)}</span>
+            <span>Open System</span>
           </button>
         </div>
       </section>
-      ${renderBuildingHubPluginPanel()}
-      <div class="main-search-shell visual-buildinghub-search">
-        <span class="main-search-icon" aria-hidden="true">${renderIcon(Plug)}</span>
-        <input
-          id="plugin-search-input"
-          class="main-search-input"
-          type="search"
-          value="${escapeHtml(state.pluginSearchQuery)}"
-          placeholder="Search building catalog"
-          autocomplete="off"
-          autocorrect="off"
-          autocapitalize="none"
-          spellcheck="false"
-        />
-        <span class="main-search-count" data-plugin-search-count>${escapeHtml(`${getFilteredPlugins().length} shown`)}</span>
-      </div>
-      <section class="plugin-grid plugin-store-grid visual-buildinghub-grid" data-plugin-results>${renderPluginCards()}</section>
+      ${state.systemMetricsError ? `<div class="system-error-card">${escapeHtml(state.systemMetricsError)}</div>` : ""}
+      ${renderSystemSummaryCards(system)}
+      ${renderDeviceSection("GPUs", system?.gpus, "No GPU utilization source was found on this host.")}
+      ${renderSystemWarnings(system)}
     </div>
   `;
 }
@@ -13526,7 +13968,7 @@ function renderToolshedBuildingPanel() {
       meta: "catalog",
       icon: Plug,
       detail: "Browse system buildings, integrations, and opt-in community catalog entries.",
-      attrs: `data-visual-building-open="buildinghub"`,
+      attrs: `data-open-buildinghub-catalog`,
     },
     {
       label: "Library",
@@ -13541,6 +13983,13 @@ function renderToolshedBuildingPanel() {
       icon: Settings,
       detail: "Settings hold credentials, local folders, remote access options, and runtime defaults.",
       attrs: `data-open-main-view="settings"`,
+    },
+    {
+      label: "System",
+      meta: "host metrics",
+      icon: ServerCog,
+      detail: "System shows storage, CPU, memory, GPUs, accelerators, and local agent usage.",
+      attrs: `data-visual-building-open="system"`,
     },
     {
       label: "Occupations",
@@ -13574,7 +14023,7 @@ function renderToolshedBuildingPanel() {
             <span aria-hidden="true">${renderIcon(MessageSquarePlus)}</span>
             <span>Ask an agent</span>
           </button>
-          <button class="ghost-button toolbar-control" type="button" data-visual-building-open="buildinghub">
+          <button class="ghost-button toolbar-control" type="button" data-open-buildinghub-catalog>
             <span aria-hidden="true">${renderIcon(Plug)}</span>
             <span>BuildingHub</span>
           </button>
@@ -13614,6 +14063,43 @@ function renderToolshedBuildingPanel() {
   `;
 }
 
+function renderAgentMallThemeCard(theme) {
+  const active = normalizeAgentTownThemeId(state.visualGame.themeId) === theme.id;
+  const preview = theme.preview || {};
+  return `
+    <button
+      class="agentmall-theme-card ${active ? "is-active" : ""}"
+      type="button"
+      data-agent-town-theme="${escapeHtml(theme.id)}"
+      aria-pressed="${active ? "true" : "false"}"
+      style="--agentmall-ground:${escapeHtml(preview.ground || "#31694b")};--agentmall-path:${escapeHtml(preview.path || "#d1af63")};--agentmall-building:${escapeHtml(preview.building || "#7a5940")};--agentmall-accent:${escapeHtml(preview.accent || "#79bdf8")};"
+    >
+      <span class="agentmall-theme-swatch" aria-hidden="true"></span>
+      <span class="agentmall-theme-copy">
+        <strong>${escapeHtml(theme.name)}</strong>
+        <em>${escapeHtml(theme.meta)}</em>
+        <span>${escapeHtml(theme.description)}</span>
+      </span>
+      <span class="agentmall-theme-action">${active ? "Active" : "Apply"}</span>
+    </button>
+  `;
+}
+
+function renderAgentMallBuildingPanel() {
+  const activeTheme = getAgentTownTheme();
+  return `
+    <div class="visual-building-panel-scroll visual-building-agentmall-panel">
+      <section class="visual-building-summary">
+        <span class="main-search-kind">theme catalog</span>
+        <strong>${escapeHtml(activeTheme.name)} is on the town map.</strong>
+      </section>
+      <section class="agentmall-theme-grid" aria-label="Agent Town themes">
+        ${AGENT_TOWN_THEMES.map(renderAgentMallThemeCard).join("")}
+      </section>
+    </div>
+  `;
+}
+
 function renderVisualGamePluginBuildingPanel(plugin) {
   const issue = getPluginBuildingIssue(plugin);
   return `
@@ -13644,12 +14130,16 @@ function renderVisualGameBuildingPanelContent(buildingId, plugin) {
     return renderToolshedBuildingPanel();
   }
 
-  if (buildingId === "knowledge-base") {
-    return renderVisualGameLibraryBuildingPanel();
+  if (buildingId === "agentmall") {
+    return renderAgentMallBuildingPanel();
   }
 
-  if (buildingId === "buildinghub") {
-    return renderBuildingHubCatalogPanel();
+  if (buildingId === "system") {
+    return renderSystemBuildingPanel();
+  }
+
+  if (buildingId === "knowledge-base") {
+    return renderVisualGameLibraryBuildingPanel();
   }
 
   if (plugin) {
@@ -13678,7 +14168,7 @@ function renderVisualGameBuildingDrawer() {
   const icon = plugin?.icon || (buildingId === "automations" ? CalendarClock : Plug);
 
   return `
-    <aside class="visual-game-building-panel" aria-label="${escapeHtml(`${title} building UI`)}">
+    <aside class="visual-game-building-panel visual-game-side-panel" aria-label="${escapeHtml(`${title} building UI`)}">
       <div class="visual-game-session-head">
         <div class="terminal-copy">
           <strong><span class="visual-building-title-icon" aria-hidden="true">${renderIcon(icon)}</span>${escapeHtml(title)}</strong>
@@ -13707,9 +14197,13 @@ function renderVisualGameSidePanel(graph) {
 
 function renderVisualVillage(graph) {
   const hasSidePanel = Boolean(state.visualGame.selectedSessionId || state.visualGame.selectedBuildingId);
+  const panelStyle = hasSidePanel
+    ? ` style="--visual-game-side-panel-width: ${getVisualGameSidePanelWidth()}px"`
+    : "";
   return `
-    <div class="visual-game-layout ${hasSidePanel ? "has-session-panel" : ""}">
+    <div class="visual-game-layout ${hasSidePanel ? "has-session-panel" : ""}"${panelStyle}>
       ${renderVisualPixelGame(graph)}
+      ${hasSidePanel ? renderVisualGameSidePanelResizeHandle() : ""}
       ${renderVisualGameSidePanel(graph)}
     </div>
   `;
@@ -13750,6 +14244,11 @@ function openVisualGameBuildingPanel(buildingId, { render = true } = {}) {
     return false;
   }
 
+  if (normalizedBuildingId === "buildinghub") {
+    void openBuildingHubCatalogView();
+    return true;
+  }
+
   state.visualGame.selectedSessionId = "";
   state.visualGame.selectedBrowserUseSessionId = "";
   state.visualGame.selectedBuildingId = normalizedBuildingId;
@@ -13774,6 +14273,16 @@ function isVisualGameBuildingPanelOpen(buildingId) {
 }
 
 async function ensureVisualGameBuildingPanelData(buildingId) {
+  if (buildingId === "system") {
+    if (!state.systemMetricsLoading) {
+      await loadSystemMetrics({ forceRender: false });
+    }
+    if (isVisualGameBuildingPanelOpen("system")) {
+      renderShell();
+    }
+    return;
+  }
+
   if (buildingId !== "knowledge-base") {
     return;
   }
@@ -13818,6 +14327,12 @@ async function openBuildingWorkspace(buildingId, workspaceView) {
   await openMainView(nextView, { buildingWorkspaceId: normalizedBuildingId });
 }
 
+async function openBuildingHubCatalogView() {
+  clearVisualGameSelection({ render: false });
+  state.pluginDetailId = "";
+  await openMainView("plugins");
+}
+
 function isAgentTownLayoutCustomized() {
   return Boolean(
     Object.keys(state.visualGame.customLayout?.places || {}).length ||
@@ -13831,6 +14346,32 @@ function saveAgentTownLayoutPreferences() {
   } catch {
     // Local map customization is a convenience; storage failures should not block the town.
   }
+}
+
+function getAgentTownTheme(themeId = state.visualGame.themeId) {
+  return AGENT_TOWN_THEME_BY_ID.get(normalizeAgentTownThemeId(themeId)) || AGENT_TOWN_THEME_BY_ID.get(AGENT_TOWN_DEFAULT_THEME_ID);
+}
+
+function saveAgentTownThemePreference() {
+  try {
+    window.localStorage.setItem(AGENT_TOWN_THEME_STORAGE_KEY, normalizeAgentTownThemeId(state.visualGame.themeId));
+  } catch {
+    // Theme selection is cosmetic; storage failures should not block Agent Town.
+  }
+}
+
+function setAgentTownTheme(themeId, { render = true } = {}) {
+  const nextThemeId = normalizeAgentTownThemeId(themeId);
+  if (state.visualGame.themeId === nextThemeId) {
+    return false;
+  }
+
+  state.visualGame.themeId = nextThemeId;
+  saveAgentTownThemePreference();
+  if (render) {
+    renderShell();
+  }
+  return true;
 }
 
 function resetAgentTownLayout({ render = true } = {}) {
@@ -13925,14 +14466,16 @@ function getAgentTownPluginBuildingPlaces() {
 function getAgentTownVisibleBuildingPlaces() {
   const places = [
     ...getAgentTownProviderDorms(),
+    getVisualGameTownPlace("occupations"),
     getVisualGameTownPlace("library"),
     getVisualGameTownPlace("workshop"),
     isPluginIdInstalled("browser-use") ? getVisualGameTownPlace("browser") : null,
     getVisualGameTownPlace("automations"),
+    getVisualGameTownPlace(VISUAL_GAME_DOGHOUSE_BUILDING_ID),
     isPluginIdInstalled("ottoauth") ? getVisualGameTownPlace("ottoauth") : null,
     isVideoMemoryPluginInstalled() ? getVisualGameTownPlace("camera") : null,
     ...getAgentTownPluginBuildingPlaces(),
-    getVisualGameGpuFactories().length ? getVisualGameTownPlace("gpuYard") : null,
+    getVisualGameTownPlace(VISUAL_GAME_SYSTEM_BUILDING_ID),
     isLocalhostAppsEnabled() ? getVisualGameTownPlace("dock") : null,
   ];
 
@@ -14261,6 +14804,18 @@ function getAgentTownPluginBuildingPalette(pluginId) {
       trim: "#2e3a31",
       fixture: "#315f68",
       screen: "#fff0b8",
+    },
+    agentmall: {
+      body: "#72513d",
+      trim: "#3d2b27",
+      fixture: "#3c8b8a",
+      screen: "#f7d884",
+    },
+    system: {
+      body: "#4f5a58",
+      trim: "#202a2c",
+      fixture: "#89978d",
+      screen: "#95d9ff",
     },
     wandb: {
       body: "#615574",
@@ -14951,12 +15506,14 @@ function drawVisualGameScene(context, graph, model, time, hitAreas, visibleWorld
   drawVisualGameGround(context, time, visibleWorld);
   drawVisualGamePaths(context, hitAreas);
   drawVisualGameSleepingQuarters(context, hitAreas, time, sleepingAgents);
+  drawVisualGameSchool(context, hitAreas, time);
   drawVisualGameLibrary(context, hitAreas, model, time, libraryAgents);
   drawVisualGameWorkshop(context, hitAreas, time, deskAgents);
   if (isPluginIdInstalled("browser-use")) {
     drawVisualGameBrowserLab(context, hitAreas, time, browserAgents);
   }
   drawVisualGameCampanile(context, hitAreas, time);
+  drawVisualGameDoghouse(context, hitAreas, time);
   if (isPluginIdInstalled("ottoauth")) {
     drawVisualGameOttoAuth(context, hitAreas, time, ottoAuthAgents);
   }
@@ -14964,7 +15521,7 @@ function drawVisualGameScene(context, graph, model, time, hitAreas, visibleWorld
     drawVisualGameCameraRoom(context, hitAreas, time, cameraAgents);
   }
   drawAgentTownInstalledPluginBuildings(context, hitAreas, time);
-  drawVisualGameGpuFactories(context, hitAreas, model.gpuFactories, time);
+  drawVisualGameSystemBuilding(context, hitAreas, model.gpuFactories, time);
   if (isLocalhostAppsEnabled()) {
     drawVisualGameDock(context, hitAreas, time);
   }
@@ -14976,35 +15533,39 @@ function drawVisualGameScene(context, graph, model, time, hitAreas, visibleWorld
   for (const agent of agents.sort((left, right) => left.y - right.y)) {
     drawVisualGameAgent(context, agent, time, hitAreas);
   }
+  drawVisualGameDog(context, time, hitAreas);
 
   drawVisualGameForeground(context, time);
   context.restore();
 }
 
 function drawVisualGameGround(context, time, visibleWorld = null) {
+  const theme = getAgentTownTheme();
+  const ground = theme.ground || AGENT_TOWN_THEME_BY_ID.get(AGENT_TOWN_DEFAULT_THEME_ID).ground;
+  const tiles = Array.isArray(ground.tiles) && ground.tiles.length ? ground.tiles : ["#34714f", "#2b6046", "#31694b"];
   const padding = VISUAL_GAME_TILE * 3;
   const left = Math.floor(((visibleWorld?.x ?? 0) - padding) / VISUAL_GAME_TILE) * VISUAL_GAME_TILE;
   const top = Math.floor(((visibleWorld?.y ?? 0) - padding) / VISUAL_GAME_TILE) * VISUAL_GAME_TILE;
   const right = Math.ceil(((visibleWorld?.x ?? 0) + (visibleWorld?.width ?? VISUAL_GAME_WIDTH) + padding) / VISUAL_GAME_TILE) * VISUAL_GAME_TILE;
   const bottom = Math.ceil(((visibleWorld?.y ?? 0) + (visibleWorld?.height ?? VISUAL_GAME_HEIGHT) + padding) / VISUAL_GAME_TILE) * VISUAL_GAME_TILE;
 
-  context.fillStyle = "#2f6849";
+  context.fillStyle = ground.base || "#2f6849";
   context.fillRect(left, top, right - left, bottom - top);
 
   for (let y = top; y < bottom; y += VISUAL_GAME_TILE) {
     for (let x = left; x < right; x += VISUAL_GAME_TILE) {
       const hash = getVisualGameHash(Math.floor(x / VISUAL_GAME_TILE), Math.floor(y / VISUAL_GAME_TILE));
-      context.fillStyle = hash % 3 === 0 ? "#34714f" : hash % 5 === 0 ? "#2b6046" : "#31694b";
+      context.fillStyle = tiles[hash % tiles.length];
       context.fillRect(x, y, VISUAL_GAME_TILE, VISUAL_GAME_TILE);
 
       if (hash % 4 === 0) {
-        context.fillStyle = "#3d8356";
+        context.fillStyle = ground.detail || "#3d8356";
         context.fillRect(x + 3, y + 11, 2, 5);
         context.fillRect(x + 6, y + 9, 2, 7);
       }
 
       if (hash % 17 === 0) {
-        context.fillStyle = "#e7ca79";
+        context.fillStyle = ground.sparkle || "#e7ca79";
         context.fillRect(x + 11, y + 7 + Math.floor(Math.sin(time / 600 + hash) * 1), 2, 2);
       }
     }
@@ -15034,15 +15595,16 @@ function drawVisualGamePathRect(context, x, y, width, height) {
     return;
   }
 
-  context.fillStyle = "#c09a52";
+  const path = getAgentTownTheme().path || AGENT_TOWN_THEME_BY_ID.get(AGENT_TOWN_DEFAULT_THEME_ID).path;
+  context.fillStyle = path.edge || "#c09a52";
   context.fillRect(x, y, width, height);
-  context.fillStyle = "#d1af63";
+  context.fillStyle = path.fill || "#d1af63";
   context.fillRect(x + 3, y + 3, width - 6, height - 6);
-  context.fillStyle = "#a87b3f";
+  context.fillStyle = path.detail || "#a87b3f";
   for (let offset = 0; offset < width; offset += 21) {
     context.fillRect(x + offset + 5, y + 7 + ((offset / 7) % 3), 6, 2);
   }
-  context.fillStyle = "rgba(82, 58, 31, 0.2)";
+  context.fillStyle = path.shadow || "rgba(82, 58, 31, 0.2)";
   context.fillRect(x, y, width, 2);
   context.fillRect(x, y + height - 2, width, 2);
 }
@@ -15062,53 +15624,56 @@ function drawAgentTownEditOutlines(context, hitAreas) {
 }
 
 function drawVisualGameRoomFloor(context, x, y, width, height, options = {}) {
-  const floor = options.floor || "#72563a";
-  const trim = options.trim || "#3d291d";
+  const theme = getAgentTownTheme();
+  const room = theme.room || AGENT_TOWN_THEME_BY_ID.get(AGENT_TOWN_DEFAULT_THEME_ID).room;
+  const entranceFill = theme.path?.fill || "#d1af63";
+  const floor = options.floor || room.floor || "#72563a";
+  const trim = options.trim || room.trim || "#3d291d";
   const entrance = normalizeVisualGameEntrance(options.entrance, x, y, width, height);
 
   drawVisualGameShadow(context, x + 3, y + height - 1, width, 7);
   context.fillStyle = floor;
   context.fillRect(x, y, width, height);
 
-  context.fillStyle = "rgba(255, 231, 159, 0.12)";
+  context.fillStyle = room.highlight || "rgba(255, 231, 159, 0.12)";
   context.fillRect(x + 4, y + 4, Math.max(0, width - 8), 4);
   for (let row = y + 12; row < y + height - 6; row += 12) {
     context.fillRect(x + 5, row, Math.max(0, width - 10), 1);
   }
-  context.fillStyle = "rgba(73, 46, 27, 0.18)";
+  context.fillStyle = room.shadow || "rgba(73, 46, 27, 0.18)";
   for (let column = x + 14; column < x + width - 6; column += 18) {
     context.fillRect(column, y + 5, 1, Math.max(0, height - 10));
   }
 
-  context.fillStyle = "rgba(10, 13, 11, 0.16)";
+  context.fillStyle = room.edgeShadow || "rgba(10, 13, 11, 0.16)";
   context.fillRect(x, y + height - 2, width, 2);
   context.fillRect(x + width - 2, y, 2, height);
-  context.fillStyle = "rgba(255, 238, 176, 0.16)";
+  context.fillStyle = room.edgeLight || "rgba(255, 238, 176, 0.16)";
   context.fillRect(x, y, width, 1);
   context.fillRect(x, y, 1, height);
 
   const openingWidth = Math.min(28, Math.max(16, Math.floor(width * 0.28)));
   if (entrance.side === "bottom") {
     const openingX = Math.round(clamp(entrance.anchor.x, x + openingWidth / 2, x + width - openingWidth / 2) - openingWidth / 2);
-    context.fillStyle = "#d1af63";
+    context.fillStyle = entranceFill;
     context.fillRect(openingX + 2, y + height - 2, openingWidth - 4, 5);
     context.fillStyle = trim;
     context.fillRect(openingX + 5, y + height, openingWidth - 10, 1);
   } else if (entrance.side === "top") {
     const openingX = Math.round(clamp(entrance.anchor.x, x + openingWidth / 2, x + width - openingWidth / 2) - openingWidth / 2);
-    context.fillStyle = "#d1af63";
+    context.fillStyle = entranceFill;
     context.fillRect(openingX + 2, y - 3, openingWidth - 4, 5);
     context.fillStyle = trim;
     context.fillRect(openingX + 5, y - 1, openingWidth - 10, 1);
   } else if (entrance.side === "left") {
     const openingY = Math.round(clamp(entrance.anchor.y, y + openingWidth / 2, y + height - openingWidth / 2) - openingWidth / 2);
-    context.fillStyle = "#d1af63";
+    context.fillStyle = entranceFill;
     context.fillRect(x - 3, openingY + 2, 5, openingWidth - 4);
     context.fillStyle = trim;
     context.fillRect(x - 1, openingY + 5, 1, openingWidth - 10);
   } else if (entrance.side === "right") {
     const openingY = Math.round(clamp(entrance.anchor.y, y + openingWidth / 2, y + height - openingWidth / 2) - openingWidth / 2);
-    context.fillStyle = "#d1af63";
+    context.fillStyle = entranceFill;
     context.fillRect(x + width - 2, openingY + 2, 5, openingWidth - 4);
     context.fillStyle = trim;
     context.fillRect(x + width, openingY + 5, 1, openingWidth - 10);
@@ -15337,6 +15902,64 @@ function getVisualGameDormBeds(dorm) {
     { x: rect.x + 8, y: bedY, width: bedWidth },
     { x: rect.x + rect.width - bedWidth - 8, y: bedY, width: bedWidth },
   ];
+}
+
+function drawVisualGameSchool(context, hitAreas, time) {
+  const place = getVisualGameTownPlace("occupations");
+  if (!place) {
+    return;
+  }
+
+  const { x, y, width, height } = place.rect;
+  const issue = getBuildingIssueById("occupations");
+  const selectedPreset = getSelectedAgentPromptPreset();
+  const selectedHatKind = getAgentPromptPresetHatKind(selectedPreset || { id: state.agentPromptSelectedId });
+  const presetLabel = selectedPreset?.label || state.agentPromptSelectedId || "Roles";
+  const targetSummary = getAgentPromptTargetSummary();
+  const chalkGlow = 0.12 + Math.sin(time / 300) * 0.04;
+
+  drawVisualGameRoomFloor(context, x, y, width, height, {
+    floor: "#536f80",
+    wall: "#6f4c6c",
+    trim: "#2b3040",
+    entrance: getVisualGameRenderedEntrance(place),
+  });
+
+  context.fillStyle = "#22363a";
+  context.fillRect(x + 9, y + 11, width - 18, 22);
+  context.fillStyle = "#1f4b3f";
+  context.fillRect(x + 12, y + 14, width - 24, 15);
+  context.fillStyle = `rgba(206, 255, 216, ${chalkGlow})`;
+  context.fillRect(x + 14, y + 18, width - 28, 2);
+  drawVisualGameSignText(context, presetLabel, x + 15, y + 27, "#d9f6d2", 6, width - 30);
+
+  const deskY = y + height - 40;
+  const deskCenters = [x + 20, x + Math.floor(width / 2), x + width - 20];
+  const hatKinds = [selectedHatKind, "researcher", "engineer"];
+  deskCenters.forEach((centerX, index) => {
+    context.fillStyle = "#3e2c25";
+    context.fillRect(centerX - 11, deskY + 6, 22, 8);
+    context.fillStyle = "#d1af63";
+    context.fillRect(centerX - 9, deskY + 3, 18, 7);
+    context.fillStyle = "rgba(255, 241, 173, 0.18)";
+    context.fillRect(centerX - 7, deskY + 5, 14, 1);
+    drawVisualGameOccupationHat(context, hatKinds[index], { x: centerX - 6, y: deskY - 8, scale: 0.62 });
+  });
+
+  drawVisualGameBuildingSign(
+    context,
+    x + 8,
+    y + height - 21,
+    Math.min(width - 16, 68),
+    19,
+    place.label,
+    issue?.label || targetSummary,
+  );
+  if (issue) {
+    drawVisualGameBuildingIssueBadge(context, place.rect);
+  }
+
+  pushAgentTownPlaceHit(hitAreas, place, { kind: "building", buildingId: "occupations", label: `${place.label} building` });
 }
 
 function drawVisualGameLibrary(context, hitAreas, model, time, libraryAgents) {
@@ -15582,6 +16205,70 @@ function drawVisualGameCampanile(context, hitAreas, time) {
   });
 }
 
+function drawVisualGameDoghouse(context, hitAreas, time) {
+  const place = getVisualGameTownPlace(VISUAL_GAME_DOGHOUSE_BUILDING_ID);
+  if (!place) {
+    return;
+  }
+
+  const { x, y, width, height } = place.rect;
+  const wagGlow = 0.14 + Math.sin(time / 280) * 0.04;
+  drawVisualGameShadow(context, x + 4, y + height - 1, width - 8, 6);
+
+  context.fillStyle = "#5d3c28";
+  context.fillRect(x + 7, y + height - 12, width - 14, 9);
+  context.fillStyle = "#7e5435";
+  context.fillRect(x + 11, y + height - 23, width - 22, 20);
+  context.fillStyle = "rgba(255, 232, 159, 0.14)";
+  context.fillRect(x + 14, y + height - 20, width - 28, 3);
+  context.fillStyle = "rgba(43, 27, 18, 0.24)";
+  for (let plankX = x + 16; plankX < x + width - 13; plankX += 10) {
+    context.fillRect(plankX, y + height - 22, 1, 19);
+  }
+
+  context.fillStyle = "#3b251b";
+  context.beginPath();
+  context.moveTo(x + 5, y + height - 23);
+  context.lineTo(x + width / 2, y + 7);
+  context.lineTo(x + width - 5, y + height - 23);
+  context.closePath();
+  context.fill();
+  context.fillStyle = "#9a5639";
+  context.beginPath();
+  context.moveTo(x + 9, y + height - 22);
+  context.lineTo(x + width / 2, y + 12);
+  context.lineTo(x + width - 9, y + height - 22);
+  context.closePath();
+  context.fill();
+  context.fillStyle = "rgba(255, 220, 148, 0.22)";
+  context.fillRect(x + width / 2 - 12, y + 17, 24, 3);
+
+  context.fillStyle = "#2a1c17";
+  context.beginPath();
+  context.moveTo(x + width / 2 - 11, y + height - 3);
+  context.lineTo(x + width / 2 - 11, y + height - 17);
+  context.quadraticCurveTo(x + width / 2, y + height - 28, x + width / 2 + 11, y + height - 17);
+  context.lineTo(x + width / 2 + 11, y + height - 3);
+  context.closePath();
+  context.fill();
+  context.fillStyle = `rgba(246, 207, 119, ${wagGlow})`;
+  context.fillRect(x + width / 2 - 6, y + height - 18, 12, 3);
+
+  context.fillStyle = "#b25e44";
+  context.fillRect(x + width - 19, y + height - 14, 11, 5);
+  context.fillStyle = "#ffe0a0";
+  context.fillRect(x + width - 17, y + height - 16, 7, 2);
+  context.fillStyle = "#5f2f24";
+  context.fillRect(x + width - 15, y + height - 12, 3, 1);
+
+  drawVisualGameBuildingSign(context, x + 4, y - 6, Math.min(width - 8, 54), 19, "Dog", "roam");
+  pushAgentTownPlaceHit(hitAreas, place, {
+    kind: "building",
+    buildingId: VISUAL_GAME_DOGHOUSE_BUILDING_ID,
+    label: `${place.label} building`,
+  });
+}
+
 function drawVisualGameCameraRoom(context, hitAreas, time, cameraAgents) {
   const place = getVisualGameTownPlace("camera");
   const { x, y, width, height } = place.rect;
@@ -15696,32 +16383,112 @@ function drawVisualGameCameraScreen(context, slot, { occupied = false, permissio
   context.restore();
 }
 
-function drawVisualGameGpuFactories(context, hitAreas, factories, time) {
-  if (!Array.isArray(factories) || !factories.length) {
+function getVisualGameSystemFactoryArea(place) {
+  const rect = place?.rect || { x: 0, y: 0, width: 1, height: 1 };
+  return {
+    x: rect.x + 6,
+    y: rect.y + 30,
+    width: Math.max(1, rect.width - 12),
+    height: Math.max(1, rect.height - 38),
+  };
+}
+
+function drawVisualGameSystemBuilding(context, hitAreas, factories, time) {
+  const place = getVisualGameTownPlace(VISUAL_GAME_SYSTEM_BUILDING_ID);
+  if (!place) {
     return;
   }
 
-  const place = getVisualGameTownPlace("gpuYard");
-  const packing = getVisualGamePackedItemSlots(place.rect, factories.length, {
+  const { x, y, width, height } = place.rect;
+  const factoryList = Array.isArray(factories) ? factories : [];
+  const factoryArea = getVisualGameSystemFactoryArea(place);
+
+  drawVisualGamePavedArea(context, x, y, width, height);
+  drawVisualGameBuildingSign(
+    context,
+    x + 7,
+    y + 6,
+    Math.min(width - 14, 104),
+    23,
+    place.label,
+    getSystemBuildingStatusText(),
+  );
+  drawVisualGameSystemMeter(context, x + width - 82, y + 10, 70, 16);
+
+  if (!isAgentTownEditMode()) {
+    pushAgentTownPlaceHit(hitAreas, place, {
+      kind: "building",
+      buildingId: VISUAL_GAME_SYSTEM_BUILDING_ID,
+      label: `${place.label} building`,
+    });
+  }
+
+  if (!factoryList.length) {
+    drawVisualGameSystemEmptyRack(context, factoryArea, time);
+  }
+
+  const packing = getVisualGamePackedItemSlots(factoryArea, factoryList.length, {
     gap: VISUAL_GAME_GPU_FACTORY_GAP,
     itemSize: VISUAL_GAME_GPU_FACTORY_SIZE,
     maxColumns: VISUAL_GAME_GPU_FACTORY_COLUMNS,
     maxVisible: VISUAL_GAME_GPU_FACTORY_MAX_VISIBLE,
     padding: VISUAL_GAME_GPU_FACTORY_PADDING,
   });
-  drawVisualGamePavedArea(context, place.rect.x, place.rect.y, place.rect.width, place.rect.height);
 
   packing.slots.forEach((slot, index) => {
-    const factory = factories[index];
+    const factory = factoryList[index];
     drawVisualGameGpuFactory(context, hitAreas, factory, slot.x, slot.y, index, time, slot.scale);
   });
 
   if (packing.hiddenCount > 0) {
-    drawVisualGameOverflowBadge(context, place.rect.x + place.rect.width - 34, place.rect.y + place.rect.height - 19, `+${packing.hiddenCount}`);
+    drawVisualGameOverflowBadge(context, x + width - 34, y + height - 19, `+${packing.hiddenCount}`);
   }
 
   if (isAgentTownEditMode()) {
-    pushAgentTownPlaceHit(hitAreas, place, { kind: "main-view", view: "system", label: place.label });
+    pushAgentTownPlaceHit(hitAreas, place, {
+      kind: "building",
+      buildingId: VISUAL_GAME_SYSTEM_BUILDING_ID,
+      label: `${place.label} building`,
+    });
+  }
+}
+
+function drawVisualGameSystemMeter(context, x, y, width, height) {
+  const cpuPercent = getFiniteMetricPercent(state.systemMetrics?.cpu?.utilizationPercent);
+  const memoryPercent = getFiniteMetricPercent(state.systemMetrics?.memory?.usedPercent);
+  const rows = [
+    { label: "CPU", value: cpuPercent, color: "#d8e3dc" },
+    { label: "MEM", value: memoryPercent, color: "#95d9ff" },
+  ];
+
+  rows.forEach((row, index) => {
+    const rowY = y + index * 9;
+    const fillWidth = Math.round((Math.max(0, Math.min(100, row.value ?? 0)) / 100) * (width - 25));
+    context.fillStyle = "rgba(20, 27, 28, 0.86)";
+    context.fillRect(Math.round(x), Math.round(rowY), Math.round(width), Math.round(height / 2 - 1));
+    drawVisualGameText(context, row.label, x + 3, rowY + 6, "#dce6df", 5);
+    context.fillStyle = "rgba(255, 255, 255, 0.12)";
+    context.fillRect(Math.round(x + 23), Math.round(rowY + 2), Math.round(width - 27), 3);
+    context.fillStyle = row.color;
+    context.fillRect(Math.round(x + 23), Math.round(rowY + 2), fillWidth, 3);
+  });
+}
+
+function drawVisualGameSystemEmptyRack(context, area, time) {
+  const bayCount = 3;
+  const bayWidth = Math.max(22, Math.floor((area.width - 20) / bayCount));
+  const y = Math.round(area.y + area.height / 2 - 12);
+  for (let index = 0; index < bayCount; index += 1) {
+    const x = Math.round(area.x + 8 + index * (bayWidth + 4));
+    const glow = 0.12 + Math.sin(time / 420 + index) * 0.04;
+    context.fillStyle = "#202929";
+    context.fillRect(x, y, bayWidth, 25);
+    context.fillStyle = "#3e4b49";
+    context.fillRect(x + 3, y + 4, bayWidth - 6, 5);
+    context.fillRect(x + 3, y + 13, bayWidth - 6, 5);
+    context.fillStyle = `rgba(149, 217, 255, ${glow})`;
+    context.fillRect(x + bayWidth - 8, y + 5, 3, 3);
+    context.fillRect(x + bayWidth - 8, y + 14, 3, 3);
   }
 }
 
@@ -15861,9 +16628,9 @@ function drawVisualGameGpuFactory(context, hitAreas, factory, x, y, index, time,
     y: originY - 9 * spriteScale,
     width: (width + 6) * spriteScale,
     height: (height + 11) * spriteScale,
-    kind: "main-view",
-    view: "system",
-    label: `${factory.label}: ${factory.name} - ${status}`,
+    kind: "building",
+    buildingId: VISUAL_GAME_SYSTEM_BUILDING_ID,
+    label: `System: ${factory.label}: ${factory.name} - ${status}`,
   });
 }
 
@@ -16049,13 +16816,121 @@ function drawVisualGamePortShip(context, port, x, y, index, time) {
 }
 
 function drawVisualGameForeground(context, time) {
+  const foreground = getAgentTownTheme().foreground || AGENT_TOWN_THEME_BY_ID.get(AGENT_TOWN_DEFAULT_THEME_ID).foreground;
   for (let index = 0; index < 34; index += 1) {
     const x = (getVisualGameHash(index, 9) * 17) % VISUAL_GAME_WIDTH;
     const y = 238 + (getVisualGameHash(index, 19) % 26);
-    context.fillStyle = index % 5 === 0 ? "#d5c967" : "#235e42";
+    context.fillStyle = index % 5 === 0 ? foreground.accent || "#d5c967" : foreground.plant || "#235e42";
     context.fillRect(x, y + Math.floor(Math.sin(time / 700 + index) * 1), 2, 6);
     context.fillRect(x + 3, y + 2, 2, 4);
   }
+}
+
+function drawVisualGameDog(context, time, hitAreas) {
+  const dog = getVisualGameDog(time);
+  if (!dog) {
+    return;
+  }
+
+  const step = Math.floor(time / 145) % 4;
+  const tailWag = Math.floor(Math.sin(time / 95) * 2);
+  const bob = Math.floor(Math.sin(time / 190) * 1);
+  const facingLeft = dog.direction === "left";
+  const x = Math.round(dog.x);
+  const y = Math.round(dog.y + bob);
+
+  drawVisualGameShadow(context, x - 12, y - 2, 25, 5);
+  context.save();
+  context.translate(x, y - 18);
+  if (facingLeft) {
+    context.scale(-1, 1);
+  }
+
+  context.fillStyle = "#3a241a";
+  context.fillRect(-13, 9 + tailWag, 7, 3);
+  context.fillRect(-14, 7 + tailWag, 3, 3);
+  context.fillStyle = "#7d5134";
+  context.fillRect(-8, 5, 16, 10);
+  context.fillStyle = "#9b6844";
+  context.fillRect(-6, 3, 11, 4);
+  context.fillStyle = "#5a3625";
+  context.fillRect(5, 1, 9, 9);
+  context.fillStyle = "#8b5a3a";
+  context.fillRect(7, -1, 5, 5);
+  context.fillStyle = "#3a241a";
+  context.fillRect(5, 2, 4, 5);
+  context.fillRect(11, 7, 6, 3);
+  context.fillStyle = "#d1a06b";
+  context.fillRect(13, 8, 4, 2);
+  context.fillStyle = "#f5e0b8";
+  context.fillRect(10, 4, 2, 2);
+  context.fillStyle = "#1d1410";
+  context.fillRect(15, 7, 2, 2);
+
+  context.fillStyle = "#3a241a";
+  if (step % 2 === 0) {
+    context.fillRect(-5, 13, 3, 5);
+    context.fillRect(4, 12, 3, 6);
+  } else {
+    context.fillRect(-6, 12, 3, 6);
+    context.fillRect(3, 13, 3, 5);
+  }
+  context.fillRect(-4, 17, 4, 2);
+  context.fillRect(4, 17, 4, 2);
+
+  context.restore();
+
+  hitAreas.push({
+    x: x - 18,
+    y: y - 27,
+    width: 36,
+    height: 31,
+    kind: "building",
+    buildingId: VISUAL_GAME_DOGHOUSE_BUILDING_ID,
+    label: "Dog - roaming from Doghouse",
+  });
+}
+
+function getVisualGameDog(time) {
+  const doghouse = getVisualGameTownPlace(VISUAL_GAME_DOGHOUSE_BUILDING_ID);
+  if (!doghouse) {
+    return null;
+  }
+
+  const route = expandVisualGameRoamRoute(getVisualGameDogRoute(doghouse));
+  if (route.length < 2) {
+    const anchor = getVisualGameTownPlaceAnchor(doghouse);
+    return { x: anchor.x, y: anchor.y, direction: "right" };
+  }
+
+  const phase = (Math.max(0, Number(time) || 0) % VISUAL_GAME_DOG_ROUTE_DURATION_MS) / VISUAL_GAME_DOG_ROUTE_DURATION_MS;
+  const position = getVisualGameRoutePosition(route, phase);
+  const nextPosition = getVisualGameRoutePosition(route, phase + VISUAL_GAME_DOG_DIRECTION_LOOKAHEAD);
+  const direction = nextPosition.x < position.x ? "left" : "right";
+
+  return {
+    x: position.x,
+    y: position.y,
+    direction,
+  };
+}
+
+function getVisualGameDogRoute(doghouse) {
+  const anchor = getVisualGameTownPlaceAnchor(doghouse);
+  const roadY = 255;
+  const plazaY = 285;
+  return [
+    { x: anchor.x, y: anchor.y },
+    { x: anchor.x, y: roadY },
+    { x: 585, y: roadY },
+    { x: 705, y: roadY },
+    { x: 705, y: plazaY },
+    { x: 825, y: plazaY },
+    { x: 765, y: plazaY },
+    { x: 705, y: roadY },
+    { x: 585, y: roadY },
+    { x: anchor.x, y: roadY },
+  ];
 }
 
 function getVisualGameAgentHatKind(agent) {
@@ -16358,7 +17233,9 @@ function getVisualGameAgentHoverLabel(agent) {
 
 function getVisualGameAgentPalette(agent) {
   const fallback = VISUAL_GAME_AGENT_PALETTES[(agent.familyIndex ?? agent.index) % VISUAL_GAME_AGENT_PALETTES.length];
-  return getVisualGameProviderAgentPalette(agent.providerId) || fallback;
+  const palette = getVisualGameProviderAgentPalette(agent.providerId) || fallback;
+  const themeAgent = getAgentTownTheme().agent;
+  return themeAgent ? { ...palette, ...themeAgent } : palette;
 }
 
 function drawVisualGameNameplate(context, text, centerX, y, scale = 1) {
@@ -18868,7 +19745,6 @@ function renderShell() {
         <div class="sidebar-footer">
           <div class="sidebar-footer-actions">
             <button class="ghost-button relaunch-button" type="button" id="relaunch-app">relaunch</button>
-            <button class="danger-button terminate-button" type="button" id="terminate-app">terminate</button>
           </div>
         </div>
         ${renderSidebarResizeHandle()}
@@ -19556,6 +20432,36 @@ function refreshPluginSearchUi() {
   bindVideoMemoryForm();
 }
 
+function bindBuildingHubCatalogControls() {
+  document.querySelectorAll("[data-buildinghub-advanced-toggle]").forEach((button) => {
+    button.addEventListener("click", () => {
+      state.buildingHubAdvancedOpen = !state.buildingHubAdvancedOpen;
+      renderShell();
+    });
+  });
+
+  document.querySelectorAll("[data-buildinghub-community-toggle]").forEach((input) => {
+    input.addEventListener("change", async () => {
+      const form = input.closest("form");
+      if (!(form instanceof HTMLFormElement)) {
+        return;
+      }
+
+      if (input instanceof HTMLInputElement) {
+        input.disabled = true;
+      }
+
+      try {
+        await saveSettingsFromForm(form);
+        renderShell();
+      } catch (error) {
+        window.alert(error.message);
+        renderShell();
+      }
+    });
+  });
+}
+
 async function setPluginInstalled(pluginId, installed, { force = false } = {}) {
   const plugin = getPluginById(pluginId);
   if (!plugin) {
@@ -20156,6 +21062,8 @@ function bindSystemToastEvents() {
           await createSessionInFolder(state.settings.wikiPath, {
             providerId,
             name: "fix Library conflict",
+            initialPrompt: getWikiConflictAgentPrompt(),
+            initialPromptDelayMs: 1400,
           });
           if (key) {
             state.systemToastDismissedKeys.add(key);
@@ -23179,6 +24087,13 @@ function bindShellEvents() {
     });
   });
 
+  document.querySelectorAll("[data-open-buildinghub-catalog]").forEach((button) => {
+    button.addEventListener("click", (event) => {
+      event.preventDefault();
+      void openBuildingHubCatalogView();
+    });
+  });
+
   document.querySelectorAll("[data-open-building-workspace]").forEach((button) => {
     button.addEventListener("click", (event) => {
       event.preventDefault();
@@ -23186,6 +24101,13 @@ function bindShellEvents() {
         button.getAttribute("data-open-building-workspace") || "",
         button.getAttribute("data-building-workspace-view") || "",
       );
+    });
+  });
+
+  document.querySelectorAll("[data-agent-town-theme]").forEach((button) => {
+    button.addEventListener("click", (event) => {
+      event.preventDefault();
+      setAgentTownTheme(button.getAttribute("data-agent-town-theme") || AGENT_TOWN_DEFAULT_THEME_ID);
     });
   });
 
@@ -23319,6 +24241,7 @@ function bindShellEvents() {
   bindFileTreeEvents();
   bindSearchResultEvents();
   bindPluginCardEvents();
+  bindBuildingHubCatalogControls();
   bindAutomationEvents();
   bindVisualBuildingLibraryEvents();
   bindUpdateEvents();
@@ -23657,12 +24580,12 @@ function bindShellEvents() {
       return;
     }
 
-    if (!window.confirm("Terminate Vibe Research on this laptop?")) {
+    if (!window.confirm("Uninstall Vibe Research on this laptop?")) {
       return;
     }
 
     button.disabled = true;
-    button.textContent = "stopping...";
+    button.textContent = "uninstalling...";
 
     try {
       await fetchJson("/api/terminate", { method: "POST" });
@@ -23672,7 +24595,7 @@ function bindShellEvents() {
       }, 250);
     } catch (error) {
       button.disabled = false;
-      button.textContent = "terminate";
+      button.textContent = "uninstall";
       window.alert(error.message);
     }
   });

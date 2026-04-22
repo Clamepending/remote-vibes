@@ -310,6 +310,47 @@ test("custom session names are left alone after the first prompt", async () => {
   }
 });
 
+test("initial agent prompts are submitted after provider readiness", async () => {
+  const { manager, workspaceDir, userHomeDir } = await createManager({
+    initialPromptDelayMs: 0,
+    initialPromptReadyIdleMs: 0,
+    initialPromptReadyTimeoutMs: 100,
+    initialPromptRetryMs: 5,
+    initialPromptSubmitDelayMs: 5,
+  });
+
+  try {
+    const provider = fakeAgentProviders.find((entry) => entry.id === "claude");
+    const session = manager.buildSessionRecord({
+      providerId: "claude",
+      providerLabel: "Claude Code",
+      name: "Onboarding guide",
+      cwd: workspaceDir,
+      status: "running",
+    });
+    const writes = [];
+    session.pty = {
+      write(input) {
+        writes.push(input);
+      },
+      kill() {},
+    };
+    session.buffer = "Claude Code v1.2.3\n❯";
+    session.lastOutputAt = new Date(Date.now() - 1_000).toISOString();
+    manager.sessions.set(session.id, session);
+
+    assert.equal(
+      manager.queueInitialPromptForSession(session, provider, "hello\nworld\r", { delayMs: 0 }),
+      true,
+    );
+    await new Promise((resolve) => setTimeout(resolve, 50));
+
+    assert.deepEqual(writes, ["hello\nworld", "\r"]);
+  } finally {
+    await cleanupManager(manager, workspaceDir, userHomeDir);
+  }
+});
+
 test("sessions record the selected occupation and forks inherit it", async () => {
   const { manager, workspaceDir, userHomeDir } = await createManager({ occupationId: "engineer" });
 

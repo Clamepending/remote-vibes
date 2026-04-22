@@ -69,7 +69,7 @@ export const VISUAL_GAME_MAP_LAYOUT = Object.freeze({
     { id: "workshop-spur", cells: cellsInRect(12, 6, 1, 2) },
     { id: "browser-spur", cells: cellsInRect(20, 6, 1, 2) },
     { id: "automations-spur", cells: cellsInRect(24, 6, 1, 2) },
-    { id: "gpu-yard-spur", cells: cellsInRect(13, 9, 1, 3) },
+    { id: "system-spur", cells: cellsInRect(13, 9, 1, 3) },
     { id: "camera-spur", cells: cellsInRect(23, 9, 1, 1) },
     { id: "east-plaza", cells: cellsInRect(23, 9, 5, 1) },
     { id: "dock-spur", cells: cellsInRect(27, 10, 1, 3) },
@@ -84,6 +84,14 @@ export const VISUAL_GAME_MAP_LAYOUT = Object.freeze({
         cellCenter(4, 2, 0, 4),
         cellCenter(5, 2, 0, 4),
         cellCenter(6, 2, -8, 4),
+      ],
+    }),
+    occupations: place("occupations", "School", 1, 5, 3, 3, {
+      entrance: { side: "right", offset: 0.5 },
+      spots: [
+        cellCenter(1, 6, 10, 0),
+        cellCenter(2, 6, 0, 0),
+        cellCenter(2, 7, 0, -4),
       ],
     }),
     library: place("library", "Library", 1, 10, 6, 3, {
@@ -125,6 +133,13 @@ export const VISUAL_GAME_MAP_LAYOUT = Object.freeze({
         cellCenter(25, 5, -10, -5),
       ],
     }),
+    doghouse: place("doghouse", "Doghouse", 15, 9, 2, 2, {
+      entrance: { side: "top", offset: 0.5 },
+      spots: [
+        cellCenter(15, 10, 5, 0),
+        cellCenter(16, 10, -5, 0),
+      ],
+    }),
     ottoauth: place("ottoauth", "OttoAuth", 15, 6, 3, 2, {
       entrance: { side: "bottom", offset: 0.5 },
       spots: [
@@ -143,7 +158,7 @@ export const VISUAL_GAME_MAP_LAYOUT = Object.freeze({
         cellCenter(23, 10, -3, 15),
       ],
     }),
-    gpuYard: place("gpuYard", "GPU Yard", 9, 12, 8, 4, {
+    system: place("system", "System", 9, 12, 8, 4, {
       entrance: { side: "top", offset: 0.5 },
       factory: {
         columns: 4,
