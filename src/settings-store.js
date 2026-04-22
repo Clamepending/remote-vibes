@@ -105,6 +105,20 @@ function normalizePluginIds(value) {
   return [...pluginIds].sort();
 }
 
+function normalizeBuildingHubUrl(value) {
+  const url = String(value || "").trim();
+  if (!url) {
+    return "";
+  }
+
+  try {
+    const parsed = new URL(url);
+    return parsed.protocol === "http:" || parsed.protocol === "https:" ? parsed.toString() : "";
+  } catch {
+    return "";
+  }
+}
+
 const AGENT_AUTOMATION_CADENCES = new Set(["hourly", "six-hours", "daily", "weekday", "weekly"]);
 const AGENT_AUTOMATION_WEEKDAYS = new Set(["monday", "tuesday", "wednesday", "thursday", "friday", "saturday", "sunday"]);
 
@@ -209,6 +223,9 @@ export class SettingsStore {
       browserUseModel: "",
       browserUseProfileDir: getDefaultBrowserUseProfileDir(this.homeDir),
       browserUseWorkerPath: getDefaultBrowserUseWorkerPath(this.homeDir),
+      buildingHubCatalogPath: String(this.env.VIBE_RESEARCH_BUILDINGHUB_PATH || "").trim(),
+      buildingHubCatalogUrl: normalizeBuildingHubUrl(this.env.VIBE_RESEARCH_BUILDINGHUB_URL),
+      buildingHubEnabled: false,
       ottoAuthBaseUrl: String(this.env.OTTOAUTH_BASE_URL || getDefaultOttoAuthBaseUrl()).trim(),
       ottoAuthCallbackUrl: String(this.env.OTTOAUTH_CALLBACK_URL || "").trim(),
       ottoAuthDefaultMaxChargeCents: "",
@@ -299,6 +316,12 @@ export class SettingsStore {
         payload.browserUseWorkerPath || defaults.browserUseWorkerPath,
         this.homeDir,
       ),
+      buildingHubCatalogPath: normalizeOptionalPath(
+        payload.buildingHubCatalogPath || defaults.buildingHubCatalogPath,
+        this.homeDir,
+      ),
+      buildingHubCatalogUrl: normalizeBuildingHubUrl(payload.buildingHubCatalogUrl || defaults.buildingHubCatalogUrl),
+      buildingHubEnabled: normalizeBoolean(payload.buildingHubEnabled, defaults.buildingHubEnabled),
       ottoAuthBaseUrl: String(payload.ottoAuthBaseUrl || defaults.ottoAuthBaseUrl || getDefaultOttoAuthBaseUrl()).trim(),
       ottoAuthCallbackUrl: String(payload.ottoAuthCallbackUrl || defaults.ottoAuthCallbackUrl || "").trim(),
       ottoAuthDefaultMaxChargeCents: String(
@@ -489,6 +512,7 @@ export class SettingsStore {
     agentMailStatus = null,
     backupStatus = null,
     browserUseStatus = null,
+    buildingHubStatus = null,
     ottoAuthStatus = null,
     sleepStatus = null,
     telegramStatus = null,
@@ -512,6 +536,7 @@ export class SettingsStore {
       browserUseAnthropicApiKey: "",
       browserUseAnthropicApiKeyConfigured: Boolean(this.settings.browserUseAnthropicApiKey),
       browserUseStatus,
+      buildingHubStatus,
       ottoAuthPrivateKey: "",
       ottoAuthPrivateKeyConfigured: Boolean(this.settings.ottoAuthPrivateKey),
       ottoAuthStatus,

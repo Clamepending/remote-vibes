@@ -19,6 +19,7 @@ import {
 import { AgentMailService } from "./agentmail-service.js";
 import { AgentPromptStore } from "./agent-prompt-store.js";
 import { AgentRunStore } from "./agent-run-store.js";
+import { BuildingHubService } from "./buildinghub-service.js";
 import { BrowserUseService } from "./browser-use-service.js";
 import { createFolderEntry, listFolderEntries } from "./folder-browser.js";
 import { OttoAuthService } from "./ottoauth-service.js";
@@ -518,6 +519,7 @@ export async function createVibeResearchApp({
     }),
   onTerminate = null,
   agentMailServiceFactory = null,
+  buildingHubServiceFactory = null,
   browserUseServiceFactory = null,
   ottoAuthServiceFactory = null,
   telegramServiceFactory = null,
@@ -538,6 +540,12 @@ export async function createVibeResearchApp({
   await settingsStore.initialize();
   await mkdir(systemRootPath, { recursive: true });
   await systemMetricsHistoryStore.initialize();
+  const buildingHubService =
+    typeof buildingHubServiceFactory === "function"
+      ? buildingHubServiceFactory(settingsStore.settings, { cwd, stateDir, systemRootPath })
+      : new BuildingHubService({
+          settings: settingsStore.settings,
+        });
   const browserUseService =
     typeof browserUseServiceFactory === "function"
       ? browserUseServiceFactory(settingsStore.settings, { cwd, stateDir, systemRootPath })
@@ -733,6 +741,7 @@ export async function createVibeResearchApp({
     return settingsStore.getState({
       agentMailStatus: agentMailService.getStatus(),
       backupStatus: wikiBackupService.getStatus(),
+      buildingHubStatus: buildingHubService.getStatus(),
       browserUseStatus: browserUseService.getStatus(),
       ottoAuthStatus: ottoAuthService.getStatus(),
       sleepStatus: sleepPreventionService.getStatus(),
@@ -764,6 +773,7 @@ export async function createVibeResearchApp({
       enabled: settings.preventSleepEnabled,
     });
     browserUseService.restart(settingsStore.settings);
+    buildingHubService.restart(settingsStore.settings);
     ottoAuthService.restart(settingsStore.settings);
     telegramService.restart(settingsStore.settings);
     videoMemoryService.restart(settingsStore.settings);
@@ -915,9 +925,14 @@ export async function createVibeResearchApp({
   });
 
   app.get("/api/state", async (_request, response) => {
+    await buildingHubService.refresh();
     response.json({
       appName: "Vibe Research",
       agentPrompt: await agentPromptStore.getState(),
+      buildingHub: {
+        buildings: buildingHubService.listBuildings(),
+        status: buildingHubService.getStatus(),
+      },
       cwd,
       defaultProviderId,
       providers,
@@ -928,6 +943,18 @@ export async function createVibeResearchApp({
       preferredUrl,
       ports: await listNamedPorts(),
     });
+  });
+
+  app.get("/api/buildinghub/catalog", async (request, response) => {
+    try {
+      await buildingHubService.refresh({ force: request.query.force === "1" || request.query.force === "true" });
+      response.json({
+        buildings: buildingHubService.listBuildings(),
+        buildingHub: buildingHubService.getStatus(),
+      });
+    } catch (error) {
+      response.status(error.statusCode || 400).json({ error: error.message || "Could not load BuildingHub catalog." });
+    }
   });
 
   app.get("/api/ports", async (_request, response) => {
@@ -1097,6 +1124,9 @@ export async function createVibeResearchApp({
         browserUseModel: request.body?.browserUseModel,
         browserUseProfileDir: request.body?.browserUseProfileDir,
         browserUseWorkerPath: request.body?.browserUseWorkerPath,
+        buildingHubCatalogPath: request.body?.buildingHubCatalogPath,
+        buildingHubCatalogUrl: request.body?.buildingHubCatalogUrl,
+        buildingHubEnabled: request.body?.buildingHubEnabled,
         ottoAuthBaseUrl: request.body?.ottoAuthBaseUrl,
         ottoAuthCallbackUrl: request.body?.ottoAuthCallbackUrl,
         ottoAuthDefaultMaxChargeCents: request.body?.ottoAuthDefaultMaxChargeCents,
