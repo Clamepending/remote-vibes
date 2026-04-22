@@ -160,6 +160,8 @@ const VISUAL_GAME_AGENT_WALK_SPEED = 0.07;
 const VISUAL_GAME_AGENT_MAX_FRAME_MS = 120;
 const VISUAL_GAME_AGENT_ARRIVAL_DISTANCE = 0.85;
 const VISUAL_GAME_AGENT_ROUTE_EPSILON = 0.5;
+const VISUAL_GAME_AGENT_ROAM_BASE_DWELL_MS = 980;
+const VISUAL_GAME_AGENT_ROAM_DWELL_STEP_MS = 180;
 const VISUAL_GAME_AGENT_PALETTES = [
   { hat: "#263a78", brim: "#17204e", hair: "#33231c", skin: "#f2c29a", coat: "#173a67", trim: "#f3d49a", pants: "#2e2b32", boots: "#5c3a21" },
   { hat: "#6b2f56", brim: "#3f1f38", hair: "#18151d", skin: "#d99f7a", coat: "#5c1f3a", trim: "#d6edf6", pants: "#2f2735", boots: "#482c1d" },
@@ -175,6 +177,8 @@ const OCCUPATION_HAT_PALETTES = Object.freeze({
   default: { fill: "#e9bd8f", dark: "#925d3f", highlight: "rgba(255, 255, 255, 0.42)" },
 });
 const VISUAL_GAME_ROAM_ROUTES = VISUAL_GAME_MAP_LAYOUT.roamRoutes;
+const VISUAL_GAME_ROAM_TILE_STEP = VISUAL_GAME_MAP_LAYOUT.grid.cellSize;
+const VISUAL_GAME_ROAM_WALK_ROUTES = VISUAL_GAME_ROAM_ROUTES.map(expandVisualGameRoamRoute);
 const VISUAL_GAME_CAMERA_SCREEN_COLUMNS = 6;
 const VISUAL_GAME_CAMERA_SCREEN_GAP = 4;
 const VISUAL_GAME_CAMERA_SCREEN_MAX_VISIBLE = 12;
@@ -16135,6 +16139,7 @@ function drawVisualGameAgent(context, agent, time, hitAreas) {
   const hatColors = getVisualGameAgentHatColors(palette);
   const isWalking = Boolean(agent.walking);
   const visualDestination = isWalking ? "roam" : agent.destination;
+  const isRoamingIdle = agent.destination === "roam" && !isWalking;
   const isStationed =
     !isWalking
     && (
@@ -16145,7 +16150,9 @@ function drawVisualGameAgent(context, agent, time, hitAreas) {
       || agent.destination === "library"
       || agent.destination === "sleep"
     );
-  const bob = isStationed ? Math.floor(Math.sin(time / 190 + agent.index) * 1) : Math.floor(Math.sin(time / 150 + agent.index) * 2);
+  const bob = isStationed || isRoamingIdle
+    ? Math.floor(Math.sin(time / 220 + agent.index) * 1)
+    : Math.floor(Math.sin(time / 150 + agent.index) * 2);
   const step = Math.floor(time / 180 + agent.index) % 4;
   const spriteWidth = VISUAL_GAME_AGENT_SIZE * scale;
   const spriteTopOffset = visualDestination === "sleep" ? 17 : 25;
@@ -16224,7 +16231,7 @@ function drawVisualGameAgent(context, agent, time, hitAreas) {
 
   if (visualDestination !== "sleep") {
     context.fillStyle = palette.boots;
-    if (isStationed) {
+    if (isStationed || isRoamingIdle) {
       context.fillRect(4, 24, 4, 3);
       context.fillRect(11, 24, 4, 3);
     } else {
@@ -16259,6 +16266,9 @@ function drawVisualGameAgent(context, agent, time, hitAreas) {
             ? "#7ce7f0"
             : agent.destination === "library" ? "#f0cf72" : "#79bdf8";
       context.fillRect(3, 22, 13, 1);
+    } else if (isRoamingIdle) {
+      context.fillRect(1, 15, 3, 7);
+      context.fillRect(15, 15, 3, 7);
     } else {
       context.fillRect(1, 15 + (step % 2), 3, 7);
       context.fillRect(15, 15 + ((step + 1) % 2), 3, 7);
@@ -16343,7 +16353,7 @@ function getVisualGameAgentHoverLabel(agent) {
     return `${agent.name} - at library`;
   }
 
-  return `${agent.name} - walking`;
+  return agent.walking ? `${agent.name} - walking` : `${agent.name} - wandering`;
 }
 
 function getVisualGameAgentPalette(agent) {
@@ -16632,10 +16642,6 @@ function getVisualGameAgentKey(agent, index) {
 
 function getVisualGameAnimatedPosition(agent, target, time) {
   const previous = state.visualGame.agentPositions.get(agent.key);
-  if (agent.destination === "roam" && (!previous || (previous.destination === "roam" && !previous.walking))) {
-    return setVisualGameStationaryAgentPosition(agent, target, time);
-  }
-
   if (!previous && agent.destination === "sleep") {
     return setVisualGameStationaryAgentPosition(agent, target, time);
   }
@@ -16861,19 +16867,76 @@ function getVisualGamePointDistance(left, right) {
   return Math.hypot(leftX - rightX, leftY - rightY);
 }
 
-function getVisualGameRoamSpot(agent, roamingIndex, time) {
-  const route = VISUAL_GAME_ROAM_ROUTES[(roamingIndex + Number(agent.familyIndex || 0)) % VISUAL_GAME_ROAM_ROUTES.length];
-  const seed = getVisualGameHash(agent.index + 1, String(agent.name || "").length + Number(agent.familyIndex || 0) + 3);
-  const position = getVisualGameRoutePosition(route, time / (9000 + (seed % 5) * 900) + seed / 100);
+function expandVisualGameRoamRoute(route) {
+  const routePoints = (Array.isArray(route) ? route : [])
+    .map((point) => ({
+      x: Number(point?.x ?? point?.[0]),
+      y: Number(point?.y ?? point?.[1]),
+    }))
+    .filter((point) => Number.isFinite(point.x) && Number.isFinite(point.y));
 
-  if (agent.isSubagent) {
-    return {
-      x: position.x + ((seed % 11) - 5),
-      y: position.y + 8 + (seed % 5),
-    };
+  if (routePoints.length < 2) {
+    return routePoints;
   }
 
-  return position;
+  const expanded = [];
+  const pushPoint = (point) => {
+    const nextPoint = { x: Math.round(point.x), y: Math.round(point.y) };
+    if (!expanded.length || !visualGamePointsAreNear(expanded[expanded.length - 1], nextPoint, 0.001)) {
+      expanded.push(nextPoint);
+    }
+  };
+
+  for (let index = 0; index < routePoints.length; index += 1) {
+    const start = routePoints[index];
+    const end = routePoints[(index + 1) % routePoints.length];
+    const deltaX = end.x - start.x;
+    const deltaY = end.y - start.y;
+    const distance = Math.max(Math.abs(deltaX), Math.abs(deltaY));
+    const steps = Math.max(1, Math.round(distance / VISUAL_GAME_ROAM_TILE_STEP));
+
+    pushPoint(start);
+    for (let step = 1; step <= steps; step += 1) {
+      pushPoint({
+        x: start.x + (deltaX * step) / steps,
+        y: start.y + (deltaY * step) / steps,
+      });
+    }
+  }
+
+  if (expanded.length > 1 && visualGamePointsAreNear(expanded[0], expanded[expanded.length - 1], 0.001)) {
+    expanded.pop();
+  }
+
+  return expanded;
+}
+
+function positiveModulo(value, divisor) {
+  const normalizedDivisor = Math.max(1, Math.floor(Number(divisor) || 1));
+  return ((Math.floor(Number(value) || 0) % normalizedDivisor) + normalizedDivisor) % normalizedDivisor;
+}
+
+function getVisualGameRoamSpot(agent, roamingIndex, time) {
+  const seed = getVisualGameHash(agent.index + 1, String(agent.name || "").length + Number(agent.familyIndex || 0) + 3);
+  const routeIndex = positiveModulo(roamingIndex + Number(agent.familyIndex || 0), VISUAL_GAME_ROAM_WALK_ROUTES.length);
+  const route = VISUAL_GAME_ROAM_WALK_ROUTES[routeIndex] || [];
+  if (!route.length) {
+    return { x: VISUAL_GAME_WIDTH / 2, y: VISUAL_GAME_HEIGHT / 2 };
+  }
+
+  const dwellMs = VISUAL_GAME_AGENT_ROAM_BASE_DWELL_MS + (seed % 5) * VISUAL_GAME_AGENT_ROAM_DWELL_STEP_MS;
+  const routeDirection = seed % 2 === 0 ? 1 : -1;
+  const routeStep = Math.floor(Math.max(0, Number(time) || 0) / dwellMs);
+  const routePointIndex = positiveModulo((seed % route.length) + routeStep * routeDirection, route.length);
+  const point = route[routePointIndex];
+
+  return {
+    x: point.x,
+    y: point.y,
+    routeAnchor: point,
+    roamRouteIndex: routeIndex,
+    roamPointIndex: routePointIndex,
+  };
 }
 
 function getVisualGameDeskSpot(index) {
