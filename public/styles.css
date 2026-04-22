@@ -5568,7 +5568,7 @@ button.visual-agent-tile:focus-visible,
   position: relative;
   display: block;
   width: 34px;
-  height: 30px;
+  height: 31px;
   image-rendering: pixelated;
 }
 
@@ -5589,34 +5589,34 @@ button.visual-agent-tile:focus-visible,
   top: 12px;
   left: 1px;
   width: 8px;
-  height: 5px;
+  height: 6px;
 }
 
 .claude-code-avatar-mid {
   top: 11px;
   left: 5px;
   width: 24px;
-  height: 9px;
+  height: 10px;
 }
 
 .claude-code-avatar-right-arm {
   top: 12px;
   right: 1px;
   width: 8px;
-  height: 5px;
+  height: 6px;
 }
 
 .claude-code-avatar-base {
   top: 20px;
   left: 8px;
   width: 18px;
-  height: 4px;
+  height: 5px;
 }
 
 .claude-code-avatar-leg {
   top: 24px;
   width: 4px;
-  height: 5px;
+  height: 6px;
 }
 
 .claude-code-avatar-leg-one {

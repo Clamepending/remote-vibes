@@ -19703,19 +19703,25 @@ function drawVisualGameClaudeCodeAvatar(context, x, y, {
   dark = "#050609",
   legPhase = 0,
   sleeping = false,
+  typingPhase = null,
 } = {}) {
   const legLift = sleeping ? 0 : Math.max(0, Math.floor(legPhase) % 2);
+  const isTyping = Number.isFinite(typingPhase);
+  const tap = isTyping ? Math.max(0, Math.floor(typingPhase)) % 2 : 0;
   const blocks = [
     [8, 3, 18, 8],
-    [1, 12, 8, 5],
-    [5, 11, 24, 9],
-    [25, 12, 8, 5],
-    [8, 20, 18, 4],
-    [8, 24 + legLift, 4, 5],
-    [13, 24 + (sleeping ? 0 : 1 - legLift), 4, 5],
-    [22, 24 + (sleeping ? 0 : 1 - legLift), 4, 5],
-    [27, 24 + legLift, 4, 5],
+    [1, 12, 8, 6],
+    [5, 11, 24, 10],
+    [25, 12, 8, 6],
+    [8, 20, 18, 5],
+    [8, 24 + legLift, 4, 6],
+    [13, 24 + (sleeping ? 0 : 1 - legLift), 4, 6],
+    [22, 24 + (sleeping ? 0 : 1 - legLift), 4, 6],
+    [27, 24 + legLift, 4, 6],
   ];
+  if (isTyping) {
+    blocks.push([5, 17 + tap, 4, 4], [25, 17 + (1 - tap), 4, 4]);
+  }
 
   context.fillStyle = "rgba(5, 6, 9, 0.38)";
   for (const [blockX, blockY, blockWidth, blockHeight] of blocks) {
@@ -19772,23 +19778,8 @@ function drawVisualGameClaudeCodeAgentSprite(context, agent, time, visualDestina
   }
 
   drawVisualGameClaudeCodeStationProp(context, visualDestination);
-  drawVisualGameClaudeCodeAvatar(context, 0, 1, { color, legPhase });
-
-  if (isStationed) {
-    context.fillStyle =
-      agent.destination === "browser"
-        ? "#bfffb0"
-        : agent.destination === "ottoauth"
-          ? "#ffd27a"
-        : agent.destination === "camera"
-          ? "#7ce7f0"
-          : agent.destination === "library" ? "#f0cf72" : "#79bdf8";
-    context.fillRect(9, 25, 16, 1);
-    context.fillStyle = color;
-    const tap = Math.floor(time / 140 + agent.index) % 2;
-    context.fillRect(3, 17 + tap, 4, 3);
-    context.fillRect(27, 17 + (1 - tap), 4, 3);
-  }
+  const typingPhase = isStationed ? Math.floor(time / 140 + agent.index) : null;
+  drawVisualGameClaudeCodeAvatar(context, 0, 1, { color, legPhase, typingPhase });
 }
 
 function drawVisualGameAgent(context, agent, time, hitAreas) {
@@ -19825,7 +19816,7 @@ function drawVisualGameAgent(context, agent, time, hitAreas) {
   const shadowY = y + (
     visualDestination === "sleep"
       ? isClaudeCodeAgent ? 25 : 24
-      : isClaudeCodeAgent ? 29 : 27
+      : isClaudeCodeAgent ? 31 : 27
   ) * scale;
   const shadowWidth = (
     visualDestination === "sleep"
