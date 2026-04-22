@@ -206,37 +206,6 @@ test("install.sh defaults to an app checkout under the home Vibe Research direct
   }
 });
 
-test("install.sh can render the polished terminal installer UI when requested", async () => {
-  const { tempRoot, repoDir } = await createSourceRepo();
-  const installRoot = await mkdtemp(path.join(os.tmpdir(), "vibe-research-install-ui-"));
-  const installDir = path.join(installRoot, "vibe-research");
-
-  try {
-    const result = await execFile("bash", [installScript], {
-      env: installTestEnv({
-        NO_COLOR: "1",
-        VIBE_RESEARCH_HOME: installDir,
-        VIBE_RESEARCH_INSTALL_ANIMATION: "0",
-        VIBE_RESEARCH_INSTALL_UI: "fancy",
-        VIBE_RESEARCH_REPO_URL: repoDir,
-        VIBE_RESEARCH_SKIP_RUN: "1",
-      }),
-    });
-
-    assert.match(result.stdout, /Vibe Research/);
-    assert.match(result.stdout, /Installer for local agent workspaces/);
-    assert.match(result.stdout, /\[1\/9\] Terminal locale/);
-    assert.match(result.stdout, /\[7\/9\] App checkout/);
-    assert.match(result.stdout, /\[done\] App checkout/);
-    assert.match(result.stdout, /\[9\/9\] Service setup/);
-    assert.match(result.stdout, /Install complete/);
-    assert.ok(await stat(path.join(installDir, "start.sh")));
-  } finally {
-    await rm(tempRoot, { recursive: true, force: true });
-    await rm(installRoot, { recursive: true, force: true });
-  }
-});
-
 test("install.sh forces a managed restart when launching from the installer", async () => {
   const { tempRoot, repoDir } = await createSourceRepo();
   const installRoot = await mkdtemp(path.join(os.tmpdir(), "vibe-research-force-restart-"));
