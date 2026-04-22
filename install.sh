@@ -14,7 +14,7 @@ UPDATE_CHANNEL="${VIBE_RESEARCH_UPDATE_CHANNEL:-${REMOTE_VIBES_UPDATE_CHANNEL:-r
 SKIP_RUN="${VIBE_RESEARCH_SKIP_RUN:-${REMOTE_VIBES_SKIP_RUN:-0}}"
 INSTALL_SYSTEM_DEPS="${VIBE_RESEARCH_INSTALL_SYSTEM_DEPS:-${REMOTE_VIBES_INSTALL_SYSTEM_DEPS:-1}}"
 INSTALL_TAILSCALE="${VIBE_RESEARCH_INSTALL_TAILSCALE:-${REMOTE_VIBES_INSTALL_TAILSCALE:-auto}}"
-INSTALL_CLAUDE_CODE="${VIBE_RESEARCH_INSTALL_CLAUDE_CODE:-${REMOTE_VIBES_INSTALL_CLAUDE_CODE:-1}}"
+INSTALL_CLAUDE_CODE="${VIBE_RESEARCH_INSTALL_CLAUDE_CODE:-${REMOTE_VIBES_INSTALL_CLAUDE_CODE:-auto}}"
 CLAUDE_CODE_INSTALL_TIMEOUT_SECONDS="${VIBE_RESEARCH_CLAUDE_CODE_INSTALL_TIMEOUT_SECONDS:-${REMOTE_VIBES_CLAUDE_CODE_INSTALL_TIMEOUT_SECONDS:-600}}"
 INSTALL_UI="${VIBE_RESEARCH_INSTALL_UI:-${REMOTE_VIBES_INSTALL_UI:-auto}}"
 INSTALL_ANIMATION="${VIBE_RESEARCH_INSTALL_ANIMATION:-${REMOTE_VIBES_INSTALL_ANIMATION:-auto}}"
@@ -592,15 +592,21 @@ install_claude_code_with_npm() {
 ensure_claude_code() {
   local native_status used_npm_fallback
 
-  if [ "$INSTALL_CLAUDE_CODE" = "0" ]; then
-    log "Skipping Claude Code install because VIBE_RESEARCH_INSTALL_CLAUDE_CODE=0"
-    return
-  fi
-
   if claude_code_is_usable; then
     log_claude_code_version
     return
   fi
+
+  case "$INSTALL_CLAUDE_CODE" in
+    0 | false | no | off)
+      log "Skipping Claude Code install because VIBE_RESEARCH_INSTALL_CLAUDE_CODE=0"
+      return
+      ;;
+    auto | detect | "")
+      log "Claude Code is not installed yet; continuing so onboarding can install or choose a coding agent"
+      return
+      ;;
+  esac
 
   if ! is_linux && ! is_macos; then
     log "Skipping Claude Code install because automatic setup is supported on macOS/Linux/WSL only"

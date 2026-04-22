@@ -23,22 +23,21 @@ Do not run lookalike installers from unrelated domains, forks, package names, or
 
 ## Claude Code Install
 
-The main installer runs Claude Code's native installer by default. That is Anthropic's recommended macOS/Linux/WSL path, and Vibe Research prefers the native `~/.local/bin/claude` binary over older npm/Homebrew shims when both are present.
+The main installer does not require Claude Code to finish setup. It detects an existing `claude` command when present, then lets the onboarding UI install or choose a coding agent. Vibe Research prefers the native `~/.local/bin/claude` binary over older npm/Homebrew shims when both are present.
 
-If Anthropic's native installer exits or does not finish within 10 minutes, the Vibe Research installer falls back to a user-local npm install under `~/.local` so setup can continue without `sudo`. Set `VIBE_RESEARCH_CLAUDE_CODE_INSTALL_TIMEOUT_SECONDS=0` to disable that timeout.
+If you explicitly set `VIBE_RESEARCH_INSTALL_CLAUDE_CODE=1`, the shell installer runs Anthropic's native installer and falls back to a user-local npm install under `~/.local` if the native installer exits or does not finish within 10 minutes. Set `VIBE_RESEARCH_CLAUDE_CODE_INSTALL_TIMEOUT_SECONDS=0` to disable that timeout.
 
 ```bash
-curl -fsSL https://claude.ai/install.sh | bash
-claude --version
+VIBE_RESEARCH_INSTALL_CLAUDE_CODE=1 curl -fsSL https://vibe-research.net/install.sh | bash
 ```
 
-To skip Claude Code when installing Vibe Research for another provider, run the quickstart with `VIBE_RESEARCH_INSTALL_CLAUDE_CODE=0`.
+The onboarding UI also offers Claude Code, Codex, OpenCode, Gemini CLI, and ML Intern install/detection from the provider picker.
 
 ## Details...
 
 Use the `vibe-research.net` installer URL directly. It is a small stable wrapper around the canonical installer in this repo. If a very minimal machine does not have `curl` yet, install `curl` first and rerun the quickstart command.
 
-The installer handles Claude Code, git, build tools, Node.js 22.x, Vibe Research, and startup on supported macOS/Linux/Raspberry Pi systems. It detects an already-connected Tailscale setup but does not require Tailscale login on first run. On Linux installs, `tmux` is installed too so coding-agent terminals can survive Vibe Research restarts.
+The installer handles git, build tools, Node.js 22.x, Vibe Research, and startup on supported macOS/Linux/Raspberry Pi systems. It detects an already-connected Tailscale setup but does not require Tailscale login on first run. On Linux installs, `tmux` is installed too so coding-agent terminals can survive Vibe Research restarts.
 
 Interactive terminals get a polished installer view with a Vibe Research header, step progress, and a small loading spinner. Set `VIBE_RESEARCH_INSTALL_UI=plain` for simple logs, or `VIBE_RESEARCH_INSTALL_ANIMATION=0` to keep the styled step output without animation.
 

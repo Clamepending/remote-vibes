@@ -19,7 +19,8 @@ export const providerDefinitions = [
       name: "@anthropic-ai/claude-code",
       bin: "claude",
     },
-    installCommand: "curl -fsSL https://claude.ai/install.sh | bash",
+    installCommand:
+      '(curl -fsSL https://claude.ai/install.sh | bash || (mkdir -p "$HOME/.local" && NPM_CONFIG_PREFIX="$HOME/.local" npm install -g @anthropic-ai/claude-code --no-audit --no-fund)) && export PATH="$HOME/.local/bin:$PATH"',
     authCommand: "claude auth login",
     pathHints: [
       "~/.local/bin/claude",

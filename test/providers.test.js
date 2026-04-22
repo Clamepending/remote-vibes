@@ -69,7 +69,8 @@ test("provider definitions include one-command installer hints for onboarding", 
       .map((provider) => [provider.id, provider.installCommand]),
   );
 
-  assert.equal(installers.claude, "curl -fsSL https://claude.ai/install.sh | bash");
+  assert.match(installers.claude, /https:\/\/claude\.ai\/install\.sh/);
+  assert.match(installers.claude, /@anthropic-ai\/claude-code/);
   assert.equal(installers.codex, "npm install -g @openai/codex");
   assert.equal(installers.gemini, "npm install -g @google/gemini-cli");
   assert.equal(installers.opencode, "curl -fsSL https://opencode.ai/install | bash");

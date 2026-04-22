@@ -227,7 +227,48 @@ test("install.sh forces a managed restart when launching from the installer", as
   }
 });
 
-test("install.sh installs Claude Code by default when it is missing", async () => {
+test("install.sh defers Claude Code install to onboarding by default", async () => {
+  const { tempRoot, repoDir } = await createSourceRepo();
+  const installRoot = await mkdtemp(path.join(os.tmpdir(), "vibe-research-claude-defer-"));
+  const installDir = path.join(installRoot, "vibe-research");
+  const fakeBin = path.join(installRoot, "bin");
+  const homeDir = path.join(installRoot, "home");
+
+  try {
+    await mkdir(fakeBin, { recursive: true });
+    await mkdir(homeDir, { recursive: true });
+    await writeFile(
+      path.join(fakeBin, "claude"),
+      "#!/usr/bin/env sh\nprintf 'not installed yet\\n' >&2\nexit 127\n",
+    );
+    await writeFile(
+      path.join(fakeBin, "curl"),
+      "#!/usr/bin/env sh\nprintf 'installer should not call curl for Claude by default\\n' >&2\nexit 99\n",
+    );
+    await execFile("chmod", ["+x", path.join(fakeBin, "claude"), path.join(fakeBin, "curl")]);
+
+    const env = installTestEnv({
+      HOME: homeDir,
+      PATH: `${fakeBin}${path.delimiter}${process.env.PATH || ""}`,
+      VIBE_RESEARCH_HOME: installDir,
+      VIBE_RESEARCH_REPO_URL: repoDir,
+      VIBE_RESEARCH_SKIP_RUN: "1",
+    });
+    delete env.VIBE_RESEARCH_INSTALL_CLAUDE_CODE;
+    delete env.REMOTE_VIBES_INSTALL_CLAUDE_CODE;
+
+    const result = await execFile("bash", [installScript], { env });
+
+    assert.match(result.stdout, /Claude Code is not installed yet; continuing so onboarding can install or choose a coding agent/);
+    assert.doesNotMatch(result.stdout, /Installing Claude Code using Anthropic's native installer/);
+    assert.ok(await stat(path.join(installDir, "start.sh")));
+  } finally {
+    await rm(tempRoot, { recursive: true, force: true });
+    await rm(installRoot, { recursive: true, force: true });
+  }
+});
+
+test("install.sh installs Claude Code when explicitly requested", async () => {
   const { tempRoot, repoDir } = await createSourceRepo();
   const installRoot = await mkdtemp(path.join(os.tmpdir(), "vibe-research-claude-install-"));
   const homeDir = path.join(installRoot, "home");
