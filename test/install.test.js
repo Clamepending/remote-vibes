@@ -221,6 +221,7 @@ test("install.sh installs Claude Code by default when it is missing", async () =
       path.join(fakeBin, "claude"),
       "#!/usr/bin/env sh\nprintf 'not installed yet\\n' >&2\nexit 127\n",
     );
+    await writeFile(path.join(fakeBin, "uname"), "#!/usr/bin/env sh\nprintf 'Darwin\\n'\n");
     await writeFile(
       path.join(fakeBin, "curl"),
       `#!/usr/bin/env bash
@@ -244,6 +245,10 @@ fi
 cat <<'CLAUDE_INSTALLER'
 #!/usr/bin/env bash
 set -euo pipefail
+if [ "\${LC_ALL:-}" != "en_US.UTF-8" ] || [ "\${LC_CTYPE:-}" != "en_US.UTF-8" ] || [ "\${LANG:-}" != "en_US.UTF-8" ]; then
+  printf 'bad installer locale: LC_ALL=%s LC_CTYPE=%s LANG=%s\\n' "\${LC_ALL:-}" "\${LC_CTYPE:-}" "\${LANG:-}" >&2
+  exit 64
+fi
 printf 'installed via native installer\\n' >> ${JSON.stringify(claudeInstallLog)}
 mkdir -p "$HOME/.local/bin"
 cat > "$HOME/.local/bin/claude" <<'CLAUDE_BIN'
@@ -258,11 +263,14 @@ chmod +x "$HOME/.local/bin/claude"
 CLAUDE_INSTALLER
 `,
     );
-    await execFile("chmod", ["+x", path.join(fakeBin, "claude"), path.join(fakeBin, "curl")]);
+    await execFile("chmod", ["+x", path.join(fakeBin, "claude"), path.join(fakeBin, "curl"), path.join(fakeBin, "uname")]);
 
     const result = await execFile("bash", [installScript], {
       env: installTestEnv({
         HOME: homeDir,
+        LANG: "C.UTF-8",
+        LC_ALL: "C.UTF-8",
+        LC_CTYPE: "C.UTF-8",
         PATH: `${fakeBin}${path.delimiter}${process.env.PATH || ""}`,
         VIBE_RESEARCH_HOME: installDir,
         VIBE_RESEARCH_REPO_URL: repoDir,
@@ -272,6 +280,7 @@ CLAUDE_INSTALLER
     });
 
     assert.match(result.stdout, /Installing Claude Code using Anthropic's native installer/);
+    assert.match(result.stdout, /Using macOS locale en_US\.UTF-8 instead of unsupported C\.UTF-8/);
     assert.match(result.stdout, /Using Claude Code Claude Code 2\.1\.99/);
     assert.equal((await readFile(claudeInstallLog, "utf8")).trim(), "installed via native installer");
     assert.ok(await stat(path.join(homeDir, ".local", "bin", "claude")));

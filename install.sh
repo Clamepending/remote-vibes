@@ -52,6 +52,23 @@ is_linux() {
   [ "$(uname -s)" = "Linux" ]
 }
 
+normalize_macos_locale() {
+  if ! is_macos; then
+    return
+  fi
+
+  case "${LC_ALL:-} ${LC_CTYPE:-} ${LANG:-}" in
+    *C.UTF-8*)
+      local fallback_locale
+      fallback_locale="${VIBE_RESEARCH_MACOS_LOCALE:-${REMOTE_VIBES_MACOS_LOCALE:-en_US.UTF-8}}"
+      export LANG="$fallback_locale"
+      export LC_CTYPE="$fallback_locale"
+      export LC_ALL="$fallback_locale"
+      log "Using macOS locale $fallback_locale instead of unsupported C.UTF-8"
+      ;;
+  esac
+}
+
 is_root() {
   [ "$(id -u)" -eq 0 ]
 }
@@ -897,6 +914,7 @@ update_repo() {
 }
 
 main() {
+  normalize_macos_locale
   ensure_base_packages
   ensure_node
   ensure_claude_code
