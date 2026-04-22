@@ -180,6 +180,10 @@ async function waitForValue(check, expectedValue) {
   throw new Error(`Expected value ${expectedValue} was never observed.`);
 }
 
+function shellQuote(value) {
+  return `'${String(value).replaceAll("'", "'\\''")}'`;
+}
+
 async function listFilesRecursive(root) {
   let entries;
   try {
@@ -231,11 +235,10 @@ test("state is available without authentication", async () => {
 
     const state = await response.json();
     assert.equal(state.appName, "Vibe Research");
-    const expectedDefaultProviderId = state.providers.some(
-      (provider) => provider.id === "claude" && provider.available,
-    )
-      ? "claude"
-      : "shell";
+    const expectedDefaultProviderId =
+      state.providers.find((provider) => provider.id === "claude" && provider.available)?.id
+      || state.providers.find((provider) => provider.id !== "shell" && provider.available)?.id
+      || "shell";
     assert.equal(state.defaultProviderId, expectedDefaultProviderId);
     assert.ok(state.providers.some((provider) => provider.id === "shell" && provider.available));
     assert.ok(Array.isArray(state.urls));
@@ -269,6 +272,53 @@ test("state is available without authentication", async () => {
 
     const gpuResponse = await fetch(`${baseUrl}/api/gpu`);
     assert.equal(gpuResponse.status, 404);
+  } finally {
+    await app.close();
+    await removeTempWorkspace(workspaceDir);
+  }
+});
+
+test("provider install api runs installer and refreshes detected agents", async () => {
+  const workspaceDir = await createTempWorkspace("vibe-research-provider-install-");
+  const fakeBinDir = path.join(workspaceDir, "fake-bin");
+  const fakeAgentPath = path.join(fakeBinDir, "fake-agent");
+  const { app, baseUrl } = await startApp({
+    cwd: workspaceDir,
+    providers: [
+      {
+        id: "fake-agent",
+        label: "Fake Agent",
+        command: "fake-agent",
+        launchCommand: "fake-agent",
+        defaultName: "Fake Agent",
+        available: false,
+        installCommand:
+          `mkdir -p ${shellQuote(fakeBinDir)} && printf '%s\\n' '#!/bin/sh' 'printf fake-agent' > ${shellQuote(fakeAgentPath)} && chmod +x ${shellQuote(fakeAgentPath)}`,
+        pathHints: [fakeAgentPath],
+      },
+      {
+        id: "shell",
+        label: "Vanilla Shell",
+        command: null,
+        launchCommand: null,
+        defaultName: "Shell",
+        available: true,
+      },
+    ],
+  });
+
+  try {
+    const response = await fetch(`${baseUrl}/api/providers/fake-agent/install`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+    });
+
+    assert.equal(response.status, 200);
+    const payload = await response.json();
+    const provider = payload.providers.find((entry) => entry.id === "fake-agent");
+    assert.equal(provider.available, true);
+    assert.equal(provider.launchCommand, fakeAgentPath);
+    assert.equal(payload.defaultProviderId, "fake-agent");
   } finally {
     await app.close();
     await removeTempWorkspace(workspaceDir);
@@ -2936,8 +2986,9 @@ test("fresh browser starts on workspace folder setup until a folder is chosen", 
     const expectedAgentDir = getWorkspaceAgentDir(canonicalWorkspaceRoot);
 
     await page.click("#folder-picker-select");
-    await page.waitForSelector(".app-shell", { timeout: 10_000 });
-    await page.waitForSelector(".knowledge-base-view", { timeout: 10_000 });
+    await page.waitForSelector(".agent-setup-screen", { timeout: 10_000 });
+    await page.waitForSelector("text=Set up a coding agent", { timeout: 10_000 });
+    assert.equal(await page.locator(".app-shell").count(), 0);
 
     const settingsResponse = await fetch(`${baseUrl}/api/settings`);
     assert.equal(settingsResponse.status, 200);
@@ -2968,6 +3019,14 @@ test("New Agent starts in the configured agent folder without opening the folder
     cwd: workspaceDir,
     providers: [
       {
+        id: "test-agent",
+        label: "Test Agent",
+        defaultName: "Test Agent",
+        available: true,
+        command: "/bin/sh",
+        launchCommand: "/bin/sh",
+      },
+      {
         id: "shell",
         label: "Vanilla Shell",
         defaultName: "Shell",
@@ -2992,6 +3051,9 @@ test("New Agent starts in the configured agent folder without opening the folder
 
     browser = await chromium.launch({ executablePath, headless: true });
     const page = await browser.newPage();
+    await page.addInitScript(() => {
+      window.localStorage.setItem("vibeResearch.agentSetupComplete.v1", "1");
+    });
     await page.goto(baseUrl, { waitUntil: "commit", timeout: 10_000 });
     await page.waitForSelector(".app-shell", { timeout: 10_000 });
 

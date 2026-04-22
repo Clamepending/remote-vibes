@@ -135,6 +135,8 @@ const ROUTED_MAIN_VIEWS = new Set([
   "swarm",
   "browser-use",
 ]);
+const AGENT_SETUP_STORAGE_KEY = "vibeResearch.agentSetupComplete.v1";
+const AGENT_SETUP_PENDING_STORAGE_KEY = "vibeResearch.agentSetupPending.v1";
 const AGENT_TOWN_SHARE_TEXT = "I set up my vibe-research.net town!";
 const AGENT_TOWN_SHARE_URL = "https://vibe-research.net";
 const AGENT_TOWN_SHARE_INTENT_URL = "https://twitter.com/intent/tweet";
@@ -1131,13 +1133,60 @@ function loadAgentTownDogNamePreference() {
   }
 }
 
+function loadAgentSetupCompletePreference() {
+  try {
+    return window.localStorage.getItem(AGENT_SETUP_STORAGE_KEY) === "1";
+  } catch {
+    return false;
+  }
+}
+
+function saveAgentSetupCompletePreference(complete) {
+  try {
+    if (complete) {
+      window.localStorage.setItem(AGENT_SETUP_STORAGE_KEY, "1");
+    } else {
+      window.localStorage.removeItem(AGENT_SETUP_STORAGE_KEY);
+    }
+  } catch {
+    // First-run setup state is convenience-only; detection still gates the app.
+  }
+}
+
+function loadAgentSetupPendingPreference() {
+  try {
+    return window.localStorage.getItem(AGENT_SETUP_PENDING_STORAGE_KEY) === "1";
+  } catch {
+    return false;
+  }
+}
+
+function saveAgentSetupPendingPreference(pending) {
+  try {
+    if (pending) {
+      window.localStorage.setItem(AGENT_SETUP_PENDING_STORAGE_KEY, "1");
+    } else {
+      window.localStorage.removeItem(AGENT_SETUP_PENDING_STORAGE_KEY);
+    }
+  } catch {
+    // Pending setup state only affects the first-run screen.
+  }
+}
+
 const layoutPreferences = loadLayoutPreferences();
 const agentTownLayoutPreferences = loadAgentTownLayoutPreferences();
 const agentTownThemePreference = loadAgentTownThemePreference();
 const agentTownDogNamePreference = loadAgentTownDogNamePreference();
+const agentSetupCompletePreference = loadAgentSetupCompletePreference();
+const agentSetupPendingPreference = loadAgentSetupPendingPreference();
 
 const state = {
   providers: [],
+  agentSetupComplete: agentSetupCompletePreference,
+  agentSetupActive: agentSetupPendingPreference,
+  agentSetupInstalling: {},
+  agentSetupRefreshing: false,
+  agentSetupError: "",
   sessionProviderPickerGlobalListenersBound: false,
   sessions: [],
   sessionReadAt: loadSessionReadState(),
@@ -4727,26 +4776,20 @@ function getProviderById(providerId) {
   return state.providers.find((provider) => provider.id === providerId) || null;
 }
 
+function getAgentSetupProviders() {
+  return state.providers.filter((provider) => provider.id !== "shell");
+}
+
+function getInstalledAgentProviders() {
+  return getAgentSetupProviders().filter((provider) => provider.available);
+}
+
+function hasInstalledAgentProvider() {
+  return getInstalledAgentProviders().length > 0;
+}
+
 function getProviderInstallCommand(provider) {
   return String(provider?.installCommand || "").trim();
-}
-
-function getProviderAuthCommand(provider) {
-  return String(provider?.authCommand || "").trim();
-}
-
-function buildProviderInstallInput(provider) {
-  const command = getProviderInstallCommand(provider);
-  if (!command) {
-    return "";
-  }
-
-  const authCommand = getProviderAuthCommand(provider);
-  const fullCommand = authCommand
-    ? `${command} && hash -r && ${authCommand}`
-    : command;
-
-  return `${fullCommand}\r`;
 }
 
 function queueSessionInput(sessionId, data, { delayMs = 900 } = {}) {
@@ -5505,20 +5548,126 @@ async function startNewAgentFromUi({ openInTown = false } = {}) {
   }
 }
 
-async function startProviderInstallSession(provider) {
-  const installInput = buildProviderInstallInput(provider);
-  if (!installInput) {
-    window.alert(`${provider?.label || "That agent"} does not have an automatic install command yet.`);
+function applyProviderDetectionState(payload = {}) {
+  if (Array.isArray(payload.providers)) {
+    state.providers = payload.providers;
+  }
+
+  if (payload.defaultProviderId) {
+    state.defaultProviderId = payload.defaultProviderId;
+  }
+
+  const selectedProvider = getProviderById(state.defaultProviderId);
+  if (!selectedProvider?.available || selectedProvider.id === "shell") {
+    const installedProvider = getInstalledAgentProviders()[0];
+    if (installedProvider) {
+      state.defaultProviderId = installedProvider.id;
+    }
+  }
+
+  for (const provider of getInstalledAgentProviders()) {
+    if (state.agentSetupInstalling[provider.id]) {
+      setAgentSetupInstallState(provider.id, null);
+    }
+  }
+}
+
+function setAgentSetupInstallState(providerId, nextState) {
+  state.agentSetupInstalling = {
+    ...state.agentSetupInstalling,
+    [providerId]: nextState,
+  };
+
+  if (!nextState) {
+    delete state.agentSetupInstalling[providerId];
+  }
+}
+
+async function refreshAgentProviders({ render = true } = {}) {
+  state.agentSetupRefreshing = true;
+  state.agentSetupError = "";
+  if (render) {
+    renderShell();
+  }
+
+  try {
+    const payload = await fetchJson("/api/providers/refresh", {
+      method: "POST",
+    });
+    applyProviderDetectionState(payload);
+  } catch (error) {
+    state.agentSetupError = error.message;
+  } finally {
+    state.agentSetupRefreshing = false;
+    if (render) {
+      renderShell();
+    }
+  }
+}
+
+async function installAgentProvider(providerId) {
+  const provider = getProviderById(providerId);
+  if (!provider || provider.available) {
     return;
   }
 
-  await createSessionInFolder(getAgentSpawnPath() || "/", {
-    providerId: "shell",
-    name: `Install ${provider.label}`,
-    initialInput: installInput,
-    initialInputDelayMs: 450,
-    rememberProvider: false,
-  });
+  if (!getProviderInstallCommand(provider)) {
+    state.agentSetupError = `${provider.label} does not have an automatic installer yet.`;
+    renderShell();
+    return;
+  }
+
+  setAgentSetupInstallState(providerId, { status: "installing", message: "" });
+  state.agentSetupError = "";
+  renderShell();
+
+  try {
+    const payload = await fetchJson(`/api/providers/${encodeURIComponent(providerId)}/install`, {
+      method: "POST",
+    });
+    applyProviderDetectionState(payload);
+    const refreshedProvider = getProviderById(providerId);
+    if (refreshedProvider?.available) {
+      setAgentSetupInstallState(providerId, null);
+    } else {
+      const message = `${provider.label} install finished, but Vibe Research did not detect the CLI yet.`;
+      setAgentSetupInstallState(providerId, { status: "error", message });
+      state.agentSetupError = message;
+    }
+  } catch (error) {
+    setAgentSetupInstallState(providerId, { status: "error", message: error.message });
+    state.agentSetupError = error.message;
+    await refreshAgentProviders({ render: false });
+  } finally {
+    renderShell();
+  }
+}
+
+async function finishAgentSetup() {
+  const installedProvider =
+    getInstalledAgentProviders().find((provider) => provider.id === state.defaultProviderId)
+    || getInstalledAgentProviders()[0];
+
+  if (!installedProvider) {
+    state.agentSetupError = "Install at least one coding agent before continuing.";
+    renderShell();
+    return;
+  }
+
+  state.defaultProviderId = installedProvider.id;
+  state.agentSetupComplete = true;
+  state.agentSetupActive = false;
+  saveAgentSetupCompletePreference(true);
+  saveAgentSetupPendingPreference(false);
+  setCurrentView("visual-interface");
+  renderShell();
+
+  if (!hasNonInstallerAgentSession()) {
+    await startNewAgentFromUi({ openInTown: true });
+    return;
+  }
+
+  await openVisualInterface({ refresh: true });
 }
 
 async function createFolderFromPicker(folderName) {
@@ -5643,6 +5792,23 @@ function maybeRedirectToPreferredOrigin() {
 
 function isBrainSetupRequired() {
   return state.settings.wikiPathConfigured === false;
+}
+
+function isAgentSetupRequired() {
+  if (state.agentSetupComplete && (hasInstalledAgentProvider() || state.sessions.length > 0)) {
+    return false;
+  }
+
+  if (state.agentSetupActive) {
+    return true;
+  }
+
+  if (hasInstalledAgentProvider() || state.sessions.length > 0) {
+    return false;
+  }
+
+  const route = getRouteState();
+  return route.view === "shell";
 }
 
 function inferWikiPathConfigured(settings) {
@@ -14313,7 +14479,7 @@ function renderVisualProjectPicker() {
       <div class="visual-project-empty">
         <span class="main-search-kind">first agent</span>
         <strong>Choose an agent, then start in the default folder.</strong>
-        <p>Ready agents are marked green. Missing agents open a terminal, run the installer, then start that agent's login flow.</p>
+        <p>Ready agents are marked green. Missing agents can be installed from setup, then opened here.</p>
         ${renderOnboardingProviderChoices()}
         <button class="ghost-button" type="button" data-start-new-agent="town">start selected agent</button>
       </div>
@@ -21981,6 +22147,107 @@ function renderUpdateBanner() {
   `;
 }
 
+function renderAgentSetupProviderCards() {
+  const providers = getAgentSetupProviders();
+
+  if (!providers.length) {
+    return `
+      <div class="agent-setup-empty">
+        <strong>No coding agents were found.</strong>
+        <span>Refresh detection after installing Claude Code, Codex, Gemini, OpenCode, or ML Intern.</span>
+      </div>
+    `;
+  }
+
+  return providers
+    .map((provider) => {
+      const installState = state.agentSetupInstalling[provider.id] || {};
+      const installing = installState.status === "installing";
+      const failed = installState.status === "error";
+      const installed = Boolean(provider.available);
+      const installCommand = getProviderInstallCommand(provider);
+      const status = installed
+        ? "installed"
+        : installing
+          ? "installing"
+          : failed
+            ? "retry"
+            : installCommand
+              ? "not installed"
+              : "manual";
+      const buttonLabel = installed ? "installed" : installing ? "installing..." : failed ? "retry install" : "install";
+      const disabled = installed || installing || !installCommand;
+
+      return `
+        <article class="agent-setup-provider ${installed ? "is-installed" : ""} ${installing ? "is-installing" : ""} ${failed ? "is-error" : ""}">
+          <div class="agent-setup-provider-icon" aria-hidden="true">
+            ${installed ? "✓" : installing ? "" : renderIcon(Bot)}
+          </div>
+          <div class="agent-setup-provider-copy">
+            <strong>${escapeHtml(provider.label)}</strong>
+            <span>${escapeHtml(status)}</span>
+            ${
+              failed && installState.message
+                ? `<em>${escapeHtml(installState.message)}</em>`
+                : ""
+            }
+          </div>
+          <button
+            class="${installed ? "ghost-button" : "primary-button"} agent-setup-install-button"
+            type="button"
+            data-agent-setup-install="${escapeHtml(provider.id)}"
+            ${disabled ? "disabled" : ""}
+          >
+            ${escapeHtml(buttonLabel)}
+          </button>
+        </article>
+      `;
+    })
+    .join("");
+}
+
+function renderAgentSetupScreen() {
+  const canProceed = hasInstalledAgentProvider();
+  state.agentSetupActive = true;
+  saveAgentSetupPendingPreference(true);
+  document.title = "Set Up Agents · Vibe Research";
+
+  app.innerHTML = `
+    <main class="screen agent-setup-screen">
+      <section class="agent-setup-card" aria-labelledby="agent-setup-title">
+        <div class="agent-setup-kicker">
+          <span>Vibe Research</span>
+          <button class="icon-button agent-setup-refresh" type="button" data-agent-setup-refresh aria-label="Refresh agents" ${tooltipAttributes("Refresh agents")} ${state.agentSetupRefreshing ? "disabled" : ""}>
+            ${renderIcon(RefreshCw)}
+          </button>
+        </div>
+        <div class="agent-setup-hero">
+          <h1 id="agent-setup-title">Set up a coding agent</h1>
+          <p>Install or detect at least one agent before entering Agent Town.</p>
+        </div>
+        <div class="agent-setup-provider-list" aria-label="Coding agents">
+          ${renderAgentSetupProviderCards()}
+        </div>
+        ${
+          state.agentSetupError
+            ? `<div class="agent-setup-error" role="alert">${escapeHtml(state.agentSetupError)}</div>`
+            : ""
+        }
+        <div class="agent-setup-actions">
+          <span>${escapeHtml(canProceed ? "Ready to enter Agent Town." : "Waiting for one installed agent.")}</span>
+          <button class="primary-button agent-setup-proceed" type="button" data-agent-setup-proceed ${canProceed ? "" : "disabled"}>
+            proceed
+          </button>
+        </div>
+      </section>
+      ${renderSystemToasts()}
+    </main>
+  `;
+
+  bindShellEvents();
+  disposeTerminal();
+}
+
 function renderBrainSetupScreen() {
   document.title = "Set Workspace Folder · Vibe Research";
 
@@ -22096,6 +22363,7 @@ function renderShell() {
   const explorerScrollSnapshot = captureExplorerScrollSnapshots();
   const mainViewScrollSnapshot = captureMainViewScrollSnapshots();
   const brainSetupScrollSnapshot = captureScrollSnapshot(".brain-setup-screen");
+  const agentSetupScrollSnapshot = captureScrollSnapshot(".agent-setup-screen");
   teardownKnowledgeBaseGraphInteractions();
   teardownVisualPixelGame();
   syncFilesRoot();
@@ -22103,6 +22371,12 @@ function renderShell() {
   if (isBrainSetupRequired()) {
     renderBrainSetupScreen();
     restoreScrollSnapshot(".brain-setup-screen", brainSetupScrollSnapshot);
+    return;
+  }
+
+  if (isAgentSetupRequired()) {
+    renderAgentSetupScreen();
+    restoreScrollSnapshot(".agent-setup-screen", agentSetupScrollSnapshot);
     return;
   }
 
@@ -26387,7 +26661,7 @@ function bindSessionProviderPicker() {
       const provider = getProviderById(providerId);
       if (provider && !provider.available) {
         closeSessionProviderPicker();
-        void startProviderInstallSession(provider);
+        void installAgentProvider(provider.id);
         return;
       }
 
@@ -26702,6 +26976,28 @@ function bindShellEvents() {
     });
   });
 
+  document.querySelectorAll("[data-agent-setup-install]").forEach((button) => {
+    button.addEventListener("click", (event) => {
+      event.preventDefault();
+      const providerId = button.getAttribute("data-agent-setup-install") || "";
+      void installAgentProvider(providerId);
+    });
+  });
+
+  document.querySelectorAll("[data-agent-setup-refresh]").forEach((button) => {
+    button.addEventListener("click", (event) => {
+      event.preventDefault();
+      void refreshAgentProviders();
+    });
+  });
+
+  document.querySelectorAll("[data-agent-setup-proceed]").forEach((button) => {
+    button.addEventListener("click", async (event) => {
+      event.preventDefault();
+      await finishAgentSetup();
+    });
+  });
+
   document.querySelectorAll("[data-start-new-agent]").forEach((button) => {
     button.addEventListener("click", async (event) => {
       event.preventDefault();
@@ -26717,7 +27013,7 @@ function bindShellEvents() {
       const providerId = button.getAttribute("data-onboarding-provider-install") || "";
       const provider = getProviderById(providerId);
       if (provider) {
-        void startProviderInstallSession(provider);
+        void installAgentProvider(provider.id);
       }
     });
   });
@@ -28028,7 +28324,7 @@ async function loadSessions() {
       void loadBrowserUseSession(state.browserUseSession.id, { silent: true });
     }
 
-    if (isBrainSetupRequired()) {
+    if (isBrainSetupRequired() || isAgentSetupRequired()) {
       return;
     }
 
@@ -28518,6 +28814,8 @@ async function saveBrainFolderSelection(selectedPath) {
   applyAgentPromptState(payload.agentPrompt);
   state.knowledgeBase.noteCache = {};
   state.folderPicker.open = false;
+  state.agentSetupActive = true;
+  saveAgentSetupPendingPreference(true);
   setCurrentView("knowledge-base");
   await loadKnowledgeBaseIndex();
   await ensureKnowledgeBaseSelectionLoaded({ force: true });
@@ -28539,6 +28837,8 @@ async function cloneBrainFromGit({ remoteUrl, wikiPath = "" }) {
   state.folderPicker.open = false;
   state.brainSetupCloning = false;
   state.brainSetupError = "";
+  state.agentSetupActive = true;
+  saveAgentSetupPendingPreference(true);
   setCurrentView("knowledge-base");
   await loadKnowledgeBaseIndex();
   await ensureKnowledgeBaseSelectionLoaded({ force: true });
@@ -28767,7 +29067,7 @@ async function bootstrapApp() {
   state.activeSessionId = payload.sessions[0]?.id ?? null;
   syncFilesRoot({ force: true });
 
-  if (route.view === "file" && !isBrainSetupRequired()) {
+  if (route.view === "file" && !isBrainSetupRequired() && !isAgentSetupRequired()) {
     setOpenFileSelection(route.path, {
       status: route.path ? "loading" : "idle",
       message: "",
@@ -28782,7 +29082,7 @@ async function bootstrapApp() {
     return;
   }
 
-  if (state.currentView === "knowledge-base" && !isBrainSetupRequired()) {
+  if (state.currentView === "knowledge-base" && !isBrainSetupRequired() && !isAgentSetupRequired()) {
     await loadKnowledgeBaseIndex();
     await ensureKnowledgeBaseSelectionLoaded();
     updateRoute({ view: "knowledge-base", notePath: state.knowledgeBase.selectedNotePath });

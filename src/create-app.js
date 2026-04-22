@@ -56,6 +56,12 @@ const TAILSCALE_HTTPS_SERVE_ENABLED =
   (process.env.VIBE_RESEARCH_TAILSCALE_HTTPS ?? process.env.REMOTE_VIBES_TAILSCALE_HTTPS) !== "0";
 const DEFAULT_TAILSCALE_HTTPS_SERVE_PORTS = [443, 8443, 10000];
 const JSON_BODY_LIMIT = "25mb";
+const PROVIDER_INSTALL_TIMEOUT_MS = Number(
+  process.env.VIBE_RESEARCH_PROVIDER_INSTALL_TIMEOUT_MS || process.env.REMOTE_VIBES_PROVIDER_INSTALL_TIMEOUT_MS || 20 * 60 * 1000,
+);
+const PROVIDER_INSTALL_MAX_BUFFER = Number(
+  process.env.VIBE_RESEARCH_PROVIDER_INSTALL_MAX_BUFFER || process.env.REMOTE_VIBES_PROVIDER_INSTALL_MAX_BUFFER || 2 * 1024 * 1024,
+);
 const WIKI_CLONE_RATE_LIMIT_WINDOW_MS = 60 * 1000;
 const WIKI_CLONE_RATE_LIMIT_MAX = 5;
 const LIBRARY_SYNC_SETTING_KEYS = new Set([
@@ -593,8 +599,8 @@ export async function createVibeResearchApp({
   updateManager = new UpdateManager({ cwd, stateDir, port }),
   defaultSessionCwd = process.env.VIBE_RESEARCH_DEFAULT_CWD || process.env.REMOTE_VIBES_DEFAULT_CWD || "",
 } = {}) {
-  const providers = Array.isArray(providerOverrides) ? providerOverrides : await detectProviders();
-  const defaultProviderId = getDefaultProviderId(providers);
+  let providers = Array.isArray(providerOverrides) ? providerOverrides : await detectProviders();
+  let defaultProviderId = getDefaultProviderId(providers);
   const app = express();
   const wikiCloneRateLimit = rateLimit({
     windowMs: WIKI_CLONE_RATE_LIMIT_WINDOW_MS,
@@ -1031,6 +1037,51 @@ export async function createVibeResearchApp({
     }
   }
 
+  async function refreshProviders() {
+    providers = Array.isArray(providerOverrides)
+      ? await detectProviders(providerOverrides)
+      : await detectProviders();
+    defaultProviderId = getDefaultProviderId(providers);
+    sessionManager.providers = providers;
+    return { providers, defaultProviderId };
+  }
+
+  function getProviderInstallOutput(error) {
+    const output = `${error?.stdout || ""}${error?.stderr || ""}`.trim();
+    if (!output) {
+      return "";
+    }
+
+    return output.length > 4000 ? output.slice(output.length - 4000) : output;
+  }
+
+  async function runProviderInstall(provider) {
+    const installCommand = String(provider?.installCommand || "").trim();
+    if (!installCommand) {
+      throw buildHttpError(`${provider?.label || "That agent"} does not have an automatic install command yet.`, 400);
+    }
+
+    try {
+      const shell = process.env.VIBE_RESEARCH_INSTALL_SHELL || process.env.REMOTE_VIBES_INSTALL_SHELL || "/bin/bash";
+      const env = buildAgentCredentialEnv(settingsStore.settings, serverEnv);
+      const { stdout = "", stderr = "" } = await execFileAsync(shell, ["-lc", installCommand], {
+        cwd: sessionDefaultCwd || cwd,
+        env,
+        timeout: PROVIDER_INSTALL_TIMEOUT_MS,
+        maxBuffer: PROVIDER_INSTALL_MAX_BUFFER,
+      });
+
+      return { stdout, stderr };
+    } catch (error) {
+      const detail = getProviderInstallOutput(error);
+      const timedOut = error?.signal === "SIGTERM" || error?.killed;
+      const message = timedOut
+        ? `${provider.label} install timed out.`
+        : `${provider.label} install failed.`;
+      throw buildHttpError(detail ? `${message}\n${detail}` : message, 500);
+    }
+  }
+
   async function collectAndRecordSystemMetrics({ forceHistory = false } = {}) {
     const system = await systemMetricsProvider({
       agentProcessRoots: sessionManager.listAgentProcessRoots(),
@@ -1079,6 +1130,43 @@ export async function createVibeResearchApp({
     }
 
     proxyHttpRequest(request, response, proxyServer, proxiedPort, false);
+  });
+
+  app.post("/api/providers/refresh", async (_request, response) => {
+    try {
+      response.json(await refreshProviders());
+    } catch (error) {
+      response.status(500).json({ error: error.message });
+    }
+  });
+
+  app.post("/api/providers/:providerId/install", async (request, response) => {
+    const providerId = String(request.params.providerId || "");
+    const provider = providers.find((entry) => entry.id === providerId);
+
+    if (!provider || provider.id === "shell") {
+      response.status(404).json({ error: "Provider not found." });
+      return;
+    }
+
+    try {
+      const install = await runProviderInstall(provider);
+      const providerState = await refreshProviders();
+      response.json({
+        ...providerState,
+        install: {
+          stdout: install.stdout,
+          stderr: install.stderr,
+        },
+      });
+    } catch (error) {
+      try {
+        await refreshProviders();
+      } catch (refreshError) {
+        console.error("[vibe-research] provider refresh after failed install failed:", refreshError);
+      }
+      response.status(error.statusCode || 500).json({ error: error.message });
+    }
   });
 
   app.get("/api/state", async (_request, response) => {

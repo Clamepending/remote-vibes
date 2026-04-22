@@ -3,7 +3,7 @@ import os from "node:os";
 import path from "node:path";
 import test from "node:test";
 import { mkdtemp, mkdir, rm, writeFile, chmod } from "node:fs/promises";
-import { detectProviders, providerDefinitions, resolveProviderCommand } from "../src/providers.js";
+import { detectProviders, getDefaultProviderId, providerDefinitions, resolveProviderCommand } from "../src/providers.js";
 
 test("resolveProviderCommand falls back to executable path hints", async () => {
   const tempDir = await mkdtemp(path.join(os.tmpdir(), "vibe-research-provider-"));
@@ -71,11 +71,31 @@ test("provider definitions include one-command installer hints for onboarding", 
 
   assert.match(installers.claude, /https:\/\/claude\.ai\/install\.sh/);
   assert.match(installers.claude, /@anthropic-ai\/claude-code/);
+  assert.match(installers.claude, /timeout 600s/);
+  assert.match(installers.claude, /claude --version/);
   assert.equal(installers.codex, "npm install -g @openai/codex");
   assert.equal(installers.gemini, "npm install -g @google/gemini-cli");
   assert.equal(installers.opencode, "curl -fsSL https://opencode.ai/install | bash");
   assert.match(installers["ml-intern"], /github\.com\/huggingface\/ml-intern/);
   assert.match(installers["ml-intern"], /uv tool install -e \./);
+});
+
+test("default provider prefers Claude, then any installed coding agent, before shell", () => {
+  assert.equal(getDefaultProviderId([
+    { id: "shell", available: true },
+    { id: "codex", available: true },
+  ]), "codex");
+
+  assert.equal(getDefaultProviderId([
+    { id: "shell", available: true },
+    { id: "codex", available: true },
+    { id: "claude", available: true },
+  ]), "claude");
+
+  assert.equal(getDefaultProviderId([
+    { id: "shell", available: true },
+    { id: "codex", available: false },
+  ]), "shell");
 });
 
 test("provider definitions include real auth entrypoints for onboarding", () => {

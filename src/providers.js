@@ -20,7 +20,7 @@ export const providerDefinitions = [
       bin: "claude",
     },
     installCommand:
-      '(curl -fsSL https://claude.ai/install.sh | bash || (mkdir -p "$HOME/.local" && NPM_CONFIG_PREFIX="$HOME/.local" npm install -g @anthropic-ai/claude-code --no-audit --no-fund)) && export PATH="$HOME/.local/bin:$PATH"',
+      '((if command -v timeout >/dev/null 2>&1; then timeout 600s bash -c \'curl -fsSL https://claude.ai/install.sh | bash\'; else bash -c \'curl -fsSL https://claude.ai/install.sh | bash\'; fi) || (mkdir -p "$HOME/.local" && NPM_CONFIG_PREFIX="$HOME/.local" npm install -g @anthropic-ai/claude-code --no-audit --no-fund --fetch-retries=5 --fetch-retry-maxtimeout=120000 --fetch-timeout=300000)) && export PATH="$HOME/.local/bin:$PATH" && hash -r && claude --version',
     authCommand: "claude auth login",
     pathHints: [
       "~/.local/bin/claude",
@@ -271,5 +271,9 @@ export async function detectProviders(definitions = providerDefinitions, env = p
 }
 
 export function getDefaultProviderId(providers) {
-  return providers.find((provider) => provider.id === "claude" && provider.available)?.id ?? "shell";
+  return (
+    providers.find((provider) => provider.id === "claude" && provider.available)?.id
+    ?? providers.find((provider) => provider.id !== "shell" && provider.available)?.id
+    ?? "shell"
+  );
 }
