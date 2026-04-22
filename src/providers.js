@@ -47,7 +47,7 @@ export const providerDefinitions = [
       },
     ],
     installCommand:
-      '(curl -fsSL https://claude.ai/install.sh | bash || (mkdir -p "$HOME/.local" && NPM_CONFIG_PREFIX="$HOME/.local" npm install -g @anthropic-ai/claude-code --no-audit --no-fund)) && (command -v ollama >/dev/null 2>&1 || curl -fsSL https://ollama.com/install.sh | sh) && ollama pull "${VIBE_RESEARCH_CLAUDE_OLLAMA_MODEL:-${REMOTE_VIBES_CLAUDE_OLLAMA_MODEL:-qwen3-coder}}"',
+      '((if command -v timeout >/dev/null 2>&1; then timeout 600s bash -c \'curl -fsSL https://claude.ai/install.sh | bash\'; else bash -c \'curl -fsSL https://claude.ai/install.sh | bash\'; fi) || (mkdir -p "$HOME/.local" && NPM_CONFIG_PREFIX="$HOME/.local" npm install -g @anthropic-ai/claude-code --no-audit --no-fund --fetch-retries=5 --fetch-retry-maxtimeout=120000 --fetch-timeout=300000)) && export PATH="$HOME/.local/bin:$PATH" && hash -r && claude --version && (command -v ollama >/dev/null 2>&1 || curl -fsSL https://ollama.com/install.sh | sh) && ollama --version && ollama pull "${VIBE_RESEARCH_CLAUDE_OLLAMA_MODEL:-${REMOTE_VIBES_CLAUDE_OLLAMA_MODEL:-qwen3-coder}}"',
     pathHints: [
       "~/.local/bin/claude",
       "/opt/homebrew/bin/claude",

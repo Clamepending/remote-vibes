@@ -327,6 +327,7 @@ test("providerDefinitions includes local Claude Code via Ollama metadata", () =>
     "/opt/homebrew/bin/claude",
     "/usr/local/bin/claude",
   ]);
+  assert.equal(provider.authCommand, undefined);
 });
 
 test("resolveProviderCommand requires Ollama for the local Claude provider", async () => {
@@ -338,13 +339,12 @@ test("resolveProviderCommand requires Ollama for the local Claude provider", asy
   try {
     await mkdir(fakeBinDir, { recursive: true });
     await writeFile(fakeClaudePath, "#!/usr/bin/env bash\nprintf 'Claude Code 2.1.117\\n'\n");
-    await writeFile(fakeOllamaPath, "#!/usr/bin/env bash\nprintf 'ollama version is 0.21.0\\n'\n");
     await chmod(fakeClaudePath, 0o755);
-    await chmod(fakeOllamaPath, 0o755);
 
-    const provider = providerDefinitions.find((entry) => entry.id === "claude-ollama");
-    const testProvider = {
-      ...provider,
+    const definition = providerDefinitions.find((entry) => entry.id === "claude-ollama");
+    assert.ok(definition);
+    const provider = {
+      ...definition,
       pathHints: [fakeClaudePath],
       requiredCommands: [
         {
@@ -353,28 +353,26 @@ test("resolveProviderCommand requires Ollama for the local Claude provider", asy
         },
       ],
     };
-    const missingOllama = await resolveProviderCommand(
-      testProvider,
-      {
-        HOME: tempDir,
-        PATH: "/usr/bin:/bin",
-        SHELL: "/bin/zsh",
-      },
-    );
+
+    const missingOllama = await resolveProviderCommand(provider, {
+      HOME: tempDir,
+      PATH: `${fakeBinDir}:/usr/bin:/bin`,
+      SHELL: "/bin/zsh",
+    });
     assert.deepEqual(missingOllama, {
       available: false,
       resolvedCommand: null,
     });
 
-    const withOllama = await resolveProviderCommand(
-      testProvider,
-      {
-        HOME: tempDir,
-        PATH: `${fakeBinDir}:/usr/bin:/bin`,
-        SHELL: "/bin/zsh",
-      },
-    );
-    assert.deepEqual(withOllama, {
+    await writeFile(fakeOllamaPath, "#!/usr/bin/env bash\nprintf 'ollama version is 0.21.0\\n'\n");
+    await chmod(fakeOllamaPath, 0o755);
+
+    const available = await resolveProviderCommand(provider, {
+      HOME: tempDir,
+      PATH: `${fakeBinDir}:/usr/bin:/bin`,
+      SHELL: "/bin/zsh",
+    });
+    assert.deepEqual(available, {
       available: true,
       resolvedCommand: fakeClaudePath,
     });
