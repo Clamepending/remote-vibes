@@ -73,12 +73,28 @@ export default defineBuilding({
 - `ui.mode` is `panel`, `wide`, or `workspace`; workspace buildings can open a compact town panel first and expand into a full-screen app.
 - `ui.entryView` names the compact building panel implementation; `ui.workspaceView` names the routed view used when the building needs the whole screen.
 - `onboarding.variables` powers the generic install checklist.
-- `onboarding.steps[].completeWhen` can use `{ type: "installed" }`, `{ setting: "key" }`, `{ configuredSetting: "key" }`, or `{ allConfigured: ["key"] }`.
+- `onboarding.steps[].completeWhen` can use `{ type: "installed" }`, `{ setting: "key" }`, `{ configuredSetting: "key" }`, `{ allConfigured: ["key"] }`, or `{ anyConfigured: ["key"] }`.
 - Secrets should use a redacted public setting such as `exampleApiKeyConfigured`; the raw secret should not be returned to the browser.
+
+## BuildingHub
+
+BuildingHub is the community catalog path for people who want to contribute buildings without editing Vibe Research itself. It is intentionally manifest-only: catalogs can add building cards, install checklist copy, required variables, access notes, visual treatment, docs links, and capability descriptions, but they cannot register executable client code, add custom workspace routes, reserve special Agent Town places, or toggle arbitrary local settings.
+
+Vibe Research can load BuildingHub from a local folder such as `/Users/mark/Desktop/projects/buildinghub`, a direct JSON file, or a reviewed remote registry JSON URL. A folder source may contain a top-level `registry.json`, `buildinghub.json`, or `catalog.json`, plus individual manifests at `buildings/<slug>/building.json`.
+
+Community manifests are normalized on the server by `src/buildinghub-service.js` before they reach the browser. The loader forces `source: "buildinghub"`, strips `install.enabledSetting`, disables `install.system`, clears `onboarding.setupSelector`, coerces workspace UI modes back to panel/wide, and prevents `visual.specialTownPlace`. The browser also refuses community manifests whose normalized id collides with a core building id.
+
+The app exposes `GET /api/buildinghub/catalog?force=1` for explicit refreshes and includes `{ buildingHub: { buildings, status } }` in `GET /api/state`. Runtime configuration lives in settings keys:
+
+- `buildingHubEnabled`
+- `buildingHubCatalogPath`
+- `buildingHubCatalogUrl`
+
+The companion starter catalog lives at `/Users/mark/Desktop/projects/buildinghub`. Its expected contribution flow is: copy `templates/basic-building/building.json`, fill in the manifest and README under `buildings/<slug>/`, run its validator, rebuild `registry.json`, then open a normal review PR.
 
 ## Current Scope
 
-The registry is client-side today. Runtime services, API routes, session env vars, and custom Agent Town behavior still need server-side code. The intended direction is to make more of those pieces declarative as the building SDK matures.
+The core registry is client-side, while BuildingHub catalogs are loaded by a server-side manifest reader and merged into the client catalog at runtime. Runtime helper services, API routes, session env vars, and custom Agent Town behavior still need first-party Vibe Research code. The intended direction is to make more safe pieces declarative as the building SDK matures.
 
 ## Generative Media Buildings
 
