@@ -28,7 +28,7 @@ By default, the installer uses the latest GitHub Release when one exists, then f
 
 The install command now launches Vibe Research as a background server, so it keeps running even after the SSH session or terminal closes. The app checkout lives under `~/.vibe-research/app`, and settings, logs, session history, and the managed pid live under `~/.vibe-research/`. On Linux installs, `tmux` is installed too; coding-agent terminals use it when available so Vibe Research restarts can reattach to live agent work instead of merely replaying a transcript.
 
-New sessions can be started by choosing a folder from the browser, then picking the agent provider. The knowledge base folder is configurable in the sidebar settings; by default, Vibe Research keeps local git backups of the wiki every 10 minutes. To back that wiki up off-machine, create a private Git repo, paste its SSH or credential-helper remote URL into the sidebar's private remote backup field, enable remote push, and Vibe Research will push wiki backup commits there on each backup run.
+New sessions can be started by choosing a folder from the browser, then picking the agent provider. The Library folder is configurable in the sidebar settings; by default, Vibe Research keeps local git backups of the Library every 10 minutes. To back the Library up off-machine, create a private Git repo, paste its SSH or credential-helper remote URL into the sidebar's private remote backup field, enable remote push, and Vibe Research will push Library backup commits there on each backup run.
 
 ## Releases
 
@@ -106,7 +106,7 @@ For a one-move Vibe Research handoff, agent sessions expose:
 ml-intern "$(cat "$VIBE_RESEARCH_ML_INTERN_HANDOFF_PROMPT")"
 ```
 
-That prompt tells ML Intern to keep Vibe Research as the research ledger: claim one QUEUE row, run 1-3 committed cycles, cite papers/datasets/jobs/artifacts, update the result doc and leaderboard, and push the wiki/code repos.
+That prompt tells ML Intern to keep Vibe Research as the research ledger: claim one QUEUE row, run 1-3 committed cycles, cite papers/datasets/jobs/artifacts, update the result doc and leaderboard, and push the Library/code repos.
 
 For a repeatable live agent smoke test inside a Vibe Research shell session, run:
 

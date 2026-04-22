@@ -419,6 +419,7 @@ export function buildSessionEnv(
     VIBE_RESEARCH_BROWSER_COMMAND: "vr-playwright",
     VIBE_RESEARCH_BROWSER_FALLBACK_COMMAND: "vr-browser",
     VIBE_RESEARCH_BROWSER_USE_COMMAND: "vr-browser-use",
+    VIBE_RESEARCH_OTTOAUTH_COMMAND: "vr-ottoauth",
     VIBE_RESEARCH_VIDEOMEMORY_COMMAND: "vr-videomemory",
     VIBE_RESEARCH_BROWSER_DESCRIBE:
       "vr-browser describe 4173 --prompt \"What visual issues stand out in the rendered UI?\"",
@@ -445,11 +446,13 @@ export function buildSessionEnv(
     VIBE_RESEARCH_AGENT_INBOX: path.join(agentDir, "inbox"),
     VIBE_RESEARCH_AGENT_PROCESSED_DIR: path.join(agentDir, "processed"),
     VIBE_RESEARCH_AGENTMAIL_REPLY_COMMAND: "vr-agentmail-reply",
+    VIBE_RESEARCH_TELEGRAM_REPLY_COMMAND: "vr-telegram-reply",
     VIBE_RESEARCH_MAIL_WATCHER: "vr-mailwatch",
     REMOTE_VIBES_APP_ROOT: appRootDir,
     REMOTE_VIBES_BROWSER_COMMAND: "rv-playwright",
     REMOTE_VIBES_BROWSER_FALLBACK_COMMAND: "rv-browser",
     REMOTE_VIBES_BROWSER_USE_COMMAND: "rv-browser-use",
+    REMOTE_VIBES_OTTOAUTH_COMMAND: "rv-ottoauth",
     REMOTE_VIBES_VIDEOMEMORY_COMMAND: "rv-videomemory",
     REMOTE_VIBES_PLAYWRIGHT_COMMAND: "rv-playwright",
     REMOTE_VIBES_PLAYWRIGHT_SKILL: path.join(appRootDir, "skills", "playwright", "SKILL.md"),
@@ -467,6 +470,7 @@ export function buildSessionEnv(
     REMOTE_VIBES_AGENT_INBOX: path.join(agentDir, "inbox"),
     REMOTE_VIBES_AGENT_PROCESSED_DIR: path.join(agentDir, "processed"),
     REMOTE_VIBES_AGENTMAIL_REPLY_COMMAND: "rv-agentmail-reply",
+    REMOTE_VIBES_TELEGRAM_REPLY_COMMAND: "rv-telegram-reply",
     REMOTE_VIBES_MAIL_WATCHER: "rv-mailwatch",
     TERM: "xterm-256color",
   };
@@ -1608,6 +1612,11 @@ function normalizeGeminiProjectPath(projectPath) {
   return process.platform === "win32" ? normalizedPath.toLowerCase() : normalizedPath;
 }
 
+function normalizeSessionOccupationId(occupationId, fallback = "researcher") {
+  const normalized = String(occupationId || "").trim().toLowerCase();
+  return normalized || fallback;
+}
+
 function hasGeminiConversationMessages(messages) {
   return Array.isArray(messages) && messages.some((message) => message?.type === "user" || message?.type === "assistant");
 }
@@ -1690,6 +1699,7 @@ export class SessionManager {
     sessionActivityIdleMs = SESSION_ACTIVITY_IDLE_MS,
     persistentTerminals = true,
     extraSubagentsProvider = null,
+    occupationId = "researcher",
     userHomeDir = env?.HOME || os.homedir(),
     setTimeoutFn = setTimeout,
     clearTimeoutFn = clearTimeout,
@@ -1703,6 +1713,7 @@ export class SessionManager {
     this.env = env && typeof env === "object" ? { ...env } : { ...process.env };
     this.persistentTerminals = Boolean(persistentTerminals);
     this.extraSubagentsProvider = typeof extraSubagentsProvider === "function" ? extraSubagentsProvider : null;
+    this.occupationId = normalizeSessionOccupationId(occupationId);
     this.tmuxAvailable = null;
     this.userHomeDir = getProviderHomeDir(userHomeDir);
     this.sessionActivityIdleMs = Math.max(500, Number(sessionActivityIdleMs) || SESSION_ACTIVITY_IDLE_MS);
@@ -1742,6 +1753,10 @@ export class SessionManager {
   setExtraSubagentsProvider(extraSubagentsProvider) {
     this.extraSubagentsProvider =
       typeof extraSubagentsProvider === "function" ? extraSubagentsProvider : null;
+  }
+
+  setOccupationId(occupationId) {
+    this.occupationId = normalizeSessionOccupationId(occupationId, this.occupationId);
   }
 
   async initialize() {
@@ -2217,7 +2232,7 @@ export class SessionManager {
     });
   }
 
-  createSession({ providerId, name, cwd }) {
+  createSession({ providerId, name, cwd, occupationId }) {
     const provider = this.getProvider(providerId);
 
     if (!provider) {
@@ -2235,6 +2250,7 @@ export class SessionManager {
       name: normalizedName || this.makeDefaultName(provider),
       providerId: provider.id,
       providerLabel: provider.label,
+      occupationId: occupationId || this.occupationId,
       createdAt,
       updatedAt: createdAt,
       restoreOnStartup: true,
@@ -2344,6 +2360,7 @@ export class SessionManager {
       cols: sourceSession.cols,
       rows: sourceSession.rows,
       providerState: forkProviderState,
+      occupationId: sourceSession.occupationId || this.occupationId,
       restoreOnStartup: true,
       buffer: [
         `\u001b[1;36m[vibe-research]\u001b[0m forked from: ${sourceSession.name}`,
@@ -2726,6 +2743,7 @@ export class SessionManager {
       exitSignal: session.exitSignal,
       cols: session.cols,
       rows: session.rows,
+      occupationId: session.occupationId || this.occupationId,
       host: os.hostname(),
       lastPromptAt: session.lastPromptAt,
       activityStatus,
@@ -2759,11 +2777,13 @@ export class SessionManager {
     restoreOnStartup = false,
     providerState = null,
     autoRenameEnabled = false,
+    occupationId = this.occupationId,
   }) {
     return {
       id,
       providerId,
       providerLabel,
+      occupationId: normalizeSessionOccupationId(occupationId, this.occupationId),
       name,
       shell,
       cwd,
@@ -3462,6 +3482,7 @@ export class SessionManager {
       buffer: snapshot.buffer || "",
       restoreOnStartup: Boolean(snapshot.restoreOnStartup),
       providerState: snapshot.providerState || null,
+      occupationId: snapshot.occupationId || snapshot.promptId || this.occupationId,
     });
 
     this.sessions.set(session.id, session);

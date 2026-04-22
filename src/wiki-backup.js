@@ -17,10 +17,10 @@ function isMergeConflictMessage(message) {
 
 function formatConflictMessage(conflictFiles) {
   if (!conflictFiles.length) {
-    return "The wiki repository has an unresolved merge conflict.";
+    return "The Library repository has an unresolved merge conflict.";
   }
 
-  return `The wiki repository has unresolved merge conflicts in ${conflictFiles.join(", ")}.`;
+  return `The Library repository has unresolved merge conflicts in ${conflictFiles.join(", ")}.`;
 }
 
 function normalizeGitRemoteName(value) {
@@ -211,7 +211,7 @@ export class WikiBackupService {
         return;
       }
     } catch {
-      // Missing local config is normal for freshly initialized wiki repos.
+      // Missing local config is normal for freshly initialized Library repos.
     }
 
     await this.git(["config", key, fallbackValue]);
@@ -302,7 +302,7 @@ export class WikiBackupService {
         this.clearConflictState();
         this.lastPullAt = pullTimestamp;
         this.lastPullStatus = "pulled";
-        this.lastPullMessage = `Pulled wiki backup from ${this.remoteName}/${this.remoteBranch}.`;
+        this.lastPullMessage = `Pulled Library backup from ${this.remoteName}/${this.remoteBranch}.`;
         return true;
       }
 
@@ -319,12 +319,12 @@ export class WikiBackupService {
 
       if (/Already up to date\./i.test(`${stdout}\n${stderr}`)) {
         this.lastPullStatus = "current";
-        this.lastPullMessage = `Wiki backup is already current with ${this.remoteName}/${this.remoteBranch}.`;
+        this.lastPullMessage = `Library backup is already current with ${this.remoteName}/${this.remoteBranch}.`;
         return false;
       }
 
       this.lastPullStatus = "pulled";
-      this.lastPullMessage = `Pulled wiki backup from ${this.remoteName}/${this.remoteBranch}.`;
+      this.lastPullMessage = `Pulled Library backup from ${this.remoteName}/${this.remoteBranch}.`;
       this.clearConflictState();
       return true;
     } catch (error) {
@@ -364,7 +364,7 @@ export class WikiBackupService {
     if (!(await this.hasHeadCommit())) {
       this.lastPushAt = pushTimestamp;
       this.lastPushStatus = "skipped";
-      this.lastPushMessage = "No wiki commits exist yet, so there is nothing to push.";
+      this.lastPushMessage = "No Library commits exist yet, so there is nothing to push.";
       return false;
     }
 
@@ -374,7 +374,7 @@ export class WikiBackupService {
       this.clearConflictState();
       this.lastPushAt = pushTimestamp;
       this.lastPushStatus = "pushed";
-      this.lastPushMessage = `Pushed wiki backup to ${this.remoteName}/${this.remoteBranch}.`;
+      this.lastPushMessage = `Pushed Library backup to ${this.remoteName}/${this.remoteBranch}.`;
       return true;
     } catch (error) {
       const message = getErrorMessage(error);
@@ -390,7 +390,7 @@ export class WikiBackupService {
     if (!this.enabled) {
       this.lastRunAt = this.now().toISOString();
       this.lastStatus = "skipped";
-      this.lastMessage = "Wiki git backup is disabled.";
+      this.lastMessage = "Library git backup is disabled.";
       return this.getStatus();
     }
 
@@ -408,7 +408,7 @@ export class WikiBackupService {
       let committedChanges = false;
 
       if (stdout.trim()) {
-        await this.git(["commit", "-m", `Vibe Research wiki backup ${timestamp}`]);
+        await this.git(["commit", "-m", `Vibe Research Library backup ${timestamp}`]);
         committedChanges = true;
       }
 
@@ -420,15 +420,15 @@ export class WikiBackupService {
         this.lastStatus = "clean";
         this.lastMessage =
           this.lastPullStatus === "pulled"
-            ? "Pulled the latest wiki backup."
-            : "No wiki changes to back up.";
+            ? "Pulled the latest Library backup."
+            : "No Library changes to back up.";
         await this.pushRemoteBackup({ timestamp });
         return this.getStatus();
       }
 
       this.lastRunAt = timestamp;
       this.lastStatus = "committed";
-      this.lastMessage = reason === "scheduled" ? "Scheduled wiki backup committed." : "Wiki backup committed.";
+      this.lastMessage = reason === "scheduled" ? "Scheduled Library backup committed." : "Library backup committed.";
       await this.pushRemoteBackup({ timestamp });
       return this.getStatus();
     } catch (error) {

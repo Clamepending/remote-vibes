@@ -259,7 +259,7 @@ ensure_mac_brain_wiki() {
     cat >"$WIKI_DIR/README.md" <<EOF
 # mac-brain
 
-Local wiki for this Mac.
+Local Library for this Mac.
 
 Vibe Research settings live in:
 
@@ -279,7 +279,7 @@ EOF
 
   if command -v git >/dev/null 2>&1 && [ -d "$WIKI_DIR/.git" ]; then
     git_add_existing "$WIKI_DIR" README.md .gitignore
-    commit_staged_changes "$WIKI_DIR" "Initialize mac-brain wiki"
+    commit_staged_changes "$WIKI_DIR" "Initialize mac-brain Library"
   fi
 }
 
@@ -668,4 +668,4 @@ track_vibe_research_settings
 log "Background server pid: $server_pid"
 log "Server is detached and will keep running after this terminal closes."
 log "State directory: $RUNTIME_DIR"
-log "Wiki directory: $WIKI_DIR"
+log "Library directory: $WIKI_DIR"

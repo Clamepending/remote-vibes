@@ -719,6 +719,14 @@ restore_installer_generated_files() {
   fi
 }
 
+reset_checkout_changes() {
+  if [ -n "$(git status --porcelain 2>/dev/null)" ]; then
+    log "Discarding local app checkout changes before update"
+    git reset --hard HEAD >/dev/null 2>&1
+    git clean -fd >/dev/null 2>&1
+  fi
+}
+
 update_repo() {
   local ssh_url checkout_ref
   ssh_url="git@github.com:${REPO_SLUG}.git"
@@ -731,11 +739,7 @@ update_repo() {
   cd "$INSTALL_DIR"
   restore_managed_prompt_files
   restore_installer_generated_files
-
-  if [ -n "$(git status --porcelain 2>/dev/null)" ]; then
-    log "Local changes detected in $INSTALL_DIR, skipping update"
-    return
-  fi
+  reset_checkout_changes
 
   if [ "$checkout_ref" != "$REPO_REF" ]; then
     log "Updating existing checkout to latest release $checkout_ref"

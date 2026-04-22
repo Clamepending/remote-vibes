@@ -41,6 +41,7 @@ test("buildSessionEnv exposes helper and common CLI directories on PATH", () => 
     assert.equal(env.VIBE_RESEARCH_BROWSER_COMMAND, "vr-playwright");
     assert.equal(env.VIBE_RESEARCH_BROWSER_FALLBACK_COMMAND, "vr-browser");
     assert.equal(env.VIBE_RESEARCH_BROWSER_USE_COMMAND, "vr-browser-use");
+    assert.equal(env.VIBE_RESEARCH_OTTOAUTH_COMMAND, "vr-ottoauth");
     assert.equal(env.VIBE_RESEARCH_PLAYWRIGHT_COMMAND, "vr-playwright");
     assert.equal(env.VIBE_RESEARCH_PLAYWRIGHT_SKILL, path.join(rootDir, "skills", "playwright", "SKILL.md"));
     assert.equal(
@@ -68,10 +69,52 @@ test("ML Intern handoff prompt keeps Vibe Research as the research ledger", asyn
   assert.match(prompt, /execute exactly one Vibe Research move/);
   assert.match(prompt, /Read `AGENTS\.md`/);
   assert.match(prompt, /take QUEUE row 1/i);
-  assert.match(prompt, /commit and push the wiki/i);
+  assert.match(prompt, /commit and push the Library/i);
   assert.match(prompt, /cite paper\(s\)/i);
   assert.match(prompt, /inspect dataset schema/i);
   assert.match(prompt, /Do not hide a search over multiple independent candidates inside one move/i);
+});
+
+test("buildSessionEnv does not inject Google Drive connector access into local terminal agents", () => {
+  const rootDir = "/tmp/vibe-research-test-root";
+  const stateDir = "/tmp/vibe-research-test-state";
+  const wikiRoot = "/tmp/vibe-research-test-wiki";
+  const systemRoot = "/tmp/vibe-research-test-system";
+  const env = buildSessionEnv(
+    "session-drive",
+    "codex",
+    [],
+    rootDir,
+    stateDir,
+    { PATH: "/usr/bin:/bin" },
+    wikiRoot,
+    systemRoot,
+  );
+
+  const connectorKeys = Object.keys(env).filter((key) => /GOOGLE|DRIVE|MCP/i.test(key));
+  assert.deepEqual(connectorKeys, []);
+});
+
+test("buildSessionEnv does not inject external social or device connector credentials", () => {
+  const rootDir = "/tmp/vibe-research-test-root";
+  const stateDir = "/tmp/vibe-research-test-state";
+  const wikiRoot = "/tmp/vibe-research-test-wiki";
+  const systemRoot = "/tmp/vibe-research-test-system";
+  const env = buildSessionEnv(
+    "session-connectors",
+    "codex",
+    [],
+    rootDir,
+    stateDir,
+    { PATH: "/usr/bin:/bin" },
+    wikiRoot,
+    systemRoot,
+  );
+
+  const connectorKeys = Object.keys(env).filter((key) =>
+    /DISCORD|MOLTBOOK|TWITTER|IMESSAGE|PHONE|SMS|HOMEKIT|HOME_ASSISTANT|MATTER/i.test(key),
+  );
+  assert.deepEqual(connectorKeys, []);
 });
 
 test("buildSessionEnv strips inherited NO_COLOR and enables terminal colors", () => {

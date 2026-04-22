@@ -8,13 +8,11 @@ import {
   Bot,
   Camera,
   CalendarClock,
-  CalendarDays,
   ChevronDown,
   ChevronLeft,
   ChevronRight,
   CircleStop,
   Cpu,
-  Database,
   File,
   FilePenLine,
   FileText,
@@ -23,13 +21,11 @@ import {
   FolderPlus,
   FolderOpen,
   FolderUp,
-  GitPullRequest,
   GitFork,
   Gpu,
   Image as ImageIcon,
   IndentDecrease,
   IndentIncrease,
-  Mail,
   MemoryStick,
   Menu,
   MessageSquarePlus,
@@ -41,6 +37,7 @@ import {
   Search,
   ServerCog,
   Settings,
+  ShoppingCart,
   Trash2,
   Type,
   Waypoints,
@@ -51,12 +48,18 @@ import {
 } from "lucide";
 import {
   VISUAL_GAME_MAP_LAYOUT,
+  findVisualGameRoadRoute,
   getVisualGamePlace,
   getVisualGamePlaceAnchor,
-  getVisualGamePlaceItemSlots,
+  getVisualGamePackedItemSlots,
   getVisualGameRoadRects,
   validateVisualGameLayout,
 } from "./visual-game-layout.js";
+import {
+  AGENT_TOWN_SPECIAL_BUILDING_IDS,
+  BUILDING_CATALOG,
+  normalizeBuildingId,
+} from "./building-registry.js";
 
 const app = document.querySelector("#app");
 const TOUCH_TAP_SLOP_PX = 10;
@@ -143,12 +146,16 @@ const VISUAL_GAME_MIN_VIEWPORT_HEIGHT = 90;
 const VISUAL_GAME_CAMERA_MIN_PADDING_X = 160;
 const VISUAL_GAME_CAMERA_MIN_PADDING_Y = 96;
 const VISUAL_GAME_GPU_ACTIVE_THRESHOLD = 5;
-const VISUAL_GAME_MIN_ZOOM = 1;
+const VISUAL_GAME_MIN_ZOOM = 0.5;
 const VISUAL_GAME_MAX_ZOOM = 3.2;
 const VISUAL_GAME_ZOOM_STEP = 1.22;
 const VISUAL_GAME_DRAG_SLOP_PX = 5;
 const VISUAL_GAME_TILE = 16;
 const VISUAL_GAME_AGENT_SIZE = 18;
+const VISUAL_GAME_AGENT_WALK_SPEED = 0.07;
+const VISUAL_GAME_AGENT_MAX_FRAME_MS = 120;
+const VISUAL_GAME_AGENT_ARRIVAL_DISTANCE = 0.85;
+const VISUAL_GAME_AGENT_ROUTE_EPSILON = 0.5;
 const VISUAL_GAME_AGENT_PALETTES = [
   { hat: "#263a78", brim: "#17204e", hair: "#33231c", skin: "#f2c29a", coat: "#173a67", trim: "#f3d49a", pants: "#2e2b32", boots: "#5c3a21" },
   { hat: "#6b2f56", brim: "#3f1f38", hair: "#18151d", skin: "#d99f7a", coat: "#5c1f3a", trim: "#d6edf6", pants: "#2f2735", boots: "#482c1d" },
@@ -157,12 +164,25 @@ const VISUAL_GAME_AGENT_PALETTES = [
   { hat: "#2f5b73", brim: "#1c394b", hair: "#4a2b21", skin: "#f1b895", coat: "#245266", trim: "#ffc7a7", pants: "#282f3c", boots: "#57331f" },
   { hat: "#713c35", brim: "#48231f", hair: "#d1a044", skin: "#e2aa7e", coat: "#7c3930", trim: "#f4e0ae", pants: "#2d3137", boots: "#4c2f20" },
 ];
+const OCCUPATION_HAT_PALETTES = Object.freeze({
+  researcher: { fill: "#a996ff", dark: "#5948ad", highlight: "rgba(255, 255, 255, 0.42)" },
+  engineer: { fill: "#ffc447", dark: "#9f6617", highlight: "rgba(255, 255, 255, 0.42)" },
+  custom: { fill: "#9ce6cc", dark: "#2c7e69", highlight: "rgba(255, 255, 255, 0.42)" },
+  default: { fill: "#e9bd8f", dark: "#925d3f", highlight: "rgba(255, 255, 255, 0.42)" },
+});
 const VISUAL_GAME_ROAM_ROUTES = VISUAL_GAME_MAP_LAYOUT.roamRoutes;
+const VISUAL_GAME_CAMERA_SCREEN_COLUMNS = 6;
+const VISUAL_GAME_CAMERA_SCREEN_GAP = 4;
+const VISUAL_GAME_CAMERA_SCREEN_MAX_VISIBLE = 12;
+const VISUAL_GAME_CAMERA_SCREEN_SIZE = { width: 12, height: 11 };
 const VISUAL_GAME_GPU_FACTORY_COLUMNS = VISUAL_GAME_MAP_LAYOUT.places.gpuYard.factory.columns;
 const VISUAL_GAME_GPU_FACTORY_GAP = VISUAL_GAME_MAP_LAYOUT.places.gpuYard.factory.gap;
 const VISUAL_GAME_GPU_FACTORY_MAX_VISIBLE = VISUAL_GAME_MAP_LAYOUT.places.gpuYard.factory.maxVisible;
 const VISUAL_GAME_GPU_FACTORY_PADDING = VISUAL_GAME_MAP_LAYOUT.places.gpuYard.factory.padding;
 const VISUAL_GAME_GPU_FACTORY_SIZE = VISUAL_GAME_MAP_LAYOUT.places.gpuYard.factory.size;
+const VISUAL_GAME_DOCK_MAX_SHIPS = 16;
+const VISUAL_GAME_DOCK_SHIP_WIDTH = 30;
+const VISUAL_GAME_DOCK_SHIP_HEIGHT = 18;
 const VISUAL_GAME_LAYOUT_ISSUES = validateVisualGameLayout(VISUAL_GAME_MAP_LAYOUT);
 const TERMINAL_IMAGE_PATH_EXTENSIONS = new Set([
   ".apng",
@@ -279,80 +299,7 @@ const SYSTEM_CHART_COLORS = [
   "#bfc7d0",
   "#ececef",
 ];
-const PLUGIN_CATALOG = [
-  {
-    id: "github",
-    name: "GitHub",
-    category: "Coding",
-    description: "Triage PRs, inspect issues, and publish changes from agent sessions.",
-    icon: GitPullRequest,
-    status: "available in Codex",
-    source: "plugin",
-  },
-  {
-    id: "google-drive",
-    name: "Google Drive",
-    category: "Knowledge",
-    description: "Search Docs, Sheets, Slides, and shared project files when the host agent supports it.",
-    icon: Database,
-    status: "MCP-ready",
-    source: "mcp",
-  },
-  {
-    id: "google-calendar",
-    name: "Google Calendar",
-    category: "Planning",
-    description: "Look up events and availability from connected agent tooling.",
-    icon: CalendarDays,
-    status: "MCP-ready",
-    source: "mcp",
-  },
-  {
-    id: "browser-use",
-    name: "Browser Use",
-    category: "Vibe Research",
-    description: "Start an OttoAuth browser fulfillment agent from a coding-agent session.",
-    icon: Bot,
-    status: "setup available",
-    source: "vibe-research",
-  },
-  {
-    id: "videomemory",
-    name: "VideoMemory",
-    category: "Vibe Research",
-    description: "Let coding agents create video monitors that wake their own Vibe Research sessions.",
-    icon: Camera,
-    status: "setup available",
-    source: "vibe-research",
-  },
-  {
-    id: "agentmail",
-    name: "AgentMail",
-    category: "Communication",
-    description: "Give Vibe Research an email inbox and wake a Claude session when mail arrives.",
-    icon: Mail,
-    status: "setup available",
-    source: "vibe-research",
-  },
-  {
-    id: "localhost-apps",
-    name: "Localhost Apps",
-    category: "Vibe Research",
-    description: "Preview web apps from discovered ports without leaving the current session.",
-    icon: AppWindow,
-    status: "built in",
-    source: "vibe-research",
-  },
-  {
-    id: "knowledge-base",
-    name: "Knowledge Base",
-    category: "Vibe Research",
-    description: "Search and edit the shared markdown wiki that agents receive in their prompt.",
-    icon: BookOpen,
-    status: "built in",
-    source: "vibe-research",
-  },
-];
+const PLUGIN_CATALOG = BUILDING_CATALOG;
 const AUTOMATION_CADENCE_OPTIONS = [
   ["hourly", "Every hour"],
   ["six-hours", "Every 6 hours"],
@@ -497,6 +444,10 @@ const LIKELY_TEXT_FILENAMES = new Set([
 ]);
 const SESSION_READ_STORAGE_KEY = "vibe-research-session-read-at-v1";
 const LAYOUT_STORAGE_KEY = "vibe-research-layout-v1";
+const OPEN_FILE_TAB_ORDER_STORAGE_KEY = "vibe-research-open-file-tab-order-v1";
+const WORKSPACE_TABS_STORAGE_KEY = "vibe-research-workspace-tabs-v1";
+const WORKSPACE_GROUPS_STORAGE_KEY = "vibe-research-workspace-groups-v1";
+const AGENT_TOWN_LAYOUT_STORAGE_KEY = "vibe-research-agent-town-layout-v1";
 const SIDEBAR_DEFAULT_WIDTH = 276;
 const SIDEBAR_MIN_WIDTH = 220;
 const SIDEBAR_MAX_WIDTH = 520;
@@ -505,6 +456,34 @@ const WORKSPACE_FILE_PREVIEW_DEFAULT_WIDTH = 460;
 const WORKSPACE_FILE_PREVIEW_MIN_WIDTH = 280;
 const WORKSPACE_TERMINAL_MIN_WIDTH = 320;
 const LAYOUT_RESIZE_KEYBOARD_STEP = 16;
+const FILE_PREVIEW_TAB_REORDER_KEYBOARD_STEP = 1;
+const FILE_PREVIEW_TAB_REORDER_DRAG_SLOP_PX = 6;
+const WORKSPACE_TAB_REORDER_KEYBOARD_STEP = 1;
+const WORKSPACE_TAB_REORDER_DRAG_SLOP_PX = 6;
+const WORKSPACE_GROUP_MAX_COUNT = 4;
+const WORKSPACE_GROUP_MIN_FRACTION = 0.22;
+const AGENT_TOWN_LAYOUT_EDIT_SNAP = 5;
+const AGENT_TOWN_DORM_SLOT_RECTS = [
+  { x: 36, y: 36, width: 82, height: 58 },
+  { x: 130, y: 36, width: 82, height: 58 },
+  { x: 224, y: 36, width: 82, height: 58 },
+  { x: 36, y: 112, width: 82, height: 58 },
+  { x: 130, y: 112, width: 82, height: 58 },
+  { x: 224, y: 112, width: 82, height: 58 },
+];
+const AGENT_TOWN_PLUGIN_BUILDING_RECTS = [
+  { x: 34, y: 395, width: 82, height: 58 },
+  { x: 130, y: 395, width: 82, height: 58 },
+  { x: 520, y: 395, width: 82, height: 58 },
+  { x: 616, y: 395, width: 82, height: 58 },
+  { x: 806, y: 36, width: 82, height: 58 },
+  { x: 806, y: 124, width: 82, height: 58 },
+  { x: 34, y: 470, width: 82, height: 58 },
+  { x: 130, y: 470, width: 82, height: 58 },
+  { x: 520, y: 470, width: 82, height: 58 },
+  { x: 616, y: 470, width: 82, height: 58 },
+];
+const AGENT_TOWN_PLACE_COLLISION_GAP = 2;
 
 function loadSessionReadState() {
   try {
@@ -531,6 +510,197 @@ function saveSessionReadState() {
   }
 }
 
+function normalizeOpenFileTabOrderList(value) {
+  if (!Array.isArray(value)) {
+    return [];
+  }
+
+  const seen = new Set();
+  return value
+    .map((entry) => normalizeFileTreePath(entry))
+    .filter((entry) => {
+      if (!entry || seen.has(entry)) {
+        return false;
+      }
+
+      seen.add(entry);
+      return true;
+    })
+    .slice(0, 200);
+}
+
+function loadOpenFileTabOrderState() {
+  try {
+    const parsed = JSON.parse(window.localStorage.getItem(OPEN_FILE_TAB_ORDER_STORAGE_KEY) || "{}");
+    if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) {
+      return {};
+    }
+
+    return Object.fromEntries(
+      Object.entries(parsed)
+        .map(([rootKey, order]) => [String(rootKey || "").trim(), normalizeOpenFileTabOrderList(order)])
+        .filter(([rootKey, order]) => rootKey && order.length),
+    );
+  } catch {
+    return {};
+  }
+}
+
+function normalizeWorkspaceView(value) {
+  const view = String(value || "").trim();
+  if (view === "library") {
+    return "knowledge-base";
+  }
+  if (view === "occupations") {
+    return "agent-prompt";
+  }
+  if (view === "swarm") {
+    return "visual-interface";
+  }
+  if (view === "shell" || view === "knowledge-base" || view === "agent-prompt" || ROUTED_MAIN_VIEWS.has(view)) {
+    return view;
+  }
+  return "";
+}
+
+function normalizeWorkspaceTab(value) {
+  if (!value || typeof value !== "object" || Array.isArray(value)) {
+    return null;
+  }
+
+  const type = String(value.type || "").trim();
+  if (type === "session") {
+    const sessionId = String(value.sessionId || "").trim();
+    return sessionId ? { type, sessionId, key: `session:${sessionId}` } : null;
+  }
+
+  if (type === "browser-use") {
+    const browserUseSessionId = String(value.browserUseSessionId || "").trim();
+    return browserUseSessionId
+      ? {
+          type,
+          browserUseSessionId,
+          key: `browser-use:${browserUseSessionId}`,
+          label: String(value.label || "").trim(),
+        }
+      : null;
+  }
+
+  if (type === "view") {
+    const view = normalizeWorkspaceView(value.view);
+    return view ? { type, view, key: `view:${view}` } : null;
+  }
+
+  return null;
+}
+
+function normalizeWorkspaceTabs(value) {
+  if (!Array.isArray(value)) {
+    return [];
+  }
+
+  const seen = new Set();
+  return value
+    .map(normalizeWorkspaceTab)
+    .filter((tab) => {
+      if (!tab || seen.has(tab.key)) {
+        return false;
+      }
+
+      seen.add(tab.key);
+      return true;
+    })
+    .slice(0, 50);
+}
+
+function loadWorkspaceTabsState() {
+  try {
+    return normalizeWorkspaceTabs(JSON.parse(window.localStorage.getItem(WORKSPACE_TABS_STORAGE_KEY) || "[]"));
+  } catch {
+    return [];
+  }
+}
+
+function normalizeWorkspaceGroupId(value) {
+  return String(value || "").trim();
+}
+
+function createWorkspaceGroupId() {
+  return `group:${Date.now().toString(36)}:${Math.random().toString(36).slice(2, 8)}`;
+}
+
+function normalizeWorkspaceGroupTabKeys(value) {
+  if (!Array.isArray(value)) {
+    return [];
+  }
+
+  const seen = new Set();
+  return value
+    .map((entry) => String(entry || "").trim())
+    .filter((key) => {
+      if (!key || seen.has(key)) {
+        return false;
+      }
+
+      seen.add(key);
+      return true;
+    })
+    .slice(0, 50);
+}
+
+function normalizeWorkspaceGroup(value) {
+  if (!value || typeof value !== "object" || Array.isArray(value)) {
+    return null;
+  }
+
+  const tabs = normalizeWorkspaceGroupTabKeys(value.tabs);
+  const activeKey = String(value.activeKey || "").trim();
+  const width = Number(value.width);
+  return {
+    id: normalizeWorkspaceGroupId(value.id) || createWorkspaceGroupId(),
+    tabs,
+    activeKey: tabs.includes(activeKey) ? activeKey : tabs[0] || "",
+    width: Number.isFinite(width) && width > 0 ? clamp(width, WORKSPACE_GROUP_MIN_FRACTION, 6) : 1,
+  };
+}
+
+function normalizeWorkspaceGroups(value) {
+  if (!Array.isArray(value)) {
+    return [];
+  }
+
+  const seenGroupIds = new Set();
+  const seenTabKeys = new Set();
+  return value
+    .map(normalizeWorkspaceGroup)
+    .filter((group) => {
+      if (!group || seenGroupIds.has(group.id)) {
+        return false;
+      }
+
+      seenGroupIds.add(group.id);
+      group.tabs = group.tabs.filter((key) => {
+        if (seenTabKeys.has(key)) {
+          return false;
+        }
+
+        seenTabKeys.add(key);
+        return true;
+      });
+      group.activeKey = group.tabs.includes(group.activeKey) ? group.activeKey : group.tabs[0] || "";
+      return group.tabs.length > 0;
+    })
+    .slice(0, WORKSPACE_GROUP_MAX_COUNT);
+}
+
+function loadWorkspaceGroupsState() {
+  try {
+    return normalizeWorkspaceGroups(JSON.parse(window.localStorage.getItem(WORKSPACE_GROUPS_STORAGE_KEY) || "[]"));
+  } catch {
+    return [];
+  }
+}
+
 function getStoredLayoutNumber(value, fallback) {
   const number = Number(value);
   return Number.isFinite(number) && number > 0 ? number : fallback;
@@ -553,7 +723,56 @@ function loadLayoutPreferences() {
   }
 }
 
+function normalizeAgentTownLayoutOffset(value) {
+  if (!value || typeof value !== "object" || Array.isArray(value)) {
+    return null;
+  }
+
+  const x = Number(value.x);
+  const y = Number(value.y);
+  if (!Number.isFinite(x) || !Number.isFinite(y)) {
+    return null;
+  }
+
+  return {
+    x: Math.round(x),
+    y: Math.round(y),
+  };
+}
+
+function normalizeAgentTownLayoutOffsets(value) {
+  if (!value || typeof value !== "object" || Array.isArray(value)) {
+    return {};
+  }
+
+  return Object.fromEntries(
+    Object.entries(value)
+      .map(([id, offset]) => [String(id || "").trim(), normalizeAgentTownLayoutOffset(offset)])
+      .filter(([id, offset]) => id && offset),
+  );
+}
+
+function normalizeAgentTownLayout(value) {
+  if (!value || typeof value !== "object" || Array.isArray(value)) {
+    return { places: {}, roads: {} };
+  }
+
+  return {
+    places: normalizeAgentTownLayoutOffsets(value.places),
+    roads: normalizeAgentTownLayoutOffsets(value.roads),
+  };
+}
+
+function loadAgentTownLayoutPreferences() {
+  try {
+    return normalizeAgentTownLayout(JSON.parse(window.localStorage.getItem(AGENT_TOWN_LAYOUT_STORAGE_KEY) || "{}"));
+  } catch {
+    return { places: {}, roads: {} };
+  }
+}
+
 const layoutPreferences = loadLayoutPreferences();
+const agentTownLayoutPreferences = loadAgentTownLayoutPreferences();
 
 const state = {
   providers: [],
@@ -568,7 +787,9 @@ const state = {
   currentView: "shell",
   globalSearchQuery: "",
   pluginSearchQuery: "",
+  pluginDetailId: "",
   pluginInstallActions: {},
+  pluginOnboardingOpenId: "",
   brainSetupCloneUrl: "",
   brainSetupClonePath: "",
   brainSetupCloning: false,
@@ -593,14 +814,18 @@ const state = {
   },
   visualGame: {
     frameHandle: 0,
+    simulationFrameHandle: 0,
     cleanup: null,
     hitAreas: [],
     hoverLabel: "",
     agentPositions: new Map(),
     camera: { x: 0, y: 0, zoom: 1 },
     viewport: null,
+    editMode: false,
+    customLayout: agentTownLayoutPreferences,
     selectedSessionId: "",
     selectedBrowserUseSessionId: "",
+    selectedBuildingId: "",
   },
   browserUseSession: {
     id: "",
@@ -634,6 +859,18 @@ const state = {
     browserUseProfileDir: "",
     browserUseStatus: null,
     browserUseWorkerPath: "",
+    ottoAuthBaseUrl: "https://ottoauth.vercel.app",
+    ottoAuthCallbackUrl: "",
+    ottoAuthDefaultMaxChargeCents: "",
+    ottoAuthEnabled: false,
+    ottoAuthPrivateKeyConfigured: false,
+    ottoAuthStatus: null,
+    ottoAuthUsername: "",
+    telegramAllowedChatIds: "",
+    telegramBotTokenConfigured: false,
+    telegramEnabled: false,
+    telegramProviderId: "claude",
+    telegramStatus: null,
     videoMemoryBaseUrl: "http://127.0.0.1:5050",
     videoMemoryEnabled: false,
     videoMemoryProviderId: "claude",
@@ -682,6 +919,11 @@ const state = {
   fileTreeLoading: new Set(),
   fileTreeError: "",
   openFileTabs: [],
+  openFileTabOrderByRoot: loadOpenFileTabOrderState(),
+  workspaceTabs: loadWorkspaceTabsState(),
+  workspaceGroups: loadWorkspaceGroupsState(),
+  activeWorkspaceGroupId: "",
+  buildingWorkspaceReturnId: "",
   knowledgeBase: {
     rootPath: "",
     relativeRoot: ".vibe-research/wiki",
@@ -801,6 +1043,35 @@ function saveLayoutPreferences() {
   }
 }
 
+function saveOpenFileTabOrderState() {
+  try {
+    window.localStorage.setItem(OPEN_FILE_TAB_ORDER_STORAGE_KEY, JSON.stringify(state.openFileTabOrderByRoot));
+  } catch {
+    // Tab order is a convenience preference; storage failures should not affect file previews.
+  }
+}
+
+function saveWorkspaceTabsState() {
+  try {
+    window.localStorage.setItem(WORKSPACE_TABS_STORAGE_KEY, JSON.stringify(normalizeWorkspaceTabs(state.workspaceTabs)));
+  } catch {
+    // Workspace tabs are a convenience preference; the app should still render without storage.
+  }
+}
+
+function saveWorkspaceGroupsState() {
+  try {
+    window.localStorage.setItem(WORKSPACE_GROUPS_STORAGE_KEY, JSON.stringify(normalizeWorkspaceGroups(state.workspaceGroups)));
+  } catch {
+    // Workspace grouping is a convenience preference; the app should still render without storage.
+  }
+}
+
+function saveWorkspaceState() {
+  saveWorkspaceTabsState();
+  saveWorkspaceGroupsState();
+}
+
 let knowledgeBaseSearchIndexCache = {
   notes: null,
   index: null,
@@ -817,8 +1088,9 @@ function getRouteState() {
   const explicitView = url.searchParams.get("view");
   const root = normalizeWorkspaceRoot(url.searchParams.get("root") || "");
   const path = normalizeFileTreePath(url.searchParams.get("path") || "");
+  const buildingId = normalizeBuildingId(url.searchParams.get("building") || "");
 
-  if (explicitView === "knowledge-base") {
+  if (explicitView === "knowledge-base" || explicitView === "library") {
     return {
       view: "knowledge-base",
       root,
@@ -827,7 +1099,7 @@ function getRouteState() {
     };
   }
 
-  if (explicitView === "agent-prompt") {
+  if (explicitView === "agent-prompt" || explicitView === "occupations") {
     return {
       view: "agent-prompt",
       root,
@@ -851,6 +1123,7 @@ function getRouteState() {
       root,
       path: "",
       notePath: "",
+      buildingId: explicitView === "plugins" ? buildingId : "",
     };
   }
 
@@ -868,6 +1141,7 @@ function getRouteState() {
     root,
     path,
     notePath: "",
+    buildingId: "",
   };
 }
 
@@ -3577,7 +3851,7 @@ function getAppBaseUrl() {
 
 function getKnowledgeBaseUrl(notePath = "") {
   const url = new URL(`${getAppBaseUrl()}/`);
-  url.searchParams.set("view", "knowledge-base");
+  url.searchParams.set("view", "library");
 
   const normalizedNotePath = normalizeFileTreePath(notePath);
   if (normalizedNotePath) {
@@ -3589,7 +3863,7 @@ function getKnowledgeBaseUrl(notePath = "") {
 
 function getAgentPromptUrl() {
   const url = new URL(`${getAppBaseUrl()}/`);
-  url.searchParams.set("view", "agent-prompt");
+  url.searchParams.set("view", "occupations");
   return url.toString();
 }
 
@@ -3611,11 +3885,11 @@ function getMainViewUrl(view) {
 
 function getFolderPickerTitle() {
   if (state.folderPicker.target === "wiki-onboarding") {
-    return "select brain folder";
+    return "select Library folder";
   }
 
   if (state.folderPicker.target === "wiki") {
-    return "choose brain folder";
+    return "choose Library folder";
   }
 
   if (state.folderPicker.target === "files") {
@@ -3897,8 +4171,8 @@ function getWikiBackupStatusText() {
 
   if (backup?.hasConflicts || backup?.lastErrorKind === "merge-conflict") {
     return backup.conflictFiles?.length
-      ? `wiki sync merge conflict: ${backup.conflictFiles.join(", ")}`
-      : "wiki sync has a merge conflict";
+      ? `Library sync merge conflict: ${backup.conflictFiles.join(", ")}`
+      : "Library sync has a merge conflict";
   }
 
   if (remoteEnabled && (backup?.lastPushStatus === "error" || backup?.lastPushStatus === "conflict")) {
@@ -3910,14 +4184,14 @@ function getWikiBackupStatusText() {
   }
 
   if (remoteEnabled && backup?.lastPullStatus === "pulled" && backup?.lastPushStatus === "pushed") {
-    return "wiki pulled + pushed";
+    return "Library pulled + pushed";
   }
 
   if (remoteEnabled && backup?.lastPushStatus === "pushed") {
     const remoteLabel = `${backup.remoteName || state.settings.wikiGitRemoteName || "origin"}/${
       backup.remoteBranch || state.settings.wikiGitRemoteBranch || "main"
     }`;
-    return backup.lastCommit ? `backup ${backup.lastCommit} pushed to ${remoteLabel}` : `wiki pushed to ${remoteLabel}`;
+    return backup.lastCommit ? `backup ${backup.lastCommit} pushed to ${remoteLabel}` : `Library pushed to ${remoteLabel}`;
   }
 
   if (remoteEnabled && backup?.lastPushStatus === "skipped") {
@@ -3933,11 +4207,11 @@ function getWikiBackupStatusText() {
   }
 
   if (backup.lastStatus === "clean") {
-    return "wiki already backed up";
+    return "Library already backed up";
   }
 
   if (backup.lastStatus === "error") {
-    return backup.lastMessage || "wiki backup failed";
+    return backup.lastMessage || "Library backup failed";
   }
 
   return backup.lastMessage || backup.lastStatus;
@@ -4006,8 +4280,8 @@ function getAgentMailStatusText() {
     return `listening on ${state.settings.agentMailInboxId}`;
   }
 
-  if (status?.lastStatus === "queued") {
-    return "email queued for Claude";
+  if (String(status?.lastStatus || "").startsWith("queued")) {
+    return "email queued for communications agent";
   }
 
   if (status?.lastStatus === "replied") {
@@ -4016,6 +4290,39 @@ function getAgentMailStatusText() {
 
   if (status?.lastStatus === "error") {
     return status.lastError || "AgentMail listener error";
+  }
+
+  return status?.lastStatus || "connecting";
+}
+
+function getTelegramStatusText() {
+  const status = state.settings.telegramStatus;
+  if (!state.settings.telegramEnabled) {
+    return state.settings.telegramBotTokenConfigured
+      ? "configured but disabled"
+      : "not configured";
+  }
+
+  if (!state.settings.telegramBotTokenConfigured) {
+    return "add a Telegram bot token";
+  }
+
+  if (status?.connected) {
+    return state.settings.telegramAllowedChatIds
+      ? "polling allowed chats"
+      : "polling all bot chats";
+  }
+
+  if (String(status?.lastStatus || "").startsWith("queued")) {
+    return "telegram queued for communications agent";
+  }
+
+  if (status?.lastStatus === "replied") {
+    return "last telegram replied";
+  }
+
+  if (status?.lastStatus === "error") {
+    return status.lastError || "Telegram listener error";
   }
 
   return status?.lastStatus || "connecting";
@@ -4043,6 +4350,28 @@ function getBrowserUseStatusText() {
   return "ready for vr-browser-use";
 }
 
+function getOttoAuthStatusText() {
+  const status = state.settings.ottoAuthStatus || {};
+  if (!state.settings.ottoAuthEnabled) {
+    return state.settings.ottoAuthPrivateKeyConfigured || state.settings.ottoAuthUsername ? "configured but disabled" : "not configured";
+  }
+
+  if (!state.settings.ottoAuthUsername) {
+    return "add an OttoAuth username";
+  }
+
+  if (!state.settings.ottoAuthPrivateKeyConfigured) {
+    return "add an OttoAuth private key";
+  }
+
+  const activeCount = Number(status.activeCount || 0);
+  if (activeCount > 0) {
+    return `${activeCount} OttoAuth task${activeCount === 1 ? "" : "s"} running`;
+  }
+
+  return "ready for vr-ottoauth";
+}
+
 function getVideoMemoryStatusText() {
   const status = state.settings.videoMemoryStatus || {};
   if (!state.settings.videoMemoryEnabled) {
@@ -4058,11 +4387,29 @@ function getVideoMemoryStatusText() {
     return `${activeCount} camera monitor${activeCount === 1 ? "" : "s"} armed`;
   }
 
+  const deviceCount = getVideoMemoryCameraDeviceCount();
+  if (Number.isFinite(deviceCount)) {
+    return deviceCount
+      ? `${deviceCount} camera device${deviceCount === 1 ? "" : "s"} ready`
+      : "no camera devices found";
+  }
+
   return status.webhookUrl ? "ready for vr-videomemory" : "waiting for server URL";
 }
 
 function isVideoMemoryPluginInstalled() {
   return Boolean(state.settings.videoMemoryEnabled || getInstalledPluginIds().has("videomemory"));
+}
+
+function getVideoMemoryCameraDeviceCount() {
+  const status = state.settings.videoMemoryStatus || {};
+  const count = Number(status.deviceCount);
+  if (Number.isFinite(count) && count >= 0 && (status.devicesKnown || count > 0)) {
+    return Math.floor(count);
+  }
+
+  const devices = Array.isArray(status.devices) ? status.devices : [];
+  return devices.length ? devices.length : null;
 }
 
 function getVideoMemoryPermissionMonitor() {
@@ -4090,9 +4437,9 @@ function renderVideoMemoryInstallState() {
   const enabled = Boolean(state.settings.videoMemoryEnabled);
   const title = installed
     ? enabled
-      ? "VideoMemory extension installed"
-      : "VideoMemory extension installed but disabled"
-    : "VideoMemory extension not installed";
+      ? "VideoMemory building installed"
+      : "VideoMemory building installed but disabled"
+    : "VideoMemory building not installed";
   const detail = enabled
     ? "Camera monitors can wake coding agents."
     : "Enable VideoMemory monitors to arm camera wakeups.";
@@ -4157,7 +4504,7 @@ function getWikiBackupFailureMessage(backup) {
   }
 
   if (backup.lastStatus === "error") {
-    return backup.lastMessage || "wiki backup failed";
+    return backup.lastMessage || "Library backup failed";
   }
 
   return backup.lastMessage || "";
@@ -4187,9 +4534,9 @@ function getSystemToasts() {
       key: `wiki:${isConflict ? "conflict" : "error"}:${timestamp}:${message}`,
       message:
         isConflict && conflictFiles.length
-          ? `${message || "Resolve the wiki git conflict."} Conflicts: ${conflictFiles.join(", ")}`
-          : message || "Vibe Research could not sync the knowledge base.",
-      title: isConflict ? "Knowledge base merge conflict" : "Knowledge base sync failed",
+          ? `${message || "Resolve the Library git conflict."} Conflicts: ${conflictFiles.join(", ")}`
+          : message || "Vibe Research could not sync the library.",
+      title: isConflict ? "Library merge conflict" : "Library sync failed",
       type: isConflict ? "conflict" : "error",
     });
   }
@@ -4413,6 +4760,10 @@ function maybeRedirectToPreferredOrigin() {
   }
 
   const currentHostname = window.location.hostname.toLowerCase();
+  if (currentHostname === "localhost" || currentHostname === "127.0.0.1" || currentHostname === "::1") {
+    return false;
+  }
+
   if (
     currentHostname.endsWith(".ts.net") &&
     preferredUrl.protocol === "http:" &&
@@ -5150,6 +5501,112 @@ function getActiveOpenFileTab() {
   return state.openFileTabs.find((tab) => tab.relativePath === activePath) || null;
 }
 
+function getOpenFileTabOrderKey(root = state.filesRoot || state.defaultCwd || "") {
+  return normalizeAbsolutePathForCompare(root) || "__default__";
+}
+
+function getOpenFileTabOrder(rootKey = getOpenFileTabOrderKey()) {
+  return normalizeOpenFileTabOrderList(state.openFileTabOrderByRoot[rootKey]);
+}
+
+function rememberOpenFileTabOrder() {
+  const rootKey = getOpenFileTabOrderKey();
+  const order = normalizeOpenFileTabOrderList(state.openFileTabs.map((tab) => tab.relativePath));
+  if (order.length) {
+    state.openFileTabOrderByRoot[rootKey] = order;
+  } else {
+    delete state.openFileTabOrderByRoot[rootKey];
+  }
+  saveOpenFileTabOrderState();
+}
+
+function applyOpenFileTabOrder() {
+  if (state.openFileTabs.length < 2) {
+    return;
+  }
+
+  const order = getOpenFileTabOrder();
+  if (!order.length) {
+    return;
+  }
+
+  const orderIndex = new Map(order.map((relativePath, index) => [relativePath, index]));
+  state.openFileTabs = state.openFileTabs
+    .map((tab, index) => ({ tab, index }))
+    .sort((left, right) => {
+      const leftOrder = orderIndex.has(left.tab.relativePath)
+        ? orderIndex.get(left.tab.relativePath)
+        : Number.POSITIVE_INFINITY;
+      const rightOrder = orderIndex.has(right.tab.relativePath)
+        ? orderIndex.get(right.tab.relativePath)
+        : Number.POSITIVE_INFINITY;
+      if (leftOrder !== rightOrder) {
+        return leftOrder - rightOrder;
+      }
+
+      return left.index - right.index;
+    })
+    .map(({ tab }) => tab);
+}
+
+function moveOpenFileTabByOffset(relativePath, offset = FILE_PREVIEW_TAB_REORDER_KEYBOARD_STEP) {
+  const normalizedPath = normalizeFileTreePath(relativePath);
+  const fromIndex = state.openFileTabs.findIndex((tab) => tab.relativePath === normalizedPath);
+  if (fromIndex < 0 || state.openFileTabs.length < 2) {
+    return false;
+  }
+
+  const toIndex = clamp(fromIndex + offset, 0, state.openFileTabs.length - 1);
+  if (toIndex === fromIndex) {
+    return false;
+  }
+
+  const [tab] = state.openFileTabs.splice(fromIndex, 1);
+  state.openFileTabs.splice(toIndex, 0, tab);
+  rememberOpenFileTabOrder();
+  refreshOpenFileUi();
+  focusOpenFileTab(normalizedPath);
+  return true;
+}
+
+function reorderOpenFileTab(relativePath, targetRelativePath, position = "before") {
+  const normalizedPath = normalizeFileTreePath(relativePath);
+  const normalizedTargetPath = normalizeFileTreePath(targetRelativePath);
+  if (!normalizedPath || !normalizedTargetPath || normalizedPath === normalizedTargetPath) {
+    return false;
+  }
+
+  const fromIndex = state.openFileTabs.findIndex((tab) => tab.relativePath === normalizedPath);
+  const targetIndex = state.openFileTabs.findIndex((tab) => tab.relativePath === normalizedTargetPath);
+  if (fromIndex < 0 || targetIndex < 0 || state.openFileTabs.length < 2) {
+    return false;
+  }
+
+  const [tab] = state.openFileTabs.splice(fromIndex, 1);
+  const updatedTargetIndex = state.openFileTabs.findIndex((entry) => entry.relativePath === normalizedTargetPath);
+  const insertIndex = updatedTargetIndex + (position === "after" ? 1 : 0);
+  state.openFileTabs.splice(insertIndex, 0, tab);
+  rememberOpenFileTabOrder();
+  refreshOpenFileUi();
+  focusOpenFileTab(normalizedPath);
+  return true;
+}
+
+function focusOpenFileTab(relativePath) {
+  const normalizedPath = normalizeFileTreePath(relativePath);
+  if (!normalizedPath) {
+    return;
+  }
+
+  window.requestAnimationFrame(() => {
+    document.querySelectorAll("[data-file-tab]").forEach((button) => {
+      if (button instanceof HTMLButtonElement && button.getAttribute("data-file-tab") === normalizedPath) {
+        button.focus();
+      }
+    });
+  });
+}
+
 function isOpenFileDirty(tab = getActiveOpenFileTab()) {
   return tab?.status === "text" && tab.draft !== tab.content;
 }
@@ -5182,6 +5639,7 @@ function ensureOpenFileTab(relativePath, { mode = "text", name = "", url, extern
   }
 
   let tab = state.openFileTabs.find((entry) => entry.relativePath === normalizedPath);
+  const created = !tab;
   if (!tab) {
     tab = {
       relativePath: normalizedPath,
@@ -5219,6 +5677,10 @@ function ensureOpenFileTab(relativePath, { mode = "text", name = "", url, extern
   }
 
   state.openFileRelativePath = normalizedPath;
+  applyOpenFileTabOrder();
+  if (created && state.openFileTabs.length > 1) {
+    rememberOpenFileTabOrder();
+  }
   syncOpenFileStateFromTab(tab);
   return tab;
 }
@@ -5226,6 +5688,7 @@ function ensureOpenFileTab(relativePath, { mode = "text", name = "", url, extern
 function resetOpenFile() {
   state.openFileRequestId += 1;
   state.openFileTabs = [];
+  rememberOpenFileTabOrder();
   state.openFileRelativePath = "";
   state.openFileName = "";
   state.openFileStatus = "idle";
@@ -5433,6 +5896,7 @@ function updateRoute({
   notePath = state.knowledgeBase.selectedNotePath,
   filePath = state.openFileRelativePath,
   root = state.filesRoot,
+  buildingId = state.pluginDetailId,
 } = {}) {
   const url = new URL(window.location.href);
   const normalizedRoot = normalizeWorkspaceRoot(root);
@@ -5444,7 +5908,7 @@ function updateRoute({
   }
 
   if (view === "knowledge-base") {
-    url.searchParams.set("view", "knowledge-base");
+    url.searchParams.set("view", "library");
     const normalizedNotePath = normalizeFileTreePath(notePath);
 
     if (normalizedNotePath) {
@@ -5454,20 +5918,33 @@ function updateRoute({
     }
 
     url.searchParams.delete("path");
+    url.searchParams.delete("building");
     url.hash = "";
   } else if (view === "agent-prompt") {
-    url.searchParams.set("view", "agent-prompt");
+    url.searchParams.set("view", "occupations");
     url.searchParams.delete("note");
     url.searchParams.delete("path");
+    url.searchParams.delete("building");
     url.hash = "";
   } else if (ROUTED_MAIN_VIEWS.has(view)) {
     url.searchParams.set("view", view);
     url.searchParams.delete("note");
     url.searchParams.delete("path");
+    if (view === "plugins") {
+      const normalizedBuildingId = normalizeBuildingId(buildingId || "");
+      if (normalizedBuildingId) {
+        url.searchParams.set("building", normalizedBuildingId);
+      } else {
+        url.searchParams.delete("building");
+      }
+    } else {
+      url.searchParams.delete("building");
+    }
     url.hash = "";
   } else if (view === "file") {
     url.searchParams.set("view", "file");
     url.searchParams.delete("note");
+    url.searchParams.delete("building");
     const normalizedFilePath = normalizeFileTreePath(filePath);
 
     if (normalizedFilePath) {
@@ -5481,6 +5958,7 @@ function updateRoute({
     url.searchParams.delete("view");
     url.searchParams.delete("note");
     url.searchParams.delete("path");
+    url.searchParams.delete("building");
     url.hash = "";
   }
 
@@ -5907,7 +6385,7 @@ function renderKnowledgeBaseGraphLegend(layout) {
   });
 
   return `
-    <div class="knowledge-base-graph-legend" aria-label="Knowledge graph color legend">
+    <div class="knowledge-base-graph-legend" aria-label="Library graph color legend">
       ${orderedGroups
         .map(
           (group) => `
@@ -7158,15 +7636,75 @@ function renderKnowledgeBaseNoteList() {
         </button>
       `;
     })
+	    .join("");
+}
+
+function getKnowledgeBasePreviewText(value, maxLength = 320) {
+  const text = String(value || "")
+    .replace(/```[\s\S]*?```/g, " ")
+    .replace(/!\[[^\]]*]\([^)]+\)/g, " ")
+    .replace(/\[([^\]]+)]\([^)]+\)/g, "$1")
+    .replace(/\[\[([^[\]|]+)(?:\|([^[\]]+))?]]/g, (_match, target, label) => label || target)
+    .replace(/[#>*_`~\-]+/g, " ")
+    .replace(/\s+/g, " ")
+    .trim();
+
+  return text.length > maxLength ? `${text.slice(0, Math.max(1, maxLength - 3))}...` : text;
+}
+
+function renderKnowledgeBaseBuildingNoteList(limit = 7) {
+  const notes = getFilteredKnowledgeBaseNotes();
+  const query = getKnowledgeBaseSearchQuery();
+
+  if (state.knowledgeBase.loading && !state.knowledgeBase.notes.length) {
+    return `<div class="blank-state">loading notes</div>`;
+  }
+
+  if (state.knowledgeBase.error) {
+    return `<div class="blank-state">${escapeHtml(state.knowledgeBase.error)}</div>`;
+  }
+
+  if (!state.knowledgeBase.notes.length) {
+    return `<div class="blank-state">no markdown notes yet</div>`;
+  }
+
+  if (!notes.length) {
+    return `<div class="blank-state">no notes match "${escapeHtml(state.knowledgeBase.searchQuery)}"</div>`;
+  }
+
+  return notes
+    .slice(0, limit)
+    .map((note) => {
+      const isActive = note.relativePath === state.knowledgeBase.selectedNotePath;
+      const matchLabel = query ? "matches search" : note.excerpt || note.relativePath || "No preview yet.";
+      const noteColor = getKnowledgeBaseGraphColor(getKnowledgeBaseGraphGroupKey(note.relativePath));
+      const tooltip = [note.title, note.relativePath, matchLabel].filter(Boolean).join(" - ");
+      return `
+        <button
+          class="knowledge-base-note-row ${isActive ? "is-active" : ""}"
+          type="button"
+          data-kb-building-note="${escapeHtml(note.relativePath)}"
+          aria-label="${escapeHtml(tooltip)}"
+          title="${escapeHtml(tooltip)}"
+          ${renderStyleVariables({
+            "--kb-note-accent": noteColor.stroke,
+            "--kb-note-accent-fill": noteColor.fill,
+          })}
+        >
+          <span class="knowledge-base-note-accent" aria-hidden="true"></span>
+          <span class="knowledge-base-note-title">${escapeHtml(note.title)}</span>
+        </button>
+      `;
+    })
     .join("");
 }
 
-function renderKnowledgeBaseSearchControls() {
+function renderKnowledgeBaseSearchControls({ id = "knowledge-base-search" } = {}) {
   return `
     <div class="knowledge-base-search">
       <input
         class="knowledge-base-search-input"
-        id="knowledge-base-search"
+        id="${escapeHtml(id)}"
         type="search"
         value="${escapeHtml(state.knowledgeBase.searchQuery || "")}"
         placeholder="search notes"
@@ -7234,7 +7772,7 @@ function renderKnowledgeBaseGraph() {
           id="knowledge-base-graph"
           viewBox="0 0 ${layout.width} ${layout.height}"
           role="img"
-          aria-label="Knowledge base graph"
+          aria-label="Library graph"
         >
           <rect
             class="knowledge-base-graph-surface"
@@ -7386,10 +7924,52 @@ function renderKnowledgeBaseNoteActions(rawHref) {
   `;
 }
 
-function renderKnowledgeSettingsForm({ popover = false } = {}) {
+function renderKnowledgeSettingsForm({ popover = false, remoteControls = true } = {}) {
+  const remoteFields = remoteControls
+    ? `
+        <label class="checkbox-row">
+          <input type="checkbox" name="wikiGitRemoteEnabled" ${state.settings.wikiGitRemoteEnabled ? "checked" : ""} />
+          <span>push backups to a private git remote</span>
+        </label>
+      </div>
+      <div class="settings-status">${escapeHtml(getSleepPreventionStatusText())}</div>
+      <div class="knowledge-settings-remote-grid">
+        <label class="field-label" for="wiki-git-remote-url">private remote URL</label>
+        <input
+          class="file-root-input"
+          id="wiki-git-remote-url"
+          name="wikiGitRemoteUrl"
+          type="text"
+          value="${escapeHtml(state.settings.wikiGitRemoteUrl || "")}"
+          placeholder="git@github.com:you/private-library.git"
+          autocomplete="off"
+          autocorrect="off"
+          autocapitalize="none"
+          spellcheck="false"
+        />
+        <label class="field-label" for="wiki-git-remote-branch">remote branch</label>
+        <input
+          class="file-root-input"
+          id="wiki-git-remote-branch"
+          name="wikiGitRemoteBranch"
+          type="text"
+          value="${escapeHtml(state.settings.wikiGitRemoteBranch || "main")}"
+          placeholder="main"
+          autocomplete="off"
+          autocorrect="off"
+          autocapitalize="none"
+          spellcheck="false"
+        />
+      </div>
+      <input type="hidden" name="wikiGitRemoteName" value="${escapeHtml(state.settings.wikiGitRemoteName || "origin")}" />
+      `
+    : `
+      </div>
+      <div class="settings-status">${escapeHtml(getSleepPreventionStatusText())}</div>
+      `;
   const form = `
-      <form class="settings-form knowledge-settings-form" id="settings-form">
-        <label class="field-label" for="wiki-path-input">wiki folder</label>
+      <form class="settings-form knowledge-settings-form" id="settings-form" data-settings-form>
+        <label class="field-label" for="wiki-path-input">library folder</label>
         <div class="folder-input-row">
           <input
             class="file-root-input"
@@ -7397,7 +7977,7 @@ function renderKnowledgeSettingsForm({ popover = false } = {}) {
             name="wikiPath"
             type="text"
             value="${escapeHtml(state.settings.wikiPath || "")}"
-            placeholder="${escapeHtml(state.defaultCwd || "wiki folder")}"
+            placeholder="${escapeHtml(state.defaultCwd || "library folder")}"
             readonly
             data-folder-picker-target="wiki"
             autocomplete="off"
@@ -7416,30 +7996,75 @@ function renderKnowledgeSettingsForm({ popover = false } = {}) {
             <input type="checkbox" name="preventSleepEnabled" ${state.settings.preventSleepEnabled ? "checked" : ""} />
             <span>prevent this computer from sleeping</span>
           </label>
-          <label class="checkbox-row">
-            <input type="checkbox" name="wikiGitRemoteEnabled" ${state.settings.wikiGitRemoteEnabled ? "checked" : ""} />
-            <span>push backups to a private git remote</span>
-          </label>
+          ${remoteFields}
+        <div class="knowledge-settings-actions">
+          <button class="primary-button settings-save-button" type="submit">save settings</button>
+          <div class="settings-status" id="wiki-backup-settings-status">${escapeHtml(getWikiBackupStatusText())}</div>
         </div>
-        <div class="settings-status">${escapeHtml(getSleepPreventionStatusText())}</div>
-        <div class="knowledge-settings-remote-grid">
-          <label class="field-label" for="wiki-git-remote-url">private remote URL</label>
+      </form>
+  `;
+
+  if (!popover) {
+    return `
+      <section class="knowledge-settings-card">
+        <div class="knowledge-settings-head">
+          <strong>Library settings</strong>
+          <span id="wiki-backup-status">${escapeHtml(getWikiBackupStatusText())}</span>
+        </div>
+        ${form}
+      </section>
+    `;
+  }
+
+  return `
+    <details class="knowledge-settings-popover">
+      <summary
+        class="icon-button knowledge-settings-trigger"
+        aria-label="Library settings"
+        ${tooltipAttributes("Library settings")}
+      >
+        ${renderIcon(Settings)}
+      </summary>
+      <div class="knowledge-settings-popover-panel">
+        <div class="knowledge-settings-head">
+          <strong>Library settings</strong>
+          <span id="wiki-backup-status">${escapeHtml(getWikiBackupStatusText())}</span>
+        </div>
+        ${form}
+      </div>
+    </details>
+  `;
+}
+
+function renderWikiRemoteSettingsPanel() {
+  return `
+    <aside class="mcp-import-card settings-remote-backup-card">
+      <span class="main-search-kind">backup</span>
+      <strong>Private Git Remote</strong>
+      <p>Optional off-machine sync for the Library backup repo.</p>
+      <form class="settings-form wiki-remote-settings-form" id="wiki-remote-settings-form" data-settings-form>
+        <label class="checkbox-row">
+          <input type="checkbox" name="wikiGitRemoteEnabled" ${state.settings.wikiGitRemoteEnabled ? "checked" : ""} />
+          <span>push backups to a private git remote</span>
+        </label>
+        <label class="field-label" for="advanced-wiki-git-remote-url">private remote URL</label>
+        <input
+          class="file-root-input"
+          id="advanced-wiki-git-remote-url"
+          name="wikiGitRemoteUrl"
+          type="text"
+          value="${escapeHtml(state.settings.wikiGitRemoteUrl || "")}"
+          placeholder="git@github.com:you/private-library.git"
+          autocomplete="off"
+          autocorrect="off"
+          autocapitalize="none"
+          spellcheck="false"
+        />
+        <div class="knowledge-settings-remote-grid settings-remote-grid">
+          <label class="field-label" for="advanced-wiki-git-remote-branch">remote branch</label>
           <input
             class="file-root-input"
-            id="wiki-git-remote-url"
-            name="wikiGitRemoteUrl"
-            type="text"
-            value="${escapeHtml(state.settings.wikiGitRemoteUrl || "")}"
-            placeholder="git@github.com:you/private-mac-brain.git"
-            autocomplete="off"
-            autocorrect="off"
-            autocapitalize="none"
-            spellcheck="false"
-          />
-          <label class="field-label" for="wiki-git-remote-branch">remote branch</label>
-          <input
-            class="file-root-input"
-            id="wiki-git-remote-branch"
+            id="advanced-wiki-git-remote-branch"
             name="wikiGitRemoteBranch"
             type="text"
             value="${escapeHtml(state.settings.wikiGitRemoteBranch || "main")}"
@@ -7452,41 +8077,24 @@ function renderKnowledgeSettingsForm({ popover = false } = {}) {
         </div>
         <input type="hidden" name="wikiGitRemoteName" value="${escapeHtml(state.settings.wikiGitRemoteName || "origin")}" />
         <div class="knowledge-settings-actions">
-          <button class="primary-button settings-save-button" type="submit">save settings</button>
-          <div class="settings-status" id="wiki-backup-settings-status">${escapeHtml(getWikiBackupStatusText())}</div>
+          <button class="primary-button settings-save-button" type="submit">save remote</button>
+          <div class="settings-status" id="wiki-remote-settings-status">${escapeHtml(getWikiBackupStatusText())}</div>
         </div>
       </form>
+    </aside>
   `;
+}
 
-  if (!popover) {
-    return `
-      <section class="knowledge-settings-card">
-        <div class="knowledge-settings-head">
-          <strong>Knowledge settings</strong>
-          <span id="wiki-backup-status">${escapeHtml(getWikiBackupStatusText())}</span>
-        </div>
-        ${form}
-      </section>
-    `;
+function renderKnowledgeBaseBuildingWorkspaceAction() {
+  if (state.buildingWorkspaceReturnId !== "knowledge-base") {
+    return "";
   }
 
   return `
-    <details class="knowledge-settings-popover">
-      <summary
-        class="icon-button knowledge-settings-trigger"
-        aria-label="Knowledge settings"
-        ${tooltipAttributes("Knowledge settings")}
-      >
-        ${renderIcon(Settings)}
-      </summary>
-      <div class="knowledge-settings-popover-panel">
-        <div class="knowledge-settings-head">
-          <strong>Knowledge settings</strong>
-          <span id="wiki-backup-status">${escapeHtml(getWikiBackupStatusText())}</span>
-        </div>
-        ${form}
-      </div>
-    </details>
+    <button class="ghost-button toolbar-control" type="button" data-visual-building-open="knowledge-base">
+      <span aria-hidden="true">${renderIcon(Waypoints)}</span>
+      <span>Back to Town</span>
+    </button>
   `;
 }
 
@@ -7504,10 +8112,11 @@ function renderKnowledgeBaseView() {
       <div class="dashboard-toolbar">
         <button class="icon-button hidden-desktop" type="button" id="open-sidebar" aria-label="Open sidebar" ${tooltipAttributes("Open sidebar")}>${renderIcon(Menu)}</button>
         <div class="dashboard-copy">
-          <strong>Knowledge Base</strong>
+          <strong>Library</strong>
           <div class="terminal-meta" data-knowledge-base-header-meta>${escapeHtml(getKnowledgeBaseHeaderMeta())}</div>
         </div>
         <div class="dashboard-actions knowledge-base-toolbar-actions">
+          ${renderKnowledgeBaseBuildingWorkspaceAction()}
           ${renderKnowledgeSettingsForm({ popover: true })}
           ${
             backupRepoUrl
@@ -7515,7 +8124,7 @@ function renderKnowledgeBaseView() {
               : ""
           }
           <button class="ghost-button toolbar-control" type="button" id="backup-wiki-now">backup now</button>
-          <button class="icon-button toolbar-control refresh-icon-button" type="button" id="refresh-knowledge-base" aria-label="Refresh knowledge base" ${tooltipAttributes("Refresh knowledge base")}>${renderIcon(RefreshCw)}</button>
+          <button class="icon-button toolbar-control refresh-icon-button" type="button" id="refresh-knowledge-base" aria-label="Refresh library" ${tooltipAttributes("Refresh library")}>${renderIcon(RefreshCw)}</button>
         </div>
       </div>
       <div class="knowledge-base-grid">
@@ -7561,8 +8170,8 @@ function renderKnowledgeBaseApp() {
   const backupRepoUrl = getKnowledgeBaseBackupRepoUrl();
 
   document.title = selectedNotePath
-    ? `${state.knowledgeBase.selectedNoteTitle || selectedNotePath} · Knowledge Base`
-    : "Knowledge Base";
+    ? `${state.knowledgeBase.selectedNoteTitle || selectedNotePath} · Library`
+    : "Library";
 
   return `
     <main class="screen knowledge-base-app">
@@ -7570,7 +8179,7 @@ function renderKnowledgeBaseApp() {
         <header class="knowledge-base-app-toolbar">
           <div class="knowledge-base-app-copy">
             <span class="knowledge-base-app-eyebrow">Vibe Research</span>
-            <strong>Knowledge Base</strong>
+            <strong>Library</strong>
             <div class="knowledge-base-app-meta" data-knowledge-base-header-meta>${escapeHtml(getKnowledgeBaseHeaderMeta())}</div>
           </div>
           <div class="knowledge-base-app-actions">
@@ -7581,7 +8190,7 @@ function renderKnowledgeBaseApp() {
             ${rawHref
               ? `<a class="ghost-button toolbar-control" href="${escapeHtml(rawHref)}" target="_blank" rel="noreferrer">raw</a>`
               : ""}
-            <button class="icon-button toolbar-control refresh-icon-button" type="button" id="refresh-knowledge-base" aria-label="Refresh knowledge base" ${tooltipAttributes("Refresh knowledge base")}>${renderIcon(RefreshCw)}</button>
+            <button class="icon-button toolbar-control refresh-icon-button" type="button" id="refresh-knowledge-base" aria-label="Refresh library" ${tooltipAttributes("Refresh library")}>${renderIcon(RefreshCw)}</button>
             <a class="ghost-button toolbar-control" href="${escapeHtml(getAppBaseUrl())}/">vibe research</a>
           </div>
         </header>
@@ -7804,8 +8413,17 @@ function renderOpenFileTabs() {
       const tabTitle = tab.externalUrl || tab.url || tab.relativePath;
       const tabMode = tab.mode === "image" ? "image" : tab.status === "text" || tab.mode === "text" ? "text" : "raw";
       return `
-        <div class="file-preview-tab ${active ? "is-active" : ""}" title="${escapeHtml(tabTitle)}">
-          <button class="file-preview-tab-label" type="button" data-file-tab="${escapeHtml(tab.relativePath)}">
+        <div
+          class="file-preview-tab ${active ? "is-active" : ""}"
+          title="${escapeHtml(tabTitle)}"
+          data-file-tab-item="${escapeHtml(tab.relativePath)}"
+        >
+          <button
+            class="file-preview-tab-label"
+            type="button"
+            data-file-tab="${escapeHtml(tab.relativePath)}"
+            aria-label="${escapeHtml(`${tab.name}${dirty ? ", unsaved" : ""}`)}"
+          >
             ${renderFileEntryIcon({ isImage: tabMode === "image" }, tabMode)}
             <span class="file-preview-tab-name">${escapeHtml(tab.name)}${dirty ? " *" : ""}</span>
           </button>
@@ -8014,13 +8632,14 @@ function getSubagentLabel(subagent) {
 function renderSessionSubagentCard(subagent) {
   const status = getSubagentLabel(subagent);
   const isBrowserUseSubagent = Boolean(subagent.browserUseSessionId);
+  const isOttoAuthSubagent = Boolean(subagent.ottoAuthSessionId);
   const isVideoMemorySubagent = Boolean(subagent.videoMemoryMonitorId);
   const messageCount = Number(subagent.messageCount);
   const toolUseCount = Number(subagent.toolUseCount);
   const metaParts = [
     isVideoMemorySubagent
       ? "VideoMemory"
-      : isBrowserUseSubagent ? "browser use" : `${subagent.source === "claude" ? "Claude" : subagent.agentType || "agent"} subagent`,
+      : isOttoAuthSubagent ? "OttoAuth" : isBrowserUseSubagent ? "browser use" : `${subagent.source === "claude" ? "Claude" : subagent.agentType || "agent"} subagent`,
     subagent.status && subagent.status !== "working" ? subagent.status : "",
     subagent.messageCount != null && Number.isFinite(messageCount) ? `${messageCount} msgs` : "",
     subagent.toolUseCount != null && Number.isFinite(toolUseCount) ? `${toolUseCount} tools` : "",
@@ -8028,9 +8647,11 @@ function renderSessionSubagentCard(subagent) {
   ].filter(Boolean);
   const title = isBrowserUseSubagent
     ? `Open Browser Use session: ${subagent.description || subagent.name || "Browser task"}`
-    : isVideoMemorySubagent
+    : isOttoAuthSubagent
+      ? `OttoAuth task: ${subagent.description || subagent.name || "order"}`
+      : isVideoMemorySubagent
       ? `VideoMemory monitor: ${subagent.description || subagent.name || "Camera monitor"}`
-    : `Claude subagent: ${subagent.description || subagent.name || "subagent"}`;
+      : `Claude subagent: ${subagent.description || subagent.name || "subagent"}`;
 
   if (isBrowserUseSubagent) {
     const browserUseSessionId = escapeHtml(subagent.browserUseSessionId);
@@ -8067,6 +8688,22 @@ function renderSessionSubagentCard(subagent) {
         <span class="session-subagent-trailing">
           <span class="session-time">${relativeTime(subagent.updatedAt)}</span>
           <span class="session-subagent-open" aria-hidden="true">${renderIcon(Camera)}</span>
+        </span>
+      </div>
+    `;
+  }
+
+  if (isOttoAuthSubagent) {
+    return `
+      <div class="session-subagent-card is-ottoauth" title="${escapeHtml(title)}">
+        <span class="session-activity-dot ${status.className}" role="img" aria-label="${escapeHtml(status.title)}" title="${escapeHtml(status.title)}"${getSessionActivityStyle(status)}></span>
+        <div class="session-main">
+          <div class="session-name">${escapeHtml(subagent.name || "OttoAuth task")}</div>
+          <div class="session-subtitle">${escapeHtml(metaParts.join(" · "))}</div>
+        </div>
+        <span class="session-subagent-trailing">
+          <span class="session-time">${relativeTime(subagent.updatedAt)}</span>
+          <span class="session-subagent-open" aria-hidden="true">${renderIcon(ShoppingCart)}</span>
         </span>
       </div>
     `;
@@ -8156,13 +8793,13 @@ function renderSidebarNav() {
     {
       view: "visual-interface",
       icon: Waypoints,
-      label: "Visual Interface",
-      meta: "agent village",
+      label: "Agent Town",
+      meta: "live map",
     },
     {
       view: "plugins",
       icon: Plug,
-      label: "Plugins",
+      label: "Buildings",
       meta: "MCPs and integrations",
     },
     {
@@ -8170,12 +8807,6 @@ function renderSidebarNav() {
       icon: Settings,
       label: "Settings",
       meta: getAgentCredentialsStatusText(),
-    },
-    {
-      view: "automations",
-      icon: CalendarClock,
-      label: "Automations",
-      meta: "scheduled helpers",
     },
     {
       view: "system",
@@ -8188,13 +8819,13 @@ function renderSidebarNav() {
     {
       view: "knowledge-base",
       icon: BookOpen,
-      label: "Knowledge Base",
+      label: "Library",
       meta: `${state.knowledgeBase.notes.length} notes · ${wikiLabel}`,
     },
     {
       view: "agent-prompt",
       icon: FilePenLine,
-      label: "Agent Prompt",
+      label: "Occupations",
       meta: getAgentPromptTargetSummary(),
     },
   ];
@@ -8217,10 +8848,10 @@ function renderSidebarNav() {
   return `
     <div class="sidebar-nav-stack">
       <nav class="sidebar-nav sidebar-primary-nav" aria-label="Main views">
-        <button class="sidebar-nav-item sidebar-nav-button" type="button" data-folder-picker-target="session" ${tooltipAttributes("New chat", "right")}>
+        <button class="sidebar-nav-item sidebar-nav-button" type="button" data-folder-picker-target="session" ${tooltipAttributes("New Agent", "right")}>
           <span class="sidebar-nav-icon" aria-hidden="true">${renderIcon(Plus)}</span>
           <span class="sidebar-nav-copy">
-            <span class="sidebar-nav-label">New chat</span>
+            <span class="sidebar-nav-label">New Agent</span>
             <span class="sidebar-nav-meta">${escapeHtml(`${getSelectedProviderLabel()} · choose folder`)}</span>
           </span>
         </button>
@@ -8395,7 +9026,7 @@ function renderSearchResults() {
   const results = getGlobalSearchResults();
 
   if (state.knowledgeBase.loading && !state.knowledgeBase.notes.length) {
-    return `<div class="blank-state">loading knowledge base notes...</div>`;
+    return `<div class="blank-state">loading library notes...</div>`;
   }
 
   if (!results.length) {
@@ -8415,7 +9046,7 @@ function renderSearchView() {
         <button class="icon-button hidden-desktop" type="button" id="open-sidebar" aria-label="Open sidebar" ${tooltipAttributes("Open sidebar")}>${renderIcon(Menu)}</button>
         <div class="dashboard-copy">
           <strong>Search</strong>
-          <div class="terminal-meta">jump across sessions, project folders, ports, and wiki notes</div>
+          <div class="terminal-meta">jump across sessions, project folders, ports, and library notes</div>
         </div>
       </div>
       <div class="main-search-shell">
@@ -8440,21 +9071,48 @@ function renderSearchView() {
 
 function getFilteredPlugins() {
   const query = String(state.pluginSearchQuery || "").trim().toLowerCase();
-  return PLUGIN_CATALOG.filter((plugin) =>
-    searchMatches([plugin.name, plugin.category, plugin.description, getPluginStatusLabel(plugin), plugin.source], query),
-  );
+  return PLUGIN_CATALOG.filter((plugin) => {
+    const issue = getPluginBuildingIssue(plugin);
+    return searchMatches(
+      [plugin.name, plugin.category, plugin.description, getPluginStatusLabel(plugin), issue?.label, issue?.detail, plugin.source],
+      query,
+    );
+  });
 }
 
 function getPluginId(plugin) {
-  return String(plugin?.id || plugin?.name || "")
-    .trim()
-    .toLowerCase()
-    .replace(/[^a-z0-9]+/g, "-")
-    .replace(/^-+|-+$/g, "");
+  return normalizeBuildingId(plugin?.id || plugin?.name);
 }
 
 function getPluginById(pluginId) {
-  return PLUGIN_CATALOG.find((plugin) => getPluginId(plugin) === pluginId) || null;
+  const normalizedPluginId = normalizeBuildingId(pluginId);
+  return PLUGIN_CATALOG.find((plugin) => getPluginId(plugin) === normalizedPluginId) || null;
+}
+
+function getCurrentPluginDetail() {
+  return getPluginById(state.pluginDetailId);
+}
+
+function openPluginDetail(pluginId) {
+  const plugin = getPluginById(pluginId);
+  if (!plugin) {
+    return false;
+  }
+
+  state.currentView = "plugins";
+  state.pluginDetailId = getPluginId(plugin);
+  state.pluginOnboardingOpenId = "";
+  updateRoute({ view: "plugins", buildingId: state.pluginDetailId });
+  closeMobileSidebar();
+  renderShell();
+  return true;
+}
+
+function closePluginDetail() {
+  state.pluginDetailId = "";
+  state.pluginOnboardingOpenId = "";
+  setCurrentView("plugins");
+  renderShell();
 }
 
 function getInstalledPluginIds() {
@@ -8472,15 +9130,24 @@ function getUpdatedInstalledPluginIds(pluginId, installed) {
   return [...pluginIds].sort();
 }
 
-function isPluginInstalled(plugin) {
-  const pluginId = getPluginId(plugin);
+function isPluginSystemApp(plugin) {
+  return Boolean(plugin?.install?.system);
+}
 
-  if (pluginId === "browser-use") {
-    return Boolean(state.settings.browserUseEnabled);
+function isPluginInstalled(plugin) {
+  if (isPluginSystemApp(plugin)) {
+    return true;
   }
 
-  if (pluginId === "videomemory") {
-    return Boolean(state.settings.videoMemoryEnabled);
+  const pluginId = getPluginId(plugin);
+  const enabledSetting = String(plugin?.install?.enabledSetting || "").trim();
+  if (enabledSetting) {
+    const enabled = Boolean(state.settings?.[enabledSetting]);
+    if (enabled || plugin?.install?.storedFallback === false) {
+      return enabled;
+    }
+
+    return getInstalledPluginIds().has(pluginId);
   }
 
   return getInstalledPluginIds().has(pluginId);
@@ -8507,10 +9174,507 @@ function getPluginStatusLabel(plugin) {
   if (pendingAction === "uninstalling") {
     return "uninstalling";
   }
+  if (isPluginSystemApp(plugin)) {
+    return plugin.status || "system app";
+  }
   return isPluginInstalled(plugin) ? "installed" : "not installed";
 }
 
+function getPluginRuntimeIssue(plugin) {
+  const pluginId = getPluginId(plugin);
+
+  if (pluginId === "browser-use") {
+    const status = state.settings.browserUseStatus || {};
+    if (state.settings.browserUseEnabled && state.settings.browserUseAnthropicApiKeyConfigured && !status.workerAvailable) {
+      return {
+        detail: status.reason || "OttoAuth headless worker was not found.",
+        label: "needs attention",
+      };
+    }
+    return null;
+  }
+
+  if (pluginId === "agentmail") {
+    const status = state.settings.agentMailStatus || {};
+    if (state.settings.agentMailEnabled && status.lastStatus === "error") {
+      return {
+        detail: status.lastError || "AgentMail listener error.",
+        label: "needs attention",
+      };
+    }
+    return null;
+  }
+
+  if (pluginId === "telegram") {
+    const status = state.settings.telegramStatus || {};
+    if (state.settings.telegramEnabled && status.lastStatus === "error") {
+      return {
+        detail: status.lastError || "Telegram listener error.",
+        label: "needs attention",
+      };
+    }
+    return null;
+  }
+
+  if (pluginId === "videomemory") {
+    const status = state.settings.videoMemoryStatus || {};
+    if (hasVideoMemoryCameraPermissionIssue()) {
+      return {
+        detail: getVideoMemoryCameraPermissionMessage(),
+        label: "needs attention",
+      };
+    }
+    if (state.settings.videoMemoryEnabled && status.lastRefreshError) {
+      return {
+        detail: status.lastRefreshError,
+        label: "needs attention",
+      };
+    }
+  }
+
+  return null;
+}
+
+function getPluginMissingConfiguration(plugin) {
+  const variables = Array.isArray(plugin?.onboarding?.variables) ? plugin.onboarding.variables : [];
+  return variables.find((variable) => variable?.required && !isOnboardingVariableConfigured(variable)) || null;
+}
+
+function getPluginBuildingIssue(plugin) {
+  if (!plugin) {
+    return null;
+  }
+
+  if (getPluginPendingAction(plugin)) {
+    return null;
+  }
+
+  if (!isPluginInstalled(plugin)) {
+    return isPluginSystemApp(plugin)
+      ? null
+      : {
+          detail: "Install this building before agents can use it.",
+          label: "not configured",
+        };
+  }
+
+  const enabledSetting = String(plugin?.install?.enabledSetting || "").trim();
+  if (enabledSetting && state.settings?.[enabledSetting] !== true) {
+    return {
+      detail: "This building is installed but disabled.",
+      label: "not configured",
+    };
+  }
+
+  const missingVariable = getPluginMissingConfiguration(plugin);
+  if (missingVariable) {
+    return {
+      detail: `${missingVariable.label || missingVariable.setting || "Required setup"} is missing.`,
+      label: "not configured",
+    };
+  }
+
+  return getPluginRuntimeIssue(plugin);
+}
+
+function getBuildingIssueById(buildingId) {
+  const plugin = getPluginById(buildingId);
+  if (plugin) {
+    return getPluginBuildingIssue(plugin);
+  }
+
+  if (normalizeBuildingId(buildingId) === "knowledge-base" && (!state.settings.wikiPathConfigured || !state.settings.wikiPath)) {
+    return {
+      detail: "Choose a Library folder.",
+      label: "not configured",
+    };
+  }
+
+  return null;
+}
+
+function getPluginStatusBadgeLabel(plugin, issue = getPluginBuildingIssue(plugin)) {
+  return issue?.label || getPluginStatusLabel(plugin);
+}
+
+function getPluginOnboarding(plugin) {
+  return plugin?.onboarding && typeof plugin.onboarding === "object" ? plugin.onboarding : null;
+}
+
+function getPluginAccess(plugin) {
+  return plugin?.access && typeof plugin.access === "object" && !Array.isArray(plugin.access) ? plugin.access : null;
+}
+
+function isPluginOnboardingOpen(plugin) {
+  return state.pluginOnboardingOpenId === getPluginId(plugin);
+}
+
+function hasPluginSetupFlow(plugin) {
+  const onboarding = getPluginOnboarding(plugin);
+  return Boolean(
+    onboarding?.setupSelector ||
+      (Array.isArray(onboarding?.steps) && onboarding.steps.length > 0) ||
+      (Array.isArray(onboarding?.variables) && onboarding.variables.length > 0),
+  );
+}
+
+function isSettingConfigured(settingKey) {
+  const value = state.settings?.[settingKey];
+  if (typeof value === "boolean") {
+    return value;
+  }
+  if (typeof value === "number") {
+    return Number.isFinite(value) && value !== 0;
+  }
+  if (Array.isArray(value)) {
+    return value.length > 0;
+  }
+  return Boolean(String(value ?? "").trim());
+}
+
+function isOnboardingVariableConfigured(variable) {
+  if (!variable || typeof variable !== "object") {
+    return false;
+  }
+
+  if (variable.configuredSetting) {
+    return Boolean(state.settings?.[variable.configuredSetting]);
+  }
+
+  if (variable.setting) {
+    return isSettingConfigured(variable.setting);
+  }
+
+  return Boolean(String(variable.value ?? "").trim());
+}
+
+function getOnboardingVariableValueLabel(variable) {
+  if (!variable || typeof variable !== "object") {
+    return "";
+  }
+
+  const configured = isOnboardingVariableConfigured(variable);
+  if (variable.secret) {
+    return configured ? "saved" : variable.required ? "missing" : "optional";
+  }
+
+  if (variable.setting) {
+    const value = state.settings?.[variable.setting];
+    if (typeof value === "boolean") {
+      return value ? "on" : "off";
+    }
+    const text = String(value ?? "").trim();
+    if (!text) {
+      return variable.required ? "missing" : "optional";
+    }
+    return variable.suffix ? `${text} ${variable.suffix}` : text;
+  }
+
+  const text = String(variable.value ?? "").trim();
+  return text || (variable.required ? "missing" : "optional");
+}
+
+function isPluginOnboardingStepComplete(plugin, step) {
+  const check = step?.completeWhen;
+  if (!check || typeof check !== "object") {
+    return false;
+  }
+
+  if (check.type === "installed") {
+    return isPluginInstalled(plugin);
+  }
+
+  if (check.setting) {
+    return isSettingConfigured(check.setting);
+  }
+
+  if (check.configuredSetting) {
+    return Boolean(state.settings?.[check.configuredSetting]);
+  }
+
+  if (Array.isArray(check.allConfigured)) {
+    return check.allConfigured.every((settingKey) => isSettingConfigured(settingKey));
+  }
+
+  return false;
+}
+
+function getPluginOnboardingProgress(plugin) {
+  const steps = Array.isArray(plugin?.onboarding?.steps) ? plugin.onboarding.steps : [];
+  const checkableSteps = steps.filter((step) => step?.completeWhen);
+  const completeSteps = checkableSteps.filter((step) => isPluginOnboardingStepComplete(plugin, step));
+
+  return {
+    complete: completeSteps.length,
+    total: checkableSteps.length,
+  };
+}
+
+function renderPluginOnboarding(plugin, { force = false } = {}) {
+  const onboarding = getPluginOnboarding(plugin);
+  if (!onboarding || (!force && !isPluginOnboardingOpen(plugin))) {
+    return "";
+  }
+
+  const progress = getPluginOnboardingProgress(plugin);
+  const steps = Array.isArray(onboarding.steps) ? onboarding.steps : [];
+  const variables = Array.isArray(onboarding.variables) ? onboarding.variables : [];
+  const progressLabel = progress.total ? `${progress.complete}/${progress.total} checks ready` : "setup guide";
+
+  return `
+    <section class="plugin-onboarding" aria-label="${escapeHtml(`${plugin.name} setup`)}">
+      <div class="plugin-onboarding-head">
+        <strong>Setup</strong>
+        <span>${escapeHtml(progressLabel)}</span>
+      </div>
+      ${
+        steps.length
+          ? `
+            <ol class="plugin-onboarding-steps">
+              ${steps
+                .map((step, index) => {
+                  const complete = isPluginOnboardingStepComplete(plugin, step);
+                  const status = step.completeWhen ? (complete ? "done" : "needed") : "next";
+                  return `
+                    <li class="plugin-onboarding-step is-${escapeHtml(status)}">
+                      <span class="plugin-onboarding-step-index">${escapeHtml(String(index + 1))}</span>
+                      <span>
+                        <strong>${escapeHtml(step.title || `Step ${index + 1}`)}</strong>
+                        <em>${escapeHtml(step.detail || "")}</em>
+                      </span>
+                      <b>${escapeHtml(status)}</b>
+                    </li>
+                  `;
+                })
+                .join("")}
+            </ol>
+          `
+          : ""
+      }
+      ${
+        variables.length
+          ? `
+            <div class="plugin-onboarding-vars">
+              ${variables
+                .map((variable) => {
+                  const configured = isOnboardingVariableConfigured(variable);
+                  const required = Boolean(variable.required);
+                  const status = configured ? "set" : required ? "missing" : "optional";
+                  return `
+                    <div class="plugin-onboarding-var is-${escapeHtml(status)}">
+                      <span>${escapeHtml(variable.label || variable.setting || "variable")}</span>
+                      <strong>${escapeHtml(getOnboardingVariableValueLabel(variable))}</strong>
+                    </div>
+                  `;
+                })
+                .join("")}
+            </div>
+          `
+          : ""
+      }
+      ${
+        renderPluginInstallSetup(plugin) ||
+        (isPluginInstalled(plugin)
+          ? ""
+          : `<div class="plugin-onboarding-actions">
+              <button class="primary-button plugin-install-finish-button" type="button" data-plugin-finish-install="${escapeHtml(getPluginId(plugin))}">finish install</button>
+              <button class="ghost-button plugin-install-cancel-button" type="button" data-plugin-cancel-install="${escapeHtml(getPluginId(plugin))}">cancel</button>
+            </div>`)
+      }
+    </section>
+  `;
+}
+
+function renderPluginInstallSetup(plugin) {
+  const pluginId = getPluginId(plugin);
+  switch (pluginId) {
+    case "browser-use":
+      return renderBrowserUseInstallForm();
+    case "ottoauth":
+      return renderOttoAuthInstallForm();
+    case "agentmail":
+      return renderAgentMailInstallForm();
+    case "telegram":
+      return renderTelegramInstallForm();
+    case "videomemory":
+      return renderVideoMemoryInstallForm();
+    default:
+      return "";
+  }
+}
+
+function renderBrowserUseInstallForm() {
+  const status = state.settings.browserUseStatus || {};
+  const actionLabel = isPluginIdInstalled("browser-use") ? "save Browser Use" : "save and install";
+  return `
+    <form class="settings-form plugin-install-form browser-use-form">
+      <input type="hidden" name="browserUseEnabled" value="on" />
+      <label class="field-label" for="install-browser-use-api-key">Anthropic API key</label>
+      <input
+        class="file-root-input"
+        id="install-browser-use-api-key"
+        name="browserUseAnthropicApiKey"
+        type="password"
+        placeholder="${escapeHtml(state.settings.browserUseAnthropicApiKeyConfigured ? "saved; leave blank to keep" : "sk-ant-...")}"
+        autocomplete="off"
+        autocorrect="off"
+        autocapitalize="none"
+        spellcheck="false"
+      />
+      <label class="field-label" for="install-browser-use-worker-path">OttoAuth worker folder</label>
+      <input
+        class="file-root-input"
+        id="install-browser-use-worker-path"
+        name="browserUseWorkerPath"
+        type="text"
+        value="${escapeHtml(state.settings.browserUseWorkerPath || status.workerPath || "")}"
+        autocomplete="off"
+        autocorrect="off"
+        autocapitalize="none"
+        spellcheck="false"
+      />
+      <label class="field-label" for="install-browser-use-profile-dir">browser profile folder</label>
+      <input
+        class="file-root-input"
+        id="install-browser-use-profile-dir"
+        name="browserUseProfileDir"
+        type="text"
+        value="${escapeHtml(state.settings.browserUseProfileDir || status.profileDir || "")}"
+        autocomplete="off"
+        autocorrect="off"
+        autocapitalize="none"
+        spellcheck="false"
+      />
+      <div class="knowledge-settings-remote-grid">
+        <label>
+          <span class="field-label">model</span>
+          <input class="file-root-input" name="browserUseModel" type="text" value="${escapeHtml(state.settings.browserUseModel || "")}" placeholder="worker default" autocomplete="off" />
+        </label>
+        <label>
+          <span class="field-label">max steps</span>
+          <input class="file-root-input" name="browserUseMaxTurns" type="number" min="1" max="200" step="1" value="${escapeHtml(String(state.settings.browserUseMaxTurns || status.maxTurns || 50))}" autocomplete="off" />
+        </label>
+      </div>
+      <input type="hidden" name="browserUseHeadless" value="on" />
+      ${state.settings.browserUseKeepTabs ? `<input type="hidden" name="browserUseKeepTabs" value="on" />` : ""}
+      <div class="plugin-onboarding-actions">
+        <button class="primary-button plugin-install-finish-button" type="submit" data-browser-use-action="setup">${escapeHtml(actionLabel)}</button>
+        <button class="ghost-button plugin-install-cancel-button" type="button" data-plugin-cancel-install="browser-use">back</button>
+      </div>
+      <div class="settings-status">${escapeHtml(getBrowserUseStatusText())}</div>
+    </form>
+  `;
+}
+
+function renderOttoAuthInstallForm() {
+  const status = state.settings.ottoAuthStatus || {};
+  const actionLabel = isPluginIdInstalled("ottoauth") ? "save OttoAuth" : "save and install";
+  return `
+    <form class="settings-form plugin-install-form ottoauth-form">
+      <input type="hidden" name="ottoAuthEnabled" value="on" />
+      <div class="knowledge-settings-remote-grid">
+        <label>
+          <span class="field-label">username</span>
+          <input class="file-root-input" name="ottoAuthUsername" type="text" value="${escapeHtml(state.settings.ottoAuthUsername || status.username || "")}" autocomplete="off" autocorrect="off" autocapitalize="none" spellcheck="false" />
+        </label>
+        <label>
+          <span class="field-label">private key</span>
+          <input class="file-root-input" name="ottoAuthPrivateKey" type="password" placeholder="${escapeHtml(state.settings.ottoAuthPrivateKeyConfigured ? "saved; leave blank to keep" : "ottoauth private key")}" autocomplete="off" autocorrect="off" autocapitalize="none" spellcheck="false" />
+        </label>
+      </div>
+      <label class="field-label" for="install-ottoauth-base-url">service URL</label>
+      <input class="file-root-input" id="install-ottoauth-base-url" name="ottoAuthBaseUrl" type="url" value="${escapeHtml(state.settings.ottoAuthBaseUrl || status.baseUrl || "https://ottoauth.vercel.app")}" autocomplete="off" autocorrect="off" autocapitalize="none" spellcheck="false" />
+      <div class="knowledge-settings-remote-grid">
+        <label>
+          <span class="field-label">default spend cap</span>
+          <input class="file-root-input" name="ottoAuthDefaultMaxChargeCents" type="number" min="1" step="1" value="${escapeHtml(String(state.settings.ottoAuthDefaultMaxChargeCents || status.defaultMaxChargeCents || ""))}" placeholder="cents" autocomplete="off" />
+        </label>
+        <label>
+          <span class="field-label">callback URL</span>
+          <input class="file-root-input" name="ottoAuthCallbackUrl" type="url" value="${escapeHtml(state.settings.ottoAuthCallbackUrl || status.callbackUrl || "")}" placeholder="optional" autocomplete="off" autocorrect="off" autocapitalize="none" spellcheck="false" />
+        </label>
+      </div>
+      <div class="plugin-onboarding-actions">
+        <button class="primary-button plugin-install-finish-button" type="submit" data-ottoauth-action="setup">${escapeHtml(actionLabel)}</button>
+        <button class="ghost-button plugin-install-cancel-button" type="button" data-plugin-cancel-install="ottoauth">back</button>
+      </div>
+      <div class="settings-status">${escapeHtml(getOttoAuthStatusText())}</div>
+    </form>
+  `;
+}
+
+function renderAgentMailInstallForm() {
+  const status = state.settings.agentMailStatus || {};
+  const actionLabel = isPluginIdInstalled("agentmail") ? "save AgentMail" : "save and install";
+  return `
+    <form class="settings-form plugin-install-form communications-form">
+      <input type="hidden" name="agentMailEnabled" value="on" />
+      <label class="field-label" for="install-agentmail-api-key">AgentMail API key</label>
+      <input class="file-root-input" id="install-agentmail-api-key" name="agentMailApiKey" type="password" placeholder="${escapeHtml(state.settings.agentMailApiKeyConfigured ? "saved; leave blank to keep" : "am_...")}" autocomplete="off" autocorrect="off" autocapitalize="none" spellcheck="false" />
+      <div class="knowledge-settings-remote-grid">
+        <label>
+          <span class="field-label">inbox ID</span>
+          <input class="file-root-input" name="agentMailInboxId" type="text" value="${escapeHtml(state.settings.agentMailInboxId || status.inboxId || "")}" placeholder="leave blank to create" autocomplete="off" autocorrect="off" autocapitalize="none" spellcheck="false" />
+        </label>
+        <label>
+          <span class="field-label">email agent</span>
+          <select class="file-root-input" name="agentMailProviderId">${renderProviderOptions(state.settings.agentMailProviderId || state.defaultProviderId)}</select>
+        </label>
+      </div>
+      <div class="plugin-onboarding-actions">
+        <button class="primary-button plugin-install-finish-button" type="submit" data-communications-action="setup">${escapeHtml(actionLabel)}</button>
+        <button class="ghost-button plugin-install-cancel-button" type="button" data-plugin-cancel-install="agentmail">back</button>
+      </div>
+      <div class="settings-status">${escapeHtml(getAgentMailStatusText())}</div>
+    </form>
+  `;
+}
+
+function renderTelegramInstallForm() {
+  const telegramStatus = state.settings.telegramStatus || {};
+  const allowedChatIdsText = Array.isArray(telegramStatus.allowedChatIds) ? telegramStatus.allowedChatIds.join(", ") : "";
+  const actionLabel = isPluginIdInstalled("telegram") ? "save Telegram" : "save and install";
+  return `
+    <form class="settings-form plugin-install-form communications-form">
+      <input type="hidden" name="telegramEnabled" value="on" />
+      <label class="field-label" for="install-telegram-bot-token">Telegram bot token</label>
+      <input class="file-root-input" id="install-telegram-bot-token" name="telegramBotToken" type="password" placeholder="${escapeHtml(state.settings.telegramBotTokenConfigured ? "saved; leave blank to keep" : "BotFather token")}" autocomplete="off" autocorrect="off" autocapitalize="none" spellcheck="false" />
+      <label class="field-label" for="install-telegram-allowed-chat-ids">allowed chat IDs</label>
+      <input class="file-root-input" id="install-telegram-allowed-chat-ids" name="telegramAllowedChatIds" type="text" value="${escapeHtml(state.settings.telegramAllowedChatIds || allowedChatIdsText)}" placeholder="optional comma-separated chat IDs" autocomplete="off" autocorrect="off" autocapitalize="none" spellcheck="false" />
+      <label class="field-label" for="install-telegram-provider">telegram agent</label>
+      <select class="file-root-input" id="install-telegram-provider" name="telegramProviderId">${renderProviderOptions(state.settings.telegramProviderId || state.defaultProviderId)}</select>
+      <div class="plugin-onboarding-actions">
+        <button class="primary-button plugin-install-finish-button" type="submit" data-communications-action="setup">${escapeHtml(actionLabel)}</button>
+        <button class="ghost-button plugin-install-cancel-button" type="button" data-plugin-cancel-install="telegram">back</button>
+      </div>
+      <div class="settings-status">${escapeHtml(getTelegramStatusText())}</div>
+    </form>
+  `;
+}
+
+function renderVideoMemoryInstallForm() {
+  const status = state.settings.videoMemoryStatus || {};
+  const actionLabel = isPluginIdInstalled("videomemory") ? "save VideoMemory" : "save and install";
+  return `
+    <form class="settings-form plugin-install-form videomemory-form">
+      <input type="hidden" name="videoMemoryEnabled" value="on" />
+      <label class="field-label" for="install-videomemory-base-url">VideoMemory URL</label>
+      <input class="file-root-input" id="install-videomemory-base-url" name="videoMemoryBaseUrl" type="url" value="${escapeHtml(state.settings.videoMemoryBaseUrl || status.baseUrl || "http://127.0.0.1:5050")}" autocomplete="off" autocorrect="off" autocapitalize="none" spellcheck="false" />
+      <label class="field-label" for="install-videomemory-provider">default agent</label>
+      <select class="file-root-input" id="install-videomemory-provider" name="videoMemoryProviderId">${renderProviderOptions(state.settings.videoMemoryProviderId || state.defaultProviderId)}</select>
+      <div class="plugin-onboarding-actions">
+        <button class="primary-button plugin-install-finish-button" type="submit" data-videomemory-action="setup">${escapeHtml(actionLabel)}</button>
+        <button class="ghost-button plugin-install-cancel-button" type="button" data-plugin-cancel-install="videomemory">back</button>
+      </div>
+      <div class="settings-status">${escapeHtml(getVideoMemoryStatusText())}</div>
+    </form>
+  `;
+}
 function renderPluginInstallButton(plugin) {
+  if (isPluginSystemApp(plugin)) {
+    return "";
+  }
+
   const pluginId = getPluginId(plugin);
   const installed = isPluginInstalled(plugin);
   const pendingAction = getPluginPendingAction(plugin);
@@ -8543,11 +9707,46 @@ function renderPluginInstallButton(plugin) {
   `;
 }
 
+function getPluginBuildingShape(plugin) {
+  return plugin?.visual?.shape || "plugin";
+}
+
+function renderBuildingIssueBadge(issue) {
+  if (!issue) {
+    return "";
+  }
+
+  const title = issue.detail || issue.label || "Building needs attention.";
+  return `<span class="building-alert-badge" aria-hidden="true" title="${escapeHtml(title)}">!</span>`;
+}
+
+function renderPluginBuilding(plugin, { issue = getPluginBuildingIssue(plugin) } = {}) {
+  const pluginId = getPluginId(plugin);
+  const shape = getPluginBuildingShape(plugin);
+
+  return `
+    <span class="plugin-building-lot plugin-building-${escapeHtml(pluginId)} plugin-building-shape-${escapeHtml(shape)} ${issue ? "has-building-issue" : ""}" aria-hidden="true">
+      <span class="plugin-building-grid"></span>
+      ${renderBuildingIssueBadge(issue)}
+      <span class="plugin-building-shadow"></span>
+      <span class="plugin-building-roof"></span>
+      <span class="plugin-building-body">
+        <span class="plugin-building-sign">${renderIcon(plugin.icon || Plug)}</span>
+        <span class="plugin-building-window plugin-building-window-a"></span>
+        <span class="plugin-building-window plugin-building-window-b"></span>
+        <span class="plugin-building-door"></span>
+      </span>
+      <span class="plugin-building-awning"></span>
+      <span class="plugin-building-base"></span>
+    </span>
+  `;
+}
+
 function renderPluginCards() {
   const plugins = getFilteredPlugins();
 
   if (!plugins.length) {
-    return `<div class="blank-state">no plugins match "${escapeHtml(state.pluginSearchQuery)}"</div>`;
+    return `<div class="blank-state">no buildings match "${escapeHtml(state.pluginSearchQuery)}"</div>`;
   }
 
   return plugins
@@ -8555,21 +9754,113 @@ function renderPluginCards() {
       (plugin) => {
         const installed = isPluginInstalled(plugin);
         const pendingAction = getPluginPendingAction(plugin);
+        const pluginId = getPluginId(plugin);
+        const issue = getPluginBuildingIssue(plugin);
+        const issueLabel = issue ? ` · ${issue.label}` : "";
+        const installAction = renderPluginInstallButton(plugin);
         return `
-        <article class="plugin-card ${installed ? "is-installed" : ""} ${pendingAction ? "is-pending" : ""}">
-          <div class="plugin-icon" aria-hidden="true">${renderIcon(plugin.icon || Plug)}</div>
-          <div class="plugin-copy">
-            <strong>${escapeHtml(plugin.name)}</strong>
-            <span>${escapeHtml(plugin.description)}</span>
-            <em>${escapeHtml(plugin.category)}</em>
-          </div>
-          ${renderPluginInstallButton(plugin)}
-          <span class="plugin-status">${escapeHtml(getPluginStatusLabel(plugin))}</span>
+        <article class="plugin-card ${installed ? "is-installed" : ""} ${pendingAction ? "is-pending" : ""} ${issue ? "has-building-issue" : ""}">
+          <button
+            class="plugin-card-open"
+            type="button"
+            data-plugin-open="${escapeHtml(pluginId)}"
+            aria-label="${escapeHtml(`Open ${plugin.name} building${issueLabel}`)}"
+          >
+            ${renderPluginBuilding(plugin, { issue })}
+            <span class="plugin-card-main">
+              <span class="plugin-copy">
+                <strong>${escapeHtml(plugin.name)}</strong>
+                <span>${escapeHtml(plugin.description)}</span>
+                <em>${escapeHtml(plugin.category)}</em>
+              </span>
+              <span class="plugin-status ${issue ? "is-warning" : ""}">${escapeHtml(getPluginStatusBadgeLabel(plugin, issue))}</span>
+            </span>
+          </button>
+          ${installAction ? `<div class="plugin-card-actions">${installAction}</div>` : ""}
         </article>
       `;
       },
     )
     .join("");
+}
+
+function renderPluginDetailAction(plugin) {
+  const installed = isPluginInstalled(plugin);
+  if (hasPluginSetupFlow(plugin) && !installed) {
+    return "";
+  }
+
+  return renderPluginInstallButton(plugin);
+}
+
+function renderPluginDetailSettings(plugin) {
+  const access = getPluginAccess(plugin);
+  const setup = renderPluginOnboarding(plugin, { force: true });
+  const fallback = `
+      <section class="plugin-onboarding" aria-label="${escapeHtml(`${plugin.name} setup`)}">
+        <div class="plugin-onboarding-head">
+          <strong>Setup</strong>
+          <span>${escapeHtml(isPluginInstalled(plugin) ? "ready" : "not installed")}</span>
+        </div>
+        <div class="plugin-onboarding-actions">
+          ${renderPluginInstallButton(plugin)}
+        </div>
+      </section>
+    `;
+
+  return `
+    ${
+      access
+        ? `<section class="plugin-access-panel" aria-label="${escapeHtml(`${plugin.name} access`)}">
+            <span>${escapeHtml(access.label || "Access")}</span>
+            <strong>${escapeHtml(access.detail || "")}</strong>
+          </section>`
+        : ""
+    }
+    ${setup || fallback}
+  `;
+}
+
+function renderPluginDetailView(plugin) {
+  const pluginId = getPluginId(plugin);
+  const progress = getPluginOnboardingProgress(plugin);
+  const progressLabel = progress.total ? `${progress.complete}/${progress.total} checks ready` : getPluginStatusLabel(plugin);
+
+  return `
+    <section class="dashboard-panel main-view plugins-view plugin-detail-view" ${renderMainViewAttributes(
+      "plugins",
+      `plugin-detail:${pluginId}`,
+    )}>
+      <div class="dashboard-toolbar">
+        <button class="icon-button hidden-desktop" type="button" id="open-sidebar" aria-label="Open sidebar" ${tooltipAttributes("Open sidebar")}>${renderIcon(Menu)}</button>
+        <button class="ghost-button toolbar-control" type="button" data-plugin-detail-back aria-label="Back to Buildings" ${tooltipAttributes("Back to Buildings")}>
+          ${renderIcon(ChevronLeft)}
+          <span>Back</span>
+        </button>
+        <div class="dashboard-copy">
+          <strong>${escapeHtml(plugin.name)}</strong>
+          <div class="terminal-meta">${escapeHtml(`${plugin.category} · ${getPluginStatusLabel(plugin)} · ${progressLabel}`)}</div>
+        </div>
+        <div class="dashboard-actions">
+          ${renderPluginDetailAction(plugin)}
+        </div>
+      </div>
+      <div class="plugin-detail-layout">
+        <section class="plugin-detail-hero">
+          ${renderPluginBuilding(plugin)}
+          <div class="plugin-detail-copy">
+            <span class="main-search-kind">${escapeHtml(plugin.source || "building")}</span>
+            <h2>${escapeHtml(plugin.name)}</h2>
+            <p>${escapeHtml(plugin.description)}</p>
+            <span class="plugin-status">${escapeHtml(getPluginStatusLabel(plugin))}</span>
+          </div>
+        </section>
+        <section class="plugin-detail-settings">
+          ${renderPluginDetailSettings(plugin)}
+        </section>
+      </div>
+    </section>
+  `;
 }
 
 function renderAgentCredentialsSettingsPanel() {
@@ -8719,6 +10010,192 @@ function renderBrowserUsePluginPanel() {
   `;
 }
 
+function renderOttoAuthPluginPanel() {
+  const status = state.settings.ottoAuthStatus || {};
+  const skillUrl = status.skillUrl || "https://ottoauth.vercel.app/skill.md";
+
+  return `
+    <aside class="mcp-import-card ottoauth-plugin-card">
+      <span class="main-search-kind">commerce agent</span>
+      <strong>OttoAuth</strong>
+      <p>Hosted service calls for human-linked purchases, browser orders, and payment handoffs.</p>
+      <form class="settings-form ottoauth-form" id="ottoauth-form">
+        <label class="checkbox-row browser-use-compact-checkbox">
+          <input type="checkbox" name="ottoAuthEnabled" ${state.settings.ottoAuthEnabled ? "checked" : ""} />
+          <span>enable OttoAuth requests</span>
+        </label>
+        <div class="knowledge-settings-remote-grid">
+          <label>
+            <span class="field-label">username</span>
+            <input
+              class="file-root-input"
+              name="ottoAuthUsername"
+              type="text"
+              value="${escapeHtml(state.settings.ottoAuthUsername || status.username || "")}"
+              autocomplete="off"
+              autocorrect="off"
+              autocapitalize="none"
+              spellcheck="false"
+            />
+          </label>
+          <label>
+            <span class="field-label">private key</span>
+            <input
+              class="file-root-input"
+              name="ottoAuthPrivateKey"
+              type="password"
+              placeholder="${escapeHtml(state.settings.ottoAuthPrivateKeyConfigured ? "saved; leave blank to keep" : "ottoauth private key")}"
+              autocomplete="off"
+              autocorrect="off"
+              autocapitalize="none"
+              spellcheck="false"
+            />
+          </label>
+        </div>
+        <label class="field-label" for="ottoauth-base-url">service URL</label>
+        <input
+          class="file-root-input"
+          id="ottoauth-base-url"
+          name="ottoAuthBaseUrl"
+          type="url"
+          value="${escapeHtml(state.settings.ottoAuthBaseUrl || status.baseUrl || "https://ottoauth.vercel.app")}"
+          autocomplete="off"
+          autocorrect="off"
+          autocapitalize="none"
+          spellcheck="false"
+        />
+        <label class="field-label" for="ottoauth-callback-url">callback URL</label>
+        <input
+          class="file-root-input"
+          id="ottoauth-callback-url"
+          name="ottoAuthCallbackUrl"
+          type="url"
+          value="${escapeHtml(state.settings.ottoAuthCallbackUrl || status.callbackUrl || "")}"
+          placeholder="https://your-agent.example.com/ottoauth/callback"
+          autocomplete="off"
+          autocorrect="off"
+          autocapitalize="none"
+          spellcheck="false"
+        />
+        <label class="field-label" for="ottoauth-default-max-charge">default spend cap</label>
+        <input
+          class="file-root-input"
+          id="ottoauth-default-max-charge"
+          name="ottoAuthDefaultMaxChargeCents"
+          type="number"
+          min="1"
+          step="1"
+          value="${escapeHtml(String(state.settings.ottoAuthDefaultMaxChargeCents || status.defaultMaxChargeCents || ""))}"
+          placeholder="cents"
+          autocomplete="off"
+        />
+        <div class="knowledge-settings-actions">
+          <button class="primary-button settings-save-button" type="submit" data-ottoauth-action="setup">save OttoAuth</button>
+          <a class="ghost-button toolbar-control" href="${escapeHtml(skillUrl)}" target="_blank" rel="noreferrer">skill</a>
+          <div class="settings-status" id="ottoauth-settings-status">${escapeHtml(getOttoAuthStatusText())}</div>
+        </div>
+      </form>
+      <p class="mcp-import-paths">Tool: <code>vr-ottoauth --task "..." --max-charge-cents 2500 --wait</code></p>
+    </aside>
+  `;
+}
+
+function renderCommunicationsPluginPanel() {
+  const agentMailStatus = state.settings.agentMailStatus || {};
+  const telegramStatus = state.settings.telegramStatus || {};
+  const telegramAllowedChatIdsText = Array.isArray(telegramStatus.allowedChatIds)
+    ? telegramStatus.allowedChatIds.join(", ")
+    : "";
+
+  return `
+    <aside class="mcp-import-card communications-plugin-card">
+      <span class="main-search-kind">communications agent</span>
+      <strong>Telegram + AgentMail</strong>
+      <p>Route human messages into dedicated long-lived agent sessions instead of scattering replies across ad hoc runs.</p>
+      <form class="settings-form communications-form" id="communications-form">
+        <label class="checkbox-row browser-use-compact-checkbox">
+          <input type="checkbox" name="agentMailEnabled" ${state.settings.agentMailEnabled ? "checked" : ""} />
+          <span>enable AgentMail inbox</span>
+        </label>
+        <label class="field-label" for="agentmail-api-key">AgentMail API key</label>
+        <input
+          class="file-root-input"
+          id="agentmail-api-key"
+          name="agentMailApiKey"
+          type="password"
+          placeholder="${escapeHtml(state.settings.agentMailApiKeyConfigured ? "saved; leave blank to keep" : "am_...")}"
+          autocomplete="off"
+          autocorrect="off"
+          autocapitalize="none"
+          spellcheck="false"
+        />
+        <div class="knowledge-settings-remote-grid">
+          <label>
+            <span class="field-label">inbox ID</span>
+            <input
+              class="file-root-input"
+              name="agentMailInboxId"
+              type="text"
+              value="${escapeHtml(state.settings.agentMailInboxId || agentMailStatus.inboxId || "")}"
+              placeholder="leave blank to create"
+              autocomplete="off"
+              autocorrect="off"
+              autocapitalize="none"
+              spellcheck="false"
+            />
+          </label>
+          <label>
+            <span class="field-label">email agent</span>
+            <select class="file-root-input" name="agentMailProviderId">
+              ${renderProviderOptions(state.settings.agentMailProviderId || state.defaultProviderId)}
+            </select>
+          </label>
+        </div>
+        <label class="checkbox-row browser-use-compact-checkbox">
+          <input type="checkbox" name="telegramEnabled" ${state.settings.telegramEnabled ? "checked" : ""} />
+          <span>enable Telegram bot</span>
+        </label>
+        <label class="field-label" for="telegram-bot-token">Telegram bot token</label>
+        <input
+          class="file-root-input"
+          id="telegram-bot-token"
+          name="telegramBotToken"
+          type="password"
+          placeholder="${escapeHtml(state.settings.telegramBotTokenConfigured ? "saved; leave blank to keep" : "BotFather token")}"
+          autocomplete="off"
+          autocorrect="off"
+          autocapitalize="none"
+          spellcheck="false"
+        />
+        <label class="field-label" for="telegram-allowed-chat-ids">allowed chat IDs</label>
+        <input
+          class="file-root-input"
+          id="telegram-allowed-chat-ids"
+          name="telegramAllowedChatIds"
+          type="text"
+          value="${escapeHtml(state.settings.telegramAllowedChatIds || telegramAllowedChatIdsText)}"
+          placeholder="optional comma-separated chat IDs"
+          autocomplete="off"
+          autocorrect="off"
+          autocapitalize="none"
+          spellcheck="false"
+        />
+        <label class="field-label" for="telegram-provider">telegram agent</label>
+        <select class="file-root-input" id="telegram-provider" name="telegramProviderId">
+          ${renderProviderOptions(state.settings.telegramProviderId || state.defaultProviderId)}
+        </select>
+        <div class="knowledge-settings-actions">
+          <button class="primary-button settings-save-button" type="submit" data-communications-action="setup">save communications</button>
+          <div class="settings-status" id="communications-settings-status">
+            ${escapeHtml(`mail: ${getAgentMailStatusText()} · telegram: ${getTelegramStatusText()}`)}
+          </div>
+        </div>
+      </form>
+      <p class="mcp-import-paths">Tools: <code>vr-agentmail-reply</code> · <code>vr-telegram-reply</code></p>
+    </aside>
+  `;
+}
+
 function renderVideoMemoryMonitorRows() {
   const monitors = Array.isArray(state.videoMemoryMonitors) ? state.videoMemoryMonitors : [];
   const activeMonitors = monitors.filter((monitor) => monitor.status !== "deleted").slice(0, 5);
@@ -8813,6 +10290,11 @@ function renderVideoMemoryPluginPanel() {
 }
 
 function renderPluginsView() {
+  const detailPlugin = getCurrentPluginDetail();
+  if (detailPlugin) {
+    return renderPluginDetailView(detailPlugin);
+  }
+
   return `
     <section class="dashboard-panel main-view plugins-view" ${renderMainViewAttributes(
       "plugins",
@@ -8821,8 +10303,8 @@ function renderPluginsView() {
       <div class="dashboard-toolbar">
         <button class="icon-button hidden-desktop" type="button" id="open-sidebar" aria-label="Open sidebar" ${tooltipAttributes("Open sidebar")}>${renderIcon(Menu)}</button>
         <div class="dashboard-copy">
-          <strong>Plugins</strong>
-          <div class="terminal-meta">a Codex-style place for MCPs, integrations, and built-in Vibe Research tools</div>
+          <strong>Buildings</strong>
+          <div class="terminal-meta">installable town buildings for MCPs, integrations, and built-in Vibe Research tools</div>
         </div>
       </div>
       <div class="main-search-shell">
@@ -8832,7 +10314,7 @@ function renderPluginsView() {
           class="main-search-input"
           type="search"
           value="${escapeHtml(state.pluginSearchQuery)}"
-          placeholder="Search plugins"
+          placeholder="Search buildings"
           autocomplete="off"
           autocorrect="off"
           autocapitalize="none"
@@ -8841,18 +10323,7 @@ function renderPluginsView() {
         <span class="main-search-count">${escapeHtml(`${getFilteredPlugins().length} shown`)}</span>
       </div>
       <div class="plugins-layout">
-        <section class="plugin-grid" id="plugin-results">${renderPluginCards()}</section>
-        <div class="plugins-side-stack">
-          ${renderAgentCredentialsSettingsPanel()}
-          ${renderBrowserUsePluginPanel()}
-          ${renderVideoMemoryPluginPanel()}
-          <aside class="mcp-import-card">
-            <span class="main-search-kind">MCP bridge</span>
-            <strong>Port the MCPs your agents already use</strong>
-            <p>Vibe Research launches the real Codex, Claude, Gemini, and OpenCode CLIs, so their existing MCP/plugin configs still matter inside each session. This page is the first shared surface for making those tools visible from Vibe Research itself.</p>
-            <p class="mcp-import-paths">Common places to import from next: <code>~/.codex</code>, <code>~/.claude</code>, project MCP files, and agent-specific config folders.</p>
-          </aside>
-        </div>
+        <section class="plugin-grid plugin-store-grid" id="plugin-results">${renderPluginCards()}</section>
       </div>
     </section>
   `;
@@ -8865,18 +10336,30 @@ function renderSettingsView() {
         <button class="icon-button hidden-desktop" type="button" id="open-sidebar" aria-label="Open sidebar" ${tooltipAttributes("Open sidebar")}>${renderIcon(Menu)}</button>
         <div class="dashboard-copy">
           <strong>Settings</strong>
-          <div class="terminal-meta">credentials, brain folder, and local runtime defaults</div>
+          <div class="terminal-meta">credentials, Library folder, and local runtime defaults</div>
         </div>
       </div>
-      <div class="plugins-layout settings-layout">
-        <div class="plugins-side-stack">
+      <div class="settings-layout">
+        <div class="settings-common-grid">
           ${renderAgentCredentialsSettingsPanel()}
-          ${renderKnowledgeSettingsForm()}
+          ${renderKnowledgeSettingsForm({ remoteControls: false })}
         </div>
-        <div class="plugins-side-stack">
-          ${renderBrowserUsePluginPanel()}
-          ${renderVideoMemoryPluginPanel()}
-        </div>
+        <details class="settings-advanced-panel">
+          <summary class="settings-advanced-summary">
+            <span class="settings-advanced-icon" aria-hidden="true">${renderIcon(ChevronDown)}</span>
+            <span class="settings-advanced-copy">
+              <strong>Advanced</strong>
+              <span>remote backups and service integrations</span>
+            </span>
+          </summary>
+          <div class="settings-advanced-grid">
+            ${renderWikiRemoteSettingsPanel()}
+            ${renderOttoAuthPluginPanel()}
+            ${renderCommunicationsPluginPanel()}
+            ${renderBrowserUsePluginPanel()}
+            ${renderVideoMemoryPluginPanel()}
+          </div>
+        </details>
       </div>
     </section>
   `;
@@ -8964,7 +10447,7 @@ function renderCreateAutomationCard() {
             <select class="file-root-input" name="weekday">${renderAutomationSelectOptions(AUTOMATION_WEEKDAY_OPTIONS, "monday")}</select>
           </label>
         </div>
-        <label class="field-label" for="automation-prompt">agent prompt</label>
+        <label class="field-label" for="automation-prompt">task prompt</label>
         <textarea
           class="file-root-input automation-prompt-input"
           id="automation-prompt"
@@ -8979,10 +10462,29 @@ function renderCreateAutomationCard() {
   `;
 }
 
-function renderAutomationsView() {
+function renderWikiBackupAutomationCard() {
   const wikiBackupEnabled = Boolean(state.settings.wikiGitBackupEnabled);
   const wikiBackupLabel = wikiBackupEnabled ? "enabled" : "disabled";
 
+  return `
+    <article class="automation-card ${wikiBackupEnabled ? "is-enabled" : "is-disabled"}">
+      <div class="automation-card-icon" aria-hidden="true">${renderIcon(CalendarClock)}</div>
+      <button
+        class="main-search-kind automation-status-toggle ${wikiBackupEnabled ? "is-enabled" : "is-disabled"}"
+        type="button"
+        data-toggle-automation="wiki-backup"
+        aria-pressed="${wikiBackupEnabled ? "true" : "false"}"
+        aria-label="${wikiBackupEnabled ? "Disable" : "Enable"} library git backup"
+        ${tooltipAttributes(`${wikiBackupEnabled ? "Disable" : "Enable"} library git backup`)}
+      >${escapeHtml(wikiBackupLabel)}</button>
+      <strong>Library git backup</strong>
+      <p>Every ${escapeHtml(String(Math.round((state.settings.wikiBackupIntervalMs || 0) / 60000) || 5))} minutes.</p>
+      <button class="ghost-button toolbar-control" type="button" data-open-main-view="knowledge-base">open library</button>
+    </article>
+  `;
+}
+
+function renderAutomationsView() {
   return `
     <section class="dashboard-panel main-view automations-view" ${renderMainViewAttributes("automations")}>
       <div class="dashboard-toolbar">
@@ -8994,24 +10496,11 @@ function renderAutomationsView() {
       </div>
       <div class="dashboard-range">
         <span class="dashboard-range-label">status</span>
-        <span>Local automations are starting with wiki backup and will grow into plugin-backed jobs.</span>
-        <span class="dashboard-updated">${escapeHtml(state.settings.wikiGitBackupEnabled ? "wiki backup on" : "wiki backup off")}</span>
+        <span>Local automations are starting with Library backup and will grow into building-backed jobs.</span>
+        <span class="dashboard-updated">${escapeHtml(state.settings.wikiGitBackupEnabled ? "Library backup on" : "Library backup off")}</span>
       </div>
       <div class="main-results-grid automation-grid">
-        <article class="automation-card ${wikiBackupEnabled ? "is-enabled" : "is-disabled"}">
-          <div class="automation-card-icon" aria-hidden="true">${renderIcon(CalendarClock)}</div>
-          <button
-            class="main-search-kind automation-status-toggle ${wikiBackupEnabled ? "is-enabled" : "is-disabled"}"
-            type="button"
-            data-toggle-automation="wiki-backup"
-            aria-pressed="${wikiBackupEnabled ? "true" : "false"}"
-            aria-label="${wikiBackupEnabled ? "Disable" : "Enable"} knowledge base git backup"
-            ${tooltipAttributes(`${wikiBackupEnabled ? "Disable" : "Enable"} knowledge base git backup`)}
-          >${escapeHtml(wikiBackupLabel)}</button>
-          <strong>Knowledge base git backup</strong>
-          <p>Backs up the selected wiki every ${escapeHtml(String(Math.round((state.settings.wikiBackupIntervalMs || 0) / 60000) || 5))} minutes when enabled.</p>
-          <button class="ghost-button toolbar-control" type="button" data-open-main-view="knowledge-base">open settings</button>
-        </article>
+        ${renderWikiBackupAutomationCard()}
         ${renderCreateAutomationCard()}
         ${renderAgentAutomationCards()}
       </div>
@@ -9474,8 +10963,8 @@ function renderSystemStorageCard(system) {
   const projectPercentLabel = formatStoragePercentLabel(projectPercent);
   const wikiLegend = wiki
     ? wiki.exists
-      ? `${formatBytes(wikiBytes)} Knowledge Base (${wikiPercentLabel})`
-      : "Knowledge Base folder missing"
+      ? `${formatBytes(wikiBytes)} Library (${wikiPercentLabel})`
+      : "Library folder missing"
     : "";
   const projectLegend = project
     ? project.exists
@@ -9491,7 +10980,7 @@ function renderSystemStorageCard(system) {
   const projectDetailParts = [
     project?.rootCount ? `${project.rootCount} folders measured` : "",
     project?.truncated ? `${project.measuredRootCount} of ${project.totalRootCount} folders included` : "",
-    projectContainsWiki ? "Knowledge Base shown separately" : "",
+    projectContainsWiki ? "Library shown separately" : "",
     ...(Array.isArray(project?.warnings) ? project.warnings : []),
   ].filter(Boolean);
 
@@ -9879,7 +11368,7 @@ function getSwarmPathBucketFallback(pathValue) {
     return {
       key: "absolute:mac-brain",
       label: "mac-brain",
-      meta: "knowledge base",
+      meta: "library",
       sample: parts.slice(macBrainIndex + 1).join("/") || ".",
     };
   }
@@ -10428,7 +11917,7 @@ function renderSwarmGraphSvg(graph) {
 
 function renderSwarmSummary(graph) {
   const git = graph?.git || {};
-  const sessions = Array.isArray(graph?.sessions) ? graph.sessions : [];
+  const sessions = getVisualGraphSessions(graph);
   const subagentCount = sessions.reduce((count, session) => count + (Array.isArray(session.subagents) ? session.subagents.length : 0), 0);
   const worktreeCount = Array.isArray(git.worktrees) ? git.worktrees.length : 0;
   const dirtyLabel = git.dirtyCount == null ? "unknown changes" : git.dirtyCount ? `${git.dirtyCount} changed` : "clean";
@@ -10457,7 +11946,7 @@ function renderSwarmSummary(graph) {
 }
 
 function renderSwarmDetails(graph) {
-  const sessions = Array.isArray(graph?.sessions) ? graph.sessions : [];
+  const sessions = getVisualGraphSessions(graph);
   const pathBuckets = collectSwarmPathBuckets(graph);
   const subagents = sessions.flatMap((session) =>
     (Array.isArray(session.subagents) ? session.subagents : []).map((subagent) => ({
@@ -10538,7 +12027,39 @@ function renderSwarmDetails(graph) {
 }
 
 function getVisualGraphSessions(graph) {
-  return Array.isArray(graph?.sessions) ? graph.sessions : [];
+  const graphSessions = Array.isArray(graph?.sessions) ? graph.sessions : [];
+  const liveSessionById = new Map(state.sessions.map((session) => [session.id, session]));
+
+  return graphSessions
+    .map((graphSession) => {
+      const liveSession = liveSessionById.get(graphSession?.id);
+      return liveSession ? { ...graphSession, ...liveSession } : null;
+    })
+    .filter(Boolean);
+}
+
+function pruneVisualGameSessionSelection() {
+  if (!state.visualGame.selectedSessionId) {
+    return false;
+  }
+
+  const selectedSessionExists = state.sessions.some((session) => session.id === state.visualGame.selectedSessionId);
+  if (selectedSessionExists) {
+    return false;
+  }
+
+  state.visualGame.selectedSessionId = "";
+  state.visualGame.selectedBrowserUseSessionId = "";
+  return true;
+}
+
+function didSessionIdsChange(previousSessions, nextSessions) {
+  if (previousSessions.length !== nextSessions.length) {
+    return true;
+  }
+
+  const previousIds = new Set(previousSessions.map((session) => session.id));
+  return nextSessions.some((session) => !previousIds.has(session.id));
 }
 
 function getVisualStatusClass(status) {
@@ -10581,6 +12102,7 @@ function getVisualInterfaceAgents(graph) {
       backgroundActivityActive: Boolean(session.backgroundActivity?.active),
       hasActiveSubagent: Array.isArray(session.subagents) && session.subagents.some((subagent) => subagent?.status === "working"),
       providerId: session.providerId || "",
+      occupationId: session.occupationId || state.agentPromptSelectedId || "researcher",
       sessionStatus: session.status || "",
       sessionId: session.id,
       parentSessionId: "",
@@ -10599,18 +12121,21 @@ function getVisualInterfaceAgents(graph) {
       const toolUseCount = Number(subagent.toolUseCount);
       const messageCount = Number(subagent.messageCount);
       const isVideoMemorySubagent = Boolean(subagent.videoMemoryMonitorId);
+      const isOttoAuthSubagent = Boolean(subagent.ottoAuthSessionId);
       const detail = [
         isVideoMemorySubagent
           ? "camera monitor"
-          : subagent.browserUseSessionId
-            ? "browser lab"
-            : subagent.source === "claude" ? "Claude helper" : subagent.agentType || "helper",
+          : isOttoAuthSubagent
+            ? "OttoAuth"
+            : subagent.browserUseSessionId
+              ? "browser lab"
+              : subagent.source === "claude" ? "Claude helper" : subagent.agentType || "helper",
         subagent.toolUseCount != null && Number.isFinite(toolUseCount) ? `${toolUseCount} tools` : "",
         subagent.messageCount != null && Number.isFinite(messageCount) ? `${messageCount} msgs` : "",
       ].filter(Boolean).join(" · ");
 
       agents.push({
-        kind: isVideoMemorySubagent ? "camera" : subagent.browserUseSessionId ? "browser" : "helper",
+        kind: isVideoMemorySubagent ? "camera" : isOttoAuthSubagent ? "ottoauth" : subagent.browserUseSessionId ? "browser" : "helper",
         name: subagent.name || subagent.description || "Helper agent",
         subtitle: detail,
         status: subagent.status || "idle",
@@ -10621,7 +12146,8 @@ function getVisualInterfaceAgents(graph) {
         agentType: subagent.agentType || "",
         backgroundActivityActive: false,
         hasActiveSubagent: false,
-        providerId: "",
+        providerId: session.providerId || subagent.source || "",
+        occupationId: subagent.occupationId || session.occupationId || state.agentPromptSelectedId || "researcher",
         sessionStatus: subagent.status || "",
         source: subagent.source || "",
         sessionId: session.id,
@@ -10630,6 +12156,8 @@ function getVisualInterfaceAgents(graph) {
         familyIndex: sessionIndex,
         isSubagent: true,
         browserUseSessionId: subagent.browserUseSessionId || "",
+        ottoAuthSessionId: subagent.ottoAuthSessionId || "",
+        ottoAuthTaskId: subagent.ottoAuthTaskId || "",
         videoMemoryMonitorId: subagent.videoMemoryMonitorId || "",
         paths: Array.isArray(subagent.paths) ? subagent.paths : [],
         commands: Array.isArray(subagent.commands) ? subagent.commands : [],
@@ -10655,7 +12183,7 @@ function isVisualGameLiveSubagent(subagent) {
 
 function renderVisualAgentTile(agent, index) {
   const statusClass = getVisualStatusClass(agent.status);
-  const icon = agent.kind === "camera" ? Camera : agent.kind === "browser" ? AppWindow : agent.kind === "helper" ? Zap : Bot;
+  const icon = agent.kind === "camera" ? Camera : agent.kind === "ottoauth" ? ShoppingCart : agent.kind === "browser" ? AppWindow : agent.kind === "helper" ? Zap : Bot;
   const content = `
     <span class="visual-agent-sprite visual-agent-sprite-${escapeHtml(statusClass)}" aria-hidden="true">
       ${renderIcon(icon)}
@@ -10710,9 +12238,9 @@ function renderVisualWorkshop(graph) {
 function renderVisualMissionBoard() {
   const missions = [
     { label: "New run", meta: "choose project", icon: MessageSquarePlus, attrs: `data-folder-picker-target="session"` },
-    { label: "Findings", meta: "open wiki", icon: BookOpen, attrs: `data-open-main-view="knowledge-base"` },
-    { label: "Tools", meta: "plugins", icon: Plug, attrs: `data-open-main-view="plugins"` },
-    { label: "Schedule", meta: "automations", icon: CalendarClock, attrs: `data-open-main-view="automations"` },
+    { label: "Findings", meta: "open library", icon: BookOpen, attrs: `data-visual-building-open="knowledge-base"` },
+    { label: "Buildings", meta: "installed", icon: Plug, attrs: `data-open-main-view="plugins"` },
+    { label: "Schedule", meta: "automations", icon: CalendarClock, attrs: `data-visual-building-open="automations"` },
   ];
 
   return `
@@ -10745,19 +12273,35 @@ function renderVisualStations(graph) {
       count + (Array.isArray(session.subagents) ? session.subagents.filter((subagent) => subagent.browserUseSessionId).length : 0),
     0,
   );
+  const ottoAuthCount = sessions.reduce(
+    (count, session) =>
+      count + (Array.isArray(session.subagents) ? session.subagents.filter((subagent) => subagent.ottoAuthSessionId).length : 0),
+    0,
+  );
   const cameraMonitorCount = sessions.reduce(
     (count, session) =>
       count + (Array.isArray(session.subagents) ? session.subagents.filter((subagent) => subagent.videoMemoryMonitorId).length : 0),
     0,
   );
   const cameraPermissionIssue = hasVideoMemoryCameraPermissionIssue();
+  const cameraDeviceCount = getVideoMemoryCameraDeviceCount();
+  const cameraMeta = cameraPermissionIssue
+    ? "permission blocked"
+    : cameraMonitorCount
+      ? `${cameraMonitorCount} monitors`
+      : Number.isFinite(cameraDeviceCount)
+        ? cameraDeviceCount
+          ? `${cameraDeviceCount} cameras`
+          : "no cameras"
+        : state.settings.videoMemoryEnabled ? "ready" : "disabled";
   const pathBucketCount = collectSwarmPathBuckets(graph).length;
   const stationCards = [
     { label: "Agent Desk", meta: `${sessions.length} chats`, icon: Bot },
     { label: "Browser Lab", meta: browserUseCount ? `${browserUseCount} tasks` : state.settings.browserUseEnabled ? "ready" : "disabled", icon: AppWindow },
-    { label: "Camera Room", meta: cameraPermissionIssue ? "permission blocked" : cameraMonitorCount ? `${cameraMonitorCount} monitors` : state.settings.videoMemoryEnabled ? "ready" : "disabled", icon: Camera },
+    { label: "OttoAuth", meta: ottoAuthCount ? `${ottoAuthCount} orders` : state.settings.ottoAuthEnabled ? "ready" : "disabled", icon: ShoppingCart },
+    { label: "Camera Room", meta: cameraMeta, icon: Camera },
     { label: "Evidence Wall", meta: `${pathBucketCount} file groups`, icon: FileText },
-    { label: "Port Dock", meta: isLocalhostAppsEnabled() ? `${state.ports.length} ports` : "off", icon: ServerCog },
+    { label: "Port Dock", meta: isLocalhostAppsEnabled() ? `${state.ports.length} ships` : "off", icon: ServerCog },
   ];
 
   return `
@@ -10863,7 +12407,7 @@ function renderVisualProjectPicker() {
   if (!groups.length) {
     return `
       <div class="visual-project-empty">
-        <strong>No agent villages yet</strong>
+        <strong>No Agent Towns yet</strong>
         <button class="primary-button" type="button" data-folder-picker-target="session">start a project</button>
       </div>
     `;
@@ -10923,7 +12467,7 @@ function getVisualTownAgentPlacement(agent, index) {
 
 function renderVisualTownAgent(agent, index) {
   const placement = getVisualTownAgentPlacement(agent, index);
-  const icon = agent.kind === "camera" ? Camera : agent.kind === "browser" ? AppWindow : agent.kind === "helper" ? Zap : Bot;
+  const icon = agent.kind === "camera" ? Camera : agent.kind === "ottoauth" ? ShoppingCart : agent.kind === "browser" ? AppWindow : agent.kind === "helper" ? Zap : Bot;
   const isWorking = placement.statusClass === "working";
   const label = truncateSwarmLabel(agent.name || "agent", isWorking ? 28 : 18);
   const style = [
@@ -10981,7 +12525,7 @@ function renderVisualTownWorld(graph) {
   const pathBuckets = collectSwarmPathBuckets(graph);
 
   return `
-    <section class="visual-town-world" aria-label="Agent village world">
+    <section class="visual-town-world" aria-label="Agent Town world">
       <div class="visual-town-map">
         <div class="visual-town-grid" aria-hidden="true"></div>
         <div class="visual-town-path visual-town-path-main" aria-hidden="true"></div>
@@ -10991,12 +12535,12 @@ function renderVisualTownWorld(graph) {
           <strong>Mission Board</strong>
           <em>start work</em>
         </button>
-        <button class="visual-town-building visual-building-evidence" type="button" data-open-main-view="knowledge-base">
+        <button class="visual-town-building visual-building-evidence" type="button" data-visual-building-open="knowledge-base">
           <span class="visual-building-roof" aria-hidden="true"></span>
           <strong>Evidence Wall</strong>
           <em>${escapeHtml(`${pathBuckets.length} groups`)}</em>
         </button>
-        <button class="visual-town-building visual-building-schedule" type="button" data-open-main-view="automations">
+        <button class="visual-town-building visual-building-schedule" type="button" data-visual-building-open="automations">
           <span class="visual-building-roof" aria-hidden="true"></span>
           <strong>Schedule</strong>
           <em>helpers</em>
@@ -11015,10 +12559,10 @@ function renderVisualTownWorld(graph) {
         </div>
         <div class="visual-town-dock" aria-hidden="true">
           <strong>Port Dock</strong>
-          <em>${escapeHtml(isLocalhostAppsEnabled() ? `${state.ports.length} ports` : "off")}</em>
+          <em>${escapeHtml(isLocalhostAppsEnabled() ? `${state.ports.length} ships` : "off")}</em>
         </div>
         <div class="visual-town-agents">
-          ${agents.length ? agents.map(renderVisualTownAgent).join("") : `<div class="visual-town-empty">Start a run to populate the village.</div>`}
+          ${agents.length ? agents.map(renderVisualTownAgent).join("") : `<div class="visual-town-empty">Start a run to populate Agent Town.</div>`}
         </div>
         <div class="visual-town-status">
           <strong>${escapeHtml(`${workingCount} working`)}</strong>
@@ -11033,20 +12577,62 @@ function renderVisualPixelGame(graph) {
   const agents = getVisualInterfaceAgents(graph);
   const workingCount = agents.filter((agent) => getVisualStatusClass(agent.status) === "working").length;
   const roamingCount = Math.max(0, agents.length - workingCount);
+  const hoverLabel = isAgentTownEditMode() ? "edit town: drag buildings or paths" : "agent town";
 
   return `
-    <section class="visual-game-stage" aria-label="Agent village videogame">
-      <div class="visual-game-frame">
+    <section class="visual-game-stage" aria-label="Agent Town">
+      <div class="visual-game-frame ${isAgentTownEditMode() ? "is-editing" : ""}">
         <canvas
           id="visual-game-canvas"
           class="visual-game-canvas"
           width="${VISUAL_GAME_WIDTH * VISUAL_GAME_RENDER_SCALE}"
           height="${VISUAL_GAME_HEIGHT * VISUAL_GAME_RENDER_SCALE}"
           role="img"
-          aria-label="${escapeHtml(`${workingCount} working agents, ${roamingCount} roaming agents in the pixel village`)}"
+          aria-label="${escapeHtml(`${workingCount} working agents, ${roamingCount} roaming agents in Agent Town`)}"
         ></canvas>
-        <div class="visual-game-hover" aria-hidden="true">agent village</div>
+        <div class="visual-game-hover" aria-hidden="true">${escapeHtml(hoverLabel)}</div>
       </div>
+    </section>
+  `;
+}
+
+function renderPassiveSwarmGraphView() {
+  const graph = state.swarmGraph.data;
+  const selectedSession = state.sessions.find((session) => session.id === state.swarmGraph.sessionId) || null;
+  const title =
+    state.swarmGraph.projectName
+    || (graph?.git?.root ? getWorkspacePathLeafName(graph.git.root) : "")
+    || selectedSession?.name
+    || graph?.sessions?.[0]?.name
+    || "Agent Town";
+  const meta = graph
+    ? `${graph.git?.isRepository ? "git" : "folder"} · ${graph.cwd || selectedSession?.cwd || state.defaultCwd}`
+    : selectedSession
+      ? `${selectedSession.providerLabel} · ${selectedSession.cwd}`
+      : state.swarmGraph.projectCwd
+        ? `project folder · ${state.swarmGraph.projectCwd}`
+        : "choose a project to open its town";
+
+  return `
+    <section class="dashboard-panel main-view visual-interface-view workspace-passive-visual-view" data-passive-main-view="visual-interface">
+      <div class="dashboard-toolbar">
+        <div class="dashboard-copy">
+          <strong>${escapeHtml(title)}</strong>
+          <div class="terminal-meta">Agent Town · ${escapeHtml(meta)}</div>
+        </div>
+      </div>
+      ${
+        state.swarmGraph.error
+          ? `<div class="system-error-card">${escapeHtml(state.swarmGraph.error)}</div>`
+          : ""
+      }
+      ${
+        state.swarmGraph.loading && !graph
+          ? `<div class="blank-state">mapping agents, buildings, files, and evidence...</div>`
+          : graph
+            ? `<div class="visual-game-layout workspace-passive-visual-layout">${renderVisualPixelGame(graph)}</div>`
+            : renderVisualProjectPicker()
+      }
     </section>
   `;
 }
@@ -11104,12 +12690,193 @@ function renderVisualGameSessionDrawer(graph) {
   `;
 }
 
-function renderVisualVillage(graph) {
-  const hasSessionPanel = Boolean(state.visualGame.selectedSessionId);
+function getVisualGameBuildingTitle(buildingId, plugin) {
+  if (plugin?.name) {
+    return plugin.name;
+  }
+
+  if (buildingId === "automations") {
+    return "Automations";
+  }
+
+  if (buildingId === "knowledge-base") {
+    return "Library";
+  }
+
+  return "Building";
+}
+
+function getVisualGameBuildingMeta(buildingId, plugin) {
+  if (plugin) {
+    const issue = getPluginBuildingIssue(plugin);
+    return [plugin.category, getPluginStatusBadgeLabel(plugin, issue)].filter(Boolean).join(" · ");
+  }
+
+  if (buildingId === "knowledge-base") {
+    return "Knowledge · notes";
+  }
+
+  return "Agent Town";
+}
+
+function renderAutomationsBuildingPanel() {
+  const automations = getAgentAutomations();
+  const enabledCount = automations.filter((automation) => automation.enabled !== false).length;
+  const helperLabel = automations.length
+    ? `${enabledCount}/${automations.length} enabled`
+    : "no custom helpers";
+
   return `
-    <div class="visual-game-layout ${hasSessionPanel ? "has-session-panel" : ""}">
+    <div class="visual-building-panel-scroll visual-building-automations-panel">
+      <section class="visual-building-summary">
+        <span class="main-search-kind">system app</span>
+        <strong>${escapeHtml(helperLabel)}</strong>
+      </section>
+      <div class="visual-building-automation-grid">
+        ${renderWikiBackupAutomationCard()}
+        ${renderCreateAutomationCard()}
+        ${renderAgentAutomationCards()}
+      </div>
+    </div>
+  `;
+}
+
+function renderVisualGameLibraryBuildingPanel() {
+  const noteCount = state.knowledgeBase.notes.length;
+  const noteLabel = noteCount === 1 ? "1 note" : `${noteCount} notes`;
+  const selectedNoteMeta = getKnowledgeBaseSelectedNoteMeta();
+  const selectedTitle = state.knowledgeBase.selectedNoteTitle || selectedNoteMeta?.title || "No note selected";
+  const selectedPath = state.knowledgeBase.selectedNotePath || selectedNoteMeta?.relativePath || "";
+  const previewText = state.knowledgeBase.selectedNoteLoading
+    ? "opening note..."
+    : state.knowledgeBase.selectedNoteError
+      ? state.knowledgeBase.selectedNoteError
+      : getKnowledgeBasePreviewText(state.knowledgeBase.selectedNoteContent || selectedNoteMeta?.excerpt || "", 260);
+  const plugin = getPluginById("knowledge-base");
+  const workspaceView = plugin?.ui?.workspaceView || "knowledge-base";
+
+  return `
+    <div class="visual-building-panel-scroll visual-building-library-panel">
+      <section class="visual-building-summary visual-building-library-summary">
+        <span class="main-search-kind">knowledge</span>
+        <strong>${escapeHtml(noteLabel)}</strong>
+        <div class="visual-building-library-actions">
+          <button
+            class="primary-button toolbar-control"
+            type="button"
+            data-open-building-workspace="knowledge-base"
+            data-building-workspace-view="${escapeHtml(workspaceView)}"
+          >
+            <span aria-hidden="true">${renderIcon(BookOpen)}</span>
+            <span>Open Library</span>
+          </button>
+        </div>
+      </section>
+      <section class="visual-building-library-browser" aria-label="Library notes">
+        ${renderKnowledgeBaseSearchControls({ id: "knowledge-base-building-search" })}
+        <div class="visual-building-library-note-list">
+          ${renderKnowledgeBaseBuildingNoteList()}
+        </div>
+      </section>
+      <section class="visual-building-library-preview" aria-label="Selected Library note">
+        <span class="main-search-kind">preview</span>
+        <strong>${escapeHtml(selectedTitle)}</strong>
+        <em>${escapeHtml(selectedPath || "select a note")}</em>
+        <p>${escapeHtml(previewText || "Select a note to preview it here.")}</p>
+      </section>
+    </div>
+  `;
+}
+
+function renderVisualGamePluginBuildingPanel(plugin) {
+  const issue = getPluginBuildingIssue(plugin);
+  return `
+    <div class="visual-building-panel-scroll visual-building-plugin-panel">
+      <section class="visual-building-plugin-card">
+        ${renderPluginBuilding(plugin, { issue })}
+        <div class="plugin-detail-copy">
+          <span class="main-search-kind">${escapeHtml(plugin.source || "building")}</span>
+          <h2>${escapeHtml(plugin.name)}</h2>
+          <p>${escapeHtml(plugin.description)}</p>
+          <span class="plugin-status ${issue ? "is-warning" : ""}">${escapeHtml(getPluginStatusBadgeLabel(plugin, issue))}</span>
+          ${issue?.detail ? `<div class="settings-status is-warning">${escapeHtml(issue.detail)}</div>` : ""}
+        </div>
+      </section>
+      <section class="plugin-detail-settings visual-building-plugin-settings">
+        ${renderPluginDetailSettings(plugin)}
+      </section>
+    </div>
+  `;
+}
+
+function renderVisualGameBuildingPanelContent(buildingId, plugin) {
+  if (buildingId === "automations") {
+    return renderAutomationsBuildingPanel();
+  }
+
+  if (buildingId === "knowledge-base") {
+    return renderVisualGameLibraryBuildingPanel();
+  }
+
+  if (plugin) {
+    return renderVisualGamePluginBuildingPanel(plugin);
+  }
+
+  return `
+    <div class="visual-building-panel-scroll">
+      <section class="visual-building-summary">
+        <span class="main-search-kind">unavailable</span>
+        <strong>Building not found</strong>
+      </section>
+    </div>
+  `;
+}
+
+function renderVisualGameBuildingDrawer() {
+  const buildingId = normalizeBuildingId(state.visualGame.selectedBuildingId || "");
+  if (!buildingId) {
+    return "";
+  }
+
+  const plugin = getPluginById(buildingId);
+  const title = getVisualGameBuildingTitle(buildingId, plugin);
+  const meta = getVisualGameBuildingMeta(buildingId, plugin);
+  const icon = plugin?.icon || (buildingId === "automations" ? CalendarClock : Plug);
+
+  return `
+    <aside class="visual-game-building-panel" aria-label="${escapeHtml(`${title} building UI`)}">
+      <div class="visual-game-session-head">
+        <div class="terminal-copy">
+          <strong><span class="visual-building-title-icon" aria-hidden="true">${renderIcon(icon)}</span>${escapeHtml(title)}</strong>
+          <div class="terminal-meta">${escapeHtml(meta)}</div>
+        </div>
+        <div class="visual-game-session-actions">
+          <button class="ghost-button toolbar-control" type="button" id="visual-game-back-building" aria-label="Back to Agent Town" ${tooltipAttributes("Back to Agent Town")}>
+            ${renderIcon(ChevronLeft)}
+            <span>Back</span>
+          </button>
+          <button class="icon-button toolbar-control" type="button" id="visual-game-close-building" aria-label="Close building" ${tooltipAttributes("Close building")}>${renderIcon(X)}</button>
+        </div>
+      </div>
+      ${renderVisualGameBuildingPanelContent(buildingId, plugin)}
+    </aside>
+  `;
+}
+
+function renderVisualGameSidePanel(graph) {
+  if (state.visualGame.selectedSessionId) {
+    return renderVisualGameSessionDrawer(graph);
+  }
+
+  return renderVisualGameBuildingDrawer();
+}
+
+function renderVisualVillage(graph) {
+  const hasSidePanel = Boolean(state.visualGame.selectedSessionId || state.visualGame.selectedBuildingId);
+  return `
+    <div class="visual-game-layout ${hasSidePanel ? "has-session-panel" : ""}">
       ${renderVisualPixelGame(graph)}
-      ${renderVisualGameSessionDrawer(graph)}
+      ${renderVisualGameSidePanel(graph)}
     </div>
   `;
 }
@@ -11127,15 +12894,577 @@ function teardownVisualPixelGame() {
 }
 
 function clearVisualGameSelection({ render = true } = {}) {
-  const hadSelection = Boolean(state.visualGame.selectedSessionId || state.visualGame.selectedBrowserUseSessionId);
+  const hadSelection = Boolean(
+    state.visualGame.selectedSessionId ||
+    state.visualGame.selectedBrowserUseSessionId ||
+    state.visualGame.selectedBuildingId,
+  );
   state.visualGame.selectedSessionId = "";
   state.visualGame.selectedBrowserUseSessionId = "";
+  state.visualGame.selectedBuildingId = "";
 
   if (render && hadSelection) {
     renderShell();
   }
 
   return hadSelection;
+}
+
+function openVisualGameBuildingPanel(buildingId, { render = true } = {}) {
+  const normalizedBuildingId = normalizeBuildingId(buildingId);
+  if (!normalizedBuildingId) {
+    return false;
+  }
+
+  state.visualGame.selectedSessionId = "";
+  state.visualGame.selectedBrowserUseSessionId = "";
+  state.visualGame.selectedBuildingId = normalizedBuildingId;
+
+  if (!isVisualInterfaceView()) {
+    setCurrentView("visual-interface");
+  } else {
+    updateRoute({ view: "visual-interface" });
+  }
+
+  closeMobileSidebar();
+  if (render) {
+    renderShell();
+  }
+  void ensureVisualGameBuildingPanelData(normalizedBuildingId);
+
+  return true;
+}
+
+function isVisualGameBuildingPanelOpen(buildingId) {
+  return isVisualInterfaceView() && state.visualGame.selectedBuildingId === normalizeBuildingId(buildingId);
+}
+
+async function ensureVisualGameBuildingPanelData(buildingId) {
+  if (buildingId !== "knowledge-base") {
+    return;
+  }
+
+  const shouldLoadIndex = !state.knowledgeBase.notes.length && !state.knowledgeBase.loading && !state.knowledgeBase.error;
+  if (shouldLoadIndex) {
+    await loadKnowledgeBaseIndex();
+  }
+  await ensureKnowledgeBaseSelectionLoaded();
+
+  if (isVisualGameBuildingPanelOpen("knowledge-base")) {
+    renderShell();
+  }
+}
+
+async function openKnowledgeBaseNoteInBuildingPanel(relativePath, { force = false } = {}) {
+  const normalizedPath = normalizeFileTreePath(relativePath) || getKnowledgeBaseDefaultNotePath();
+  if (!normalizedPath) {
+    return;
+  }
+
+  state.knowledgeBase.selectedNotePath = normalizedPath;
+  if (isVisualGameBuildingPanelOpen("knowledge-base")) {
+    renderShell();
+  }
+
+  await loadKnowledgeBaseNote(normalizedPath, { force });
+
+  if (isVisualGameBuildingPanelOpen("knowledge-base")) {
+    renderShell();
+  }
+}
+
+async function openBuildingWorkspace(buildingId, workspaceView) {
+  const normalizedBuildingId = normalizeBuildingId(buildingId);
+  const plugin = getPluginById(normalizedBuildingId);
+  const nextView = workspaceView || plugin?.ui?.workspaceView || normalizedBuildingId;
+  if (!normalizedBuildingId || !nextView) {
+    return;
+  }
+
+  await openMainView(nextView, { buildingWorkspaceId: normalizedBuildingId });
+}
+
+function isAgentTownLayoutCustomized() {
+  return Boolean(
+    Object.keys(state.visualGame.customLayout?.places || {}).length ||
+    Object.keys(state.visualGame.customLayout?.roads || {}).length,
+  );
+}
+
+function saveAgentTownLayoutPreferences() {
+  try {
+    window.localStorage.setItem(AGENT_TOWN_LAYOUT_STORAGE_KEY, JSON.stringify(normalizeAgentTownLayout(state.visualGame.customLayout)));
+  } catch {
+    // Local map customization is a convenience; storage failures should not block the town.
+  }
+}
+
+function resetAgentTownLayout({ render = true } = {}) {
+  state.visualGame.customLayout = { places: {}, roads: {} };
+  saveAgentTownLayoutPreferences();
+  if (render) {
+    renderShell();
+  }
+}
+
+function toggleAgentTownEditMode() {
+  state.visualGame.editMode = !state.visualGame.editMode;
+  renderShell();
+}
+
+function isAgentTownEditMode() {
+  return Boolean(state.visualGame.editMode);
+}
+
+function getAgentTownLayoutBucket(kind) {
+  if (!state.visualGame.customLayout || typeof state.visualGame.customLayout !== "object") {
+    state.visualGame.customLayout = { places: {}, roads: {} };
+  }
+  const key = kind === "road" ? "roads" : "places";
+  if (!state.visualGame.customLayout[key] || typeof state.visualGame.customLayout[key] !== "object") {
+    state.visualGame.customLayout[key] = {};
+  }
+  return state.visualGame.customLayout[key];
+}
+
+function getAgentTownLayoutOffset(kind, id) {
+  return normalizeAgentTownLayoutOffset(getAgentTownLayoutBucket(kind)[id]) || { x: 0, y: 0 };
+}
+
+function setAgentTownLayoutOffset(kind, id, offset) {
+  const normalized = normalizeAgentTownLayoutOffset(offset) || { x: 0, y: 0 };
+  const bucket = getAgentTownLayoutBucket(kind);
+  if (Math.abs(normalized.x) < 0.5 && Math.abs(normalized.y) < 0.5) {
+    delete bucket[id];
+    return;
+  }
+  bucket[id] = normalized;
+}
+
+function snapAgentTownLayoutValue(value) {
+  return Math.round(Number(value || 0) / AGENT_TOWN_LAYOUT_EDIT_SNAP) * AGENT_TOWN_LAYOUT_EDIT_SNAP;
+}
+
+function snapAgentTownLayoutOffset(offset) {
+  return {
+    x: snapAgentTownLayoutValue(offset.x),
+    y: snapAgentTownLayoutValue(offset.y),
+  };
+}
+
+function clampAgentTownOffset(baseRect, offset) {
+  return {
+    x: clamp(offset.x, -baseRect.x, VISUAL_GAME_WIDTH - (baseRect.x + baseRect.width)),
+    y: clamp(offset.y, -baseRect.y, VISUAL_GAME_HEIGHT - (baseRect.y + baseRect.height)),
+  };
+}
+
+function visualGameRectsOverlap(left, right, gap = 0) {
+  if (!left || !right) {
+    return false;
+  }
+
+  return (
+    left.x - gap < right.x + right.width
+    && left.x + left.width + gap > right.x
+    && left.y - gap < right.y + right.height
+    && left.y + left.height + gap > right.y
+  );
+}
+
+function getAgentTownPluginBuildingPlaces() {
+  return getAgentTownPluginBuildingBlueprints()
+    .map((blueprint) =>
+      getVisualGameTownVirtualPlace({
+        ...blueprint,
+        spots: [],
+        entrance: { side: "bottom" },
+        baseAnchor: {
+          x: blueprint.baseRect.x + blueprint.baseRect.width / 2,
+          y: blueprint.baseRect.y + blueprint.baseRect.height,
+        },
+      }),
+    )
+    .filter(Boolean);
+}
+
+function getAgentTownVisibleBuildingPlaces() {
+  const places = [
+    ...getAgentTownProviderDorms(),
+    getVisualGameTownPlace("library"),
+    getVisualGameTownPlace("workshop"),
+    isPluginIdInstalled("browser-use") ? getVisualGameTownPlace("browser") : null,
+    getVisualGameTownPlace("automations"),
+    isPluginIdInstalled("ottoauth") ? getVisualGameTownPlace("ottoauth") : null,
+    isVideoMemoryPluginInstalled() ? getVisualGameTownPlace("camera") : null,
+    ...getAgentTownPluginBuildingPlaces(),
+    getVisualGameGpuFactories().length ? getVisualGameTownPlace("gpuYard") : null,
+    isLocalhostAppsEnabled() ? getVisualGameTownPlace("dock") : null,
+  ];
+
+  return places.filter((place) => place?.id && place.rect);
+}
+
+function getAgentTownPlaceCollision(candidateRect, placeId) {
+  return getAgentTownVisibleBuildingPlaces()
+    .filter((place) => place.id !== placeId)
+    .find((place) => visualGameRectsOverlap(candidateRect, place.rect, AGENT_TOWN_PLACE_COLLISION_GAP))
+    || null;
+}
+
+function offsetVisualGameRect(rect, offset) {
+  return {
+    ...rect,
+    x: rect.x + offset.x,
+    y: rect.y + offset.y,
+  };
+}
+
+function offsetVisualGamePoint(point, offset) {
+  return {
+    x: point.x + offset.x,
+    y: point.y + offset.y,
+  };
+}
+
+function getVisualGameTownPlace(placeId) {
+  const place = getVisualGamePlace(VISUAL_GAME_MAP_LAYOUT, placeId);
+  if (!place) {
+    return null;
+  }
+
+  return getVisualGameTownVirtualPlace({
+    ...place,
+    baseRect: place.rect,
+    spots: Array.isArray(place.spots) ? place.spots : [],
+  });
+}
+
+function getVisualGameTownVirtualPlace(place) {
+  if (!place) {
+    return null;
+  }
+
+  const placeId = place.id || "";
+  const baseRect = place.baseRect || place.rect || { x: 0, y: 0, width: 1, height: 1 };
+  const offset = getAgentTownLayoutOffset("place", placeId);
+  const rect = offsetVisualGameRect(baseRect, offset);
+  const spots = Array.isArray(place.spots) ? place.spots.map((spot) => offsetVisualGamePoint(spot, offset)) : [];
+  const anchor =
+    place.baseAnchor
+      ? offsetVisualGamePoint(place.baseAnchor, offset)
+      : place.cell
+        ? offsetVisualGamePoint(getVisualGamePlaceAnchor(place), offset)
+        : { x: rect.x + rect.width / 2, y: rect.y + rect.height };
+
+  return {
+    ...place,
+    rect,
+    spots,
+    townOffset: offset,
+    townAnchor: anchor,
+  };
+}
+
+function getVisualGameTownPlaceAnchor(place) {
+  return place?.townAnchor || getVisualGamePlaceAnchor(place);
+}
+
+function getVisualGameTownRoadRects() {
+  return getVisualGameRoadRects(VISUAL_GAME_MAP_LAYOUT).map((road) => {
+    const offset = getAgentTownLayoutOffset("road", road.id);
+    return {
+      ...road,
+      baseRect: road.rect,
+      rect: offsetVisualGameRect(road.rect, offset),
+      townOffset: offset,
+    };
+  });
+}
+
+function getAgentTownRoadBaseBounds(roadId) {
+  const rects = getVisualGameRoadRects(VISUAL_GAME_MAP_LAYOUT)
+    .filter((road) => road.id === roadId)
+    .map((road) => road.rect);
+  if (!rects.length) {
+    return { x: 0, y: 0, width: VISUAL_GAME_WIDTH, height: VISUAL_GAME_HEIGHT };
+  }
+
+  const minX = Math.min(...rects.map((rect) => rect.x));
+  const minY = Math.min(...rects.map((rect) => rect.y));
+  const maxX = Math.max(...rects.map((rect) => rect.x + rect.width));
+  const maxY = Math.max(...rects.map((rect) => rect.y + rect.height));
+  return {
+    x: minX,
+    y: minY,
+    width: maxX - minX,
+    height: maxY - minY,
+  };
+}
+
+function getAgentTownProviderDisplayLabel(provider) {
+  if (provider?.id === "ml-intern") {
+    return "HF Intern";
+  }
+
+  return provider?.label || provider?.defaultName || "Agent";
+}
+
+function getAgentTownProviderPriority(provider) {
+  const priority = ["claude", "codex", "ml-intern", "opencode", "gemini"];
+  const index = priority.indexOf(provider?.id || "");
+  return index >= 0 ? index : priority.length;
+}
+
+function getAgentTownProviderDormPalette(providerId) {
+  const palettes = {
+    claude: {
+      floor: "#8a5a3e",
+      wall: "#6a4237",
+      trim: "#3b251f",
+      blanket: "#d77b4a",
+      pillow: "#f2d2b2",
+    },
+    codex: {
+      floor: "#23584c",
+      wall: "#1b3f38",
+      trim: "#112b26",
+      blanket: "#7ce3c7",
+      pillow: "#d8fff6",
+    },
+    "ml-intern": {
+      floor: "#8b6b2d",
+      wall: "#6a4a22",
+      trim: "#3c2a13",
+      blanket: "#f0c84f",
+      pillow: "#fff0a8",
+    },
+    opencode: {
+      floor: "#444873",
+      wall: "#303556",
+      trim: "#20243a",
+      blanket: "#a4adff",
+      pillow: "#e4e7ff",
+    },
+    gemini: {
+      floor: "#2c6288",
+      wall: "#254867",
+      trim: "#172c42",
+      blanket: "#8ec7ff",
+      pillow: "#d8eeff",
+    },
+  };
+
+  return palettes[providerId] || {
+    floor: "#826449",
+    wall: "#63463b",
+    trim: "#3b2a22",
+    blanket: "#7895b4",
+    pillow: "#f1d9a6",
+  };
+}
+
+function getVisualGameProviderAgentPalette(providerId) {
+  const palettes = {
+    claude: {
+      hat: "#b65d3d",
+      brim: "#713624",
+      hair: "#33231c",
+      skin: "#f2c29a",
+      coat: "#d77b4a",
+      trim: "#ffd0a3",
+      pants: "#2f2730",
+      boots: "#57331f",
+    },
+    codex: {
+      hat: "#2f8d79",
+      brim: "#145248",
+      hair: "#241c18",
+      skin: "#e8b484",
+      coat: "#35b89d",
+      trim: "#d8fff6",
+      pants: "#173f3a",
+      boots: "#102923",
+    },
+    "ml-intern": {
+      hat: "#b78a24",
+      brim: "#6c4d13",
+      hair: "#4a2b21",
+      skin: "#f1b895",
+      coat: "#f0c84f",
+      trim: "#fff0a8",
+      pants: "#3f3420",
+      boots: "#5f4018",
+    },
+    opencode: {
+      hat: "#575ec0",
+      brim: "#30356e",
+      hair: "#18151d",
+      skin: "#d99f7a",
+      coat: "#7c84e8",
+      trim: "#e4e7ff",
+      pants: "#282945",
+      boots: "#23233a",
+    },
+    gemini: {
+      hat: "#347fbd",
+      brim: "#1d4f7c",
+      hair: "#33231c",
+      skin: "#e2aa7e",
+      coat: "#4aa6e8",
+      trim: "#d8eeff",
+      pants: "#203549",
+      boots: "#17283a",
+    },
+  };
+
+  return palettes[providerId] || null;
+}
+
+function getAgentTownProviderDorms() {
+  const providers = (Array.isArray(state.providers) ? state.providers : [])
+    .filter((provider) => provider?.available && provider.id !== "shell")
+    .sort((left, right) => getAgentTownProviderPriority(left) - getAgentTownProviderPriority(right));
+
+  if (!providers.length) {
+    return [getVisualGameTownVirtualPlace({
+      id: "dormitory",
+      label: "Dormitory",
+      meta: "quiet beds",
+      baseRect: getVisualGamePlace(VISUAL_GAME_MAP_LAYOUT, "dormitory")?.rect || { x: 4, y: 4, width: 172, height: 52 },
+      baseAnchor: getVisualGamePlaceAnchor(getVisualGamePlace(VISUAL_GAME_MAP_LAYOUT, "dormitory")),
+      beds: [],
+      spots: [
+        { x: 26, y: 47 },
+        { x: 52, y: 47 },
+        { x: 78, y: 47 },
+        { x: 104, y: 47 },
+      ],
+      entrance: { side: "bottom" },
+      providerId: "",
+    })];
+  }
+
+  return providers.slice(0, AGENT_TOWN_DORM_SLOT_RECTS.length).map((provider, index) => {
+    const baseRect = AGENT_TOWN_DORM_SLOT_RECTS[index];
+    const label = `${getAgentTownProviderDisplayLabel(provider)} Dorm`;
+    return getVisualGameTownVirtualPlace({
+      id: `provider-dorm-${provider.id}`,
+      label,
+      meta: provider.available ? "installed" : "offline",
+      baseRect,
+      baseAnchor: { x: baseRect.x + baseRect.width / 2, y: baseRect.y + baseRect.height },
+      beds: [],
+      spots: [
+        { x: baseRect.x + baseRect.width * 0.36, y: baseRect.y + baseRect.height - 10 },
+        { x: baseRect.x + baseRect.width * 0.66, y: baseRect.y + baseRect.height - 10 },
+        { x: baseRect.x + baseRect.width * 0.5, y: baseRect.y + baseRect.height - 25 },
+      ],
+      entrance: { side: "bottom" },
+      providerId: provider.id,
+    });
+  });
+}
+
+function getAgentTownDormForAgent(agent) {
+  const dorms = getAgentTownProviderDorms();
+  if (!dorms.length) {
+    return null;
+  }
+
+  return dorms.find((dorm) => dorm.providerId && dorm.providerId === agent.providerId) || dorms[agent.familyIndex % dorms.length] || dorms[0];
+}
+
+function getAgentTownPluginBuildingBlueprints() {
+  const installedPlugins = PLUGIN_CATALOG
+    .filter((plugin) => isPluginInstalled(plugin))
+    .filter((plugin) => !AGENT_TOWN_SPECIAL_BUILDING_IDS.has(getPluginId(plugin)));
+
+  return installedPlugins.slice(0, AGENT_TOWN_PLUGIN_BUILDING_RECTS.length).map((plugin, index) => {
+    const pluginId = getPluginId(plugin);
+    const issue = getPluginBuildingIssue(plugin);
+    return {
+      ...getAgentTownPluginBuildingPalette(pluginId),
+      id: `building-${pluginId}`,
+      issue,
+      pluginId,
+      label: plugin.name,
+      meta: getPluginStatusBadgeLabel(plugin, issue) || plugin.category || "building",
+      baseRect: AGENT_TOWN_PLUGIN_BUILDING_RECTS[index],
+      action: {
+        kind: "building",
+        buildingId: pluginId,
+        label: `${plugin.name} building`,
+      },
+    };
+  });
+}
+
+function getAgentTownPluginBuildingPalette(pluginId) {
+  const palettes = {
+    github: {
+      body: "#463a34",
+      trim: "#1f2328",
+      fixture: "#24292f",
+      screen: "#f6f8fa",
+    },
+    "google-drive": {
+      body: "#506d58",
+      trim: "#264536",
+      fixture: "#e4a936",
+      screen: "#d8eff2",
+    },
+    "google-calendar": {
+      body: "#536f9a",
+      trim: "#27436f",
+      fixture: "#325d9f",
+      screen: "#f2edd2",
+    },
+    agentmail: {
+      body: "#8a6045",
+      trim: "#4a2c21",
+      fixture: "#315a86",
+      screen: "#f8de9c",
+    },
+    telegram: {
+      body: "#4c7087",
+      trim: "#253e4f",
+      fixture: "#b84f5e",
+      screen: "#d9f2ff",
+    },
+  };
+
+  return palettes[pluginId] || {
+    body: "#7a5940",
+    trim: "#4b2f22",
+    fixture: "#4f3322",
+    screen: "#ffd88a",
+  };
+}
+
+function pushAgentTownPlaceHit(hitAreas, place, action) {
+  if (!place?.rect) {
+    return;
+  }
+
+  const { x, y, width, height } = place.rect;
+  if (isAgentTownEditMode()) {
+    hitAreas.push({
+      x,
+      y,
+      width,
+      height,
+      kind: "town-place",
+      placeId: place.id || "",
+      baseRect: place.baseRect || place.rect,
+      label: `Move ${place.label || "building"}`,
+    });
+    return;
+  }
+
+  if (action) {
+    hitAreas.push({ x, y, width, height, ...action });
+  }
 }
 
 function getVisualGameDefaultViewport() {
@@ -11172,12 +13501,20 @@ function getVisualGameCameraBounds(visibleWidth, visibleHeight) {
   };
 }
 
-function getVisualGameCenteredCamera(viewport = getVisualGameDefaultViewport(), zoom = 1) {
+function getVisualGameCenteredCamera(viewport = getVisualGameDefaultViewport(), zoom = getVisualGameFitZoom(viewport)) {
   return {
     x: (VISUAL_GAME_WIDTH - viewport.width / zoom) / 2,
     y: (VISUAL_GAME_HEIGHT - viewport.height / zoom) / 2,
     zoom,
   };
+}
+
+function getVisualGameFitZoom(viewport = getVisualGameDefaultViewport()) {
+  return clamp(
+    Math.min(1, viewport.width / VISUAL_GAME_WIDTH, viewport.height / VISUAL_GAME_HEIGHT),
+    VISUAL_GAME_MIN_ZOOM,
+    VISUAL_GAME_MAX_ZOOM,
+  );
 }
 
 function normalizeVisualGameCamera(camera = {}, viewport = getVisualGameDefaultViewport()) {
@@ -11209,7 +13546,7 @@ function syncVisualGameCameraToViewport(viewport) {
 
   if (!previousViewport) {
     state.visualGame.viewport = viewport;
-    return setVisualGameCamera(getVisualGameCenteredCamera(viewport, zoom), viewport);
+    return setVisualGameCamera(getVisualGameCenteredCamera(viewport, getVisualGameFitZoom(viewport)), viewport);
   }
 
   state.visualGame.viewport = viewport;
@@ -11250,6 +13587,27 @@ function zoomVisualGameCameraAt(viewportPoint, zoomFactor, viewport = state.visu
   }, viewport);
 }
 
+function ensureVisualGameSimulationLoop() {
+  if (state.visualGame.simulationFrameHandle || !state.swarmGraph.data) {
+    return;
+  }
+
+  const tick = (time) => {
+    state.visualGame.simulationFrameHandle = 0;
+    const graph = state.swarmGraph.data;
+    if (!graph) {
+      return;
+    }
+
+    advanceVisualGameSimulation(time, graph);
+    if (state.swarmGraph.data) {
+      state.visualGame.simulationFrameHandle = window.requestAnimationFrame(tick);
+    }
+  };
+
+  state.visualGame.simulationFrameHandle = window.requestAnimationFrame(tick);
+}
+
 function mountVisualPixelGame() {
   teardownVisualPixelGame();
 
@@ -11261,6 +13619,7 @@ function mountVisualPixelGame() {
   if (!(canvas instanceof HTMLCanvasElement) || !graph) {
     return;
   }
+  ensureVisualGameSimulationLoop();
 
   const context = canvas.getContext("2d");
   if (!context) {
@@ -11277,6 +13636,7 @@ function mountVisualPixelGame() {
   }
 
   let panState = null;
+  let townDragState = null;
   let suppressClickUntil = 0;
 
   const resizeCanvasToDisplaySize = () => {
@@ -11326,8 +13686,9 @@ function mountVisualPixelGame() {
   };
 
   const hoverElement = document.querySelector(".visual-game-hover");
+  const getDefaultHoverLabel = () => (isAgentTownEditMode() ? "edit town: drag buildings or paths" : "agent town");
   const setHoverLabel = (label) => {
-    const nextLabel = label || "agent village";
+    const nextLabel = label || getDefaultHoverLabel();
     if (state.visualGame.hoverLabel === nextLabel) {
       return;
     }
@@ -11338,7 +13699,95 @@ function mountVisualPixelGame() {
     }
   };
 
+  const isTownEditHit = (hit) => isAgentTownEditMode() && (hit?.kind === "town-place" || hit?.kind === "town-road");
+  const startTownEditDrag = (event, hit) => {
+    const worldPoint = getWorldPoint(event);
+    if (!worldPoint || !isTownEditHit(hit)) {
+      return false;
+    }
+
+    const kind = hit.kind === "town-road" ? "road" : "place";
+    const id = hit.roadId || hit.placeId || "";
+    if (!id) {
+      return false;
+    }
+
+    townDragState = {
+      pointerId: event.pointerId,
+      kind,
+      id,
+      label: hit.label || "Move town item",
+      startClientX: event.clientX,
+      startClientY: event.clientY,
+      startWorldX: worldPoint.x,
+      startWorldY: worldPoint.y,
+      startOffset: getAgentTownLayoutOffset(kind, id),
+      lastValidOffset: getAgentTownLayoutOffset(kind, id),
+      baseRect: hit.baseRect || (kind === "road" ? getAgentTownRoadBaseBounds(id) : { x: 0, y: 0, width: 1, height: 1 }),
+      moved: false,
+    };
+    canvas.classList.add("is-editing-drag");
+    canvas.setPointerCapture?.(event.pointerId);
+    setHoverLabel(townDragState.label);
+    event.preventDefault();
+    return true;
+  };
+  const updateTownEditDrag = (event) => {
+    if (!townDragState || townDragState.pointerId !== event.pointerId) {
+      return false;
+    }
+
+    const worldPoint = getWorldPoint(event);
+    if (!worldPoint) {
+      return true;
+    }
+
+    const distance = Math.hypot(event.clientX - townDragState.startClientX, event.clientY - townDragState.startClientY);
+    townDragState.moved = townDragState.moved || distance >= VISUAL_GAME_DRAG_SLOP_PX;
+    const proposedOffset = clampAgentTownOffset(
+      townDragState.baseRect,
+      snapAgentTownLayoutOffset({
+        x: townDragState.startOffset.x + worldPoint.x - townDragState.startWorldX,
+        y: townDragState.startOffset.y + worldPoint.y - townDragState.startWorldY,
+      }),
+    );
+    const blockedPlace =
+      townDragState.kind === "place"
+        ? getAgentTownPlaceCollision(offsetVisualGameRect(townDragState.baseRect, proposedOffset), townDragState.id)
+        : null;
+    const nextOffset = blockedPlace ? townDragState.lastValidOffset : proposedOffset;
+    if (!blockedPlace) {
+      townDragState.lastValidOffset = nextOffset;
+    }
+    setAgentTownLayoutOffset(townDragState.kind, townDragState.id, nextOffset);
+    canvas.classList.add("is-dragging");
+    canvas.classList.toggle("is-editing-blocked", Boolean(blockedPlace));
+    setHoverLabel(blockedPlace ? `blocked by ${blockedPlace.label || "building"}` : townDragState.label);
+    event.preventDefault();
+    return true;
+  };
+  const finishTownEditDrag = (event) => {
+    if (!townDragState || townDragState.pointerId !== event.pointerId) {
+      return false;
+    }
+
+    if (townDragState.moved) {
+      suppressClickUntil = Date.now() + 250;
+      saveAgentTownLayoutPreferences();
+    }
+    townDragState = null;
+    canvas.classList.remove("is-editing-drag", "is-editing-blocked", "is-dragging");
+    canvas.releasePointerCapture?.(event.pointerId);
+    const hit = getHitAtPoint(getWorldPoint(event));
+    canvas.classList.toggle("is-actionable", Boolean(hit));
+    setHoverLabel(hit?.label || "");
+    return true;
+  };
   const onPointerMove = (event) => {
+    if (updateTownEditDrag(event)) {
+      return;
+    }
+
     if (panState?.pointerId === event.pointerId) {
       const rect = canvas.getBoundingClientRect();
       if (!rect.width || !rect.height) {
@@ -11366,7 +13815,7 @@ function mountVisualPixelGame() {
     setHoverLabel(hit?.label || "");
   };
   const onPointerLeave = () => {
-    if (!panState) {
+    if (!panState && !townDragState) {
       canvas.classList.remove("is-actionable");
       setHoverLabel("");
     }
@@ -11381,6 +13830,11 @@ function mountVisualPixelGame() {
       return;
     }
 
+    const editHit = getHitAtPoint(getWorldPoint(event));
+    if (startTownEditDrag(event, editHit)) {
+      return;
+    }
+
     panState = {
       pointerId: event.pointerId,
       startClientX: event.clientX,
@@ -11392,6 +13846,10 @@ function mountVisualPixelGame() {
     canvas.setPointerCapture?.(event.pointerId);
   };
   const endPointerPan = (event) => {
+    if (finishTownEditDrag(event)) {
+      return;
+    }
+
     if (!panState || panState.pointerId !== event.pointerId) {
       return;
     }
@@ -11413,6 +13871,11 @@ function mountVisualPixelGame() {
     }
 
     const hit = getHitAtPoint(getWorldPoint(event));
+    if (isTownEditHit(hit)) {
+      event.preventDefault();
+      return;
+    }
+
     if (hit) {
       event.preventDefault();
       void handleVisualGameHit(hit);
@@ -11444,12 +13907,13 @@ function mountVisualPixelGame() {
   const resetCamera = () => {
     const viewport = getVisualGameCanvasViewport(canvas);
     state.visualGame.viewport = viewport;
-    setVisualGameCamera(getVisualGameCenteredCamera(viewport), viewport);
-    setHoverLabel("agent village");
+    setVisualGameCamera(getVisualGameCenteredCamera(viewport, getVisualGameFitZoom(viewport)), viewport);
+    setHoverLabel("agent town");
   };
   const onLostPointerCapture = () => {
     panState = null;
-    canvas.classList.remove("is-panning", "is-dragging");
+    townDragState = null;
+    canvas.classList.remove("is-panning", "is-editing-drag", "is-editing-blocked", "is-dragging");
   };
   const onZoomInClick = () => zoomCameraFromCenter(VISUAL_GAME_ZOOM_STEP);
   const onZoomOutClick = () => zoomCameraFromCenter(1 / VISUAL_GAME_ZOOM_STEP);
@@ -11490,7 +13954,8 @@ function mountVisualPixelGame() {
     );
     context.imageSmoothingEnabled = false;
     const gameModel = getVisualGameModel(graph);
-    drawVisualGameScene(context, graph, gameModel, time, state.visualGame.hitAreas, visibleWorld);
+    const agents = advanceVisualGameSimulation(time, graph);
+    drawVisualGameScene(context, graph, gameModel, time, state.visualGame.hitAreas, visibleWorld, agents);
     state.visualGame.frameHandle = window.requestAnimationFrame(drawFrame);
   };
 
@@ -11520,6 +13985,7 @@ async function handleVisualGameHit(hit) {
     state.activeSessionId = hit.sessionId;
     state.visualGame.selectedSessionId = hit.sessionId;
     state.visualGame.selectedBrowserUseSessionId = hit.browserUseSessionId || "";
+    state.visualGame.selectedBuildingId = "";
     const nextSession = state.sessions.find((session) => session.id === hit.sessionId);
     if (nextSession) {
       expandSessionProject(nextSession.cwd);
@@ -11535,8 +14001,18 @@ async function handleVisualGameHit(hit) {
     return;
   }
 
+  if (hit.kind === "port" && hit.port) {
+    openPortPreview(hit.port);
+    return;
+  }
+
   if (hit.kind === "main-view" && hit.view) {
-    await openMainView(hit.view);
+    await openMainView(hit.view, { buildingId: hit.pluginId || "" });
+    return;
+  }
+
+  if (hit.kind === "building" && hit.buildingId) {
+    openVisualGameBuildingPanel(hit.buildingId);
     return;
   }
 
@@ -11603,25 +14079,40 @@ function isVisualGameGpuActive(gpu) {
   return false;
 }
 
-function drawVisualGameScene(context, graph, model, time, hitAreas, visibleWorld = null) {
+function drawVisualGameScene(context, graph, model, time, hitAreas, visibleWorld = null, agents = advanceVisualGameSimulation(time, graph)) {
   context.save();
   context.imageSmoothingEnabled = false;
-  const agents = getVisualGameAgents(graph, time);
   const deskAgents = agents.filter((agent) => agent.destination === "desk");
   const browserAgents = agents.filter((agent) => agent.destination === "browser");
+  const ottoAuthAgents = agents.filter((agent) => agent.destination === "ottoauth");
   const cameraAgents = agents.filter((agent) => agent.destination === "camera");
   const libraryAgents = agents.filter((agent) => agent.destination === "library");
   const sleepingAgents = agents.filter((agent) => agent.destination === "sleep");
 
   drawVisualGameGround(context, time, visibleWorld);
-  drawVisualGamePaths(context);
+  drawVisualGamePaths(context, hitAreas);
   drawVisualGameSleepingQuarters(context, hitAreas, time, sleepingAgents);
   drawVisualGameLibrary(context, hitAreas, model, time, libraryAgents);
   drawVisualGameWorkshop(context, hitAreas, time, deskAgents);
-  drawVisualGameBrowserLab(context, hitAreas, time, browserAgents);
-  drawVisualGameCameraRoom(context, hitAreas, time, cameraAgents);
+  if (isPluginIdInstalled("browser-use")) {
+    drawVisualGameBrowserLab(context, hitAreas, time, browserAgents);
+  }
+  drawVisualGameCampanile(context, hitAreas, time);
+  if (isPluginIdInstalled("ottoauth")) {
+    drawVisualGameOttoAuth(context, hitAreas, time, ottoAuthAgents);
+  }
+  if (isVideoMemoryPluginInstalled()) {
+    drawVisualGameCameraRoom(context, hitAreas, time, cameraAgents);
+  }
+  drawAgentTownInstalledPluginBuildings(context, hitAreas);
   drawVisualGameGpuFactories(context, hitAreas, model.gpuFactories, time);
-  drawVisualGameDock(context);
+  if (isLocalhostAppsEnabled()) {
+    drawVisualGameDock(context, hitAreas, time);
+  }
+
+  if (isAgentTownEditMode()) {
+    drawAgentTownEditOutlines(context, hitAreas);
+  }
 
   for (const agent of agents.sort((left, right) => left.y - right.y)) {
     drawVisualGameAgent(context, agent, time, hitAreas);
@@ -11661,9 +14152,21 @@ function drawVisualGameGround(context, time, visibleWorld = null) {
   }
 }
 
-function drawVisualGamePaths(context) {
-  for (const road of getVisualGameRoadRects(VISUAL_GAME_MAP_LAYOUT)) {
+function drawVisualGamePaths(context, hitAreas = []) {
+  for (const road of getVisualGameTownRoadRects()) {
     drawVisualGamePathRect(context, road.rect.x, road.rect.y, road.rect.width, road.rect.height);
+    if (isAgentTownEditMode()) {
+      hitAreas.push({
+        x: road.rect.x,
+        y: road.rect.y,
+        width: road.rect.width,
+        height: road.rect.height,
+        kind: "town-road",
+        roadId: road.id,
+        baseRect: getAgentTownRoadBaseBounds(road.id),
+        label: `Move ${road.id.replace(/-/g, " ")} path`,
+      });
+    }
   }
 }
 
@@ -11685,58 +14188,71 @@ function drawVisualGamePathRect(context, x, y, width, height) {
   context.fillRect(x, y + height - 2, width, 2);
 }
 
+function drawAgentTownEditOutlines(context, hitAreas) {
+  context.save();
+  context.setLineDash([4, 3]);
+  for (const hit of hitAreas) {
+    if (hit.kind !== "town-place" && hit.kind !== "town-road") {
+      continue;
+    }
+    context.strokeStyle = hit.kind === "town-road" ? "rgba(255, 236, 166, 0.7)" : "rgba(216, 251, 255, 0.76)";
+    context.lineWidth = 1.5;
+    context.strokeRect(Math.round(hit.x) + 0.75, Math.round(hit.y) + 0.75, Math.round(hit.width) - 1.5, Math.round(hit.height) - 1.5);
+  }
+  context.restore();
+}
+
 function drawVisualGameRoomFloor(context, x, y, width, height, options = {}) {
   const floor = options.floor || "#72563a";
-  const wall = options.wall || "#7a4635";
   const trim = options.trim || "#3d291d";
   const entrance = normalizeVisualGameEntrance(options.entrance, x, y, width, height);
 
   drawVisualGameShadow(context, x + 3, y + height - 1, width, 7);
   context.fillStyle = floor;
   context.fillRect(x, y, width, height);
-  context.fillStyle = "rgba(255, 231, 159, 0.1)";
-  for (let row = y + 9; row < y + height - 6; row += 10) {
-    context.fillRect(x + 6, row, width - 12, 1);
+
+  context.fillStyle = "rgba(255, 231, 159, 0.12)";
+  context.fillRect(x + 4, y + 4, Math.max(0, width - 8), 4);
+  for (let row = y + 12; row < y + height - 6; row += 12) {
+    context.fillRect(x + 5, row, Math.max(0, width - 10), 1);
   }
   context.fillStyle = "rgba(73, 46, 27, 0.18)";
-  for (let column = x + 14; column < x + width - 8; column += 21) {
-    context.fillRect(column, y + 6, 2, height - 12);
+  for (let column = x + 14; column < x + width - 6; column += 18) {
+    context.fillRect(column, y + 5, 1, Math.max(0, height - 10));
   }
 
-  context.fillStyle = wall;
-  context.fillRect(x - 3, y - 3, width + 6, 7);
-  context.fillRect(x - 3, y - 3, 7, height + 6);
-  context.fillRect(x + width - 4, y - 3, 7, height + 6);
-  context.fillRect(x - 3, y + height - 4, width + 6, 7);
-  context.fillStyle = trim;
-  context.fillRect(x - 3, y - 3, width + 6, 2);
-  context.fillRect(x - 3, y + height + 1, width + 6, 2);
+  context.fillStyle = "rgba(10, 13, 11, 0.16)";
+  context.fillRect(x, y + height - 2, width, 2);
+  context.fillRect(x + width - 2, y, 2, height);
+  context.fillStyle = "rgba(255, 238, 176, 0.16)";
+  context.fillRect(x, y, width, 1);
+  context.fillRect(x, y, 1, height);
 
   const openingWidth = Math.min(28, Math.max(16, Math.floor(width * 0.28)));
   if (entrance.side === "bottom") {
     const openingX = Math.round(clamp(entrance.anchor.x, x + openingWidth / 2, x + width - openingWidth / 2) - openingWidth / 2);
-    context.fillStyle = floor;
-    context.fillRect(openingX, y + height - 4, openingWidth, 7);
     context.fillStyle = "#d1af63";
-    context.fillRect(openingX + 2, y + height - 1, openingWidth - 4, 6);
+    context.fillRect(openingX + 2, y + height - 2, openingWidth - 4, 5);
+    context.fillStyle = trim;
+    context.fillRect(openingX + 5, y + height, openingWidth - 10, 1);
   } else if (entrance.side === "top") {
     const openingX = Math.round(clamp(entrance.anchor.x, x + openingWidth / 2, x + width - openingWidth / 2) - openingWidth / 2);
-    context.fillStyle = floor;
-    context.fillRect(openingX, y - 3, openingWidth, 7);
     context.fillStyle = "#d1af63";
-    context.fillRect(openingX + 2, y - 5, openingWidth - 4, 6);
+    context.fillRect(openingX + 2, y - 3, openingWidth - 4, 5);
+    context.fillStyle = trim;
+    context.fillRect(openingX + 5, y - 1, openingWidth - 10, 1);
   } else if (entrance.side === "left") {
     const openingY = Math.round(clamp(entrance.anchor.y, y + openingWidth / 2, y + height - openingWidth / 2) - openingWidth / 2);
-    context.fillStyle = floor;
-    context.fillRect(x - 3, openingY, 7, openingWidth);
     context.fillStyle = "#d1af63";
-    context.fillRect(x - 5, openingY + 2, 6, openingWidth - 4);
+    context.fillRect(x - 3, openingY + 2, 5, openingWidth - 4);
+    context.fillStyle = trim;
+    context.fillRect(x - 1, openingY + 5, 1, openingWidth - 10);
   } else if (entrance.side === "right") {
     const openingY = Math.round(clamp(entrance.anchor.y, y + openingWidth / 2, y + height - openingWidth / 2) - openingWidth / 2);
-    context.fillStyle = floor;
-    context.fillRect(x + width - 4, openingY, 7, openingWidth);
     context.fillStyle = "#d1af63";
-    context.fillRect(x + width - 1, openingY + 2, 6, openingWidth - 4);
+    context.fillRect(x + width - 2, openingY + 2, 5, openingWidth - 4);
+    context.fillStyle = trim;
+    context.fillRect(x + width, openingY + 5, 1, openingWidth - 10);
   }
 }
 
@@ -11768,7 +14284,7 @@ function getVisualGameDefaultEntranceAnchor(side, x, y, width, height) {
 function getVisualGameRenderedEntrance(place) {
   return {
     ...(place?.entrance || { side: "bottom" }),
-    anchor: getVisualGamePlaceAnchor(place),
+    anchor: getVisualGameTownPlaceAnchor(place),
   };
 }
 
@@ -11786,68 +14302,112 @@ function drawVisualGameComputerStation(context, desk, occupied, time, index, scr
 }
 
 function drawVisualGameBuilding(context, hitAreas, building) {
-  const { x, y, width, height, label, meta, roof, body, action } = building;
+  const rect = building.rect || building;
+  const { x, y, width, height } = rect;
+  const { label, meta, body, trim, fixture, screen, action, issue } = building;
   drawVisualGameRoomFloor(context, x, y, width, height, {
     floor: body,
-    wall: roof,
-    trim: "#4b2f22",
+    trim: trim || "#4b2f22",
     entrance: "bottom",
   });
   drawVisualGameBuildingSign(context, x + 8, y + 7, Math.min(width - 16, 88), 23, label, meta);
 
-  context.fillStyle = "rgba(255, 232, 159, 0.18)";
-  context.fillRect(x + width - 23, y + 16, 14, 8);
-  context.fillStyle = "#4f3322";
-  context.fillRect(x + width - 17, y + 16, 1, 8);
-  context.fillRect(x + width - 23, y + 20, 14, 1);
+  context.fillStyle = screen || "rgba(255, 232, 159, 0.16)";
+  context.fillRect(x + width - 24, y + height - 18, 15, 7);
+  context.fillStyle = fixture || "rgba(79, 51, 34, 0.42)";
+  context.fillRect(x + width - 17, y + height - 18, 1, 7);
+  context.fillRect(x + width - 24, y + height - 15, 15, 1);
 
-  if (action) {
-    hitAreas.push({ x, y, width, height, ...action });
+  if (issue) {
+    drawVisualGameBuildingIssueBadge(context, rect);
+  }
+
+  pushAgentTownPlaceHit(hitAreas, { ...building, rect, baseRect: building.baseRect || rect }, action);
+}
+
+function drawAgentTownInstalledPluginBuildings(context, hitAreas) {
+  for (const blueprint of getAgentTownPluginBuildingBlueprints()) {
+    const building = getVisualGameTownVirtualPlace({
+      ...blueprint,
+      spots: [],
+      entrance: { side: "bottom" },
+      baseAnchor: {
+        x: blueprint.baseRect.x + blueprint.baseRect.width / 2,
+        y: blueprint.baseRect.y + blueprint.baseRect.height,
+      },
+    });
+    drawVisualGameBuilding(context, hitAreas, {
+      ...building,
+      body: blueprint.body,
+      trim: blueprint.trim,
+      fixture: blueprint.fixture,
+      screen: blueprint.screen,
+      issue: blueprint.issue,
+      action: blueprint.action,
+    });
   }
 }
 
 function drawVisualGameSleepingQuarters(context, hitAreas, time, sleepingAgents) {
-  const restingCount = sleepingAgents.length;
-  const place = getVisualGamePlace(VISUAL_GAME_MAP_LAYOUT, "dormitory");
-  const { x, y, width, height } = place.rect;
-  drawVisualGameSleepRoom(context, {
-    x,
-    y,
-    width,
-    height,
-    label: place.label,
-    meta: restingCount ? `${restingCount} resting` : "quiet beds",
-    beds: place.beds,
-    entrance: getVisualGameRenderedEntrance(place),
-  });
-  hitAreas.push({ x, y, width, height, kind: "main-view", view: "visual-interface", label: place.label });
+  const dorms = getAgentTownProviderDorms();
+  for (const dorm of dorms) {
+    const restingCount = sleepingAgents.filter((agent) => (
+      dorm.providerId ? agent.providerId === dorm.providerId : true
+    )).length;
+    const { x, y, width, height } = dorm.rect;
+    drawVisualGameSleepRoom(context, {
+      x,
+      y,
+      width,
+      height,
+      label: dorm.label,
+      meta: restingCount ? `${restingCount} resting` : dorm.meta || "quiet beds",
+      beds: getVisualGameDormBeds(dorm),
+      entrance: getVisualGameRenderedEntrance(dorm),
+      palette: getAgentTownProviderDormPalette(dorm.providerId),
+    });
+    pushAgentTownPlaceHit(hitAreas, dorm, { kind: "main-view", view: "visual-interface", label: dorm.label });
+  }
 }
 
 function drawVisualGameSleepRoom(context, room) {
   const { x, y, width, height, label, meta, beds, entrance } = room;
+  const palette = room.palette || getAgentTownProviderDormPalette("");
   drawVisualGameRoomFloor(context, x, y, width, height, {
-    floor: "#826449",
-    wall: "#63463b",
-    trim: "#3b2a22",
+    floor: palette.floor,
+    wall: palette.wall,
+    trim: palette.trim,
     entrance,
   });
   drawVisualGameBuildingSign(context, x + 8, y + 7, Math.min(width - 16, 88), 23, label, meta);
   for (const bed of beds) {
+    const bedWidth = Math.max(12, Number(bed.width || 20));
     context.fillStyle = "#493628";
-    context.fillRect(bed.x, bed.y + 7, 20, 8);
-    context.fillStyle = "#f1d9a6";
+    context.fillRect(bed.x, bed.y + 7, bedWidth, 8);
+    context.fillStyle = palette.pillow;
     context.fillRect(bed.x + 2, bed.y + 2, 7, 5);
-    context.fillStyle = "#7895b4";
-    context.fillRect(bed.x + 8, bed.y + 2, 10, 11);
+    context.fillStyle = palette.blanket;
+    context.fillRect(bed.x + 8, bed.y + 2, Math.max(6, bedWidth - 10), 11);
     context.fillStyle = "rgba(255, 244, 198, 0.18)";
-    context.fillRect(bed.x + 10, bed.y + 4, 6, 2);
+    context.fillRect(bed.x + 10, bed.y + 4, Math.max(4, bedWidth - 14), 2);
   }
 }
 
+function getVisualGameDormBeds(dorm) {
+  const rect = dorm?.rect || { x: 0, y: 0, width: 52, height: 52 };
+  const bedWidth = Math.max(14, Math.min(20, Math.floor(rect.width * 0.32)));
+  const bedY = rect.y + Math.max(22, rect.height - 22);
+  return [
+    { x: rect.x + 8, y: bedY, width: bedWidth },
+    { x: rect.x + rect.width - bedWidth - 8, y: bedY, width: bedWidth },
+  ];
+}
+
 function drawVisualGameLibrary(context, hitAreas, model, time, libraryAgents) {
-  const place = getVisualGamePlace(VISUAL_GAME_MAP_LAYOUT, "library");
+  const place = getVisualGameTownPlace("library");
   const { x, y, width, height } = place.rect;
   const bookGlow = 0.14 + Math.sin(time / 260) * 0.04;
+  const issue = getBuildingIssueById("knowledge-base");
 
   drawVisualGameRoomFloor(context, x, y, width, height, {
     floor: "#8a6a42",
@@ -11877,14 +14437,17 @@ function drawVisualGameLibrary(context, hitAreas, model, time, libraryAgents) {
     76,
     20,
     place.label,
-    libraryAgents.length ? `${libraryAgents.length} reading` : `${model.pathBucketCount} notes`,
+    issue?.label || (libraryAgents.length ? `${libraryAgents.length} reading` : `${model.pathBucketCount} notes`),
   );
+  if (issue) {
+    drawVisualGameBuildingIssueBadge(context, place.rect);
+  }
 
-  hitAreas.push({ x, y, width, height, kind: "main-view", view: "knowledge-base", label: place.label });
+  pushAgentTownPlaceHit(hitAreas, place, { kind: "building", buildingId: "knowledge-base", label: place.label });
 }
 
 function drawVisualGameWorkshop(context, hitAreas, time, workingAgents) {
-  const place = getVisualGamePlace(VISUAL_GAME_MAP_LAYOUT, "workshop");
+  const place = getVisualGameTownPlace("workshop");
   const { x, y, width, height } = place.rect;
 
   drawVisualGameRoomFloor(context, x, y, width, height, {
@@ -11896,33 +14459,34 @@ function drawVisualGameWorkshop(context, hitAreas, time, workingAgents) {
   context.fillStyle = "#3d2c21";
   context.fillRect(x + 15, y + 56, width - 30, 9);
   context.fillRect(x + 15, y + 97, width - 30, 9);
-  drawVisualGamePaintedWallSign(context, x + 11, y + 14, Math.min(width - 22, 105), 23, place.label, `${workingAgents.length} at desks`);
+  drawVisualGameBuildingSign(context, x + 11, y + 14, Math.min(width - 22, 105), 23, place.label, `${workingAgents.length} at desks`);
 
   for (let index = 0; index < 6; index += 1) {
     const desk = getVisualGameDeskSpot(index);
     drawVisualGameComputerStation(context, desk, Boolean(workingAgents[index]), time, index);
   }
 
-  hitAreas.push({ x, y, width, height, kind: "main-view", view: "visual-interface", label: place.label });
+  pushAgentTownPlaceHit(hitAreas, place, { kind: "main-view", view: "visual-interface", label: place.label });
 }
 
 function drawVisualGameBrowserLab(context, hitAreas, time, browserAgents) {
-  const place = getVisualGamePlace(VISUAL_GAME_MAP_LAYOUT, "browser");
+  const place = getVisualGameTownPlace("browser");
   const { x, y, width, height } = place.rect;
+  const issue = getBuildingIssueById("browser-use");
   drawVisualGameRoomFloor(context, x, y, width, height, {
     floor: "#253433",
     wall: "#4d795d",
     trim: "#223a2c",
     entrance: getVisualGameRenderedEntrance(place),
   });
-  drawVisualGamePaintedWallSign(
+  drawVisualGameBuildingSign(
     context,
     x + 8,
     y + 13,
     52,
     24,
     place.label,
-    browserAgents.length ? `${browserAgents.length} task${browserAgents.length === 1 ? "" : "s"}` : "Lab",
+    issue?.label || (browserAgents.length ? `${browserAgents.length} task${browserAgents.length === 1 ? "" : "s"}` : "Lab"),
   );
 
   context.fillStyle = "#3d2c21";
@@ -11932,52 +14496,217 @@ function drawVisualGameBrowserLab(context, hitAreas, time, browserAgents) {
     const desk = getVisualGameBrowserSpot(index);
     drawVisualGameComputerStation(context, desk, Boolean(browserAgents[index]), time, index, "#94d785");
   }
+  if (issue) {
+    drawVisualGameBuildingIssueBadge(context, place.rect);
+  }
   if (browserAgents[0]?.browserUseSessionId) {
-    hitAreas.push({
-      x,
-      y,
-      width,
-      height,
+    pushAgentTownPlaceHit(hitAreas, place, {
       kind: "browser",
       browserUseSessionId: browserAgents[0].browserUseSessionId,
       label: `${place.label} Lab`,
     });
+  } else {
+    pushAgentTownPlaceHit(hitAreas, place, { kind: "building", buildingId: "browser-use", label: `${place.label} Lab` });
   }
 }
 
+function drawVisualGameOttoAuth(context, hitAreas, time, ottoAuthAgents) {
+  const place = getVisualGameTownPlace("ottoauth");
+  const { x, y, width, height } = place.rect;
+  const registerGlow = 0.18 + Math.sin(time / 220) * 0.05;
+  const issue = getBuildingIssueById("ottoauth");
+  drawVisualGameRoomFloor(context, x, y, width, height, {
+    floor: "#4a3f55",
+    wall: "#7b4a70",
+    trim: "#33233e",
+    entrance: getVisualGameRenderedEntrance(place),
+  });
+  drawVisualGamePaintedWallSign(
+    context,
+    x + 8,
+    y + 8,
+    Math.min(width - 16, 70),
+    22,
+    place.label,
+    issue?.label || (ottoAuthAgents.length ? `${ottoAuthAgents.length} order${ottoAuthAgents.length === 1 ? "" : "s"}` : "Market"),
+  );
+
+  context.fillStyle = "#2c2235";
+  context.fillRect(x + 10, y + height - 24, width - 20, 9);
+  context.fillStyle = "#d6a85f";
+  context.fillRect(x + 14, y + height - 35, 16, 14);
+  context.fillStyle = "#f5cf77";
+  context.fillRect(x + 17, y + height - 39, 10, 5);
+  context.fillStyle = "#2c2235";
+  context.fillRect(x + 18, y + height - 32, 8, 2);
+  context.fillStyle = "#79e0c6";
+  context.fillRect(x + width - 31, y + height - 35, 17, 12);
+  context.fillStyle = `rgba(121, 224, 198, ${registerGlow})`;
+  context.fillRect(x + width - 34, y + height - 38, 23, 17);
+  context.fillStyle = "#182624";
+  context.fillRect(x + width - 27, y + height - 31, 9, 5);
+  drawVisualGameText(context, "$", x + width - 25, y + height - 26, "#d9fff5", 7);
+  if (issue) {
+    drawVisualGameBuildingIssueBadge(context, place.rect);
+  }
+
+  pushAgentTownPlaceHit(hitAreas, place, {
+    kind: "building",
+    buildingId: "ottoauth",
+    label: `${place.label} building`,
+  });
+}
+
+function drawVisualGameCampanile(context, hitAreas, time) {
+  const place = getVisualGameTownPlace("automations");
+  const { x, y, width, height } = place.rect;
+  const automations = getAgentAutomations();
+  const towerWidth = 40;
+  const towerX = Math.round(x + width / 2 - towerWidth / 2);
+  const towerY = Math.round(y + 13);
+  const towerHeight = Math.max(90, height - 18);
+  const clockX = towerX + Math.floor(towerWidth / 2);
+  const clockY = towerY + 49;
+  const bellGlow = 0.16 + Math.sin(time / 360) * 0.04;
+
+  drawVisualGameShadow(context, x + 13, y + height - 2, width - 26, 7);
+  context.fillStyle = "#b89452";
+  context.fillRect(x + 12, y + height - 9, width - 24, 8);
+  context.fillStyle = "#d0ad63";
+  context.fillRect(x + 17, y + height - 12, width - 34, 4);
+
+  context.fillStyle = "#5f513c";
+  context.fillRect(towerX - 5, towerY + 15, towerWidth + 10, towerHeight - 12);
+  context.fillStyle = "#cfc29a";
+  context.fillRect(towerX - 2, towerY + 12, towerWidth + 4, towerHeight - 12);
+  context.fillStyle = "#ded4ad";
+  context.fillRect(towerX + 2, towerY + 16, towerWidth - 4, towerHeight - 18);
+  context.fillStyle = "rgba(92, 73, 49, 0.24)";
+  for (let blockY = towerY + 23; blockY < towerY + towerHeight - 10; blockY += 13) {
+    context.fillRect(towerX, blockY, towerWidth, 1);
+  }
+  for (let blockX = towerX + 9; blockX < towerX + towerWidth - 4; blockX += 11) {
+    context.fillRect(blockX, towerY + 18, 1, towerHeight - 23);
+  }
+
+  context.fillStyle = "#234842";
+  context.fillRect(towerX - 7, towerY + 6, towerWidth + 14, 8);
+  context.fillStyle = "#2f756c";
+  context.fillRect(towerX - 4, towerY, towerWidth + 8, 8);
+  context.fillStyle = "#63a49a";
+  context.fillRect(towerX + 2, towerY + 1, towerWidth - 4, 2);
+  context.fillStyle = "#24413e";
+  context.fillRect(clockX - 1, towerY - 12, 2, 12);
+  context.fillStyle = "#d0ad63";
+  context.fillRect(clockX - 3, towerY - 16, 6, 4);
+
+  context.fillStyle = "#5a4d39";
+  context.fillRect(towerX + 5, towerY + 19, 30, 18);
+  context.fillStyle = "#171f20";
+  for (let arch = 0; arch < 3; arch += 1) {
+    const archX = towerX + 8 + arch * 8;
+    context.fillRect(archX, towerY + 25, 5, 10);
+    context.fillRect(archX + 1, towerY + 22, 3, 4);
+  }
+  context.fillStyle = `rgba(246, 219, 139, ${bellGlow})`;
+  context.fillRect(towerX + 10, towerY + 24, 21, 10);
+
+  context.fillStyle = "#4f402c";
+  context.fillRect(clockX - 9, clockY - 8, 18, 16);
+  context.fillRect(clockX - 7, clockY - 10, 14, 20);
+  context.fillStyle = "#f0e3bd";
+  context.fillRect(clockX - 7, clockY - 6, 14, 12);
+  context.fillRect(clockX - 5, clockY - 8, 10, 16);
+  context.fillStyle = "#2b2118";
+  context.fillRect(clockX - 1, clockY - 1, 2, 2);
+  context.fillRect(clockX, clockY - 6, 1, 6);
+  context.fillRect(clockX, clockY, 5, 1);
+
+  context.fillStyle = "#6d5b3f";
+  context.fillRect(towerX + 8, y + height - 29, 24, 21);
+  context.fillStyle = "#2d251c";
+  context.fillRect(towerX + 12, y + height - 24, 16, 16);
+  context.fillStyle = "#cfc29a";
+  context.fillRect(towerX + 13, y + height - 25, 14, 2);
+
+  drawVisualGameBuildingSign(
+    context,
+    x + 4,
+    y + height - 24,
+    Math.min(width - 8, 74),
+    21,
+    place.label,
+    automations.length ? `${automations.length} helper${automations.length === 1 ? "" : "s"}` : "Campanile",
+  );
+
+  pushAgentTownPlaceHit(hitAreas, place, {
+    kind: "building",
+    buildingId: "automations",
+    label: `${place.label} Campanile`,
+  });
+}
+
 function drawVisualGameCameraRoom(context, hitAreas, time, cameraAgents) {
-  const place = getVisualGamePlace(VISUAL_GAME_MAP_LAYOUT, "camera");
+  const place = getVisualGameTownPlace("camera");
   const { x, y, width, height } = place.rect;
   const permissionIssue = hasVideoMemoryCameraPermissionIssue();
+  const issue = getBuildingIssueById("videomemory");
+  const deviceCount = getVideoMemoryCameraDeviceCount();
+  const screenCount = getVisualGameCameraScreenCount(place, cameraAgents);
+  const cameraMeta = issue?.label || (permissionIssue
+    ? "Blocked"
+    : cameraAgents.length
+      ? `${cameraAgents.length} watch${cameraAgents.length === 1 ? "" : "es"}`
+      : Number.isFinite(deviceCount)
+        ? deviceCount
+          ? `${deviceCount} cam${deviceCount === 1 ? "" : "s"}`
+          : "No cams"
+        : "Room");
   drawVisualGameRoomFloor(context, x, y, width, height, {
     floor: permissionIssue ? "#4a2d24" : "#173744",
     wall: permissionIssue ? "#a85b45" : "#3f8791",
     trim: permissionIssue ? "#54251e" : "#143743",
     entrance: getVisualGameRenderedEntrance(place),
   });
-  drawVisualGamePaintedWallSign(
+  drawVisualGameBuildingSign(
     context,
     x + 10,
     y + 7,
     60,
     22,
     place.label,
-    permissionIssue ? "Blocked" : cameraAgents.length ? `${cameraAgents.length} watch${cameraAgents.length === 1 ? "" : "es"}` : "Room",
+    cameraMeta,
   );
 
-  context.fillStyle = "#1a252b";
-  context.fillRect(x + 8, y + 43, width - 16, 7);
-  for (let index = 0; index < place.spots.length; index += 1) {
-    const occupied = Boolean(cameraAgents[index]);
-    const screenX = x + 12 + index * 14;
-    const screenY = y + 35;
+  const rack = {
+    x: x + 10,
+    y: y + 34,
+    width: Math.max(1, width - 20),
+    height: Math.max(18, height - 45),
+  };
+  if (screenCount > 0) {
+    context.fillStyle = "#1a252b";
+    context.fillRect(rack.x - 2, rack.y + 7, rack.width + 4, Math.max(8, rack.height - 4));
 
-    context.fillStyle = permissionIssue ? "#ff9b72" : occupied ? "#77dce7" : "#31535a";
-    context.fillRect(screenX, screenY, 10, 7);
-    context.fillStyle = permissionIssue ? "#ffe1ba" : occupied ? "#d8fbff" : "#4e8e97";
-    context.fillRect(screenX + 3, screenY - 3, 5, 3);
-    context.fillStyle = "#172228";
-    context.fillRect(screenX + 4, screenY + 7, 2, 1);
+    const packing = getVisualGamePackedItemSlots(rack, screenCount, {
+      gap: VISUAL_GAME_CAMERA_SCREEN_GAP,
+      itemSize: VISUAL_GAME_CAMERA_SCREEN_SIZE,
+      maxColumns: VISUAL_GAME_CAMERA_SCREEN_COLUMNS,
+      maxVisible: VISUAL_GAME_CAMERA_SCREEN_MAX_VISIBLE,
+      padding: 1,
+    });
+    packing.slots.forEach((slot, index) => {
+      drawVisualGameCameraScreen(context, slot, {
+        occupied: Boolean(cameraAgents[index]),
+        permissionIssue,
+        time,
+        index,
+      });
+    });
+
+    if (packing.hiddenCount > 0) {
+      drawVisualGameOverflowBadge(context, x + width - 35, y + height - 20, `+${packing.hiddenCount}`);
+    }
   }
 
   if (permissionIssue) {
@@ -11987,16 +14716,48 @@ function drawVisualGameCameraRoom(context, hitAreas, time, cameraAgents) {
     context.fillRect(x + width - 16, y + 16, 2, 5);
     context.fillRect(x + width - 16, y + 23, 2, 2);
   }
+  if (issue) {
+    drawVisualGameBuildingIssueBadge(context, place.rect);
+  }
 
-  hitAreas.push({
-    x,
-    y,
-    width,
-    height,
-    kind: "main-view",
-    view: "plugins",
+  pushAgentTownPlaceHit(hitAreas, place, {
+    kind: "building",
+    buildingId: "videomemory",
     label: `${place.label} Room`,
   });
+}
+
+function getVisualGameCameraScreenCount(place, cameraAgents) {
+  const agentCount = Array.isArray(cameraAgents) ? cameraAgents.length : 0;
+  const deviceCount = getVideoMemoryCameraDeviceCount();
+  if (Number.isFinite(deviceCount)) {
+    return Math.max(0, Math.floor(deviceCount), agentCount);
+  }
+
+  const fallbackCount = Array.isArray(place?.spots) ? place.spots.length : 0;
+  return Math.max(fallbackCount, agentCount);
+}
+
+function drawVisualGameCameraScreen(context, slot, { occupied = false, permissionIssue = false, time = 0, index = 0 } = {}) {
+  const scale = clamp(Number(slot?.scale) || 1, 0.35, 1);
+  const glow = occupied ? 0.18 + Math.sin(time / 180 + index) * 0.08 : 0;
+
+  context.save();
+  context.translate(Math.round(slot.x), Math.round(slot.y));
+  context.scale(scale, scale);
+  context.fillStyle = "#172228";
+  context.fillRect(0, 3, 12, 8);
+  context.fillStyle = permissionIssue ? "#ff9b72" : occupied ? "#77dce7" : "#31535a";
+  context.fillRect(1, 4, 10, 6);
+  if (occupied) {
+    context.fillStyle = `rgba(216, 251, 255, ${glow})`;
+    context.fillRect(0, 3, 12, 8);
+  }
+  context.fillStyle = permissionIssue ? "#ffe1ba" : occupied ? "#d8fbff" : "#4e8e97";
+  context.fillRect(4, 0, 5, 3);
+  context.fillStyle = "#172228";
+  context.fillRect(5, 11, 2, 1);
+  context.restore();
 }
 
 function drawVisualGameGpuFactories(context, hitAreas, factories, time) {
@@ -12004,8 +14765,8 @@ function drawVisualGameGpuFactories(context, hitAreas, factories, time) {
     return;
   }
 
-  const place = getVisualGamePlace(VISUAL_GAME_MAP_LAYOUT, "gpuYard");
-  const packing = getVisualGamePlaceItemSlots(VISUAL_GAME_MAP_LAYOUT, "gpuYard", factories.length, {
+  const place = getVisualGameTownPlace("gpuYard");
+  const packing = getVisualGamePackedItemSlots(place.rect, factories.length, {
     gap: VISUAL_GAME_GPU_FACTORY_GAP,
     itemSize: VISUAL_GAME_GPU_FACTORY_SIZE,
     maxColumns: VISUAL_GAME_GPU_FACTORY_COLUMNS,
@@ -12021,6 +14782,10 @@ function drawVisualGameGpuFactories(context, hitAreas, factories, time) {
 
   if (packing.hiddenCount > 0) {
     drawVisualGameOverflowBadge(context, place.rect.x + place.rect.width - 34, place.rect.y + place.rect.height - 19, `+${packing.hiddenCount}`);
+  }
+
+  if (isAgentTownEditMode()) {
+    pushAgentTownPlaceHit(hitAreas, place, { kind: "main-view", view: "system", label: place.label });
   }
 }
 
@@ -12207,19 +14972,144 @@ function getVisualGameGpuFactoryShortLabel(factory) {
   return index > 0 ? `GPU${index}` : "GPU";
 }
 
-function drawVisualGameDock(context) {
-  const place = getVisualGamePlace(VISUAL_GAME_MAP_LAYOUT, "dock");
+function drawVisualGameDock(context, hitAreas, time) {
+  const place = getVisualGameTownPlace("dock");
   const { x, y, width, height } = place.rect;
-  drawVisualGameShadow(context, x + 3, y + height - 1, width, 7);
+  const ports = isLocalhostAppsEnabled() ? state.ports : [];
+  const visiblePorts = ports.slice(0, VISUAL_GAME_DOCK_MAX_SHIPS);
+  const water = {
+    x: x - 18,
+    y: y + 12,
+    width: width + 36,
+    height: height + 14,
+  };
+
   context.fillStyle = "#304d64";
-  context.fillRect(x - 8, y + 20, width + 18, 25);
+  context.fillRect(water.x, water.y, water.width, water.height);
+  context.fillStyle = "#27536f";
+  context.fillRect(water.x + 3, water.y + 3, water.width - 6, 8);
+  context.fillStyle = "rgba(146, 211, 218, 0.2)";
+  for (let wave = 0; wave < 7; wave += 1) {
+    const waveX = water.x + 6 + wave * 14;
+    const waveY = water.y + 15 + ((wave * 7) % 24);
+    context.fillRect(waveX, waveY, 8, 2);
+  }
+
+  pushAgentTownPlaceHit(hitAreas, place, { kind: "building", buildingId: "localhost-apps", label: place.label });
+
+  visiblePorts.forEach((port, index) => {
+    const slot = getVisualGameDockShipSlot(water, index, visiblePorts.length);
+    drawVisualGamePortShip(context, port, slot.x, slot.y, index, time);
+    const portNumber = Number(port.port);
+    if (!isAgentTownEditMode() && Number.isFinite(portNumber)) {
+      hitAreas.push({
+        x: slot.x,
+        y: slot.y,
+        width: VISUAL_GAME_DOCK_SHIP_WIDTH,
+        height: VISUAL_GAME_DOCK_SHIP_HEIGHT,
+        kind: "port",
+        port: portNumber,
+        label: `Preview ${getPortDisplayName(port)} · ${getPortAccessHint(port)}`,
+      });
+    }
+  });
+
+  if (ports.length > visiblePorts.length) {
+    drawVisualGameOverflowBadge(context, water.x + water.width - 33, water.y + 4, `+${ports.length - visiblePorts.length}`);
+  } else if (!ports.length) {
+    context.fillStyle = "#d1af63";
+    context.fillRect(water.x + water.width - 19, water.y + water.height - 15, 9, 9);
+    context.fillStyle = "#8c6a37";
+    context.fillRect(water.x + water.width - 17, water.y + water.height - 13, 5, 5);
+  }
+
+  drawVisualGameShadow(context, x + 3, y + height - 1, width, 7);
   context.fillStyle = "#5a3f2c";
-  for (let plank = 0; plank < 5; plank += 1) {
-    context.fillRect(x + plank * 12, y + 14, 9, 35);
+  context.fillRect(x + width / 2 - 7, y + 8, 14, height + 8);
+  context.fillRect(water.x + 4, y + 22, water.width - 8, 9);
+  context.fillStyle = "#7a5736";
+  for (let plank = 0; plank < 7; plank += 1) {
+    context.fillRect(water.x + 8 + plank * 13, y + 23, 8, 7);
   }
   context.fillStyle = "#2c2020";
-  context.fillRect(x + 6, y + 18, width - 8, 3);
-  drawVisualGameBuildingSign(context, x - 2, y + 2, 62, 22, place.label, isLocalhostAppsEnabled() ? `${state.ports.length} ports` : "off");
+  context.fillRect(x + width / 2 - 8, y + 13, 16, 2);
+  context.fillRect(water.x + 5, y + 30, water.width - 10, 2);
+
+  for (let post = 0; post < 4; post += 1) {
+    const postX = water.x + 11 + post * 25;
+    context.fillStyle = "#2c2020";
+    context.fillRect(postX, y + 18, 4, 18);
+    context.fillStyle = "#87613c";
+    context.fillRect(postX + 1, y + 17, 2, 5);
+  }
+
+  drawVisualGameBuildingSign(context, x - 2, y + 2, 62, 22, place.label, isLocalhostAppsEnabled() ? `${ports.length} ships` : "off");
+}
+
+function getVisualGameDockShipSlot(water, index, count) {
+  const columns = Math.min(4, Math.max(1, Math.ceil(Math.sqrt(Math.max(1, count)))));
+  const column = index % columns;
+  const row = Math.floor(index / columns);
+  const slotWidth = Math.floor((water.width - 12) / columns);
+  return {
+    x: Math.round(water.x + 6 + column * slotWidth + Math.max(0, Math.floor((slotWidth - VISUAL_GAME_DOCK_SHIP_WIDTH) / 2))),
+    y: Math.round(water.y + 18 + row * 16 + (column % 2)),
+  };
+}
+
+function getVisualGamePortShipPalette(port, index) {
+  const palettes = {
+    direct: { hull: "#4c8f7a", deck: "#e8d394", cabin: "#f6f0cf", flag: "#7be0c3" },
+    "tailscale-serve": { hull: "#506fa8", deck: "#d5dfef", cabin: "#f3f0cf", flag: "#8fc1ff" },
+    localhost: { hull: "#8a6744", deck: "#e2c78d", cabin: "#f7ebc2", flag: "#ffb48f" },
+    proxy: { hull: "#65727f", deck: "#d9d2bf", cabin: "#efe7d1", flag: "#d7e0ef" },
+  };
+  const access = port?.preferredAccess === "direct" || port?.preferredAccess === "tailscale-serve"
+    ? port.preferredAccess
+    : port?.canExposeWithTailscale
+      ? "localhost"
+      : "proxy";
+  const fallback = ["#8a6744", "#4c8f7a", "#65727f", "#506fa8"][getVisualGameHash(port?.port, index) % 4];
+  return palettes[access] || { hull: fallback, deck: "#e2c78d", cabin: "#f7ebc2", flag: "#ffb48f" };
+}
+
+function drawVisualGamePortShip(context, port, x, y, index, time) {
+  const palette = getVisualGamePortShipPalette(port, index);
+  const bob = Math.floor(Math.sin(time / 480 + index * 0.8) * 1);
+  const shipX = Math.round(x);
+  const shipY = Math.round(y + bob);
+  const portLabel = String(port?.port ?? "");
+
+  context.fillStyle = "rgba(9, 20, 28, 0.28)";
+  context.fillRect(shipX + 3, shipY + 15, 24, 3);
+  context.fillStyle = "rgba(196, 235, 230, 0.22)";
+  context.fillRect(shipX, shipY + 13, 6, 1);
+  context.fillRect(shipX + 23, shipY + 14, 7, 1);
+
+  context.fillStyle = "#201b1a";
+  context.fillRect(shipX + 1, shipY + 7, 27, 7);
+  context.fillRect(shipX + 6, shipY + 14, 15, 2);
+  context.fillStyle = palette.hull;
+  context.fillRect(shipX + 2, shipY + 6, 24, 7);
+  context.fillRect(shipX + 6, shipY + 13, 14, 2);
+  context.fillStyle = "rgba(255, 246, 216, 0.26)";
+  context.fillRect(shipX + 4, shipY + 7, 18, 1);
+
+  context.fillStyle = palette.cabin;
+  context.fillRect(shipX + 10, shipY + 2, 9, 5);
+  context.fillStyle = "#274456";
+  context.fillRect(shipX + 12, shipY + 3, 5, 2);
+  context.fillStyle = palette.deck;
+  context.fillRect(shipX + 5, shipY + 5, 19, 2);
+  context.fillStyle = "rgba(255, 249, 224, 0.9)";
+  context.fillRect(shipX + 5, shipY + 8, 19, 5);
+  context.fillStyle = "rgba(55, 43, 33, 0.3)";
+  context.fillRect(shipX + 5, shipY + 12, 19, 1);
+  drawVisualGameCenteredText(context, portLabel, shipX + 14.5, shipY + 12, "#211811", 5);
+  context.fillStyle = "#2c2020";
+  context.fillRect(shipX + 14, shipY, 1, 4);
+  context.fillStyle = palette.flag;
+  context.fillRect(shipX + 15, shipY, 5, 2);
 }
 
 function drawVisualGameForeground(context, time) {
@@ -12232,34 +15122,116 @@ function drawVisualGameForeground(context, time) {
   }
 }
 
+function getVisualGameAgentHatKind(agent) {
+  return getOccupationHatKind({
+    id: agent?.occupationId || agent?.promptId || "",
+    label: agent?.occupationLabel || "",
+  });
+}
+
+function getVisualGameAgentHatColors(palette) {
+  return {
+    fill: palette?.hat || OCCUPATION_HAT_PALETTES.default.fill,
+    dark: palette?.brim || OCCUPATION_HAT_PALETTES.default.dark,
+    highlight: OCCUPATION_HAT_PALETTES.default.highlight,
+  };
+}
+
+function drawVisualGameOccupationHat(context, kind, { x = 0, y = 0, scale = 1, colors = null } = {}) {
+  const hatKind = ["researcher", "engineer", "custom", "default"].includes(kind) ? kind : "default";
+  const hatColors = colors || OCCUPATION_HAT_PALETTES[hatKind] || OCCUPATION_HAT_PALETTES.default;
+
+  context.save();
+  context.translate(x, y);
+  context.scale(scale, scale);
+
+  if (hatKind === "researcher") {
+    context.fillStyle = "rgba(0, 0, 0, 0.24)";
+    context.fillRect(2, 8, 14, 2);
+    context.fillStyle = hatColors.fill;
+    context.beginPath();
+    context.moveTo(3, 8);
+    context.quadraticCurveTo(4, 0, 9, 0);
+    context.quadraticCurveTo(14, 0, 15, 8);
+    context.closePath();
+    context.fill();
+    context.fillStyle = hatColors.dark;
+    context.fillRect(2, 6, 14, 4);
+    context.fillStyle = hatColors.highlight;
+    context.fillRect(6, 3, 6, 1);
+  } else if (hatKind === "engineer") {
+    context.fillStyle = "rgba(0, 0, 0, 0.24)";
+    context.fillRect(1, 8, 17, 2);
+    context.fillStyle = hatColors.fill;
+    context.fillRect(4, 0, 10, 8);
+    context.fillStyle = hatColors.dark;
+    context.fillRect(0, 7, 18, 3);
+    context.fillStyle = hatColors.highlight;
+    context.fillRect(6, 2, 6, 1);
+  } else if (hatKind === "custom") {
+    context.fillStyle = "rgba(0, 0, 0, 0.24)";
+    context.fillRect(1, 8, 17, 2);
+    context.fillStyle = hatColors.fill;
+    context.beginPath();
+    context.moveTo(9, -2);
+    context.lineTo(15, 8);
+    context.lineTo(3, 8);
+    context.closePath();
+    context.fill();
+    context.fillStyle = hatColors.dark;
+    context.fillRect(1, 7, 17, 3);
+    context.fillStyle = hatColors.highlight;
+    context.fillRect(8, 2, 2, 4);
+  } else {
+    context.fillStyle = "rgba(0, 0, 0, 0.24)";
+    context.fillRect(1, 8, 17, 2);
+    context.fillStyle = hatColors.fill;
+    context.fillRect(4, 1, 10, 7);
+    context.fillStyle = hatColors.dark;
+    context.fillRect(1, 7, 17, 3);
+    context.fillStyle = hatColors.highlight;
+    context.fillRect(6, 3, 6, 1);
+  }
+
+  context.restore();
+}
+
 function drawVisualGameAgent(context, agent, time, hitAreas) {
   const scale = agent.scale || 1;
-  const palette = VISUAL_GAME_AGENT_PALETTES[(agent.familyIndex ?? agent.index) % VISUAL_GAME_AGENT_PALETTES.length];
+  const palette = getVisualGameAgentPalette(agent);
+  const hatKind = getVisualGameAgentHatKind(agent);
+  const hatColors = getVisualGameAgentHatColors(palette);
+  const isWalking = Boolean(agent.walking);
+  const visualDestination = isWalking ? "roam" : agent.destination;
   const isStationed =
-    agent.destination === "desk" ||
-    agent.destination === "browser" ||
-    agent.destination === "camera" ||
-    agent.destination === "library" ||
-    agent.destination === "sleep";
+    !isWalking
+    && (
+      agent.destination === "desk"
+      || agent.destination === "browser"
+      || agent.destination === "ottoauth"
+      || agent.destination === "camera"
+      || agent.destination === "library"
+      || agent.destination === "sleep"
+    );
   const bob = isStationed ? Math.floor(Math.sin(time / 190 + agent.index) * 1) : Math.floor(Math.sin(time / 150 + agent.index) * 2);
   const step = Math.floor(time / 180 + agent.index) % 4;
   const spriteWidth = VISUAL_GAME_AGENT_SIZE * scale;
-  const spriteTopOffset = agent.destination === "sleep" ? 17 : 25;
+  const spriteTopOffset = visualDestination === "sleep" ? 17 : 25;
   const x = Math.round(agent.x - spriteWidth / 2);
   const y = Math.round(agent.y - spriteTopOffset * scale + bob);
 
   drawVisualGameShadow(
     context,
     x + 1 * scale,
-    y + (agent.destination === "sleep" ? 24 : 27) * scale,
-    (agent.destination === "sleep" ? 22 : 15) * scale,
+    y + (visualDestination === "sleep" ? 24 : 27) * scale,
+    (visualDestination === "sleep" ? 22 : 15) * scale,
     Math.max(3, 4 * scale),
   );
   context.save();
   context.translate(x, y);
   context.scale(scale, scale);
 
-  if (agent.destination === "sleep") {
+  if (visualDestination === "sleep") {
     context.fillStyle = "#332519";
     context.fillRect(0, 13, 23, 13);
     context.fillStyle = "#5b3f29";
@@ -12273,44 +15245,52 @@ function drawVisualGameAgent(context, agent, time, hitAreas) {
     context.fillStyle = palette.hair;
     context.fillRect(3, 7, 9, 3);
     context.fillRect(2, 10, 3, 4);
+    drawVisualGameOccupationHat(context, hatKind, { x: 2, y: 4, scale: 0.56, colors: hatColors });
     context.fillStyle = "#3a241d";
     context.fillRect(9, 11, 2, 1);
     context.fillStyle = palette.skin;
     context.fillRect(10, 16, 4, 3);
-    context.fillStyle = "#6e8aa9";
+    context.fillStyle = palette.coat;
     context.fillRect(8, 14, 13, 10);
-    context.fillStyle = "#8fb0ce";
+    context.fillStyle = palette.trim;
     context.fillRect(10, 15, 9, 3);
-    context.fillStyle = "#5b7695";
+    context.fillStyle = palette.pants;
     context.fillRect(8, 22, 13, 2);
-    context.fillStyle = palette.hat;
-    context.fillRect(4, 5, 7, 2);
     context.fillStyle = "#f7efba";
     context.fillRect(16, 7, 2, 2);
     context.fillRect(18, 5, 2, 2);
     context.fillRect(20, 3, 2, 2);
-  } else if (agent.destination === "desk") {
+  } else if (visualDestination === "desk") {
     context.fillStyle = "#2b2018";
     context.fillRect(2, 18, 15, 11);
     context.fillStyle = "#624632";
     context.fillRect(4, 16, 11, 4);
-  } else if (agent.destination === "library") {
+  } else if (visualDestination === "library") {
     context.fillStyle = "#5a3d27";
     context.fillRect(2, 20, 15, 7);
     context.fillStyle = "#e7c76f";
     context.fillRect(4, 18, 10, 5);
     context.fillStyle = "#8e5646";
     context.fillRect(9, 18, 1, 5);
-  } else if (agent.destination === "camera") {
+  } else if (visualDestination === "camera") {
     context.fillStyle = "#27343c";
     context.fillRect(2, 19, 15, 8);
     context.fillStyle = "#6ec7d6";
     context.fillRect(5, 16, 9, 6);
     context.fillStyle = "#1e262d";
     context.fillRect(8, 17, 3, 3);
+  } else if (visualDestination === "ottoauth") {
+    context.fillStyle = "#2f2638";
+    context.fillRect(2, 19, 15, 8);
+    context.fillStyle = "#e0ad62";
+    context.fillRect(5, 15, 9, 8);
+    context.fillStyle = "#f8d27a";
+    context.fillRect(7, 12, 5, 4);
+    context.fillStyle = "#3a2b42";
+    context.fillRect(7, 19, 5, 2);
   }
 
-  if (agent.destination !== "sleep") {
+  if (visualDestination !== "sleep") {
     context.fillStyle = palette.boots;
     if (isStationed) {
       context.fillRect(4, 24, 4, 3);
@@ -12330,11 +15310,7 @@ function drawVisualGameAgent(context, agent, time, hitAreas) {
     context.fillRect(5, 7, 9, 7);
     context.fillStyle = palette.hair;
     context.fillRect(4, 6, 11, 3);
-    context.fillStyle = palette.hat;
-    context.fillRect(3, 1, 13, 7);
-    context.fillRect(5, -2, 9, 3);
-    context.fillStyle = palette.brim;
-    context.fillRect(1, 7, 17, 2);
+    drawVisualGameOccupationHat(context, hatKind, { colors: hatColors });
     context.fillStyle = "#fff0d6";
     context.fillRect(8, 10, 2, 2);
     context.fillStyle = palette.skin;
@@ -12345,6 +15321,8 @@ function drawVisualGameAgent(context, agent, time, hitAreas) {
       context.fillStyle =
         agent.destination === "browser"
           ? "#bfffb0"
+          : agent.destination === "ottoauth"
+            ? "#ffd27a"
           : agent.destination === "camera"
             ? "#7ce7f0"
             : agent.destination === "library" ? "#f0cf72" : "#79bdf8";
@@ -12365,6 +15343,8 @@ function drawVisualGameAgent(context, agent, time, hitAreas) {
     context.fillStyle =
       agent.destination === "browser"
         ? "#bfffb0"
+        : agent.destination === "ottoauth"
+          ? "#ffd27a"
         : agent.destination === "camera"
           ? "#7ce7f0"
           : agent.destination === "library" ? "#f0cf72" : "#79bdf8";
@@ -12378,7 +15358,7 @@ function drawVisualGameAgent(context, agent, time, hitAreas) {
 
   context.restore();
 
-  if (agent.destination === "desk" || agent.destination === "browser" || agent.destination === "camera") {
+  if (!isWalking && (agent.destination === "desk" || agent.destination === "browser" || agent.destination === "ottoauth" || agent.destination === "camera")) {
     drawVisualGameNameplate(context, truncateSwarmLabel(agent.name, agent.isSubagent ? 12 : 14), x + 9 * scale, y + 34 * scale, scale);
   }
   hitAreas.push({
@@ -12394,8 +15374,25 @@ function drawVisualGameAgent(context, agent, time, hitAreas) {
 }
 
 function getVisualGameAgentHoverLabel(agent) {
+  if (agent.walking && agent.destination !== "roam") {
+    const destinationLabel = {
+      browser: "browser lab",
+      ottoauth: "OttoAuth",
+      camera: "camera room",
+      sleep: "beds",
+      desk: "computer lab",
+      library: "library",
+      evidence: "library",
+    }[agent.destination] || "destination";
+    return `${agent.name} - walking to ${destinationLabel}`;
+  }
+
   if (agent.destination === "browser") {
     return `${agent.name} - at browser lab computer`;
+  }
+
+  if (agent.destination === "ottoauth") {
+    return `${agent.name} - at OttoAuth building`;
   }
 
   if (agent.destination === "camera") {
@@ -12415,6 +15412,11 @@ function getVisualGameAgentHoverLabel(agent) {
   }
 
   return `${agent.name} - walking`;
+}
+
+function getVisualGameAgentPalette(agent) {
+  const fallback = VISUAL_GAME_AGENT_PALETTES[(agent.familyIndex ?? agent.index) % VISUAL_GAME_AGENT_PALETTES.length];
+  return getVisualGameProviderAgentPalette(agent.providerId) || fallback;
 }
 
 function drawVisualGameNameplate(context, text, centerX, y, scale = 1) {
@@ -12449,6 +15451,25 @@ function drawVisualGameBuildingSign(context, x, y, width, height, label, meta) {
 
   drawVisualGameSignText(context, label, signX + 6, signY + 12, "#20170f", 8, signWidth - 12);
   drawVisualGameSignText(context, meta, signX + 6, signY + signHeight - 4, "#382515", 6, signWidth - 12);
+}
+
+function drawVisualGameBuildingIssueBadge(context, rect) {
+  if (!rect) {
+    return;
+  }
+
+  const badgeSize = 22;
+  const badgeX = Math.round(rect.x + rect.width - badgeSize - 4);
+  const badgeY = Math.round(rect.y + 4);
+  context.fillStyle = "rgba(38, 13, 10, 0.44)";
+  context.fillRect(badgeX + 2, badgeY + 2, badgeSize, badgeSize);
+  context.fillStyle = "#2b1410";
+  context.fillRect(badgeX, badgeY, badgeSize, badgeSize);
+  context.fillStyle = "#ffad6a";
+  context.fillRect(badgeX + 2, badgeY + 2, badgeSize - 4, badgeSize - 4);
+  context.fillStyle = "#331711";
+  context.fillRect(badgeX + 9, badgeY + 5, 4, 9);
+  context.fillRect(badgeX + 9, badgeY + 16, 4, 3);
 }
 
 function drawVisualGamePaintedWallSign(context, x, y, width, height, label, meta) {
@@ -12489,6 +15510,21 @@ function drawVisualGameText(context, text, x, y, color, size = 8) {
   context.fillText(label, Math.round(x), Math.round(y));
 }
 
+function drawVisualGameCenteredText(context, text, centerX, y, color, size = 8) {
+  const label = String(text || "");
+  context.font = `${size}px "IBM Plex Mono", monospace`;
+  context.textBaseline = "alphabetic";
+  context.lineJoin = "round";
+  context.lineWidth = size >= 8 ? 2.2 : 1.1;
+  const textWidth = context.measureText(label).width;
+  const textX = Math.round(centerX - textWidth / 2);
+  const textY = Math.round(y);
+  context.strokeStyle = "rgba(255, 249, 224, 0.76)";
+  context.strokeText(label, textX, textY);
+  context.fillStyle = color;
+  context.fillText(label, textX, textY);
+}
+
 function drawVisualGameShadow(context, x, y, width, height) {
   context.fillStyle = "rgba(0, 0, 0, 0.24)";
   context.fillRect(Math.round(x), Math.round(y), Math.round(width), Math.round(height));
@@ -12497,8 +15533,9 @@ function drawVisualGameShadow(context, x, y, width, height) {
 function getVisualGameAgents(graph, time) {
   const deskIndex = { value: 0 };
   const browserIndex = { value: 0 };
+  const ottoAuthIndex = { value: 0 };
   const cameraIndex = { value: 0 };
-  const sleepIndex = { value: 0 };
+  const sleepIndexByDorm = new Map();
   const libraryIndex = { value: 0 };
   const evidenceIndex = { value: 0 };
   const roamingIndex = { value: 0 };
@@ -12518,12 +15555,18 @@ function getVisualGameAgents(graph, time) {
     if (destination === "browser") {
       target = getVisualGameBrowserSpot(browserIndex.value);
       browserIndex.value += 1;
+    } else if (destination === "ottoauth") {
+      target = getVisualGameOttoAuthSpot(ottoAuthIndex.value);
+      ottoAuthIndex.value += 1;
     } else if (destination === "camera") {
       target = getVisualGameCameraSpot(cameraIndex.value);
       cameraIndex.value += 1;
     } else if (destination === "sleep") {
-      target = getVisualGameSleepSpot(sleepIndex.value);
-      sleepIndex.value += 1;
+      const dorm = getAgentTownDormForAgent(base);
+      const dormKey = dorm?.id || "dormitory";
+      const dormIndex = sleepIndexByDorm.get(dormKey) || 0;
+      target = getVisualGameSleepSpot(base, dormIndex);
+      sleepIndexByDorm.set(dormKey, dormIndex + 1);
     } else if (destination === "library") {
       target = getVisualGameLibrarySpot(libraryIndex.value);
       libraryIndex.value += 1;
@@ -12543,14 +15586,35 @@ function getVisualGameAgents(graph, time) {
   });
 }
 
+function advanceVisualGameSimulation(time, graph = state.swarmGraph.data) {
+  if (!graph) {
+    return [];
+  }
+
+  const timestamp = Number.isFinite(Number(time)) ? Number(time) : getUiNow();
+  const agents = getVisualGameAgents(graph, timestamp);
+  const activeKeys = new Set(agents.map((agent) => agent.key));
+  for (const key of state.visualGame.agentPositions.keys()) {
+    if (!activeKeys.has(key)) {
+      state.visualGame.agentPositions.delete(key);
+    }
+  }
+
+  return agents;
+}
+
 function getVisualGameAgentDestination(agent, statusClass) {
   const activelyGenerating = isVisualGameActivelyGenerating(agent, statusClass);
 
-  if (agent.kind === "browser" && statusClass === "working") {
+  if (agent.kind === "browser" && statusClass === "working" && isPluginIdInstalled("browser-use")) {
     return "browser";
   }
 
-  if (agent.kind === "camera" && activelyGenerating) {
+  if (agent.kind === "ottoauth" && statusClass === "working" && isPluginIdInstalled("ottoauth")) {
+    return "ottoauth";
+  }
+
+  if (agent.kind === "camera" && activelyGenerating && isVideoMemoryPluginInstalled()) {
     return "camera";
   }
 
@@ -12632,6 +15696,7 @@ function isVisualGameLibraryReference(value) {
 function getVisualGameAgentKey(agent, index) {
   return [
     agent.browserUseSessionId || "",
+    agent.ottoAuthSessionId || "",
     agent.videoMemoryMonitorId || "",
     agent.sessionId || "",
     agent.parentSessionId || "",
@@ -12642,28 +15707,192 @@ function getVisualGameAgentKey(agent, index) {
 }
 
 function getVisualGameAnimatedPosition(agent, target, time) {
-  if (agent.destination === "roam") {
+  const previous = state.visualGame.agentPositions.get(agent.key);
+  if (agent.destination === "roam" && (!previous || (previous.destination === "roam" && !previous.walking))) {
     state.visualGame.agentPositions.set(agent.key, { x: target.x, y: target.y, destination: agent.destination, updatedAt: time });
-    return target;
+    return { x: target.x, y: target.y, walking: false };
   }
 
-  const previous = state.visualGame.agentPositions.get(agent.key);
-  const spawn = previous || { ...getVisualGameRoamSpot(agent, agent.index, time), destination: "roam" };
-  const easing = spawn.destination === agent.destination ? 0.18 : 0.045;
+  if (agent.destination === "roam" && previous?.destination === "roam" && previous.walking) {
+    const previousTarget = { x: Number(previous.targetX), y: Number(previous.targetY) };
+    if (Number.isFinite(previousTarget.x) && Number.isFinite(previousTarget.y)) {
+      target = previousTarget;
+    }
+  }
+
+  const spawn = previous || { ...getVisualGameRoamSpot(agent, agent.index, time), destination: "roam", updatedAt: time };
+  const current = { x: spawn.x, y: spawn.y };
+  const needsRoute =
+    !Array.isArray(spawn.route)
+    || spawn.route.length < 2
+    || spawn.destination !== agent.destination
+    || visualGameTargetChanged(spawn, target);
+  const route = needsRoute ? getVisualGameAgentPathRoute(current, target, spawn) : spawn.route;
+  let routeIndex = needsRoute ? 1 : Math.max(1, Math.min(route.length - 1, Math.floor(Number(spawn.routeIndex || 1))));
+  let nextX = current.x;
+  let nextY = current.y;
+  const elapsedMs = previous
+    ? clamp(Math.max(0, time - Number(spawn.updatedAt || time)), 0, VISUAL_GAME_AGENT_MAX_FRAME_MS)
+    : 16;
+  let remainingDistance =
+    VISUAL_GAME_AGENT_WALK_SPEED
+    * (agent.isSubagent ? 0.92 : 1)
+    * elapsedMs;
+
+  while (routeIndex < route.length && remainingDistance > 0) {
+    const waypoint = route[routeIndex];
+    const distance = getVisualGamePointDistance({ x: nextX, y: nextY }, waypoint);
+    if (distance <= VISUAL_GAME_AGENT_ARRIVAL_DISTANCE) {
+      nextX = waypoint.x;
+      nextY = waypoint.y;
+      routeIndex += 1;
+      continue;
+    }
+
+    const step = Math.min(distance, remainingDistance);
+    nextX += ((waypoint.x - nextX) / distance) * step;
+    nextY += ((waypoint.y - nextY) / distance) * step;
+    remainingDistance -= step;
+
+    if (step < distance) {
+      break;
+    }
+
+    routeIndex += 1;
+  }
+
+  const finalPoint = route[route.length - 1] || target;
+  const walking = getVisualGamePointDistance({ x: nextX, y: nextY }, finalPoint) > VISUAL_GAME_AGENT_ARRIVAL_DISTANCE;
+  if (!walking) {
+    nextX = finalPoint.x;
+    nextY = finalPoint.y;
+    routeIndex = route.length;
+  }
+
+  const routeAnchor = getVisualGameTargetRouteAnchor(target);
   const next = {
-    x: spawn.x + (target.x - spawn.x) * easing,
-    y: spawn.y + (target.y - spawn.y) * easing,
+    x: nextX,
+    y: nextY,
     destination: agent.destination,
     updatedAt: time,
+    route,
+    routeIndex,
+    targetX: target.x,
+    targetY: target.y,
+    routeAnchor,
+    walking,
   };
 
-  if (Math.hypot(target.x - next.x, target.y - next.y) < 0.35) {
-    next.x = target.x;
-    next.y = target.y;
+  state.visualGame.agentPositions.set(agent.key, next);
+  return { x: next.x, y: next.y, walking: next.walking };
+}
+
+function getVisualGameAgentPathRoute(start, target, previous) {
+  const targetAnchor = getVisualGameTargetRouteAnchor(target);
+  const previousAnchor = getVisualGamePreviousRouteAnchor(previous);
+  const roadStart =
+    previousAnchor && !visualGamePointsAreNear(previousAnchor, targetAnchor || target)
+      ? previousAnchor
+      : start;
+  const roadEnd = targetAnchor || target;
+  const points = [start];
+
+  if (!visualGamePointsAreNear(start, roadStart)) {
+    points.push(roadStart);
   }
 
-  state.visualGame.agentPositions.set(agent.key, next);
-  return { x: next.x, y: next.y };
+  if (visualGamePointsAreNear(roadStart, roadEnd)) {
+    points.push(roadEnd);
+  } else {
+    points.push(...findVisualGameRoadRoute(roadStart, roadEnd, getVisualGameTownRoadRects(), { tolerance: 1.5 }).slice(1));
+  }
+
+  if (targetAnchor && !visualGamePointsAreNear(roadEnd, target)) {
+    points.push(target);
+  }
+
+  return compactVisualGameAgentPath(points, start, target);
+}
+
+function compactVisualGameAgentPath(points, start, target) {
+  const compacted = [];
+  for (const point of points) {
+    if (!point || !Number.isFinite(Number(point.x)) || !Number.isFinite(Number(point.y))) {
+      continue;
+    }
+
+    const nextPoint = { x: Number(point.x), y: Number(point.y) };
+    if (compacted.length && visualGamePointsAreNear(compacted[compacted.length - 1], nextPoint, 0.001)) {
+      continue;
+    }
+    compacted.push(nextPoint);
+  }
+
+  if (compacted.length < 2) {
+    return [start, target].map((point) => ({ x: Number(point.x) || 0, y: Number(point.y) || 0 }));
+  }
+
+  return compacted;
+}
+
+function getVisualGamePreviousRouteAnchor(previous) {
+  if (!previous || previous.walking || previous.destination === "roam") {
+    return null;
+  }
+
+  return getVisualGameRoutePoint(previous.routeAnchor);
+}
+
+function getVisualGameTargetRouteAnchor(target) {
+  return getVisualGameRoutePoint(target?.routeAnchor);
+}
+
+function getVisualGameRoutePoint(point) {
+  const x = Number(point?.x);
+  const y = Number(point?.y);
+  if (!Number.isFinite(x) || !Number.isFinite(y)) {
+    return null;
+  }
+
+  return { x, y };
+}
+
+function visualGameTargetChanged(previous, target) {
+  if (!previous) {
+    return true;
+  }
+
+  if (getVisualGamePointDistance({ x: previous.targetX, y: previous.targetY }, target) > VISUAL_GAME_AGENT_ROUTE_EPSILON) {
+    return true;
+  }
+
+  const previousAnchor = getVisualGameRoutePoint(previous.routeAnchor);
+  const nextAnchor = getVisualGameTargetRouteAnchor(target);
+  if (Boolean(previousAnchor) !== Boolean(nextAnchor)) {
+    return true;
+  }
+
+  return Boolean(nextAnchor) && getVisualGamePointDistance(previousAnchor, nextAnchor) > VISUAL_GAME_AGENT_ROUTE_EPSILON;
+}
+
+function visualGamePointsAreNear(left, right, epsilon = VISUAL_GAME_AGENT_ROUTE_EPSILON) {
+  if (!left || !right) {
+    return false;
+  }
+
+  return getVisualGamePointDistance(left, right) <= epsilon;
+}
+
+function getVisualGamePointDistance(left, right) {
+  const leftX = Number(left?.x);
+  const leftY = Number(left?.y);
+  const rightX = Number(right?.x);
+  const rightY = Number(right?.y);
+  if (!Number.isFinite(leftX) || !Number.isFinite(leftY) || !Number.isFinite(rightX) || !Number.isFinite(rightY)) {
+    return Infinity;
+  }
+
+  return Math.hypot(leftX - rightX, leftY - rightY);
 }
 
 function getVisualGameRoamSpot(agent, roamingIndex, time) {
@@ -12689,12 +15918,24 @@ function getVisualGameBrowserSpot(index) {
   return getVisualGamePlaceSpot("browser", index, { x: -7, y: 6 });
 }
 
+function getVisualGameOttoAuthSpot(index) {
+  return getVisualGamePlaceSpot("ottoauth", index, { x: 7, y: 5 });
+}
+
 function getVisualGameCameraSpot(index) {
   return getVisualGamePlaceSpot("camera", index, { x: -8, y: 6 });
 }
 
-function getVisualGameSleepSpot(index) {
-  return getVisualGamePlaceSpot("dormitory", index, { x: 7, y: 5 });
+function getVisualGameSleepSpot(agent, index) {
+  const dorm = getAgentTownDormForAgent(agent);
+  const spots = Array.isArray(dorm?.spots) && dorm.spots.length ? dorm.spots : [getVisualGameTownPlaceAnchor(dorm)];
+  const spot = spots[index % spots.length];
+  const row = Math.floor(index / spots.length);
+  return {
+    x: spot.x + row * 7,
+    y: spot.y + row * 5,
+    routeAnchor: getVisualGameTownPlaceAnchor(dorm),
+  };
 }
 
 function getVisualGameLibrarySpot(index) {
@@ -12706,17 +15947,19 @@ function getVisualGameEvidenceSpot(index) {
   return {
     x: spot.x + 2,
     y: spot.y - 18,
+    routeAnchor: spot.routeAnchor,
   };
 }
 
 function getVisualGamePlaceSpot(placeId, index, overflowStep) {
-  const place = getVisualGamePlace(VISUAL_GAME_MAP_LAYOUT, placeId);
-  const spots = Array.isArray(place?.spots) && place.spots.length ? place.spots : [getVisualGamePlaceAnchor(place)];
+  const place = getVisualGameTownPlace(placeId);
+  const spots = Array.isArray(place?.spots) && place.spots.length ? place.spots : [getVisualGameTownPlaceAnchor(place)];
   const spot = spots[index % spots.length];
   const row = Math.floor(index / spots.length);
   return {
     x: spot.x + row * overflowStep.x,
     y: spot.y + row * overflowStep.y,
+    routeAnchor: getVisualGameTownPlaceAnchor(place),
   };
 }
 
@@ -12758,15 +16001,16 @@ function renderSwarmGraphView() {
     || (graph?.git?.root ? getWorkspacePathLeafName(graph.git.root) : "")
     || selectedSession?.name
     || graph?.sessions?.[0]?.name
-    || "Visual interface";
-  const refreshLabel = state.swarmGraph.loading ? "Mapping agent village" : "Refresh visual interface";
+    || "Agent Town";
+  const refreshLabel = state.swarmGraph.loading ? "Mapping Agent Town" : "Refresh Agent Town";
+  const editTownLabel = isAgentTownEditMode() ? "Finish editing town" : "Edit town layout";
   const meta = graph
     ? `${graph.git?.isRepository ? "git" : "folder"} · ${graph.cwd || selectedSession?.cwd || state.defaultCwd}`
     : selectedSession
       ? `${selectedSession.providerLabel} · ${selectedSession.cwd}`
       : state.swarmGraph.projectCwd
         ? `project folder · ${state.swarmGraph.projectCwd}`
-        : "choose a project to open its village";
+        : "choose a project to open its town";
   const canRefreshSwarm = Boolean(state.swarmGraph.projectCwd || state.swarmGraph.sessionId);
 
   return `
@@ -12778,12 +16022,14 @@ function renderSwarmGraphView() {
         <button class="icon-button hidden-desktop" type="button" id="open-sidebar" aria-label="Open sidebar" ${tooltipAttributes("Open sidebar")}>${renderIcon(Menu)}</button>
         <div class="dashboard-copy">
           <strong>${escapeHtml(title)}</strong>
-          <div class="terminal-meta">visual interface · ${escapeHtml(meta)}</div>
+          <div class="terminal-meta">Agent Town · ${escapeHtml(meta)}</div>
         </div>
         <div class="dashboard-actions">
           ${
             graph
               ? `
+                <button class="icon-button toolbar-control ${isAgentTownEditMode() ? "is-active" : ""}" type="button" id="visual-game-edit-town" aria-label="${escapeHtml(editTownLabel)}" aria-pressed="${isAgentTownEditMode() ? "true" : "false"}" ${tooltipAttributes(editTownLabel)}>${renderIcon(Pencil)}</button>
+                <button class="icon-button toolbar-control danger-icon-button" type="button" id="visual-game-reset-town-layout" aria-label="Reset town layout" ${tooltipAttributes("Reset town layout")} ${isAgentTownLayoutCustomized() ? "" : "disabled"}>${renderIcon(Trash2)}</button>
                 <button class="icon-button toolbar-control" type="button" id="visual-game-zoom-out" aria-label="Zoom out map" ${tooltipAttributes("Zoom out map")}>${renderIcon(ZoomOut)}</button>
                 <button class="icon-button toolbar-control" type="button" id="visual-game-reset-camera" aria-label="Reset map view" ${tooltipAttributes("Reset map view")}>${renderIcon(RefreshCw)}</button>
                 <button class="icon-button toolbar-control" type="button" id="visual-game-zoom-in" aria-label="Zoom in map" ${tooltipAttributes("Zoom in map")}>${renderIcon(ZoomIn)}</button>
@@ -12801,7 +16047,7 @@ function renderSwarmGraphView() {
       }
       ${
         state.swarmGraph.loading && !graph
-          ? `<div class="blank-state">mapping agents, tools, files, and evidence...</div>`
+          ? `<div class="blank-state">mapping agents, buildings, files, and evidence...</div>`
           : graph
             ? renderVisualVillage(graph)
             : renderVisualProjectPicker()
@@ -13155,6 +16401,619 @@ function formatUptime(seconds) {
   return `${minutes}m`;
 }
 
+function getWorkspaceViewTabConfig(view) {
+  const configs = {
+    shell: { label: "Terminal", meta: "shell", icon: Bot },
+    "knowledge-base": { label: "Library", meta: "notes", icon: BookOpen },
+    "agent-prompt": { label: "Occupations", meta: "prompts", icon: FilePenLine },
+    search: { label: "Search", meta: "global", icon: Search },
+    plugins: { label: "Buildings", meta: "integrations", icon: Plug },
+    settings: { label: "Settings", meta: "app", icon: Settings },
+    automations: { label: "Automations", meta: "scheduled", icon: CalendarClock },
+    system: { label: "System", meta: "metrics", icon: ServerCog },
+    "visual-interface": { label: "Agent Town", meta: "map", icon: Waypoints },
+    "browser-use": { label: "Browser Use", meta: "browser", icon: AppWindow },
+  };
+  return configs[normalizeWorkspaceView(view)] || configs.shell;
+}
+
+function getCurrentWorkspaceTab() {
+  if (state.currentView === "shell") {
+    if (state.activeSessionId) {
+      return normalizeWorkspaceTab({ type: "session", sessionId: state.activeSessionId });
+    }
+    return normalizeWorkspaceTab({ type: "view", view: "shell" });
+  }
+
+  if (state.currentView === "browser-use" && state.browserUseSession.id) {
+    const session = state.browserUseSession.data;
+    const label = session?.name || session?.description || "";
+    return normalizeWorkspaceTab({
+      type: "browser-use",
+      browserUseSessionId: state.browserUseSession.id,
+      label,
+    });
+  }
+
+  return normalizeWorkspaceTab({ type: "view", view: state.currentView });
+}
+
+function getActiveWorkspaceTabKey() {
+  return getCurrentWorkspaceTab()?.key || "";
+}
+
+function getSessionWorkspaceTab(sessionId) {
+  return state.sessions.find((session) => session.id === sessionId) || null;
+}
+
+function syncWorkspaceTabs({ persist = false } = {}) {
+  const previous = JSON.stringify(normalizeWorkspaceTabs(state.workspaceTabs));
+  const knownSessionIds = new Set(state.sessions.map((session) => session.id));
+  const activeTab = getCurrentWorkspaceTab();
+  const nextTabs = normalizeWorkspaceTabs(state.workspaceTabs).filter((tab) => {
+    if (tab.type !== "session") {
+      return true;
+    }
+    return knownSessionIds.has(tab.sessionId) || tab.key === activeTab?.key;
+  });
+
+  if (activeTab && !nextTabs.some((tab) => tab.key === activeTab.key)) {
+    nextTabs.push(activeTab);
+  }
+
+  if (activeTab?.type === "browser-use") {
+    const existing = nextTabs.find((tab) => tab.key === activeTab.key);
+    if (existing && activeTab.label) {
+      existing.label = activeTab.label;
+    }
+  }
+
+  state.workspaceTabs = nextTabs;
+  const changed = previous !== JSON.stringify(nextTabs);
+  if (changed && persist) {
+    saveWorkspaceTabsState();
+  }
+  return changed;
+}
+
+function getWorkspaceTabByKey(key) {
+  const normalizedKey = String(key || "");
+  return normalizeWorkspaceTabs(state.workspaceTabs).find((tab) => tab.key === normalizedKey) || null;
+}
+
+function getWorkspaceGroupById(groupId) {
+  const normalizedGroupId = normalizeWorkspaceGroupId(groupId);
+  return normalizeWorkspaceGroups(state.workspaceGroups).find((group) => group.id === normalizedGroupId) || null;
+}
+
+function getWorkspaceGroupContainingTab(key) {
+  const normalizedKey = String(key || "");
+  return normalizeWorkspaceGroups(state.workspaceGroups).find((group) => group.tabs.includes(normalizedKey)) || null;
+}
+
+function getWorkspaceGroupActiveTab(group) {
+  if (!group) {
+    return null;
+  }
+
+  const activeKey = group.tabs.includes(group.activeKey) ? group.activeKey : group.tabs[0] || "";
+  return getWorkspaceTabByKey(activeKey);
+}
+
+function getWorkspaceGroupTabs(group) {
+  if (!group) {
+    return [];
+  }
+
+  return group.tabs.map(getWorkspaceTabByKey).filter(Boolean);
+}
+
+function getActiveWorkspaceGroup() {
+  const groups = normalizeWorkspaceGroups(state.workspaceGroups);
+  return groups.find((group) => group.id === state.activeWorkspaceGroupId) || groups[0] || null;
+}
+
+function ensureWorkspaceGroupWidths(groups) {
+  return groups.map((group) => ({
+    ...group,
+    width: Number.isFinite(Number(group.width)) && Number(group.width) > 0
+      ? clamp(Number(group.width), WORKSPACE_GROUP_MIN_FRACTION, 6)
+      : 1,
+  }));
+}
+
+function flattenWorkspaceGroupTabKeys(groups = state.workspaceGroups) {
+  return normalizeWorkspaceGroups(groups).flatMap((group) => group.tabs);
+}
+
+function syncWorkspaceTabsOrderFromGroups() {
+  const groupedKeys = flattenWorkspaceGroupTabKeys();
+  if (!groupedKeys.length) {
+    return;
+  }
+
+  const tabByKey = new Map(normalizeWorkspaceTabs(state.workspaceTabs).map((tab) => [tab.key, tab]));
+  const ordered = groupedKeys.map((key) => tabByKey.get(key)).filter(Boolean);
+  const groupedSet = new Set(groupedKeys);
+  for (const tab of normalizeWorkspaceTabs(state.workspaceTabs)) {
+    if (!groupedSet.has(tab.key)) {
+      ordered.push(tab);
+    }
+  }
+  state.workspaceTabs = ordered;
+}
+
+function syncWorkspaceTabGroups({ persist = false } = {}) {
+  const previousGroups = JSON.stringify(normalizeWorkspaceGroups(state.workspaceGroups));
+  const previousActiveGroupId = state.activeWorkspaceGroupId;
+  const tabs = normalizeWorkspaceTabs(state.workspaceTabs);
+  const tabKeys = new Set(tabs.map((tab) => tab.key));
+  const activeTab = getCurrentWorkspaceTab();
+  const activeKey = activeTab?.key || "";
+  let groups = ensureWorkspaceGroupWidths(normalizeWorkspaceGroups(state.workspaceGroups))
+    .map((group) => ({
+      ...group,
+      tabs: group.tabs.filter((key) => tabKeys.has(key)),
+    }))
+    .filter((group) => group.tabs.length > 0);
+
+  for (const group of groups) {
+    group.activeKey = group.tabs.includes(group.activeKey) ? group.activeKey : group.tabs[0] || "";
+  }
+
+  if (!groups.length && tabs.length) {
+    groups = [
+      {
+        id: createWorkspaceGroupId(),
+        tabs: tabs.map((tab) => tab.key),
+        activeKey: activeKey && tabKeys.has(activeKey) ? activeKey : tabs[0].key,
+        width: 1,
+      },
+    ];
+  }
+
+  const assignedKeys = new Set(groups.flatMap((group) => group.tabs));
+  const unassignedKeys = tabs.map((tab) => tab.key).filter((key) => !assignedKeys.has(key));
+  if (unassignedKeys.length) {
+    let targetGroup =
+      groups.find((group) => group.id === state.activeWorkspaceGroupId) ||
+      (activeKey ? groups.find((group) => group.tabs.includes(activeKey)) : null) ||
+      groups[0];
+
+    if (!targetGroup) {
+      targetGroup = {
+        id: createWorkspaceGroupId(),
+        tabs: [],
+        activeKey: "",
+        width: 1,
+      };
+      groups.push(targetGroup);
+    }
+
+    for (const key of unassignedKeys) {
+      targetGroup.tabs.push(key);
+    }
+  }
+
+  let activeGroup = activeKey ? groups.find((group) => group.tabs.includes(activeKey)) : null;
+  if (!activeGroup) {
+    activeGroup = groups.find((group) => group.id === state.activeWorkspaceGroupId) || groups[0] || null;
+  }
+
+  if (activeGroup) {
+    state.activeWorkspaceGroupId = activeGroup.id;
+    activeGroup.activeKey = activeKey && activeGroup.tabs.includes(activeKey) ? activeKey : activeGroup.activeKey || activeGroup.tabs[0] || "";
+  } else {
+    state.activeWorkspaceGroupId = "";
+  }
+
+  groups = ensureWorkspaceGroupWidths(groups).slice(0, WORKSPACE_GROUP_MAX_COUNT);
+  state.workspaceGroups = groups;
+  syncWorkspaceTabsOrderFromGroups();
+
+  const changed =
+    previousGroups !== JSON.stringify(normalizeWorkspaceGroups(state.workspaceGroups)) ||
+    previousActiveGroupId !== state.activeWorkspaceGroupId;
+  if (changed && persist) {
+    saveWorkspaceState();
+  }
+  return changed;
+}
+
+function getWorkspaceTabsForRender() {
+  syncWorkspaceTabs();
+  syncWorkspaceTabGroups();
+  return normalizeWorkspaceTabs(state.workspaceTabs);
+}
+
+function getWorkspaceGroupsForRender() {
+  syncWorkspaceTabs();
+  syncWorkspaceTabGroups();
+  return normalizeWorkspaceGroups(state.workspaceGroups);
+}
+
+function moveWorkspaceTabByOffset(key, offset = WORKSPACE_TAB_REORDER_KEYBOARD_STEP, groupId = "") {
+  const normalizedKey = String(key || "");
+  const group = getWorkspaceGroupById(groupId) || getWorkspaceGroupContainingTab(normalizedKey);
+  if (!group || group.tabs.length < 2) {
+    return false;
+  }
+
+  const fromIndex = group.tabs.indexOf(normalizedKey);
+  if (fromIndex < 0) {
+    return false;
+  }
+  const toIndex = clamp(fromIndex + offset, 0, group.tabs.length - 1);
+  if (toIndex === fromIndex) {
+    return false;
+  }
+
+  const groups = normalizeWorkspaceGroups(state.workspaceGroups);
+  const targetGroup = groups.find((entry) => entry.id === group.id);
+  if (!targetGroup) {
+    return false;
+  }
+
+  const [tabKey] = targetGroup.tabs.splice(fromIndex, 1);
+  targetGroup.tabs.splice(clamp(toIndex, 0, targetGroup.tabs.length), 0, tabKey);
+  targetGroup.activeKey = normalizedKey;
+  state.workspaceGroups = groups;
+  state.activeWorkspaceGroupId = targetGroup.id;
+  syncWorkspaceTabsOrderFromGroups();
+  saveWorkspaceState();
+  refreshWorkspaceTabsUi({ focusKey: normalizedKey });
+  return true;
+}
+
+function removeWorkspaceTabFromGroups(key) {
+  const normalizedKey = String(key || "");
+  let sourceGroupId = "";
+  const groups = normalizeWorkspaceGroups(state.workspaceGroups)
+    .map((group) => {
+      if (!group.tabs.includes(normalizedKey)) {
+        return group;
+      }
+
+      sourceGroupId = group.id;
+      const tabs = group.tabs.filter((tabKey) => tabKey !== normalizedKey);
+      return {
+        ...group,
+        tabs,
+        activeKey: group.activeKey === normalizedKey ? tabs[0] || "" : group.activeKey,
+      };
+    })
+    .filter((group) => group.tabs.length > 0);
+
+  state.workspaceGroups = groups;
+  return sourceGroupId;
+}
+
+function reorderWorkspaceTab(key, targetKey, position = "before") {
+  const normalizedKey = String(key || "");
+  const normalizedTargetKey = String(targetKey || "");
+  if (!normalizedKey || !normalizedTargetKey || normalizedKey === normalizedTargetKey) {
+    return false;
+  }
+
+  if (!getWorkspaceTabByKey(normalizedKey) || !getWorkspaceTabByKey(normalizedTargetKey)) {
+    return false;
+  }
+
+  removeWorkspaceTabFromGroups(normalizedKey);
+  const groups = normalizeWorkspaceGroups(state.workspaceGroups);
+  const targetGroup = groups.find((group) => group.tabs.includes(normalizedTargetKey));
+  if (!targetGroup) {
+    return false;
+  }
+
+  const targetIndex = targetGroup.tabs.indexOf(normalizedTargetKey);
+  const insertIndex = clamp(targetIndex + (position === "after" ? 1 : 0), 0, targetGroup.tabs.length);
+  targetGroup.tabs.splice(insertIndex, 0, normalizedKey);
+  targetGroup.activeKey = normalizedKey;
+  state.workspaceGroups = groups;
+  state.activeWorkspaceGroupId = targetGroup.id;
+  syncWorkspaceTabsOrderFromGroups();
+  saveWorkspaceState();
+  renderShell();
+  focusWorkspaceTab(normalizedKey);
+  return true;
+}
+
+function splitWorkspaceTab(key, targetGroupId = "", side = "after") {
+  const normalizedKey = String(key || "");
+  if (!getWorkspaceTabByKey(normalizedKey) || normalizeWorkspaceGroups(state.workspaceGroups).length >= WORKSPACE_GROUP_MAX_COUNT) {
+    return false;
+  }
+
+  const targetGroup = getWorkspaceGroupById(targetGroupId) || getWorkspaceGroupContainingTab(normalizedKey) || getActiveWorkspaceGroup();
+  if (!targetGroup) {
+    return false;
+  }
+
+  const sourceGroup = getWorkspaceGroupContainingTab(normalizedKey);
+  if (sourceGroup?.id === targetGroup.id && sourceGroup.tabs.length < 2) {
+    return false;
+  }
+
+  removeWorkspaceTabFromGroups(normalizedKey);
+  const groups = normalizeWorkspaceGroups(state.workspaceGroups);
+  const targetIndex = Math.max(0, groups.findIndex((group) => group.id === targetGroup.id));
+  const insertIndex = clamp(targetIndex + (side === "before" ? 0 : 1), 0, groups.length);
+  groups.splice(insertIndex, 0, {
+    id: createWorkspaceGroupId(),
+    tabs: [normalizedKey],
+    activeKey: normalizedKey,
+    width: targetGroup.width || 1,
+  });
+  state.workspaceGroups = ensureWorkspaceGroupWidths(groups);
+  state.activeWorkspaceGroupId = state.workspaceGroups[insertIndex]?.id || "";
+  syncWorkspaceTabsOrderFromGroups();
+  saveWorkspaceState();
+  renderShell();
+  focusWorkspaceTab(normalizedKey);
+  return true;
+}
+
+function focusWorkspaceTab(key) {
+  const normalizedKey = String(key || "");
+  if (!normalizedKey) {
+    return;
+  }
+
+  window.requestAnimationFrame(() => {
+    document.querySelectorAll("[data-workspace-tab]").forEach((button) => {
+      if (button instanceof HTMLButtonElement && button.getAttribute("data-workspace-tab") === normalizedKey) {
+        button.focus();
+      }
+    });
+  });
+}
+
+function getWorkspaceTabDisplay(tab) {
+  if (tab.type === "session") {
+    const session = getSessionWorkspaceTab(tab.sessionId);
+    const status = session ? getSessionLabel(session) : null;
+    return {
+      icon: Bot,
+      label: session?.name || "Session",
+      meta: session?.providerLabel || "terminal",
+      status,
+      title: session ? `${session.name} · ${session.cwd}` : "Session",
+    };
+  }
+
+  if (tab.type === "browser-use") {
+    return {
+      icon: AppWindow,
+      label: tab.label || "Browser Use",
+      meta: "browser",
+      status: null,
+      title: tab.label || "Browser Use",
+    };
+  }
+
+  const config = getWorkspaceViewTabConfig(tab.view);
+  return {
+    ...config,
+    status: null,
+    title: `${config.label} · ${config.meta}`,
+  };
+}
+
+function renderWorkspaceTab(tab, group) {
+  const selected = group?.activeKey === tab.key;
+  const active = selected && group?.id === state.activeWorkspaceGroupId;
+  const display = getWorkspaceTabDisplay(tab);
+  const status = display.status;
+  const statusDot = status
+    ? `<span class="workspace-tab-status session-activity-dot ${escapeHtml(status.className)}" aria-hidden="true"${getSessionActivityStyle(status)}></span>`
+    : "";
+
+  return `
+    <div
+      class="workspace-tab ${active ? "is-active" : ""}"
+      title="${escapeHtml(display.title)}"
+      data-workspace-tab-item="${escapeHtml(tab.key)}"
+      data-workspace-group-tab-item="${escapeHtml(group?.id || "")}"
+    >
+      <button
+        class="workspace-tab-label"
+        type="button"
+        role="tab"
+        aria-selected="${selected ? "true" : "false"}"
+        data-workspace-tab="${escapeHtml(tab.key)}"
+        data-workspace-tab-group="${escapeHtml(group?.id || "")}"
+      >
+        <span class="workspace-tab-icon" aria-hidden="true">${renderIcon(display.icon)}</span>
+        <span class="workspace-tab-text">${escapeHtml(display.label)}</span>
+        ${statusDot}
+      </button>
+      <button
+        class="workspace-tab-close"
+        type="button"
+        aria-label="Close ${escapeHtml(display.label)}"
+        ${tooltipAttributes(`Close ${display.label}`)}
+        data-close-workspace-tab="${escapeHtml(tab.key)}"
+        data-close-workspace-tab-group="${escapeHtml(group?.id || "")}"
+      >${renderIcon(X)}</button>
+    </div>
+  `;
+}
+
+function renderWorkspaceTabs(group) {
+  const tabs = getWorkspaceGroupTabs(group);
+  const activeKey = group?.activeKey || tabs[0]?.key || "";
+  return `
+    <div class="workspace-tabs" aria-label="Workspace tabs">
+      <div class="workspace-tab-strip" data-workspace-tab-strip="${escapeHtml(group?.id || "")}" role="tablist">
+        ${tabs.map((tab) => renderWorkspaceTab(tab, group)).join("")}
+      </div>
+      <button class="icon-button workspace-tab-split" type="button" data-split-workspace-tab="${escapeHtml(activeKey)}" data-split-workspace-tab-group="${escapeHtml(group?.id || "")}" aria-label="Split ${escapeHtml(getWorkspaceTabDisplay(getWorkspaceTabByKey(activeKey) || { type: "view", view: "shell", key: "view:shell" }).label)} right" ${tooltipAttributes("Split right")} ${activeKey && normalizeWorkspaceGroups(state.workspaceGroups).length < WORKSPACE_GROUP_MAX_COUNT ? "" : "disabled"}>${renderIcon(GitFork)}</button>
+      <button class="icon-button workspace-tab-new" type="button" data-workspace-new-session aria-label="New Agent" ${tooltipAttributes("New Agent")}>${renderIcon(Plus)}</button>
+    </div>
+  `;
+}
+
+function renderWorkspaceGroupsGridStyle(groups) {
+  const columns = [];
+  groups.forEach((group, index) => {
+    columns.push(`minmax(260px, ${clamp(Number(group.width) || 1, WORKSPACE_GROUP_MIN_FRACTION, 6)}fr)`);
+    if (index < groups.length - 1) {
+      columns.push("6px");
+    }
+  });
+  return `grid-template-columns: ${columns.join(" ")};`;
+}
+
+function renderInactiveWorkspacePane(tab, group) {
+  const display = getWorkspaceTabDisplay(tab || { type: "view", view: "shell", key: "view:shell" });
+  return `
+    <button
+      class="workspace-inactive-pane"
+      type="button"
+      data-activate-workspace-group="${escapeHtml(group?.id || "")}"
+      aria-label="Focus ${escapeHtml(display.label)} pane"
+      ${tooltipAttributes(`Focus ${display.label}`)}
+    >
+      <span class="workspace-inactive-pane-icon" aria-hidden="true">${renderIcon(display.icon)}</span>
+      <span class="workspace-inactive-pane-copy">
+        <strong>${escapeHtml(display.label)}</strong>
+        <span>${escapeHtml(display.meta)}</span>
+      </span>
+    </button>
+  `;
+}
+
+function sanitizePassiveWorkspaceHtml(html) {
+  if (typeof document === "undefined") {
+    return html;
+  }
+
+  const template = document.createElement("template");
+  template.innerHTML = html;
+  template.content.querySelectorAll("*").forEach((element) => {
+    element.removeAttribute("id");
+    element.removeAttribute("for");
+    element.removeAttribute("aria-controls");
+    element.removeAttribute("aria-describedby");
+    element.removeAttribute("aria-labelledby");
+    Array.from(element.attributes).forEach((attribute) => {
+      if (attribute.name.startsWith("data-")) {
+        element.removeAttribute(attribute.name);
+      }
+    });
+  });
+  return template.innerHTML;
+}
+
+function renderPassiveWorkspacePane(tab, group, content, className = "", { sanitize = true } = {}) {
+  const display = getWorkspaceTabDisplay(tab || { type: "view", view: "shell", key: "view:shell" });
+  const passiveContent = sanitize ? sanitizePassiveWorkspaceHtml(content) : content;
+  return `
+    <div class="workspace-passive-pane ${escapeHtml(className)}" data-workspace-passive-pane="${escapeHtml(group?.id || "")}">
+      <div class="workspace-passive-pane-content" aria-hidden="true" inert>
+        ${passiveContent}
+      </div>
+      <button
+        class="workspace-passive-pane-focus"
+        type="button"
+        data-activate-workspace-group="${escapeHtml(group?.id || "")}"
+        aria-label="Focus ${escapeHtml(display.label)} pane"
+        ${tooltipAttributes(`Focus ${display.label}`)}
+      ></button>
+    </div>
+  `;
+}
+
+function renderPassiveWorkspaceView(tab) {
+  if (tab?.type === "browser-use") {
+    return renderBrowserUseView();
+  }
+
+  if (tab?.type !== "view") {
+    return "";
+  }
+
+  const view = normalizeWorkspaceView(tab.view);
+  if (view === "knowledge-base") {
+    return renderKnowledgeBaseView();
+  }
+  if (view === "agent-prompt") {
+    return renderAgentPromptView();
+  }
+  if (view === "search") {
+    return renderSearchView();
+  }
+  if (view === "plugins") {
+    return renderPluginsView();
+  }
+  if (view === "settings") {
+    return renderSettingsView();
+  }
+  if (view === "automations") {
+    return renderAutomationsView();
+  }
+  if (view === "system") {
+    return renderSystemView();
+  }
+  if (view === "browser-use") {
+    return renderBrowserUseView();
+  }
+  return "";
+}
+
+function renderInactiveWorkspaceGroupContent(tab, group) {
+  if (tab?.type === "view" && isVisualInterfaceView(tab.view)) {
+    return renderPassiveWorkspacePane(tab, group, renderPassiveSwarmGraphView(), "is-visual-preview", { sanitize: false });
+  }
+
+  const passiveView = renderPassiveWorkspaceView(tab);
+  if (passiveView) {
+    return renderPassiveWorkspacePane(tab, group, passiveView, "is-view-preview");
+  }
+
+  return renderInactiveWorkspacePane(tab, group);
+}
+
+function renderWorkspaceGroup(group, index, groups, activeSession) {
+  const active = group.id === state.activeWorkspaceGroupId;
+  const activeTab = getWorkspaceGroupActiveTab(group);
+  return `
+    <section
+      class="workspace-group ${active ? "is-active" : ""}"
+      data-workspace-group="${escapeHtml(group.id)}"
+      data-workspace-group-index="${index}"
+    >
+      ${renderWorkspaceTabs(group)}
+      <div class="workspace-content" data-workspace-group-content="${escapeHtml(group.id)}">
+        ${active ? renderTerminalPanel(activeSession) : renderInactiveWorkspaceGroupContent(activeTab, group)}
+      </div>
+    </section>
+    ${
+      index < groups.length - 1
+        ? `<div class="workspace-group-resizer" role="separator" aria-orientation="vertical" data-workspace-group-resizer data-left-workspace-group="${escapeHtml(group.id)}" data-right-workspace-group="${escapeHtml(groups[index + 1].id)}"></div>`
+        : ""
+    }
+  `;
+}
+
+function renderWorkspaceGroups(activeSession) {
+  const groups = getWorkspaceGroupsForRender();
+  return `
+    <div class="workspace-groups" style="${renderWorkspaceGroupsGridStyle(groups)}">
+      ${groups.map((group, index) => renderWorkspaceGroup(group, index, groups, activeSession)).join("")}
+    </div>
+  `;
+}
+
+function renderWorkspaceArea(activeSession) {
+  return `
+    <section class="workspace-area">
+      ${renderWorkspaceGroups(activeSession)}
+    </section>
+  `;
+}
+
 function renderTerminalPanel(activeSession) {
   if (state.currentView === "knowledge-base") {
     return renderKnowledgeBaseView();
@@ -13261,13 +17120,88 @@ function getAgentPromptPresetList() {
   return presets;
 }
 
+function getOccupationHatKind(occupation = {}) {
+  const value = `${occupation?.id || ""} ${occupation?.label || ""}`.toLowerCase();
+  if (value.includes("engineer") || value.includes("builder") || value.includes("developer")) {
+    return "engineer";
+  }
+  if (value.includes("custom") || value.includes("personal")) {
+    return "custom";
+  }
+  if (value.includes("researcher") || value.includes("research") || value.includes("scientist")) {
+    return "researcher";
+  }
+  return "default";
+}
+
+function getAgentPromptPresetHatKind(preset) {
+  return getOccupationHatKind({ id: preset?.id, label: preset?.label });
+}
+
+function getAgentPromptPreviewHatColors() {
+  const palette = getVisualGameProviderAgentPalette(state.defaultProviderId) || VISUAL_GAME_AGENT_PALETTES[0];
+  return getVisualGameAgentHatColors(palette);
+}
+
+function renderOccupationHat(kind, colors = null) {
+  const normalizedKind = ["researcher", "engineer", "custom", "default"].includes(kind) ? kind : "default";
+  const className = `occupation-hat occupation-hat-${normalizedKind}`;
+  const style = colors
+    ? ` style="--hat-fill: ${escapeHtml(colors.fill)}; --hat-dark: ${escapeHtml(colors.dark)};"`
+    : "";
+
+  if (normalizedKind === "researcher") {
+    return `
+      <svg class="${className}"${style} viewBox="0 0 64 36" aria-hidden="true" focusable="false">
+        <path class="occupation-hat-shadow" d="M14 25h36l-4 4H18z" />
+        <path class="occupation-hat-fill" d="M14 24c0-11 8-18 18-18s18 7 18 18z" />
+        <path class="occupation-hat-dark" d="M12 21h40v8H12z" />
+        <path class="occupation-hat-highlight" d="M24 12h16" />
+      </svg>
+    `;
+  }
+
+  if (normalizedKind === "engineer") {
+    return `
+      <svg class="${className}"${style} viewBox="0 0 64 36" aria-hidden="true" focusable="false">
+        <path class="occupation-hat-shadow" d="M10 25h44l-4 4H14z" />
+        <path class="occupation-hat-fill" d="M20 7h24v17H20z" />
+        <path class="occupation-hat-dark" d="M8 22h48v7H8z" />
+        <path class="occupation-hat-highlight" d="M24 12h16" />
+      </svg>
+    `;
+  }
+
+  if (normalizedKind === "custom") {
+    return `
+      <svg class="${className}"${style} viewBox="0 0 64 36" aria-hidden="true" focusable="false">
+        <path class="occupation-hat-shadow" d="M10 25h44l-4 4H14z" />
+        <path class="occupation-hat-fill" d="M32 5 49 24H15z" />
+        <path class="occupation-hat-dark" d="M8 22h48v7H8z" />
+        <path class="occupation-hat-highlight" d="M32 12v8" />
+      </svg>
+    `;
+  }
+
+  return `
+    <svg class="${className}"${style} viewBox="0 0 64 36" aria-hidden="true" focusable="false">
+      <path class="occupation-hat-shadow" d="M10 25h44l-4 4H14z" />
+      <path class="occupation-hat-fill" d="M20 8h24v16H20z" />
+      <path class="occupation-hat-dark" d="M8 22h48v7H8z" />
+      <path class="occupation-hat-highlight" d="M24 13h16" />
+    </svg>
+  `;
+}
+
 function renderAgentPromptPresetBar() {
   const presets = getAgentPromptPresetList();
+  const hatColors = getAgentPromptPreviewHatColors();
 
   return presets
     .map(
       (preset) => {
         const selected = preset.id === state.agentPromptSelectedId;
+        const hatKind = getAgentPromptPresetHatKind(preset);
         return `
         <button
           class="agent-prompt-preset-button${selected ? " is-selected" : ""}"
@@ -13276,7 +17210,8 @@ function renderAgentPromptPresetBar() {
           aria-checked="${selected ? "true" : "false"}"
           data-agent-prompt-preset="${escapeHtml(preset.id)}"
         >
-          ${escapeHtml(preset.label || preset.id)}
+          <span class="agent-prompt-preset-label">${escapeHtml(preset.label || preset.id)}</span>
+          ${renderOccupationHat(hatKind, hatColors)}
         </button>
       `;
       },
@@ -13310,7 +17245,7 @@ function renderAgentPromptView() {
   const selectedPreset = getSelectedAgentPromptPreset();
   const presetDescription =
     selectedPreset?.description ||
-    (state.agentPromptEditable ? "custom prompt selected" : "built-in prompt selected");
+    (state.agentPromptEditable ? "custom occupation selected" : "built-in occupation selected");
   const editorAttributes = `
               spellcheck="false"
               autocapitalize="none"
@@ -13323,11 +17258,11 @@ function renderAgentPromptView() {
       <div class="dashboard-toolbar">
         <button class="icon-button hidden-desktop" type="button" id="open-sidebar" aria-label="Open sidebar" ${tooltipAttributes("Open sidebar")}>${renderIcon(Menu)}</button>
         <div class="dashboard-copy">
-          <strong>Agent Prompt</strong>
-          <div class="terminal-meta">shared instructions injected into Codex, Claude, Gemini, and OpenCode sessions</div>
+          <strong>Occupations</strong>
+          <div class="terminal-meta">shared instruction sets injected into Codex, Claude, Gemini, and OpenCode sessions</div>
         </div>
         <div class="dashboard-actions">
-          <button class="icon-button toolbar-control refresh-icon-button" type="button" id="refresh-agent-prompt" aria-label="Reload agent prompt from disk" ${tooltipAttributes("Reload agent prompt from disk")}>${renderIcon(RefreshCw)}</button>
+          <button class="icon-button toolbar-control refresh-icon-button" type="button" id="refresh-agent-prompt" aria-label="Reload occupations from disk" ${tooltipAttributes("Reload occupations from disk")}>${renderIcon(RefreshCw)}</button>
         </div>
       </div>
       <div class="dashboard-range agent-prompt-summary">
@@ -13339,19 +17274,19 @@ function renderAgentPromptView() {
         <form class="agent-prompt-editor-card" id="agent-prompt-form">
           <div class="agent-prompt-card-head">
             <div>
-              <strong>Prompt</strong>
+              <strong>Occupation</strong>
               <div class="knowledge-base-panel-meta">${escapeHtml(presetDescription)}</div>
             </div>
             <div class="agent-prompt-controls">
-              <div class="agent-prompt-preset-bar" role="radiogroup" aria-label="Prompt occupation">
+              <div class="agent-prompt-preset-bar" role="radiogroup" aria-label="Occupation">
                 ${renderAgentPromptPresetBar()}
               </div>
               <button class="primary-button toolbar-control" type="submit" ${state.agentPromptEditable ? "" : "disabled"}>save custom</button>
             </div>
           </div>
           <div class="agent-prompt-meta-row">
-            <span>wiki root: ${escapeHtml(state.agentPromptWikiRoot)}</span>
-            <span>${state.agentPromptEditable ? `custom source: ${escapeHtml(state.agentPromptCustomPath || ".vibe-research/custom-agent-prompt.md")}` : "built-in prompt"}</span>
+            <span>Library root: ${escapeHtml(state.agentPromptWikiRoot)}</span>
+            <span>${state.agentPromptEditable ? `custom source: ${escapeHtml(state.agentPromptCustomPath || ".vibe-research/custom-agent-prompt.md")}` : "built-in occupation"}</span>
           </div>
           ${renderLineNumberEditor({
             id: "agent-prompt-textarea",
@@ -13366,7 +17301,7 @@ function renderAgentPromptView() {
           <div class="agent-prompt-card-head">
             <div>
               <strong>Managed Files</strong>
-              <div class="knowledge-base-panel-meta">where the prompt is synced for agents</div>
+              <div class="knowledge-base-panel-meta">where occupations are synced for agents</div>
             </div>
           </div>
           <div class="agent-prompt-target-list" id="agent-prompt-targets">${renderAgentPromptTargets()}</div>
@@ -13465,7 +17400,7 @@ function renderFolderPickerModal() {
   const chooseLabel = isSessionTarget
     ? "choose folder"
     : state.folderPicker.target === "wiki-onboarding"
-      ? "use this brain"
+      ? "use this Library"
       : "choose this folder";
   const dragStyle = renderFolderPickerDragStyle();
 
@@ -13643,14 +17578,21 @@ function renderUpdateBanner() {
     return "";
   }
 
-  const current = update.currentTag || update.currentVersion || update.currentShort || "current";
   const latest = update.latestVersion || update.latestTag || update.latestShort || "latest";
-  const branch = update.branch || "main";
   const isRelease = update.targetType === "release";
+
+  if (update.canUpdate && isRelease) {
+    return `
+      <button class="primary-button update-button is-compact" type="button" id="update-app">
+        ${escapeHtml(`Update to ${latest}`)}
+      </button>
+    `;
+  }
+
+  const current = update.currentTag || update.currentVersion || update.currentShort || "current";
+  const branch = update.branch || "main";
   const detail = update.canUpdate
-    ? isRelease
-      ? `${current} -> ${latest}${update.latestName && update.latestName !== latest ? ` · ${update.latestName}` : ""}`
-      : `${branch}: ${current} -> ${latest}`
+    ? `${branch}: ${current} -> ${latest}`
     : update.reason || "This checkout cannot be updated automatically.";
   const releaseLink =
     isRelease && update.releaseUrl
@@ -13672,24 +17614,24 @@ function renderUpdateBanner() {
 }
 
 function renderBrainSetupScreen() {
-  document.title = "Set Brain Folder · Vibe Research";
+  document.title = "Set Library Folder · Vibe Research";
 
   app.innerHTML = `
     <main class="screen brain-setup-screen">
       <section class="brain-setup-card" aria-labelledby="brain-setup-title">
         <span class="brain-setup-eyebrow">Vibe Research</span>
-        <h1 id="brain-setup-title">Choose your brain</h1>
+        <h1 id="brain-setup-title">Choose your Library</h1>
         <p>
-          Vibe Research needs one markdown wiki folder for shared memory. Select an
+          Vibe Research needs one markdown Library folder for shared memory. Select an
           existing local folder, or clone one from GitHub.
         </p>
         <div class="brain-setup-picker">
-          <h2>Select a brain folder</h2>
+          <h2>Select a Library folder</h2>
           <p>
             If the folder is already a git repo, Vibe Research will detect its origin
             remote and use it for private backups.
           </p>
-          <label class="field-label" for="brain-folder-input">Brain folder</label>
+          <label class="field-label" for="brain-folder-input">Library folder</label>
           <div class="folder-input-row">
             <input
               id="brain-folder-input"
@@ -13713,7 +17655,7 @@ function renderBrainSetupScreen() {
             <h2>Insert GitHub URL</h2>
             <p>
               Paste a GitHub repo URL and Vibe Research will clone it locally, set it
-              as the active brain, and use its origin remote for backups.
+              as the active Library, and use its origin remote for backups.
             </p>
           </div>
           <label class="field-label" for="brain-git-url">GitHub repo URL</label>
@@ -13723,7 +17665,7 @@ function renderBrainSetupScreen() {
             name="remoteUrl"
             type="text"
             value="${escapeHtml(state.brainSetupCloneUrl)}"
-            placeholder="https://github.com/you/private-mac-brain.git"
+            placeholder="https://github.com/you/private-library.git"
             autocomplete="off"
             autocorrect="off"
             autocapitalize="none"
@@ -13781,20 +17723,24 @@ function renderShell() {
   }
 
   const viewTitles = {
-    "knowledge-base": "Knowledge Base · Vibe Research",
-    "agent-prompt": "Agent Prompt · Vibe Research",
+    "knowledge-base": "Library · Vibe Research",
+    "agent-prompt": "Occupations · Vibe Research",
     search: "Search · Vibe Research",
-    plugins: "Plugins · Vibe Research",
+    plugins: "Buildings · Vibe Research",
     settings: "Settings · Vibe Research",
     automations: "Automations · Vibe Research",
     system: "System · Vibe Research",
-    "visual-interface": "Visual Interface · Vibe Research",
-    swarm: "Visual Interface · Vibe Research",
+    "visual-interface": "Agent Town · Vibe Research",
+    swarm: "Agent Town · Vibe Research",
     "browser-use": "Browser Use · Vibe Research",
   };
-  document.title = viewTitles[state.currentView] || "Vibe Research";
+  const detailPlugin = state.currentView === "plugins" ? getCurrentPluginDetail() : null;
+  document.title = detailPlugin ? `${detailPlugin.name} · Buildings · Vibe Research` : viewTitles[state.currentView] || "Vibe Research";
+  ensureVisualGameSimulationLoop();
 
   const activeSession = state.sessions.find((session) => session.id === state.activeSessionId) || null;
+  syncWorkspaceTabs({ persist: true });
+  syncWorkspaceTabGroups({ persist: true });
 
   app.innerHTML = `
     <main class="screen app-shell ${state.sidebarCollapsed ? "is-sidebar-collapsed" : ""}" style="${renderAppShellStyle()}">
@@ -13873,7 +17819,7 @@ function renderShell() {
         ${renderSidebarResizeHandle()}
       </aside>
 
-      ${renderTerminalPanel(activeSession)}
+      ${renderWorkspaceArea(activeSession)}
       ${renderFolderPickerModal()}
       ${renderSystemToasts()}
     </main>
@@ -13883,6 +17829,7 @@ function renderShell() {
 
   bindShellEvents();
 
+  const hasVisualGameCanvas = document.querySelector("#visual-game-canvas") instanceof HTMLCanvasElement;
   if (state.currentView === "shell") {
     mountTerminal();
     refreshShellUi();
@@ -13897,6 +17844,9 @@ function renderShell() {
     if (isVisualInterfaceView()) {
       mountVisualPixelGame();
     }
+  }
+  if (hasVisualGameCanvas && !isVisualInterfaceView()) {
+    mountVisualPixelGame();
   }
 
   void refreshOpenFileTree();
@@ -14021,6 +17971,10 @@ function flushDeferredSelectableRefreshes({ force = false } = {}) {
 
   if (refreshes.has("browser-use")) {
     refreshBrowserUsePluginUi({ force: true });
+  }
+
+  if (refreshes.has("ottoauth")) {
+    refreshOttoAuthPluginUi({ force: true });
   }
 
   if (refreshes.has("videomemory")) {
@@ -14386,6 +18340,7 @@ function bindSessionEvents() {
       try {
         await fetchJson(`/api/sessions/${sessionId}`, { method: "DELETE" });
         state.sessions = state.sessions.filter((session) => session.id !== sessionId);
+        const visualSelectionPruned = pruneVisualGameSessionSelection();
 
         if (state.activeSessionId === sessionId) {
           closeWebsocket();
@@ -14399,6 +18354,11 @@ function bindSessionEvents() {
           if (state.activeSessionId) {
             connectToSession(state.activeSessionId);
           }
+          return;
+        }
+
+        if (visualSelectionPruned && isVisualInterfaceView()) {
+          renderShell();
           return;
         }
 
@@ -14501,31 +18461,64 @@ function refreshPluginSearchUi() {
 
   results.innerHTML = renderPluginCards();
   bindPluginCardEvents();
+  bindBrowserUseForm();
+  bindOttoAuthForm();
+  bindCommunicationsForm();
+  bindVideoMemoryForm();
 }
 
-async function setPluginInstalled(pluginId, installed) {
+async function setPluginInstalled(pluginId, installed, { force = false } = {}) {
   const plugin = getPluginById(pluginId);
   if (!plugin) {
     return;
+  }
+  const normalizedPluginId = getPluginId(plugin);
+  const detailOpen = state.currentView === "plugins" && state.pluginDetailId === normalizedPluginId;
+  const buildingOpen = isVisualInterfaceView() && state.visualGame.selectedBuildingId === normalizedPluginId;
+  const surfaceOpen = detailOpen || buildingOpen;
+
+  if (isPluginSystemApp(plugin)) {
+    state.pluginOnboardingOpenId = "";
+    if (surfaceOpen) {
+      renderShell();
+    } else {
+      refreshPluginSearchUi();
+    }
+    return;
+  }
+
+  if (installed && hasPluginSetupFlow(plugin) && !force) {
+    if (buildingOpen) {
+      renderShell();
+      return;
+    }
+    openPluginDetail(pluginId);
+    return;
+  }
+
+  if (installed && getPluginOnboarding(plugin)) {
+    state.pluginOnboardingOpenId = "";
+  } else if (!installed && state.pluginOnboardingOpenId === pluginId) {
+    state.pluginOnboardingOpenId = "";
   }
 
   state.pluginInstallActions = {
     ...state.pluginInstallActions,
     [pluginId]: installed ? "installing" : "uninstalling",
   };
-  refreshPluginSearchUi();
+  if (surfaceOpen) {
+    renderShell();
+  } else {
+    refreshPluginSearchUi();
+  }
 
   try {
     const body = {
       installedPluginIds: getUpdatedInstalledPluginIds(pluginId, installed),
     };
-
-    if (pluginId === "browser-use") {
-      body.browserUseEnabled = installed;
-    }
-
-    if (pluginId === "videomemory") {
-      body.videoMemoryEnabled = installed;
+    const enabledSetting = String(plugin.install?.enabledSetting || "").trim();
+    if (enabledSetting) {
+      body[enabledSetting] = installed;
     }
 
     const [payload] = await Promise.all([
@@ -14553,18 +18546,79 @@ async function setPluginInstalled(pluginId, installed) {
       return;
     }
 
-    refreshPluginSearchUi();
+    if (surfaceOpen) {
+      renderShell();
+    } else {
+      refreshPluginSearchUi();
+    }
 
     refreshBrowserUsePluginUi({ force: true });
+    refreshOttoAuthPluginUi({ force: true });
+    refreshCommunicationsPluginUi({ force: true });
     refreshVideoMemoryPluginUi({ force: true });
   } catch (error) {
     delete state.pluginInstallActions[pluginId];
-    refreshPluginSearchUi();
+    if (surfaceOpen) {
+      renderShell();
+    } else {
+      refreshPluginSearchUi();
+    }
     window.alert(error.message);
   }
 }
 
 function bindPluginCardEvents() {
+  document.querySelectorAll("[data-plugin-open]").forEach((button) => {
+    button.addEventListener("click", () => {
+      if (!(button instanceof HTMLButtonElement)) {
+        return;
+      }
+
+      openPluginDetail(button.getAttribute("data-plugin-open") || "");
+    });
+  });
+
+  document.querySelectorAll("[data-plugin-detail-back]").forEach((button) => {
+    button.addEventListener("click", () => {
+      closePluginDetail();
+    });
+  });
+
+  document.querySelectorAll("[data-plugin-cancel-install]").forEach((button) => {
+    button.addEventListener("click", () => {
+      if (!(button instanceof HTMLButtonElement)) {
+        return;
+      }
+
+      const pluginId = button.getAttribute("data-plugin-cancel-install") || "";
+      if (isVisualInterfaceView() && state.visualGame.selectedBuildingId === pluginId) {
+        clearVisualGameSelection();
+        return;
+      }
+
+      if (state.pluginDetailId === pluginId) {
+        closePluginDetail();
+        return;
+      }
+
+      if (state.pluginOnboardingOpenId === pluginId) {
+        state.pluginOnboardingOpenId = "";
+      }
+      refreshPluginSearchUi();
+    });
+  });
+
+  document.querySelectorAll("[data-plugin-finish-install]").forEach((button) => {
+    button.addEventListener("click", () => {
+      if (!(button instanceof HTMLButtonElement)) {
+        return;
+      }
+
+      const pluginId = button.getAttribute("data-plugin-finish-install") || "";
+      void setPluginInstalled(pluginId, true, { force: true });
+    });
+  });
+
   document.querySelectorAll("[data-plugin-install]").forEach((button) => {
     button.addEventListener("click", () => {
       if (!(button instanceof HTMLButtonElement)) {
@@ -14649,29 +18703,31 @@ function bindAutomationEvents() {
     });
   });
 
-  document.querySelector("#automation-create-form")?.addEventListener("submit", async (event) => {
-    event.preventDefault();
-    const form = event.currentTarget;
-    if (!(form instanceof HTMLFormElement)) {
-      return;
-    }
-
-    const button = form.querySelector("button[type='submit']");
-    if (button instanceof HTMLButtonElement) {
-      button.disabled = true;
-      button.textContent = "creating...";
-    }
-
-    try {
-      await createAgentAutomationFromForm(form);
-      renderShell();
-    } catch (error) {
-      if (button instanceof HTMLButtonElement) {
-        button.disabled = false;
-        button.textContent = "create automation";
+  document.querySelectorAll(".automation-create-form").forEach((formElement) => {
+    formElement.addEventListener("submit", async (event) => {
+      event.preventDefault();
+      const form = event.currentTarget;
+      if (!(form instanceof HTMLFormElement)) {
+        return;
       }
-      window.alert(error.message);
-    }
+
+      const button = form.querySelector("button[type='submit']");
+      if (button instanceof HTMLButtonElement) {
+        button.disabled = true;
+        button.textContent = "creating...";
+      }
+
+      try {
+        await createAgentAutomationFromForm(form);
+        renderShell();
+      } catch (error) {
+        if (button instanceof HTMLButtonElement) {
+          button.disabled = false;
+          button.textContent = "create automation";
+        }
+        window.alert(error.message);
+      }
+    });
   });
 
   document.querySelectorAll("[data-delete-agent-automation]").forEach((button) => {
@@ -14707,13 +18763,53 @@ function refreshBrowserUsePluginUi({ force = false } = {}) {
   }
 
   const activeElement = document.activeElement;
-  if (activeElement instanceof HTMLElement && activeElement.closest("#browser-use-form")) {
+  if (activeElement instanceof HTMLElement && activeElement.closest(".browser-use-form")) {
     return;
   }
 
   card.outerHTML = renderBrowserUsePluginPanel();
   bindBrowserUseForm();
   bindAgentCredentialsForm();
+}
+
+function refreshOttoAuthPluginUi({ force = false } = {}) {
+  const card = document.querySelector(".ottoauth-plugin-card");
+  if (!card) {
+    return;
+  }
+
+  if (shouldDeferSelectableRefresh({ force })) {
+    deferSelectableRefresh("ottoauth");
+    return;
+  }
+
+  const activeElement = document.activeElement;
+  if (activeElement instanceof HTMLElement && activeElement.closest(".ottoauth-form")) {
+    return;
+  }
+
+  card.outerHTML = renderOttoAuthPluginPanel();
+  bindOttoAuthForm();
+}
+
+function refreshCommunicationsPluginUi({ force = false } = {}) {
+  const card = document.querySelector(".communications-plugin-card");
+  if (!card) {
+    return;
+  }
+
+  if (shouldDeferSelectableRefresh({ force })) {
+    deferSelectableRefresh("communications");
+    return;
+  }
+
+  const activeElement = document.activeElement;
+  if (activeElement instanceof HTMLElement && activeElement.closest(".communications-form")) {
+    return;
+  }
+
+  card.outerHTML = renderCommunicationsPluginPanel();
+  bindCommunicationsForm();
 }
 
 function refreshVideoMemoryPluginUi({ force = false } = {}) {
@@ -14728,7 +18824,7 @@ function refreshVideoMemoryPluginUi({ force = false } = {}) {
   }
 
   const activeElement = document.activeElement;
-  if (activeElement instanceof HTMLElement && activeElement.closest("#videomemory-form")) {
+  if (activeElement instanceof HTMLElement && activeElement.closest(".videomemory-form")) {
     return;
   }
 
@@ -14737,7 +18833,7 @@ function refreshVideoMemoryPluginUi({ force = false } = {}) {
 }
 
 function bindBrowserUseForm() {
-  document.querySelector("#browser-use-form")?.addEventListener("submit", async (event) => {
+  document.querySelectorAll(".browser-use-form").forEach((formElement) => formElement.addEventListener("submit", async (event) => {
     event.preventDefault();
     const form = event.currentTarget;
 
@@ -14761,11 +18857,67 @@ function bindBrowserUseForm() {
         button.textContent = "save browser use";
       }
     }
-  });
+  }));
+}
+
+function bindOttoAuthForm() {
+  document.querySelectorAll(".ottoauth-form").forEach((formElement) => formElement.addEventListener("submit", async (event) => {
+    event.preventDefault();
+    const form = event.currentTarget;
+
+    if (!(form instanceof HTMLFormElement)) {
+      return;
+    }
+
+    const button = form.querySelector("[data-ottoauth-action]");
+    if (button instanceof HTMLButtonElement) {
+      button.disabled = true;
+      button.textContent = "saving...";
+    }
+
+    try {
+      await setupOttoAuthFromForm(form);
+      renderShell();
+    } catch (error) {
+      window.alert(error.message);
+      if (button instanceof HTMLButtonElement) {
+        button.disabled = false;
+        button.textContent = "save OttoAuth";
+      }
+    }
+  }));
+}
+
+function bindCommunicationsForm() {
+  document.querySelectorAll(".communications-form").forEach((formElement) => formElement.addEventListener("submit", async (event) => {
+    event.preventDefault();
+    const form = event.currentTarget;
+
+    if (!(form instanceof HTMLFormElement)) {
+      return;
+    }
+
+    const button = form.querySelector("[data-communications-action]");
+    if (button instanceof HTMLButtonElement) {
+      button.disabled = true;
+      button.textContent = "saving...";
+    }
+
+    try {
+      await setupCommunicationsFromForm(form);
+      renderShell();
+    } catch (error) {
+      window.alert(error.message);
+      if (button instanceof HTMLButtonElement) {
+        button.disabled = false;
+        button.textContent = "save communications";
+      }
+    }
+  }));
 }
 
 function bindVideoMemoryForm() {
-  document.querySelector("#videomemory-form")?.addEventListener("submit", async (event) => {
+  document.querySelectorAll(".videomemory-form").forEach((formElement) => formElement.addEventListener("submit", async (event) => {
     event.preventDefault();
     const form = event.currentTarget;
 
@@ -14789,7 +18941,7 @@ function bindVideoMemoryForm() {
         button.textContent = "save VideoMemory";
       }
     }
-  });
+  }));
 }
 
 function bindAgentCredentialsForm() {
@@ -14837,7 +18989,7 @@ function refreshUpdateUi({ force = false } = {}) {
 
 function refreshKnowledgeSettingsUi() {
   const wikiBackupText = getWikiBackupStatusText();
-  document.querySelectorAll("#wiki-backup-status, #wiki-backup-settings-status").forEach((element) => {
+  document.querySelectorAll("#wiki-backup-status, #wiki-backup-settings-status, #wiki-remote-settings-status").forEach((element) => {
     element.textContent = wikiBackupText;
   });
 
@@ -14910,7 +19062,7 @@ function bindSystemToastEvents() {
               : state.defaultProviderId;
           await createSessionInFolder(state.settings.wikiPath, {
             providerId,
-            name: "fix wiki conflict",
+            name: "fix Library conflict",
           });
           if (key) {
             state.systemToastDismissedKeys.add(key);
@@ -15366,7 +19518,40 @@ function bindKnowledgeBaseNoteOpenEvents() {
   });
 }
 
+function bindKnowledgeBaseSearchInputEvents(root = document) {
+  root.querySelectorAll(".knowledge-base-search-input").forEach((inputElement) => {
+    inputElement.oninput = (event) => {
+      const input = event.currentTarget;
+      if (!(input instanceof HTMLInputElement)) {
+        return;
+      }
+
+      state.knowledgeBase.searchQuery = input.value;
+      refreshKnowledgeBaseSearchUi();
+    };
+  });
+}
+
+function bindVisualBuildingLibraryEvents() {
+  const libraryPanel = document.querySelector(".visual-building-library-panel");
+  if (libraryPanel) {
+    bindKnowledgeBaseSearchInputEvents(libraryPanel);
+  }
+
+  document.querySelectorAll("[data-kb-building-note]").forEach((button) => {
+    button.onclick = async () => {
+      await openKnowledgeBaseNoteInBuildingPanel(button.getAttribute("data-kb-building-note") || "");
+    };
+  });
+}
+
 function refreshKnowledgeBaseSearchUi() {
+  document.querySelectorAll(".knowledge-base-search-input").forEach((input) => {
+    if (input instanceof HTMLInputElement && input.value !== state.knowledgeBase.searchQuery) {
+      input.value = state.knowledgeBase.searchQuery;
+    }
+  });
+
   document.querySelectorAll(".knowledge-base-search-count").forEach((element) => {
     element.textContent = getKnowledgeBaseSearchResultLabel();
   });
@@ -15375,22 +19560,19 @@ function refreshKnowledgeBaseSearchUi() {
     element.innerHTML = renderKnowledgeBaseNoteList();
   });
 
+  document.querySelectorAll(".visual-building-library-note-list").forEach((element) => {
+    element.innerHTML = renderKnowledgeBaseBuildingNoteList();
+  });
+
   bindKnowledgeBaseNoteOpenEvents();
+  bindVisualBuildingLibraryEvents();
 }
 
 function bindKnowledgeBaseEvents() {
   bindKnowledgeBaseNoteOpenEvents();
   bindSystemToastEvents();
 
-  document.querySelector("#knowledge-base-search")?.addEventListener("input", (event) => {
-    const input = event.currentTarget;
-    if (!(input instanceof HTMLInputElement)) {
-      return;
-    }
-
-    state.knowledgeBase.searchQuery = input.value;
-    refreshKnowledgeBaseSearchUi();
-  });
+  bindKnowledgeBaseSearchInputEvents();
 
   document.querySelector("#edit-knowledge-base-note")?.addEventListener("click", () => {
     startKnowledgeBaseNoteEdit();
@@ -15775,13 +19957,780 @@ function bindImagePreviewEvents() {
   });
 }
 
+let openFileTabDragState = null;
+let openFileTabClickSuppressPath = "";
+let openFileTabClickSuppressUntil = 0;
+
+function getOpenFileTabPathFromElement(element) {
+  if (!(element instanceof HTMLElement)) {
+    return "";
+  }
+
+  return normalizeFileTreePath(element.getAttribute("data-file-tab-item"));
+}
+
+function clearOpenFileTabDropMarkers() {
+  document.querySelectorAll(".file-preview-tab.is-drop-before, .file-preview-tab.is-drop-after").forEach((tab) => {
+    tab.classList.remove("is-drop-before", "is-drop-after");
+  });
+}
+
+function setOpenFileTabDropMarker(target) {
+  clearOpenFileTabDropMarkers();
+  if (!target?.path) {
+    return;
+  }
+
+  document.querySelectorAll("[data-file-tab-item]").forEach((tab) => {
+    if (!(tab instanceof HTMLElement) || getOpenFileTabPathFromElement(tab) !== target.path) {
+      return;
+    }
+
+    tab.classList.add(target.position === "after" ? "is-drop-after" : "is-drop-before");
+  });
+}
+
+function getOpenFileTabDropTarget(clientX, clientY, draggedPath) {
+  const strip = document.querySelector(".file-preview-tab-strip");
+  if (!(strip instanceof HTMLElement)) {
+    return null;
+  }
+
+  const draggedTabPath = normalizeFileTreePath(draggedPath);
+  const items = Array.from(strip.querySelectorAll("[data-file-tab-item]")).filter((item) => {
+    const path = getOpenFileTabPathFromElement(item);
+    return item instanceof HTMLElement && path && path !== draggedTabPath;
+  });
+  if (!items.length) {
+    return null;
+  }
+
+  const hoveredElement = document.elementFromPoint(clientX, clientY);
+  const hoveredTab = hoveredElement instanceof Element ? hoveredElement.closest("[data-file-tab-item]") : null;
+  if (hoveredTab instanceof HTMLElement && strip.contains(hoveredTab)) {
+    const path = getOpenFileTabPathFromElement(hoveredTab);
+    if (path && path !== draggedTabPath) {
+      const rect = hoveredTab.getBoundingClientRect();
+      return {
+        path,
+        position: clientX > rect.left + rect.width / 2 ? "after" : "before",
+      };
+    }
+  }
+
+  for (const item of items) {
+    if (!(item instanceof HTMLElement)) {
+      continue;
+    }
+
+    const rect = item.getBoundingClientRect();
+    if (clientX < rect.left + rect.width / 2) {
+      return {
+        path: getOpenFileTabPathFromElement(item),
+        position: "before",
+      };
+    }
+  }
+
+  const lastItem = items[items.length - 1];
+  return {
+    path: getOpenFileTabPathFromElement(lastItem),
+    position: "after",
+  };
+}
+
+function suppressOpenFileTabClick(relativePath) {
+  openFileTabClickSuppressPath = normalizeFileTreePath(relativePath);
+  openFileTabClickSuppressUntil = getUiNow() + 350;
+}
+
+function shouldSuppressOpenFileTabClick(relativePath) {
+  return (
+    openFileTabClickSuppressPath === normalizeFileTreePath(relativePath) &&
+    getUiNow() < openFileTabClickSuppressUntil
+  );
+}
+
+function finishOpenFileTabReorder(event, { cancel = false } = {}) {
+  const dragState = openFileTabDragState;
+  if (!dragState || dragState.pointerId !== event.pointerId) {
+    return;
+  }
+
+  openFileTabDragState = null;
+  dragState.controller?.abort();
+  dragState.item?.classList.remove("is-dragging");
+  dragState.strip?.classList.remove("is-reordering");
+  document.body.classList.remove("is-reordering-file-tabs");
+  clearOpenFileTabDropMarkers();
+
+  try {
+    dragState.item?.releasePointerCapture?.(event.pointerId);
+  } catch {
+    // Pointer capture release is best-effort; the drag has already ended.
+  }
+
+  if (!dragState.dragging) {
+    return;
+  }
+
+  suppressOpenFileTabClick(dragState.path);
+  event.preventDefault();
+
+  if (cancel) {
+    return;
+  }
+
+  const target =
+    dragState.target ||
+    getOpenFileTabDropTarget(event.clientX, event.clientY, dragState.path);
+  if (target?.path) {
+    reorderOpenFileTab(dragState.path, target.path, target.position);
+  }
+}
+
+function beginOpenFileTabReorder(event) {
+  if (event.button !== undefined && event.button !== 0) {
+    return;
+  }
+
+  const target = event.target;
+  if (!(target instanceof Element) || target.closest("[data-close-file-tab]")) {
+    return;
+  }
+
+  const item = target.closest("[data-file-tab-item]");
+  const strip = event.currentTarget;
+  if (!(item instanceof HTMLElement) || !(strip instanceof HTMLElement) || !strip.contains(item)) {
+    return;
+  }
+
+  const path = getOpenFileTabPathFromElement(item);
+  if (!path || state.openFileTabs.length < 2) {
+    return;
+  }
+
+  const controller = new AbortController();
+  openFileTabDragState = {
+    captured: false,
+    controller,
+    dragging: false,
+    item,
+    path,
+    pointerId: event.pointerId,
+    startClientX: event.clientX,
+    startClientY: event.clientY,
+    strip,
+    target: null,
+  };
+
+  const onPointerMove = (moveEvent) => {
+    const dragState = openFileTabDragState;
+    if (!dragState || dragState.pointerId !== moveEvent.pointerId) {
+      return;
+    }
+
+    const deltaX = moveEvent.clientX - dragState.startClientX;
+    const deltaY = moveEvent.clientY - dragState.startClientY;
+    if (!dragState.dragging && Math.hypot(deltaX, deltaY) < FILE_PREVIEW_TAB_REORDER_DRAG_SLOP_PX) {
+      return;
+    }
+
+    if (!dragState.dragging) {
+      dragState.dragging = true;
+      dragState.item.classList.add("is-dragging");
+      dragState.strip.classList.add("is-reordering");
+      document.body.classList.add("is-reordering-file-tabs");
+      try {
+        dragState.item.setPointerCapture(moveEvent.pointerId);
+        dragState.captured = true;
+      } catch {
+        // Window listeners keep the drag alive if capture is unavailable.
+      }
+    }
+
+    dragState.target = getOpenFileTabDropTarget(moveEvent.clientX, moveEvent.clientY, dragState.path);
+    setOpenFileTabDropMarker(dragState.target);
+    moveEvent.preventDefault();
+  };
+
+  const onPointerUp = (upEvent) => finishOpenFileTabReorder(upEvent);
+  const onPointerCancel = (cancelEvent) => finishOpenFileTabReorder(cancelEvent, { cancel: true });
+
+  window.addEventListener("pointermove", onPointerMove, { signal: controller.signal });
+  window.addEventListener("pointerup", onPointerUp, { signal: controller.signal });
+  window.addEventListener("pointercancel", onPointerCancel, { signal: controller.signal });
+
+}
+
+function bindOpenFileTabReorderEvents() {
+  const strip = document.querySelector(".file-preview-tab-strip");
+  if (!(strip instanceof HTMLElement) || strip.dataset.reorderBound === "true") {
+    return;
+  }
+
+  strip.dataset.reorderBound = "true";
+  strip.addEventListener("pointerdown", beginOpenFileTabReorder);
+}
+
+let workspaceTabDragState = null;
+let workspaceTabClickSuppressKey = "";
+let workspaceTabClickSuppressUntil = 0;
+let workspaceGroupResizeState = null;
+
+function getWorkspaceTabKeyFromElement(element) {
+  if (!(element instanceof HTMLElement)) {
+    return "";
+  }
+
+  return String(element.getAttribute("data-workspace-tab-item") || "");
+}
+
+function clearWorkspaceTabDropMarkers() {
+  document
+    .querySelectorAll(
+      ".workspace-tab.is-drop-before, .workspace-tab.is-drop-after, .workspace-group.is-split-before, .workspace-group.is-split-after",
+    )
+    .forEach((tab) => {
+      tab.classList.remove("is-drop-before", "is-drop-after", "is-split-before", "is-split-after");
+    });
+}
+
+function setWorkspaceTabDropMarker(target) {
+  clearWorkspaceTabDropMarkers();
+  if (!target) {
+    return;
+  }
+
+  if (target.type === "split" && target.groupId) {
+    document.querySelectorAll("[data-workspace-group]").forEach((group) => {
+      if (!(group instanceof HTMLElement) || group.dataset.workspaceGroup !== target.groupId) {
+        return;
+      }
+
+      group.classList.add(target.side === "before" ? "is-split-before" : "is-split-after");
+    });
+    return;
+  }
+
+  document.querySelectorAll("[data-workspace-tab-item]").forEach((tab) => {
+    if (!(tab instanceof HTMLElement) || getWorkspaceTabKeyFromElement(tab) !== target.key) {
+      return;
+    }
+
+    tab.classList.add(target.position === "after" ? "is-drop-after" : "is-drop-before");
+  });
+}
+
+function getWorkspaceTabDropTarget(clientX, clientY, draggedKey) {
+  const hoveredElement = document.elementFromPoint(clientX, clientY);
+  const hoveredTab = hoveredElement instanceof Element ? hoveredElement.closest("[data-workspace-tab-item]") : null;
+  if (hoveredTab instanceof HTMLElement) {
+    const key = getWorkspaceTabKeyFromElement(hoveredTab);
+    if (key && key !== draggedKey) {
+      const rect = hoveredTab.getBoundingClientRect();
+      return {
+        type: "tab",
+        key,
+        position: clientX > rect.left + rect.width / 2 ? "after" : "before",
+      };
+    }
+  }
+
+  const hoveredContent = hoveredElement instanceof Element ? hoveredElement.closest("[data-workspace-group-content]") : null;
+  if (hoveredContent instanceof HTMLElement) {
+    const groupId = normalizeWorkspaceGroupId(hoveredContent.dataset.workspaceGroupContent);
+    if (groupId) {
+      const rect = hoveredContent.getBoundingClientRect();
+      return {
+        type: "split",
+        groupId,
+        side: clientX < rect.left + rect.width / 2 ? "before" : "after",
+      };
+    }
+  }
+
+  const hoveredStrip = hoveredElement instanceof Element ? hoveredElement.closest("[data-workspace-tab-strip]") : null;
+  if (hoveredStrip instanceof HTMLElement) {
+    const groupId = normalizeWorkspaceGroupId(hoveredStrip.dataset.workspaceTabStrip);
+    const group = getWorkspaceGroupById(groupId);
+    const tabKey = group?.tabs.filter((key) => key !== draggedKey).at(-1) || "";
+    if (tabKey) {
+      return { type: "tab", key: tabKey, position: "after" };
+    }
+  }
+
+  const items = Array.from(document.querySelectorAll("[data-workspace-tab-item]")).filter((item) => {
+    const key = getWorkspaceTabKeyFromElement(item);
+    return item instanceof HTMLElement && key && key !== draggedKey;
+  });
+  for (const item of items) {
+    if (!(item instanceof HTMLElement)) {
+      continue;
+    }
+
+    const rect = item.getBoundingClientRect();
+    if (clientX < rect.left + rect.width / 2) {
+      return {
+        type: "tab",
+        key: getWorkspaceTabKeyFromElement(item),
+        position: "before",
+      };
+    }
+  }
+
+  const lastItem = items[items.length - 1];
+  if (!(lastItem instanceof HTMLElement)) {
+    return null;
+  }
+  return {
+    type: "tab",
+    key: getWorkspaceTabKeyFromElement(lastItem),
+    position: "after",
+  };
+}
+
+function suppressWorkspaceTabClick(key) {
+  workspaceTabClickSuppressKey = String(key || "");
+  workspaceTabClickSuppressUntil = getUiNow() + 350;
+}
+
+function shouldSuppressWorkspaceTabClick(key) {
+  return workspaceTabClickSuppressKey === String(key || "") && getUiNow() < workspaceTabClickSuppressUntil;
+}
+
+function finishWorkspaceTabReorder(event, { cancel = false } = {}) {
+  const dragState = workspaceTabDragState;
+  if (!dragState || dragState.pointerId !== event.pointerId) {
+    return;
+  }
+
+  workspaceTabDragState = null;
+  dragState.controller?.abort();
+  dragState.item?.classList.remove("is-dragging");
+  dragState.strip?.classList.remove("is-reordering");
+  document.body.classList.remove("is-reordering-workspace-tabs");
+  clearWorkspaceTabDropMarkers();
+
+  try {
+    dragState.item?.releasePointerCapture?.(event.pointerId);
+  } catch {
+    // Pointer capture release is best-effort; the drag has already ended.
+  }
+
+  if (!dragState.dragging) {
+    return;
+  }
+
+  suppressWorkspaceTabClick(dragState.key);
+  event.preventDefault();
+
+  if (cancel) {
+    return;
+  }
+
+  const target =
+    dragState.target ||
+    getWorkspaceTabDropTarget(event.clientX, event.clientY, dragState.key);
+  if (target?.type === "split") {
+    splitWorkspaceTab(dragState.key, target.groupId, target.side);
+  } else if (target?.key) {
+    reorderWorkspaceTab(dragState.key, target.key, target.position);
+  }
+}
+
+function beginWorkspaceTabReorder(event) {
+  if (event.button !== undefined && event.button !== 0) {
+    return;
+  }
+
+  const target = event.target;
+  if (!(target instanceof Element) || target.closest("[data-close-workspace-tab]")) {
+    return;
+  }
+
+  const item = target.closest("[data-workspace-tab-item]");
+  const strip = event.currentTarget;
+  if (!(item instanceof HTMLElement) || !(strip instanceof HTMLElement) || !strip.contains(item)) {
+    return;
+  }
+
+  const key = getWorkspaceTabKeyFromElement(item);
+  if (!key || state.workspaceTabs.length < 2) {
+    return;
+  }
+
+  const controller = new AbortController();
+  workspaceTabDragState = {
+    captured: false,
+    controller,
+    dragging: false,
+    item,
+    key,
+    pointerId: event.pointerId,
+    startClientX: event.clientX,
+    startClientY: event.clientY,
+    strip,
+    target: null,
+  };
+
+  const onPointerMove = (moveEvent) => {
+    const dragState = workspaceTabDragState;
+    if (!dragState || dragState.pointerId !== moveEvent.pointerId) {
+      return;
+    }
+
+    const deltaX = moveEvent.clientX - dragState.startClientX;
+    const deltaY = moveEvent.clientY - dragState.startClientY;
+    if (!dragState.dragging && Math.hypot(deltaX, deltaY) < WORKSPACE_TAB_REORDER_DRAG_SLOP_PX) {
+      return;
+    }
+
+    if (!dragState.dragging) {
+      dragState.dragging = true;
+      dragState.item.classList.add("is-dragging");
+      dragState.strip.classList.add("is-reordering");
+      document.body.classList.add("is-reordering-workspace-tabs");
+      try {
+        dragState.item.setPointerCapture(moveEvent.pointerId);
+        dragState.captured = true;
+      } catch {
+        // Window listeners keep the drag alive if capture is unavailable.
+      }
+    }
+
+    dragState.target = getWorkspaceTabDropTarget(moveEvent.clientX, moveEvent.clientY, dragState.key);
+    setWorkspaceTabDropMarker(dragState.target);
+    moveEvent.preventDefault();
+  };
+
+  const onPointerUp = (upEvent) => finishWorkspaceTabReorder(upEvent);
+  const onPointerCancel = (cancelEvent) => finishWorkspaceTabReorder(cancelEvent, { cancel: true });
+
+  window.addEventListener("pointermove", onPointerMove, { signal: controller.signal });
+  window.addEventListener("pointerup", onPointerUp, { signal: controller.signal });
+  window.addEventListener("pointercancel", onPointerCancel, { signal: controller.signal });
+
+}
+
+function setWorkspaceGroupActiveTab(key, groupId = "") {
+  const normalizedKey = String(key || "");
+  if (!normalizedKey) {
+    return false;
+  }
+
+  const groups = normalizeWorkspaceGroups(state.workspaceGroups);
+  const group =
+    groups.find((entry) => entry.id === normalizeWorkspaceGroupId(groupId) && entry.tabs.includes(normalizedKey)) ||
+    groups.find((entry) => entry.tabs.includes(normalizedKey));
+  if (!group) {
+    return false;
+  }
+
+  group.activeKey = normalizedKey;
+  state.activeWorkspaceGroupId = group.id;
+  state.workspaceGroups = groups;
+  saveWorkspaceGroupsState();
+  return true;
+}
+
+async function activateWorkspaceTab(key, { groupId = "" } = {}) {
+  const tab = normalizeWorkspaceTabs(state.workspaceTabs).find((entry) => entry.key === String(key || ""));
+  if (!tab) {
+    return;
+  }
+
+  setWorkspaceGroupActiveTab(tab.key, groupId);
+
+  if (tab.type === "session") {
+    const session = getSessionWorkspaceTab(tab.sessionId);
+    if (!session) {
+      closeWorkspaceTab(tab.key, groupId);
+      return;
+    }
+
+    state.activeSessionId = tab.sessionId;
+    expandSessionProject(session.cwd);
+    setCurrentView("shell");
+    markSessionRead(tab.sessionId, { refresh: false });
+    closeMobileSidebar();
+    renderShell();
+    connectToSession(tab.sessionId);
+    return;
+  }
+
+  if (tab.type === "browser-use") {
+    await loadBrowserUseSession(tab.browserUseSessionId);
+    return;
+  }
+
+  await openMainView(tab.view);
+}
+
+function closeWorkspaceTab(key, groupId = "") {
+  const normalizedKey = String(key || "");
+  const tabIndex = state.workspaceTabs.findIndex((tab) => tab.key === normalizedKey);
+  if (tabIndex < 0) {
+    return;
+  }
+
+  const group = getWorkspaceGroupById(groupId) || getWorkspaceGroupContainingTab(normalizedKey);
+  const groupTabIndex = group ? group.tabs.indexOf(normalizedKey) : -1;
+  const closingActive = normalizedKey === getActiveWorkspaceTabKey() && (!group || group.id === state.activeWorkspaceGroupId);
+  const fallbackKey =
+    group && groupTabIndex >= 0
+      ? group.tabs[groupTabIndex + 1] || group.tabs[groupTabIndex - 1] || ""
+      : "";
+  state.workspaceTabs.splice(tabIndex, 1);
+  removeWorkspaceTabFromGroups(normalizedKey);
+  saveWorkspaceTabsState();
+  saveWorkspaceGroupsState();
+
+  if (closingActive) {
+    const nextTab =
+      (fallbackKey ? getWorkspaceTabByKey(fallbackKey) : null) ||
+      state.workspaceTabs[Math.min(tabIndex, state.workspaceTabs.length - 1)] ||
+      state.workspaceTabs[tabIndex - 1] ||
+      null;
+    if (nextTab) {
+      void activateWorkspaceTab(nextTab.key, { groupId: group?.id || "" });
+      return;
+    }
+
+    renderShell();
+    if (state.currentView === "shell" && state.activeSessionId) {
+      connectToSession(state.activeSessionId);
+    }
+    return;
+  }
+
+  renderShell();
+}
+
+function applyWorkspaceGroupGridStyle() {
+  const groups = normalizeWorkspaceGroups(state.workspaceGroups);
+  const grid = document.querySelector(".workspace-groups");
+  if (grid instanceof HTMLElement) {
+    grid.setAttribute("style", renderWorkspaceGroupsGridStyle(groups));
+  }
+}
+
+function beginWorkspaceGroupResize(event) {
+  if (event.button !== undefined && event.button !== 0) {
+    return;
+  }
+
+  const handle = event.currentTarget;
+  if (!(handle instanceof HTMLElement)) {
+    return;
+  }
+
+  const leftGroupId = normalizeWorkspaceGroupId(handle.dataset.leftWorkspaceGroup);
+  const rightGroupId = normalizeWorkspaceGroupId(handle.dataset.rightWorkspaceGroup);
+  const groups = normalizeWorkspaceGroups(state.workspaceGroups);
+  const leftGroup = groups.find((group) => group.id === leftGroupId);
+  const rightGroup = groups.find((group) => group.id === rightGroupId);
+  const grid = document.querySelector(".workspace-groups");
+  if (!leftGroup || !rightGroup || !(grid instanceof HTMLElement)) {
+    return;
+  }
+
+  const controller = new AbortController();
+  workspaceGroupResizeState = {
+    controller,
+    leftGroupId,
+    rightGroupId,
+    pointerId: event.pointerId,
+    startClientX: event.clientX,
+    startLeftWidth: leftGroup.width || 1,
+    startRightWidth: rightGroup.width || 1,
+    containerWidth: Math.max(1, grid.getBoundingClientRect().width),
+  };
+  handle.classList.add("is-dragging");
+  document.body.classList.add("is-resizing-workspace-groups");
+
+  const onPointerMove = (moveEvent) => {
+    const dragState = workspaceGroupResizeState;
+    if (!dragState || dragState.pointerId !== moveEvent.pointerId) {
+      return;
+    }
+
+    const nextGroups = normalizeWorkspaceGroups(state.workspaceGroups);
+    const nextLeft = nextGroups.find((group) => group.id === dragState.leftGroupId);
+    const nextRight = nextGroups.find((group) => group.id === dragState.rightGroupId);
+    if (!nextLeft || !nextRight) {
+      return;
+    }
+
+    const total = dragState.startLeftWidth + dragState.startRightWidth;
+    const delta = ((moveEvent.clientX - dragState.startClientX) / dragState.containerWidth) * total;
+    const nextLeftWidth = clamp(dragState.startLeftWidth + delta, WORKSPACE_GROUP_MIN_FRACTION, total - WORKSPACE_GROUP_MIN_FRACTION);
+    nextLeft.width = nextLeftWidth;
+    nextRight.width = total - nextLeftWidth;
+    state.workspaceGroups = nextGroups;
+    applyWorkspaceGroupGridStyle();
+    moveEvent.preventDefault();
+  };
+
+  const onPointerEnd = (endEvent) => {
+    const dragState = workspaceGroupResizeState;
+    if (!dragState || dragState.pointerId !== endEvent.pointerId) {
+      return;
+    }
+
+    workspaceGroupResizeState = null;
+    controller.abort();
+    handle.classList.remove("is-dragging");
+    document.body.classList.remove("is-resizing-workspace-groups");
+    saveWorkspaceGroupsState();
+  };
+
+  window.addEventListener("pointermove", onPointerMove, { signal: controller.signal });
+  window.addEventListener("pointerup", onPointerEnd, { signal: controller.signal });
+  window.addEventListener("pointercancel", onPointerEnd, { signal: controller.signal });
+  event.preventDefault();
+}
+
+function bindWorkspaceTabEvents() {
+  document.querySelectorAll("[data-workspace-tab-strip]").forEach((strip) => {
+    if (strip instanceof HTMLElement && strip.dataset.workspaceTabsBound !== "true") {
+      strip.dataset.workspaceTabsBound = "true";
+      strip.addEventListener("pointerdown", beginWorkspaceTabReorder);
+    }
+  });
+
+  document.querySelectorAll("[data-workspace-tab]").forEach((button) => {
+    button.addEventListener("click", (event) => {
+      const key = button.getAttribute("data-workspace-tab") || "";
+      const groupId = button.getAttribute("data-workspace-tab-group") || "";
+      if (shouldSuppressWorkspaceTabClick(key)) {
+        event.preventDefault();
+        event.stopPropagation();
+        return;
+      }
+
+      void activateWorkspaceTab(key, { groupId });
+    });
+
+    button.addEventListener("keydown", (event) => {
+      if (!event.altKey || (event.key !== "ArrowLeft" && event.key !== "ArrowRight")) {
+        return;
+      }
+
+      event.preventDefault();
+      event.stopPropagation();
+      const direction =
+        event.key === "ArrowLeft"
+          ? -WORKSPACE_TAB_REORDER_KEYBOARD_STEP
+          : WORKSPACE_TAB_REORDER_KEYBOARD_STEP;
+      moveWorkspaceTabByOffset(
+        button.getAttribute("data-workspace-tab"),
+        direction,
+        button.getAttribute("data-workspace-tab-group"),
+      );
+    });
+  });
+
+  document.querySelectorAll("[data-close-workspace-tab]").forEach((button) => {
+    button.addEventListener("click", (event) => {
+      event.preventDefault();
+      event.stopPropagation();
+      closeWorkspaceTab(
+        button.getAttribute("data-close-workspace-tab") || "",
+        button.getAttribute("data-close-workspace-tab-group") || "",
+      );
+    });
+  });
+
+  document.querySelectorAll("[data-split-workspace-tab]").forEach((button) => {
+    button.addEventListener("click", (event) => {
+      event.preventDefault();
+      event.stopPropagation();
+      splitWorkspaceTab(
+        button.getAttribute("data-split-workspace-tab") || "",
+        button.getAttribute("data-split-workspace-tab-group") || "",
+        "after",
+      );
+    });
+  });
+
+  document.querySelectorAll("[data-activate-workspace-group]").forEach((button) => {
+    button.addEventListener("click", () => {
+      const group = getWorkspaceGroupById(button.getAttribute("data-activate-workspace-group") || "");
+      if (group?.activeKey) {
+        void activateWorkspaceTab(group.activeKey, { groupId: group.id });
+      }
+    });
+  });
+
+  document.querySelectorAll("[data-workspace-group-resizer]").forEach((handle) => {
+    if (handle instanceof HTMLElement && handle.dataset.workspaceResizeBound !== "true") {
+      handle.dataset.workspaceResizeBound = "true";
+      handle.addEventListener("pointerdown", beginWorkspaceGroupResize);
+    }
+  });
+
+  document.querySelectorAll("[data-workspace-new-session]").forEach((button) => {
+    button.addEventListener("click", async () => {
+      const group = button.closest("[data-workspace-group]");
+      if (group instanceof HTMLElement) {
+        state.activeWorkspaceGroupId = group.dataset.workspaceGroup || state.activeWorkspaceGroupId;
+        saveWorkspaceGroupsState();
+      }
+      state.defaultProviderId = getSelectedSessionProviderId();
+      await loadFolderPicker(state.defaultCwd, { target: "session" });
+    });
+  });
+}
+
+function refreshWorkspaceTabsUi({ focusKey = "" } = {}) {
+  syncWorkspaceTabs({ persist: true });
+  syncWorkspaceTabGroups({ persist: true });
+  document.querySelectorAll("[data-workspace-group]").forEach((groupElement) => {
+    if (!(groupElement instanceof HTMLElement)) {
+      return;
+    }
+
+    const group = getWorkspaceGroupById(groupElement.dataset.workspaceGroup || "");
+    const tabs = groupElement.querySelector(".workspace-tabs");
+    if (group && tabs instanceof HTMLElement) {
+      tabs.outerHTML = renderWorkspaceTabs(group);
+    }
+  });
+  bindWorkspaceTabEvents();
+  if (focusKey) {
+    focusWorkspaceTab(focusKey);
+  }
+}
+
 function bindFileEditorEvents() {
   bindLineNumberEditors();
   bindImagePreviewEvents();
+  bindOpenFileTabReorderEvents();
 
   document.querySelectorAll("[data-file-tab]").forEach((button) => {
-    button.addEventListener("click", () => {
+    button.addEventListener("click", (event) => {
+      if (shouldSuppressOpenFileTabClick(button.getAttribute("data-file-tab"))) {
+        event.preventDefault();
+        event.stopPropagation();
+        return;
+      }
+
       activateOpenFileTab(button.getAttribute("data-file-tab"));
+    });
+
+    button.addEventListener("keydown", (event) => {
+      if (!event.altKey || (event.key !== "ArrowLeft" && event.key !== "ArrowRight")) {
+        return;
+      }
+
+      event.preventDefault();
+      event.stopPropagation();
+      const direction =
+        event.key === "ArrowLeft"
+          ? -FILE_PREVIEW_TAB_REORDER_KEYBOARD_STEP
+          : FILE_PREVIEW_TAB_REORDER_KEYBOARD_STEP;
+      moveOpenFileTabByOffset(button.getAttribute("data-file-tab"), direction);
     });
   });
 
@@ -15926,6 +20875,7 @@ function refreshShellUi({ sessions = true, ports = true, files = true } = {}) {
 
   refreshKnowledgeBaseUi();
   refreshToolbarUi();
+  refreshWorkspaceTabsUi();
 }
 
 async function openWorkspaceFile(relativePath, { force = false } = {}) {
@@ -15999,6 +20949,12 @@ async function openWorkspaceFile(relativePath, { force = false } = {}) {
 
 async function openWorkspaceFilePreview(relativePath, { mode = "text", force = false } = {}) {
   const normalizedPath = normalizeFileTreePath(relativePath);
+
+  if (normalizedPath && state.currentView !== "shell") {
+    setCurrentView("shell");
+    renderShell();
+  }
+
   const tab = ensureOpenFileTab(normalizedPath, { mode });
 
   if (!tab) {
@@ -16099,6 +21055,7 @@ function closeOpenFileTab(relativePath) {
 
   const closingActiveTab = state.openFileRelativePath === normalizedPath;
   state.openFileTabs.splice(tabIndex, 1);
+  rememberOpenFileTabOrder();
 
   if (closingActiveTab) {
     const nextTab = state.openFileTabs[Math.min(tabIndex, state.openFileTabs.length - 1)] || null;
@@ -16347,6 +21304,8 @@ function applySettingsState(payload) {
   const sleepPrevention = settings.sleepPrevention || settings.sleep || state.settings.sleepPrevention;
   const agentMailStatus = settings.agentMailStatus || settings.agentMail || state.settings.agentMailStatus;
   const browserUseStatus = settings.browserUseStatus || settings.browserUse || state.settings.browserUseStatus;
+  const ottoAuthStatus = settings.ottoAuthStatus || settings.ottoAuth || state.settings.ottoAuthStatus;
+  const telegramStatus = settings.telegramStatus || settings.telegram || state.settings.telegramStatus;
   const videoMemoryStatus = settings.videoMemoryStatus || settings.videoMemory || state.settings.videoMemoryStatus;
 
   state.settings = {
@@ -16419,6 +21378,44 @@ function applySettingsState(payload) {
       settings.browserUseWorkerPath === undefined
         ? state.settings.browserUseWorkerPath || ""
         : String(settings.browserUseWorkerPath || ""),
+    ottoAuthBaseUrl:
+      settings.ottoAuthBaseUrl === undefined
+        ? state.settings.ottoAuthBaseUrl || "https://ottoauth.vercel.app"
+        : String(settings.ottoAuthBaseUrl || ""),
+    ottoAuthCallbackUrl:
+      settings.ottoAuthCallbackUrl === undefined
+        ? state.settings.ottoAuthCallbackUrl || ""
+        : String(settings.ottoAuthCallbackUrl || ""),
+    ottoAuthDefaultMaxChargeCents:
+      settings.ottoAuthDefaultMaxChargeCents === undefined
+        ? state.settings.ottoAuthDefaultMaxChargeCents || ""
+        : String(settings.ottoAuthDefaultMaxChargeCents || ""),
+    ottoAuthEnabled:
+      settings.ottoAuthEnabled === undefined
+        ? state.settings.ottoAuthEnabled
+        : Boolean(settings.ottoAuthEnabled),
+    ottoAuthPrivateKeyConfigured:
+      settings.ottoAuthPrivateKeyConfigured === undefined
+        ? state.settings.ottoAuthPrivateKeyConfigured
+        : Boolean(settings.ottoAuthPrivateKeyConfigured),
+    ottoAuthStatus: ottoAuthStatus || null,
+    ottoAuthUsername:
+      settings.ottoAuthUsername === undefined ? state.settings.ottoAuthUsername || "" : String(settings.ottoAuthUsername || ""),
+    telegramAllowedChatIds:
+      settings.telegramAllowedChatIds === undefined
+        ? state.settings.telegramAllowedChatIds || ""
+        : String(settings.telegramAllowedChatIds || ""),
+    telegramBotTokenConfigured:
+      settings.telegramBotTokenConfigured === undefined
+        ? state.settings.telegramBotTokenConfigured
+        : Boolean(settings.telegramBotTokenConfigured),
+    telegramEnabled:
+      settings.telegramEnabled === undefined
+        ? state.settings.telegramEnabled
+        : Boolean(settings.telegramEnabled),
+    telegramProviderId:
+      settings.telegramProviderId || state.settings.telegramProviderId || "claude",
+    telegramStatus: telegramStatus || null,
     videoMemoryBaseUrl:
       settings.videoMemoryBaseUrl === undefined
         ? state.settings.videoMemoryBaseUrl || "http://127.0.0.1:5050"
@@ -16470,6 +21467,7 @@ function syncViewFromLocation() {
   const route = getRouteState();
   const previousView = state.currentView;
   state.currentView = route.view;
+  state.pluginDetailId = route.view === "plugins" && getPluginById(route.buildingId) ? normalizeBuildingId(route.buildingId) : "";
 
   if (route.view === "knowledge-base") {
     if (previousView !== "knowledge-base") {
@@ -16487,15 +21485,21 @@ function isVisualGameTerminalOpen() {
   return isVisualInterfaceView() && Boolean(state.visualGame.selectedSessionId);
 }
 
-function setCurrentView(nextView, { notePath = state.knowledgeBase.selectedNotePath } = {}) {
+function setCurrentView(nextView, {
+  notePath = state.knowledgeBase.selectedNotePath,
+  buildingId = "",
+  buildingWorkspaceId = "",
+} = {}) {
   if (nextView === "swarm") {
     nextView = "visual-interface";
   }
 
+  state.buildingWorkspaceReturnId = normalizeBuildingId(buildingWorkspaceId);
   const previousView = state.currentView;
 
   if (nextView === "knowledge-base") {
     state.currentView = "knowledge-base";
+    state.pluginDetailId = "";
     if (previousView !== "knowledge-base") {
       requestKnowledgeBaseGraphReplay();
     }
@@ -16505,23 +21509,26 @@ function setCurrentView(nextView, { notePath = state.knowledgeBase.selectedNoteP
 
   if (nextView === "agent-prompt") {
     state.currentView = "agent-prompt";
+    state.pluginDetailId = "";
     updateRoute({ view: "agent-prompt" });
     return;
   }
 
   if (ROUTED_MAIN_VIEWS.has(nextView)) {
     state.currentView = nextView;
-    updateRoute({ view: nextView });
+    state.pluginDetailId = nextView === "plugins" && getPluginById(buildingId) ? normalizeBuildingId(buildingId) : "";
+    updateRoute({ view: nextView, buildingId: state.pluginDetailId });
     return;
   }
 
   state.currentView = "shell";
+  state.pluginDetailId = "";
   updateRoute({ view: state.currentView });
 }
 
-async function openMainView(nextView) {
+async function openMainView(nextView, { buildingId = "", buildingWorkspaceId = "" } = {}) {
   if (nextView === "knowledge-base") {
-    setCurrentView("knowledge-base");
+    setCurrentView("knowledge-base", { buildingWorkspaceId });
     closeMobileSidebar();
     renderShell();
 
@@ -16548,7 +21555,7 @@ async function openMainView(nextView) {
   }
 
   if (ROUTED_MAIN_VIEWS.has(nextView)) {
-    setCurrentView(nextView);
+    setCurrentView(nextView, { buildingId });
     closeMobileSidebar();
     renderShell();
 
@@ -16990,12 +21997,30 @@ function bindShellEvents() {
   bindSessionProviderPicker();
   bindFolderPickerDragEvents();
   bindLayoutResizeEvents();
+  bindWorkspaceTabEvents();
 
   document.querySelectorAll("[data-open-main-view]").forEach((link) => {
     link.addEventListener("click", (event) => {
       event.preventDefault();
       const nextView = link.getAttribute("data-open-main-view") || "shell";
       void openMainView(nextView);
+    });
+  });
+
+  document.querySelectorAll("[data-visual-building-open]").forEach((button) => {
+    button.addEventListener("click", (event) => {
+      event.preventDefault();
+      openVisualGameBuildingPanel(button.getAttribute("data-visual-building-open") || "");
+    });
+  });
+
+  document.querySelectorAll("[data-open-building-workspace]").forEach((button) => {
+    button.addEventListener("click", (event) => {
+      event.preventDefault();
+      void openBuildingWorkspace(
+        button.getAttribute("data-open-building-workspace") || "",
+        button.getAttribute("data-building-workspace-view") || "",
+      );
     });
   });
 
@@ -17084,6 +22109,7 @@ function bindShellEvents() {
   bindSearchResultEvents();
   bindPluginCardEvents();
   bindAutomationEvents();
+  bindVisualBuildingLibraryEvents();
   bindUpdateEvents();
   bindSystemToastEvents();
 
@@ -17120,6 +22146,22 @@ function bindShellEvents() {
 
   document.querySelector("#visual-game-close-session")?.addEventListener("click", () => {
     clearVisualGameSelection();
+  });
+
+  document.querySelector("#visual-game-close-building")?.addEventListener("click", () => {
+    clearVisualGameSelection();
+  });
+
+  document.querySelector("#visual-game-back-building")?.addEventListener("click", () => {
+    clearVisualGameSelection();
+  });
+
+  document.querySelector("#visual-game-edit-town")?.addEventListener("click", () => {
+    toggleAgentTownEditMode();
+  });
+
+  document.querySelector("#visual-game-reset-town-layout")?.addEventListener("click", () => {
+    resetAgentTownLayout();
   });
 
   document.querySelector("#refresh-swarm-graph")?.addEventListener("click", () => {
@@ -17179,7 +22221,7 @@ function bindShellEvents() {
     const hasUnsavedChanges =
       state.agentPromptEditable && textarea instanceof HTMLTextAreaElement && textarea.value !== state.agentPrompt;
 
-    if (hasUnsavedChanges && !window.confirm("You have unsaved edits in the prompt editor. Reload from disk and discard them?")) {
+    if (hasUnsavedChanges && !window.confirm("You have unsaved edits in Occupations. Reload from disk and discard them?")) {
       return;
     }
 
@@ -17203,7 +22245,7 @@ function bindShellEvents() {
       const hasUnsavedChanges =
         state.agentPromptEditable && textarea instanceof HTMLTextAreaElement && textarea.value !== state.agentPrompt;
 
-      if (hasUnsavedChanges && !window.confirm("You have unsaved custom prompt edits. Switch presets and discard them?")) {
+      if (hasUnsavedChanges && !window.confirm("You have unsaved custom occupation edits. Switch occupations and discard them?")) {
         return;
       }
 
@@ -17246,20 +22288,22 @@ function bindShellEvents() {
       window.alert(error.message);
     }
   });
-  document.querySelector("#settings-form")?.addEventListener("submit", async (event) => {
-    event.preventDefault();
-    const form = event.currentTarget;
+  document.querySelectorAll("[data-settings-form]").forEach((settingsForm) => {
+    settingsForm.addEventListener("submit", async (event) => {
+      event.preventDefault();
+      const form = event.currentTarget;
 
-    if (!(form instanceof HTMLFormElement)) {
-      return;
-    }
+      if (!(form instanceof HTMLFormElement)) {
+        return;
+      }
 
-    try {
-      await saveSettingsFromForm(form);
-      renderShell();
-    } catch (error) {
-      window.alert(error.message);
-    }
+      try {
+        await saveSettingsFromForm(form);
+        renderShell();
+      } catch (error) {
+        window.alert(error.message);
+      }
+    });
   });
   document.querySelector("#brain-git-form")?.addEventListener("submit", async (event) => {
     event.preventDefault();
@@ -17287,6 +22331,8 @@ function bindShellEvents() {
     }
   });
   bindBrowserUseForm();
+  bindOttoAuthForm();
+  bindCommunicationsForm();
   bindVideoMemoryForm();
   document.querySelector("#backup-wiki-now")?.addEventListener("click", async (event) => {
     const button = event.currentTarget;
@@ -18076,12 +23122,15 @@ function connectToSession(sessionId) {
 
     if (payload.type === "session-deleted") {
       state.sessions = state.sessions.filter((session) => session.id !== payload.sessionId);
+      const visualSelectionPruned = pruneVisualGameSessionSelection();
       if (state.activeSessionId === payload.sessionId) {
         state.activeSessionId = state.sessions[0]?.id ?? null;
         renderShell();
         if (state.activeSessionId) {
           connectToSession(state.activeSessionId);
         }
+      } else if (visualSelectionPruned && isVisualInterfaceView()) {
+        renderShell();
       }
       return;
     }
@@ -18133,6 +23182,7 @@ function updateSession(session) {
   }
 
   refreshToolbarUi();
+  refreshWorkspaceTabsUi();
   scheduleSessionsRefresh();
 }
 
@@ -18213,6 +23263,7 @@ function clearLocalhostAppsSurfaces() {
 async function loadSessions() {
   try {
     const previousActiveSessionId = state.activeSessionId;
+    const previousSessions = state.sessions;
     const payload = await fetchJson("/api/sessions");
     state.sessions = payload.sessions;
     pruneSessionReadState();
@@ -18225,6 +23276,9 @@ async function loadSessions() {
       state.activeSessionId = state.sessions[0].id;
     }
 
+    const visualSelectionPruned = pruneVisualGameSessionSelection();
+    const sessionIdsChanged = didSessionIdsChange(previousSessions, state.sessions);
+
     if (state.currentView === "browser-use" && state.browserUseSession.id && !state.browserUseSession.loading) {
       void loadBrowserUseSession(state.browserUseSession.id, { silent: true });
     }
@@ -18234,6 +23288,11 @@ async function loadSessions() {
     }
 
     if (state.currentView !== "shell") {
+      if (isVisualInterfaceView() && (sessionIdsChanged || visualSelectionPruned)) {
+        renderShell();
+        return;
+      }
+
       refreshSessionsList();
       return;
     }
@@ -18337,8 +23396,10 @@ async function loadSettingsStatus() {
     if (state.currentView === "plugins") {
       refreshPluginSearchUi();
       refreshBrowserUsePluginUi();
+      refreshCommunicationsPluginUi();
       void loadVideoMemoryStatus({ renderOnComplete: true });
     } else if (state.currentView === "settings") {
+      refreshCommunicationsPluginUi();
       void loadVideoMemoryStatus({ renderOnComplete: true });
     }
     refreshSystemToastsUi();
@@ -18584,23 +23645,48 @@ async function loadFolderPickerTreePath(relativePath = "", { force = false } = {
 async function saveSettingsFromForm(form) {
   const formData = new FormData(form);
   const wikiPath = String(formData.get("wikiPath") || "");
+  const hasField = (name) => Boolean(form.querySelector(`[name="${name}"]`));
+  const body = {};
+
+  if (hasField("preventSleepEnabled")) {
+    body.preventSleepEnabled = formData.get("preventSleepEnabled") === "on";
+  }
+
+  if (hasField("wikiGitBackupEnabled")) {
+    body.wikiGitBackupEnabled = formData.get("wikiGitBackupEnabled") === "on";
+  }
+
+  if (hasField("wikiGitRemoteBranch")) {
+    body.wikiGitRemoteBranch = String(formData.get("wikiGitRemoteBranch") || "main");
+  }
+
+  if (hasField("wikiGitRemoteEnabled")) {
+    body.wikiGitRemoteEnabled = formData.get("wikiGitRemoteEnabled") === "on";
+  }
+
+  if (hasField("wikiGitRemoteName")) {
+    body.wikiGitRemoteName = String(formData.get("wikiGitRemoteName") || "origin");
+  }
+
+  if (hasField("wikiGitRemoteUrl")) {
+    body.wikiGitRemoteUrl = String(formData.get("wikiGitRemoteUrl") || "");
+  }
+
+  if (hasField("wikiPath")) {
+    body.wikiPath = wikiPath;
+    body.wikiPathConfigured = Boolean(wikiPath.trim());
+  }
+
   const payload = await fetchJson("/api/settings", {
     method: "PATCH",
-    body: JSON.stringify({
-      preventSleepEnabled: formData.get("preventSleepEnabled") === "on",
-      wikiGitBackupEnabled: formData.get("wikiGitBackupEnabled") === "on",
-      wikiGitRemoteBranch: String(formData.get("wikiGitRemoteBranch") || "main"),
-      wikiGitRemoteEnabled: formData.get("wikiGitRemoteEnabled") === "on",
-      wikiGitRemoteName: String(formData.get("wikiGitRemoteName") || "origin"),
-      wikiGitRemoteUrl: String(formData.get("wikiGitRemoteUrl") || ""),
-      wikiPath,
-      wikiPathConfigured: Boolean(wikiPath.trim()),
-    }),
+    body: JSON.stringify(body),
   });
 
   applySettingsState(payload.settings);
-  state.settings.wikiPath = wikiPath;
-  state.settings.wikiPathConfigured = true;
+  if (hasField("wikiPath")) {
+    state.settings.wikiPath = wikiPath;
+    state.settings.wikiPathConfigured = true;
+  }
   applyAgentPromptState(payload.agentPrompt);
   state.knowledgeBase.noteCache = {};
 
@@ -18630,7 +23716,7 @@ async function saveAgentCredentialsFromForm(form) {
 async function saveBrainFolderSelection(selectedPath) {
   const wikiPath = normalizeWorkspaceRoot(selectedPath);
   if (!wikiPath) {
-    throw new Error("Choose or create a brain folder first.");
+    throw new Error("Choose or create a Library folder first.");
   }
 
   const payload = await fetchJson("/api/settings", {
@@ -18693,6 +23779,104 @@ async function setupBrowserUseFromForm(form) {
     }),
   });
   applySettingsState(payload.settings);
+}
+
+async function setupOttoAuthFromForm(form) {
+  const formData = new FormData(form);
+  const enabled = formData.get("ottoAuthEnabled") === "on";
+  const privateKey = String(formData.get("ottoAuthPrivateKey") || "").trim();
+  const payload = await fetchJson("/api/ottoauth/setup", {
+    method: "POST",
+    body: JSON.stringify({
+      baseUrl: String(formData.get("ottoAuthBaseUrl") || ""),
+      callbackUrl: String(formData.get("ottoAuthCallbackUrl") || ""),
+      defaultMaxChargeCents: String(formData.get("ottoAuthDefaultMaxChargeCents") || ""),
+      enabled,
+      installedPluginIds: getUpdatedInstalledPluginIds("ottoauth", enabled),
+      privateKey: privateKey || undefined,
+      username: String(formData.get("ottoAuthUsername") || ""),
+    }),
+  });
+  applySettingsState(payload.settings);
+}
+
+function getCommunicationsInstalledPluginIds({ agentMailEnabled, telegramEnabled }) {
+  const pluginIds = getInstalledPluginIds();
+  if (agentMailEnabled) {
+    pluginIds.add("agentmail");
+  } else {
+    pluginIds.delete("agentmail");
+  }
+  if (telegramEnabled) {
+    pluginIds.add("telegram");
+  } else {
+    pluginIds.delete("telegram");
+  }
+  return [...pluginIds].sort();
+}
+
+async function setupCommunicationsFromForm(form) {
+  const formData = new FormData(form);
+  const hasField = (name) => Boolean(form.querySelector(`[name="${name}"]`));
+  const agentMailEnabled = hasField("agentMailEnabled") ? formData.get("agentMailEnabled") === "on" : Boolean(state.settings.agentMailEnabled);
+  const telegramEnabled = hasField("telegramEnabled") ? formData.get("telegramEnabled") === "on" : Boolean(state.settings.telegramEnabled);
+  const installedPluginIds = getCommunicationsInstalledPluginIds({ agentMailEnabled, telegramEnabled });
+  const agentMailApiKey = String(formData.get("agentMailApiKey") || "").trim();
+  const telegramBotToken = String(formData.get("telegramBotToken") || "").trim();
+  let payload = null;
+
+  if (agentMailEnabled) {
+    payload = await fetchJson("/api/agentmail/setup", {
+      method: "POST",
+      body: JSON.stringify({
+        apiKey: agentMailApiKey || undefined,
+        inboxId: String(formData.get("agentMailInboxId") || ""),
+        installedPluginIds,
+        providerId: String(formData.get("agentMailProviderId") || state.settings.agentMailProviderId || state.defaultProviderId || "claude"),
+      }),
+    });
+  } else {
+    payload = await fetchJson("/api/settings", {
+      method: "PATCH",
+      body: JSON.stringify({
+        agentMailEnabled: false,
+        agentMailInboxId: String(formData.get("agentMailInboxId") || state.settings.agentMailInboxId || ""),
+        agentMailProviderId: String(formData.get("agentMailProviderId") || state.settings.agentMailProviderId || state.defaultProviderId || "claude"),
+        installedPluginIds,
+      }),
+    });
+  }
+  applySettingsState(payload.settings);
+  if (payload.agentPrompt) {
+    applyAgentPromptState(payload.agentPrompt);
+  }
+
+  if (telegramEnabled) {
+    payload = await fetchJson("/api/telegram/setup", {
+      method: "POST",
+      body: JSON.stringify({
+        allowedChatIds: String(formData.get("telegramAllowedChatIds") || ""),
+        botToken: telegramBotToken || undefined,
+        enabled: true,
+        installedPluginIds,
+        providerId: String(formData.get("telegramProviderId") || state.settings.telegramProviderId || state.defaultProviderId || "claude"),
+      }),
+    });
+  } else {
+    payload = await fetchJson("/api/settings", {
+      method: "PATCH",
+      body: JSON.stringify({
+        installedPluginIds,
+        telegramAllowedChatIds: String(formData.get("telegramAllowedChatIds") || state.settings.telegramAllowedChatIds || ""),
+        telegramEnabled: false,
+        telegramProviderId: String(formData.get("telegramProviderId") || state.settings.telegramProviderId || state.defaultProviderId || "claude"),
+      }),
+    });
+  }
+  applySettingsState(payload.settings);
+  if (payload.agentPrompt) {
+    applyAgentPromptState(payload.agentPrompt);
+  }
 }
 
 async function setupVideoMemoryFromForm(form) {

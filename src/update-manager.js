@@ -327,9 +327,7 @@ export class UpdateManager {
       const dirtyState = await this.readDirtyState(dirtyResult.stdout);
       let reason = "";
 
-      if (updateAvailable && dirtyState.blockingDirty) {
-        reason = "Local changes are present, so the updater will not overwrite this checkout.";
-      } else if (latest.targetType === "branch" && updateAvailable && !currentBranch) {
+      if (latest.targetType === "branch" && updateAvailable && !currentBranch) {
         reason = `This checkout is detached; the updater only updates ${this.branch}.`;
       } else if (latest.targetType === "branch" && updateAvailable && currentBranch && currentBranch !== this.branch) {
         reason = `This checkout is on ${currentBranch}; the updater only updates ${this.branch}.`;
@@ -364,7 +362,7 @@ export class UpdateManager {
         releaseCheck: latest.releaseCheck,
         aheadOfTarget,
         dirty: dirtyState.dirty,
-        blockingDirty: dirtyState.blockingDirty,
+        blockingDirty: false,
         dirtyFiles: dirtyState.dirtyFiles,
         ignoredDirtyFiles: dirtyState.ignoredDirtyFiles,
         restoredManagedPromptFiles,
@@ -772,6 +770,13 @@ export class UpdateManager {
 set -euo pipefail
 echo "[vibe-research-update] starting $(date)"
 cd ${cwd}
+reset_checkout_changes() {
+  if [ -n "$(git status --porcelain 2>/dev/null)" ]; then
+    echo "[vibe-research-update] discarding local app checkout changes before update"
+    git reset --hard HEAD
+    git clean -fd
+  fi
+}
 has_managed_prompt_marker() {
   local source="$1"
   local marker
@@ -796,6 +801,7 @@ restore_managed_prompt_file() {
 for file in ${managedPromptFiles}; do
   restore_managed_prompt_file "$file"
 done
+reset_checkout_changes
 ${updateCommand}
 echo "[vibe-research-update] update pulled; stopping current server"
 curl -fsS -X POST ${terminateUrl} >/dev/null 2>&1 || true

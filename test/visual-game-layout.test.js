@@ -2,7 +2,9 @@ import assert from "node:assert/strict";
 import test from "node:test";
 import {
   VISUAL_GAME_MAP_LAYOUT,
+  findVisualGameRoadRoute,
   getVisualGamePlace,
+  getVisualGamePlaceAnchor,
   getVisualGamePlaceItemSlots,
   getVisualGameRoadRects,
   validateVisualGameLayout,
@@ -23,6 +25,74 @@ test("visual game roads render as exact grid cells", () => {
     assert.equal(road.rect.width % cellSize, 0);
     assert.equal(road.rect.height % cellSize, 0);
   }
+});
+
+test("visual game map gives the town a larger build area", () => {
+  assert.ok(VISUAL_GAME_MAP_LAYOUT.width >= 900);
+  assert.ok(VISUAL_GAME_MAP_LAYOUT.height >= 540);
+});
+
+test("visual game pathfinding routes destination walks through connected roads", () => {
+  const roadRects = getVisualGameRoadRects(VISUAL_GAME_MAP_LAYOUT);
+  const route = findVisualGameRoadRoute(
+    getVisualGamePlaceAnchor(getVisualGamePlace(VISUAL_GAME_MAP_LAYOUT, "workshop")),
+    getVisualGamePlaceAnchor(getVisualGamePlace(VISUAL_GAME_MAP_LAYOUT, "library")),
+    roadRects,
+  );
+
+  assert.deepEqual(route[0], getVisualGamePlaceAnchor(getVisualGamePlace(VISUAL_GAME_MAP_LAYOUT, "workshop")));
+  assert.deepEqual(route.at(-1), getVisualGamePlaceAnchor(getVisualGamePlace(VISUAL_GAME_MAP_LAYOUT, "library")));
+  assert.ok(route.length > 2);
+
+  const roadSegments = route.slice(1, -1);
+  assert.ok(roadSegments.some((point) => point.y === 255));
+  for (let index = 1; index < roadSegments.length; index += 1) {
+    const previous = roadSegments[index - 1];
+    const current = roadSegments[index];
+    assert.ok(previous.x === current.x || previous.y === current.y);
+  }
+});
+
+test("visual game map has an OttoAuth building reachable from town roads", () => {
+  const ottoauth = getVisualGamePlace(VISUAL_GAME_MAP_LAYOUT, "ottoauth");
+  const workshop = getVisualGamePlace(VISUAL_GAME_MAP_LAYOUT, "workshop");
+  const roadRects = getVisualGameRoadRects(VISUAL_GAME_MAP_LAYOUT);
+  const route = findVisualGameRoadRoute(
+    getVisualGamePlaceAnchor(workshop),
+    getVisualGamePlaceAnchor(ottoauth),
+    roadRects,
+  );
+
+  assert.equal(ottoauth.label, "OttoAuth");
+  assert.ok(route.length > 2);
+  assert.deepEqual(route[0], getVisualGamePlaceAnchor(workshop));
+  assert.deepEqual(route.at(-1), getVisualGamePlaceAnchor(ottoauth));
+});
+
+test("visual game map has a Campanile-style Automations tower reachable from town roads", () => {
+  const automations = getVisualGamePlace(VISUAL_GAME_MAP_LAYOUT, "automations");
+  const workshop = getVisualGamePlace(VISUAL_GAME_MAP_LAYOUT, "workshop");
+  const roadRects = getVisualGameRoadRects(VISUAL_GAME_MAP_LAYOUT);
+  const route = findVisualGameRoadRoute(
+    getVisualGamePlaceAnchor(workshop),
+    getVisualGamePlaceAnchor(automations),
+    roadRects,
+  );
+
+  assert.equal(automations.label, "Automations");
+  assert.ok(automations.rect.height > automations.rect.width);
+  assert.ok(route.length > 2);
+  assert.deepEqual(route[0], getVisualGamePlaceAnchor(workshop));
+  assert.deepEqual(route.at(-1), getVisualGamePlaceAnchor(automations));
+});
+
+test("visual game pathfinding falls back to direct routes without roads", () => {
+  const route = findVisualGameRoadRoute({ x: 5, y: 6 }, { x: 40, y: 44 }, []);
+
+  assert.deepEqual(route, [
+    { x: 5, y: 6 },
+    { x: 40, y: 44 },
+  ]);
 });
 
 test("visual game machine slots scale to stay inside the GPU yard", () => {

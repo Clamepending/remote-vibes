@@ -281,6 +281,147 @@ test("VideoMemory suppresses noisy monitor updates during wake cooldown", async 
   }
 });
 
+test("VideoMemory surfaces camera permission webhook failures without waking the agent", async () => {
+  const stateDir = await mkdtemp(path.join(os.tmpdir(), "vr-videomemory-permission-webhook-"));
+  const fetchImpl = createFetch([{ body: { task_id: "88" } }]);
+  const sessionManager = createSessionManager([
+    { id: "session-parent", providerId: "codex", status: "running", cwd: stateDir },
+  ]);
+  const service = new VideoMemoryService({
+    defaultProviderId: "codex",
+    fetchImpl,
+    sessionManager,
+    settings: {
+      videoMemoryBaseUrl: "http://127.0.0.1:5050",
+      videoMemoryEnabled: true,
+    },
+    stateDir,
+  });
+
+  try {
+    await service.initialize();
+    const monitor = await service.createMonitor({
+      callerSessionId: "session-parent",
+      ioId: "0",
+      providerId: "codex",
+      trigger: "When the camera sees a person",
+    });
+
+    const result = await service.handleWebhook({
+      headers: { authorization: `Bearer ${service.webhookToken}` },
+      body: {
+        event_id: "evt-camera-permission",
+        note: "Camera access denied. Please grant camera permissions in System Settings.",
+        task_id: "88",
+      },
+    });
+
+    assert.equal(result.status, "blocked");
+    assert.equal(result.reason, "camera_permission");
+    assert.equal(sessionManager.writes.length, 0);
+
+    const [updated] = service.listMonitors().filter((entry) => entry.id === monitor.id);
+    assert.equal(updated.needsCameraPermission, true);
+    assert.equal(updated.lastIssueKind, "camera-permission");
+    assert.match(updated.lastIssueMessage, /Camera access is blocked/);
+    assert.match(service.getStatus().cameraPermissionMessage, /Privacy & Security > Camera/);
+  } finally {
+    await rm(stateDir, { recursive: true, force: true });
+  }
+});
+
+test("VideoMemory status polling surfaces camera permission task notes", async () => {
+  const stateDir = await mkdtemp(path.join(os.tmpdir(), "vr-videomemory-permission-refresh-"));
+  const fetchImpl = createFetch([
+    { body: { task_id: "89" } },
+    {
+      body: {
+        status: "success",
+        task: {
+          task_id: "89",
+          task_note: [
+            {
+              content: "Camera access denied. Please grant camera permissions in System Settings.",
+              timestamp: "2026-04-22 03:00:00",
+            },
+          ],
+        },
+      },
+    },
+  ]);
+  const sessionManager = createSessionManager([
+    { id: "session-parent", providerId: "codex", status: "running", cwd: stateDir },
+  ]);
+  const service = new VideoMemoryService({
+    defaultProviderId: "codex",
+    fetchImpl,
+    remoteRefreshIntervalMs: 0,
+    sessionManager,
+    settings: {
+      videoMemoryBaseUrl: "http://127.0.0.1:5050",
+      videoMemoryEnabled: true,
+    },
+    stateDir,
+  });
+
+  try {
+    await service.initialize();
+    await service.createMonitor({
+      callerSessionId: "session-parent",
+      ioId: "0",
+      providerId: "codex",
+      trigger: "When the camera sees a person",
+    });
+
+    await service.refreshRemoteMonitorStates({ force: true });
+    const [monitor] = service.listMonitors();
+    assert.equal(fetchImpl.calls[1].url, "http://127.0.0.1:5050/api/task/89");
+    assert.equal(monitor.needsCameraPermission, true);
+    assert.match(monitor.lastEventNote, /Camera access denied/);
+    assert.equal(service.getStatus().cameraPermissionIssue, true);
+  } finally {
+    await rm(stateDir, { recursive: true, force: true });
+  }
+});
+
+test("VideoMemory refreshes device inventory for status", async () => {
+  const stateDir = await mkdtemp(path.join(os.tmpdir(), "vr-videomemory-devices-"));
+  const fetchImpl = createFetch([
+    {
+      body: {
+        devices: [
+          { io_id: "net0", name: "Desk camera", status: "online" },
+          { id: "net1", displayName: "Door camera", type: "camera" },
+        ],
+      },
+    },
+  ]);
+  const service = new VideoMemoryService({
+    fetchImpl,
+    remoteDeviceRefreshIntervalMs: 0,
+    sessionManager: createSessionManager(),
+    settings: {
+      videoMemoryBaseUrl: "http://127.0.0.1:5050",
+      videoMemoryEnabled: true,
+    },
+    stateDir,
+  });
+
+  try {
+    await service.initialize();
+    await service.refreshRemoteDevices({ force: true });
+
+    assert.equal(fetchImpl.calls[0].url, "http://127.0.0.1:5050/api/devices");
+    const status = service.getStatus();
+    assert.equal(status.deviceCount, 2);
+    assert.equal(status.devicesKnown, true);
+    assert.deepEqual(status.devices.map((device) => device.ioId), ["net0", "net1"]);
+    assert.deepEqual(status.devices.map((device) => device.name), ["Desk camera", "Door camera"]);
+  } finally {
+    await rm(stateDir, { recursive: true, force: true });
+  }
+});
+
 test("VideoMemory waits for Claude readiness and confirms workspace trust", async () => {
   const stateDir = await mkdtemp(path.join(os.tmpdir(), "rv-videomemory-claude-ready-"));
   const fetchImpl = createFetch([{ body: { task_id: "8" } }]);

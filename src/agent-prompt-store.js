@@ -6,8 +6,9 @@ import { mkdir, readFile, rename, writeFile } from "node:fs/promises";
 const MANAGED_MARKER = "<!-- vibe-research:managed-agent-prompt -->";
 const LEGACY_MANAGED_MARKER = "<!-- remote-vibes:managed-agent-prompt -->";
 const MANAGED_MARKERS = [MANAGED_MARKER, LEGACY_MANAGED_MARKER];
-const WIKI_V2_MARKER = "<!-- vibe-research:wiki-v2-protocol:v2 -->";
-const WIKI_V2_SECTION_MARKER_PATTERN = /<!-- (?:vibe-research|remote-vibes):wiki-v2-protocol:v\d+ -->/;
+const WIKI_V2_MARKER = "<!-- vibe-research:library-v2-protocol:v2 -->";
+const WIKI_V2_SECTION_MARKER_PATTERN =
+  /<!-- (?:vibe-research|remote-vibes):(?:wiki|library)-v2-protocol:v\d+ -->/;
 const AGENT_MAILBOX_SECTION_MARKER_PATTERN = /<!-- (?:vibe-research|remote-vibes):agent-mailbox-protocol:v\d+ -->/;
 export const AGENT_PROMPT_FILENAME = "agent-prompt.md";
 const PROMPT_FILENAME = AGENT_PROMPT_FILENAME;
@@ -42,7 +43,7 @@ const PROMPT_PRESETS = [
   {
     id: CUSTOM_PROMPT_ID,
     label: "Custom",
-    description: "Your editable prompt. Selecting it makes this the system prompt for new agents.",
+    description: "Your editable occupation. Selecting it sets the system prompt for new agents.",
     editable: true,
   },
   {
@@ -63,8 +64,15 @@ function normalizePrompt(prompt) {
   return trimmed ? `${trimmed}\n` : "";
 }
 
+function migrateOccupationTerminology(prompt) {
+  return String(prompt ?? "")
+    .replace(/^# Vibe Research Agent Prompt$/m, "# Vibe Research Researcher Occupation")
+    .replace(/^# Remote Vibes Agent Prompt$/m, "# Vibe Research Researcher Occupation")
+    .replace(/^# Vibe Research Engineer Prompt$/m, "# Vibe Research Engineer Occupation");
+}
+
 function stripDeprecatedPromptSections(prompt) {
-  const normalized = normalizePrompt(prompt);
+  const normalized = normalizePrompt(migrateOccupationTerminology(prompt));
 
   if (!normalized) {
     return "";
@@ -78,18 +86,18 @@ function getWikiV2Section({ wikiRootLabel = ".vibe-research/wiki" } = {}) {
   return normalizePrompt(`
 ${WIKI_V2_MARKER}
 
-## Knowledge Model
+## Library Model
 
-Use \`${wikiRootLabel}\` as the workspace memory system. Treat it as a living wiki that helps future agents avoid rediscovering the same things.
+Use \`${wikiRootLabel}\` as the workspace Library: a living shared memory system that helps future agents avoid rediscovering the same things. Say "Library" in user-facing communication; if internal paths, environment variables, or APIs say "wiki", treat that as the same Library for backward compatibility.
 
-- \`${wikiRootLabel}/\` is the synthesized knowledge layer for durable notes.
-- \`${wikiRootLabel}/index.md\` is the entrypoint, not the entire knowledge system.
+- \`${wikiRootLabel}/\` is the synthesized Library layer for durable notes.
+- \`${wikiRootLabel}/index.md\` is the Library entrypoint, not the entire memory system.
 - \`${wikiRootLabel}/log.md\` is chronological and append-only.
 - Use \`${wikiRootLabel}/raw/sources/\` for exact source manifests, commands, commits, paths, and artifact pointers when provenance matters.
 
 Prefer promoting useful findings into durable notes over leaving them trapped in terminal output.
 
-## Knowledge Lifecycle
+## Library Lifecycle
 
 Not all information is equally durable.
 
@@ -129,18 +137,18 @@ When useful, include lightweight metadata or clearly labeled bullets for:
 
 ## Search And Traversal
 
-Do not rely only on \`index.md\` once the wiki grows.
+Do not rely only on \`index.md\` once the Library grows.
 
 - Start with the directly named files, notes, messages, or artifacts for the current task before widening the search.
 - Use search over markdown filenames, headings, bodies, run ids, commits, and exact terms.
-- Follow \`[[wikilinks]]\` and normal markdown links when they look relevant.
+- Follow double-bracket note links and normal markdown links when they look relevant.
 - Treat links as traversal hints, not decoration.
 - For narrowly scoped tasks, stay anchored to the specific exchange or artifact unless the direct evidence is insufficient.
 - If the task already names the evidence files to use, do not roam into older related notes unless those exact files are missing, contradictory, or clearly insufficient.
 - When notes disagree, prefer the newest and best-supported understanding.
-- Make uncertainty explicit when the wiki is incomplete or contradictory.
+- Make uncertainty explicit when the Library is incomplete or contradictory.
 
-If dedicated wiki search or traversal tools exist, use them.
+If dedicated Library search or traversal tools exist, use them.
 If not, approximate the same behavior with exact search and manual link-following.
 
 ## Crystallization And Supersession
@@ -154,11 +162,11 @@ When a session produces something reusable:
 
 Do not leave contradictory notes side by side without explanation.
 
-## Shared Knowledge Rules
+## Shared Library Rules
 
-- Shared project knowledge belongs in canonical wiki pages.
+- Shared project knowledge belongs in canonical Library pages.
 - Private scratch and tentative thoughts should stay lightweight unless they become reusable.
-- Do not write secrets, tokens, passwords, or sensitive material into the wiki.
+- Do not write secrets, tokens, passwords, or sensitive material into the Library.
 - Optimize for another agent being able to pick up the work later with minimal confusion.
 
 ## User Interface Rules
@@ -168,7 +176,7 @@ Do not leave contradictory notes side by side without explanation.
 `);
 }
 
-const WIKI_PLACEHOLDER_PATTERN = /\{\{\s*WIKI\s*\}\}/g;
+const WIKI_PLACEHOLDER_PATTERN = /\{\{\s*(?:WIKI|LIBRARY)\s*\}\}/g;
 
 function substitutePromptPlaceholders(prompt, { wikiRootLabel = ".vibe-research/wiki" } = {}) {
   return String(prompt ?? "").replace(WIKI_PLACEHOLDER_PATTERN, wikiRootLabel);
@@ -252,7 +260,7 @@ function getPromptFromSaveInput(input) {
 
 function renderManagedFile(prompt, sourcePath) {
   return `${MANAGED_MARKER}
-<!-- Edit this from Vibe Research or ${sourcePath}. -->
+<!-- Edit this from Vibe Research Occupations or ${sourcePath}. -->
 
 ${normalizePrompt(prompt)}`;
 }
@@ -425,7 +433,7 @@ export class AgentPromptStore {
     const hasRequestedPromptId = Boolean(requestedPromptIdValue);
 
     if (hasRequestedPromptId && !isValidPromptId(requestedPromptIdValue)) {
-      throw new Error("Unknown prompt preset.");
+      throw new Error("Unknown occupation.");
     }
 
     const nextPromptId = normalizePromptId(
@@ -435,7 +443,7 @@ export class AgentPromptStore {
 
     if (hasPrompt) {
       if (nextPromptId !== CUSTOM_PROMPT_ID) {
-        throw new Error("Only the custom prompt can be edited.");
+        throw new Error("Only the custom occupation can be edited.");
       }
 
       await this.persistCustomPrompt(prompt, { preserveCurrentWikiSection: true });
@@ -518,11 +526,11 @@ export class AgentPromptStore {
       },
       {
         filePath: path.join(this.wikiRootPath, "index.md"),
-        content: "# Wiki Index\n\n- Add experiment pages under `experiments/`.\n- Add cross-cutting pages under `topics/`.\n- Append major updates to `log.md`.\n",
+        content: "# Library Index\n\n- Add experiment pages under `experiments/`.\n- Add cross-cutting pages under `topics/`.\n- Append major updates to `log.md`.\n",
       },
       {
         filePath: path.join(this.wikiRootPath, "log.md"),
-        content: "# Wiki Log\n\n",
+        content: "# Library Log\n\n",
       },
     ];
 

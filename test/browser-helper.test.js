@@ -574,7 +574,7 @@ test("shell sessions can invoke vr-browser against localhost apps", async () => 
   }
 });
 
-test("agent wrappers inject Playwright skill guidance and the managed agent prompt for Codex and Claude", async () => {
+test("agent wrappers inject Playwright skill guidance and the managed occupation for Codex and Claude", async () => {
   const workspaceDir = await mkdtemp(path.join(os.tmpdir(), "vibe-research-agent-wrapper-"));
 
   try {
@@ -585,7 +585,7 @@ test("agent wrappers inject Playwright skill guidance and the managed agent prom
 
     await writeFile(
       agentPromptPath,
-      `# Vibe Research Agent Prompt
+      `# Vibe Research Researcher Occupation
 
 Vibe Research provides \`vr-session-name\` on your session \`PATH\`.
 - Run \`vr-session-name "<short task label>"\` at the start of meaningful work.

@@ -1,6 +1,6 @@
 ---
 name: Meta-Prompt Bugbench
-description: Measure whether the 45.8k-char Vibe Research agent prompt pulls its weight against minimal-discipline controls, using a battery of small Python bug-fixes as the inner task. Successor to meta-prompt-autoresearch after that benchmark was deemed low-signal + OOM-unsafe.
+description: Measure whether the 45.8k-char Vibe Research occupation pulls its weight against minimal-discipline controls, using a battery of small Python bug-fixes as the inner task. Successor to meta-prompt-autoresearch after that benchmark was deemed low-signal + OOM-unsafe.
 type: experiment
 updated_at: 2026-04-19
 status: DESIGN COMPLETE, IMPLEMENTATION ~20% — paused for disk/panic constraints on the origin host. Ready for handoff to another machine.
@@ -9,7 +9,7 @@ supersedes: experiments/meta-prompt-autoresearch/README.md (partially — only t
 
 ## The question
 
-Is the ~45.8k-character Vibe Research agent prompt (`CLAUDE.md` / mirrored into the v0 meta-prompt) pulling its weight in agentic work, or can it be trimmed substantially without losing the behaviors that matter?
+Is the ~45.8k-character Vibe Research occupation (`CLAUDE.md` / mirrored into the v0 meta-prompt) pulling its weight in agentic work, or can it be trimmed substantially without losing the behaviors that matter?
 
 Concrete motivation: the Claude Code harness now surfaces a performance warning at >40k characters. If a minimal prompt (v1-control, ~1.1k chars) or a no-discipline prompt (v3, ~1.1k chars) resolves the same fraction of bugs as v0, that's a strong argument for trimming the canonical prompt. If v0 meaningfully outperforms on specific bugs-by-design, that's evidence for the opposite.
 
@@ -33,7 +33,7 @@ All five were authored on origin host at `<harness-repo>/meta-prompts/<variant>.
 
 | id | variant | size | what's in it |
 |---|---|---|---|
-| v0 | full Vibe Research | ~47k chars | the entire current `CLAUDE.md` (Identity, Core Principles, Research Mode, Autoresearch Loop, Git Discipline, Citation Rigor, Faithful Reporting, Knowledge Model…) with `{{WIKI}}` → `.vibe-research/wiki` substitution, plus the **claude -p runtime note** (below) appended verbatim |
+| v0 | full Vibe Research | ~47k chars | the entire current `CLAUDE.md` (Identity, Core Principles, Research Mode, Autoresearch Loop, Git Discipline, Citation Rigor, Faithful Reporting, Library Model...) with `{{LIBRARY}}` -> `.vibe-research/wiki` substitution, plus the **claude -p runtime note** (below) appended verbatim |
 | v1-control | minimal | ~1.2k chars | "You are a researcher running an autoresearch loop on a small task. Read `PROMPT.md` in the current directory. Follow it." + runtime note |
 | v2-ml-priors | v0 + ML priors | ~49k chars | v0 body + a terse "ML priors" section (depth/width, LR, warmup, logit-cap, frozen data, etc.) + runtime note. *Note: for bugbench this variant is mostly a null — bugbench has no ML. Kept for experiment parity; expect it to score ≈ v0.* |
 | v3-no-priors-no-discipline | ultra-minimal | ~1.1k chars | "Read `PROMPT.md`. Do what it says. Stop when your budget is reached." + runtime note |
@@ -328,7 +328,7 @@ These are host-independent and apply to any future `claude -p` meta-experiment o
 
 ### 1. The Vibe Research claude wrapper contaminates meta-prompt experiments (critical)
 
-`$PATH` on a Vibe Research-installed machine resolves `claude` to `$VIBE_RESEARCH_APP/bin/claude`, a shell wrapper that always calls the real claude with `--append-system-prompt "$GUIDANCE\n\n$(cat $VIBE_RESEARCH_AGENT_PROMPT_PATH)"`. That means every `claude -p --system-prompt <meta-prompt>` call you make ends up with the Playwright guidance + the full Vibe Research agent prompt appended to your meta-prompt. Minimal-prompt variants aren't actually minimal.
+`$PATH` on a Vibe Research-installed machine resolves `claude` to `$VIBE_RESEARCH_APP/bin/claude`, a shell wrapper that always calls the real claude with `--append-system-prompt "$GUIDANCE\n\n$(cat $VIBE_RESEARCH_AGENT_PROMPT_PATH)"`. That means every `claude -p --system-prompt <meta-prompt>` call you make ends up with the Playwright guidance + the full Vibe Research occupation appended to your meta-prompt. Minimal-prompt variants aren't actually minimal.
 
 **Bypass:** call the real binary directly. On a typical RV install it's at `$HOME/.local/bin/claude` (a symlink to `$HOME/.local/share/claude/versions/<version>` — a Mach-O executable, not a shell script). Defensively clear `VIBE_RESEARCH_AGENT_PROMPT_PATH=""` and `VIBE_RESEARCH_PLAYWRIGHT_SKILL=""` in the child env in case the real binary reads them via some other code path.
 
@@ -353,7 +353,7 @@ If the agent does `git add results.tsv && git commit && git reset --hard <baseli
 ## Implementation state at handoff
 
 - [x] Design finalized (this page).
-- [x] 5 meta-prompt variants authored on origin host at `<harness-repo>/meta-prompts/<variant>.md` on branch `experiment/wave1` commit `efd5292`. **Not pushed to a remote.** The v0/v2/v4 variants are the full `CLAUDE.md` + runtime note; v1/v3 are fully reproduced above. **New-host action:** either pull/push the branch, or reconstruct — v1 and v3 are in this page; v0 is `cat <repo>/CLAUDE.md | sed 's|{{WIKI}}|.vibe-research/wiki|g'` + append the runtime note; v2 and v4 are v0 + an extra section each (see variant table above for content descriptions).
+- [x] 5 meta-prompt variants authored on origin host at `<harness-repo>/meta-prompts/<variant>.md` on branch `experiment/wave1` commit `efd5292`. **Not pushed to a remote.** The v0/v2/v4 variants are the full `CLAUDE.md` + runtime note; v1/v3 are fully reproduced above. **New-host action:** either pull/push the branch, or reconstruct -- v1 and v3 are in this page; v0 is `cat <repo>/CLAUDE.md | sed 's|{{LIBRARY}}|.vibe-research/wiki|g'` + append the runtime note; v2 and v4 are v0 + an extra section each (see variant table above for content descriptions).
 - [x] Harness wrapper-bypass fix committed on origin host at `<harness-repo>@aeb2aa1` branch `experiment/wave1`. **Not pushed.** Script body is reproduced in "Meta-harness" section above — new host can copy it directly.
 - [x] Bugs 01 and 02 fully implemented on origin host at `<bugbench-repo>/bugs/{01_sanity,02_read_stderr}/` on branch `experiment/bugbench-v1`. **Not committed, not pushed.** All code is reproduced above — new host should `git init` and recreate from this page.
 - [ ] Bugs 03, 04, 05 designed in full above, not yet scaffolded on origin host.

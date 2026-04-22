@@ -812,7 +812,7 @@ async function readWikiStorageByWalking({
           skippedEntries: 0,
           truncated: false,
           source: "walk",
-          error: error.message || "Could not read knowledge base folder.",
+          error: error.message || "Could not read library folder.",
         };
       }
       skippedEntries += 1;

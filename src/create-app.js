@@ -21,6 +21,7 @@ import { AgentPromptStore } from "./agent-prompt-store.js";
 import { AgentRunStore } from "./agent-run-store.js";
 import { BrowserUseService } from "./browser-use-service.js";
 import { createFolderEntry, listFolderEntries } from "./folder-browser.js";
+import { OttoAuthService } from "./ottoauth-service.js";
 import { PortAliasStore } from "./port-alias-store.js";
 import { listListeningPorts } from "./ports.js";
 import { buildAgentCredentialEnv, SettingsStore } from "./settings-store.js";
@@ -30,6 +31,7 @@ import { getVibeResearchStateDir, getVibeResearchSystemDir } from "./state-paths
 import { collectSystemMetrics } from "./system-metrics.js";
 import { SystemMetricsHistoryStore } from "./system-metrics-history.js";
 import { TailscaleServeManager } from "./tailscale-serve.js";
+import { TelegramService } from "./telegram-service.js";
 import { UpdateManager } from "./update-manager.js";
 import { VideoMemoryService } from "./videomemory-service.js";
 import { WikiBackupService } from "./wiki-backup.js";
@@ -191,13 +193,13 @@ function getGitRepoFolderName(remoteUrl) {
     .trim()
     .replace(/[?#].*$/, "")
     .replace(/\/+$/, "");
-  const rawName = cleaned.split(/[/:]/).filter(Boolean).at(-1) || "brain";
+  const rawName = cleaned.split(/[/:]/).filter(Boolean).at(-1) || "library";
   const folderName = rawName
     .replace(/\.git$/i, "")
     .replace(/[^A-Za-z0-9._-]+/g, "-")
     .replace(/^-+|-+$/g, "");
 
-  return folderName || "brain";
+  return folderName || "library";
 }
 
 function normalizeGitRemoteForCompare(value) {
@@ -517,6 +519,8 @@ export async function createVibeResearchApp({
   onTerminate = null,
   agentMailServiceFactory = null,
   browserUseServiceFactory = null,
+  ottoAuthServiceFactory = null,
+  telegramServiceFactory = null,
   videoMemoryServiceFactory = null,
   systemMetricsProvider = collectSystemMetrics,
   systemMetricsSampleIntervalMs = 60_000,
@@ -542,6 +546,13 @@ export async function createVibeResearchApp({
           stateDir,
           systemRootPath,
         });
+  const ottoAuthService =
+    typeof ottoAuthServiceFactory === "function"
+      ? ottoAuthServiceFactory(settingsStore.settings, { cwd, stateDir, systemRootPath })
+      : new OttoAuthService({
+          settings: settingsStore.settings,
+          stateDir,
+        });
   const wikiBackupService = new WikiBackupService({
     enabled: settingsStore.settings.wikiGitBackupEnabled,
     intervalMs: settingsStore.settings.wikiBackupIntervalMs,
@@ -565,6 +576,7 @@ export async function createVibeResearchApp({
     systemRootPath,
     extraSubagentsProvider: (session) => [
       ...browserUseService.listSubagentsForSession(session.id),
+      ...ottoAuthService.listSubagentsForSession(session.id),
       ...(videoMemoryService ? videoMemoryService.listSubagentsForSession(session.id) : []),
     ],
   });
@@ -577,6 +589,16 @@ export async function createVibeResearchApp({
     typeof agentMailServiceFactory === "function"
       ? agentMailServiceFactory(settingsStore.settings, { cwd, sessionManager, stateDir, systemRootPath })
       : new AgentMailService({
+          cwd,
+          sessionManager,
+          settings: settingsStore.settings,
+          stateDir,
+          systemRootPath,
+        });
+  const telegramService =
+    typeof telegramServiceFactory === "function"
+      ? telegramServiceFactory(settingsStore.settings, { cwd, sessionManager, stateDir, systemRootPath })
+      : new TelegramService({
           cwd,
           sessionManager,
           settings: settingsStore.settings,
@@ -601,11 +623,14 @@ export async function createVibeResearchApp({
   await agentRunStore.initialize();
   await portAliasStore.initialize();
   await browserUseService.initialize();
+  await ottoAuthService.initialize();
   await videoMemoryService.initialize();
   await sessionManager.initialize();
   await agentPromptStore.initialize();
+  sessionManager.setOccupationId(agentPromptStore.selectedPromptId);
   wikiBackupService.start();
   agentMailService.start();
+  telegramService.start();
   if (settingsStore.settings.wikiGitRemoteEnabled && settingsStore.settings.wikiGitRemoteUrl) {
     void wikiBackupService.runBackup({ reason: "startup" });
   }
@@ -709,7 +734,9 @@ export async function createVibeResearchApp({
       agentMailStatus: agentMailService.getStatus(),
       backupStatus: wikiBackupService.getStatus(),
       browserUseStatus: browserUseService.getStatus(),
+      ottoAuthStatus: ottoAuthService.getStatus(),
       sleepStatus: sleepPreventionService.getStatus(),
+      telegramStatus: telegramService.getStatus(),
       videoMemoryStatus: videoMemoryService.getStatus(),
     });
   }
@@ -737,6 +764,8 @@ export async function createVibeResearchApp({
       enabled: settings.preventSleepEnabled,
     });
     browserUseService.restart(settingsStore.settings);
+    ottoAuthService.restart(settingsStore.settings);
+    telegramService.restart(settingsStore.settings);
     videoMemoryService.restart(settingsStore.settings);
     agentMailService.restart(settingsStore.settings);
     sessionManager.setEnvironment(buildAgentCredentialEnv(settingsStore.settings, serverEnv));
@@ -784,7 +813,7 @@ export async function createVibeResearchApp({
     try {
       const stats = await stat(targetPath);
       if (!stats.isDirectory()) {
-        throw buildHttpError(`Brain path is not a directory: ${targetPath}`, 400);
+        throw buildHttpError(`Library path is not a directory: ${targetPath}`, 400);
       }
 
       const entries = await readdir(targetPath);
@@ -808,7 +837,7 @@ export async function createVibeResearchApp({
       }
 
       throw buildHttpError(
-        `Brain clone folder already has files: ${targetPath}. Choose an empty folder or move the existing folder first.`,
+        `Library clone folder already has files: ${targetPath}. Choose an empty folder or move the existing folder first.`,
         409,
       );
     } catch (error) {
@@ -1068,6 +1097,16 @@ export async function createVibeResearchApp({
         browserUseModel: request.body?.browserUseModel,
         browserUseProfileDir: request.body?.browserUseProfileDir,
         browserUseWorkerPath: request.body?.browserUseWorkerPath,
+        ottoAuthBaseUrl: request.body?.ottoAuthBaseUrl,
+        ottoAuthCallbackUrl: request.body?.ottoAuthCallbackUrl,
+        ottoAuthDefaultMaxChargeCents: request.body?.ottoAuthDefaultMaxChargeCents,
+        ottoAuthEnabled: request.body?.ottoAuthEnabled,
+        ottoAuthPrivateKey: request.body?.ottoAuthPrivateKey,
+        ottoAuthUsername: request.body?.ottoAuthUsername,
+        telegramAllowedChatIds: request.body?.telegramAllowedChatIds,
+        telegramBotToken: request.body?.telegramBotToken,
+        telegramEnabled: request.body?.telegramEnabled,
+        telegramProviderId: request.body?.telegramProviderId,
         videoMemoryBaseUrl: request.body?.videoMemoryBaseUrl,
         videoMemoryEnabled: request.body?.videoMemoryEnabled,
         videoMemoryProviderId: request.body?.videoMemoryProviderId,
@@ -1116,7 +1155,7 @@ export async function createVibeResearchApp({
           }
 
           const stderr = String(error?.stderr || error?.message || "").trim();
-          throw buildHttpError(stderr || "Could not clone the brain git repo.", 400);
+          throw buildHttpError(stderr || "Could not clone the Library git repo.", 400);
         }
       }
 
@@ -1242,6 +1281,58 @@ export async function createVibeResearchApp({
     }
   });
 
+  app.get("/api/telegram/status", (_request, response) => {
+    response.json({ telegram: telegramService.getStatus() });
+  });
+
+  app.post("/api/telegram/setup", async (request, response) => {
+    try {
+      const botToken = String(request.body?.botToken || request.body?.telegramBotToken || "").trim();
+      const enabled = request.body?.enabled ?? request.body?.telegramEnabled;
+      const enabledBoolean = enabled === true || enabled === "true" || enabled === "on";
+      const nextSettings = {
+        installedPluginIds: request.body?.installedPluginIds,
+        telegramAllowedChatIds: request.body?.allowedChatIds ?? request.body?.telegramAllowedChatIds,
+        telegramBotToken: botToken || undefined,
+        telegramEnabled: enabledBoolean,
+        telegramProviderId: request.body?.telegramProviderId || request.body?.providerId,
+      };
+
+      if (enabledBoolean && !botToken && !settingsStore.settings.telegramBotToken) {
+        throw new Error("Telegram bot token is required.");
+      }
+
+      await settingsStore.update(nextSettings);
+      telegramService.restart(settingsStore.settings);
+
+      response.json({
+        settings: getSettingsState(),
+        telegram: telegramService.getStatus(),
+      });
+    } catch (error) {
+      response.status(400).json({ error: error.message || "Could not set up Telegram." });
+    }
+  });
+
+  app.post("/api/telegram/reply", async (request, response) => {
+    try {
+      const token = String(request.headers["x-vibe-research-telegram-token"] || request.body?.token || "").trim();
+      if (!token || token !== telegramService.replyToken) {
+        response.status(403).json({ error: "Invalid Telegram reply token." });
+        return;
+      }
+
+      const reply = await telegramService.replyToMessage({
+        chatId: request.body?.chatId,
+        messageId: request.body?.messageId,
+        text: request.body?.text,
+      });
+      response.json({ ok: true, reply });
+    } catch (error) {
+      response.status(400).json({ error: error.message || "Could not send Telegram reply." });
+    }
+  });
+
   app.get("/api/browser-use/status", (_request, response) => {
     response.json({ browserUse: browserUseService.getStatus() });
   });
@@ -1272,7 +1363,37 @@ export async function createVibeResearchApp({
     }
   });
 
-  app.get("/api/videomemory/status", (_request, response) => {
+  app.get("/api/ottoauth/status", (_request, response) => {
+    response.json({ ottoAuth: ottoAuthService.getStatus() });
+  });
+
+  app.post("/api/ottoauth/setup", async (request, response) => {
+    try {
+      const privateKey = String(request.body?.privateKey || request.body?.ottoAuthPrivateKey || "").trim();
+      await settingsStore.update({
+        installedPluginIds: request.body?.installedPluginIds,
+        ottoAuthBaseUrl: request.body?.baseUrl ?? request.body?.ottoAuthBaseUrl,
+        ottoAuthCallbackUrl: request.body?.callbackUrl ?? request.body?.ottoAuthCallbackUrl,
+        ottoAuthDefaultMaxChargeCents:
+          request.body?.defaultMaxChargeCents ?? request.body?.ottoAuthDefaultMaxChargeCents,
+        ottoAuthEnabled: request.body?.enabled ?? request.body?.ottoAuthEnabled,
+        ottoAuthPrivateKey: privateKey || undefined,
+        ottoAuthUsername: request.body?.username ?? request.body?.ottoAuthUsername,
+      });
+      await applyRuntimeSettings(settingsStore.settings, { backupReason: false });
+
+      response.json({
+        ottoAuth: ottoAuthService.getStatus(),
+        settings: getSettingsState(),
+      });
+    } catch (error) {
+      response.status(400).json({ error: error.message || "Could not set up OttoAuth." });
+    }
+  });
+
+  app.get("/api/videomemory/status", async (_request, response) => {
+    await videoMemoryService.refreshRemoteMonitorStates();
+    await videoMemoryService.refreshRemoteDevices();
     response.json({
       monitors: videoMemoryService.listMonitors(),
       videoMemory: videoMemoryService.getStatus(),
@@ -1418,6 +1539,73 @@ export async function createVibeResearchApp({
     }
 
     response.json({ ok: true, session });
+  });
+
+  app.get("/api/ottoauth/tasks", (_request, response) => {
+    response.json({ tasks: ottoAuthService.listTasks() });
+  });
+
+  app.post("/api/ottoauth/tasks", async (request, response) => {
+    try {
+      const token = String(request.headers["x-vibe-research-ottoauth-token"] || request.body?.token || "").trim();
+      if (!ottoAuthService.validateCreateRequest(token)) {
+        response.status(403).json({ error: "Invalid OttoAuth token." });
+        return;
+      }
+
+      const task = await ottoAuthService.createTask({
+        callerSessionId: request.body?.callerSessionId || request.body?.parentSessionId,
+        cwd: request.body?.cwd,
+        itemUrl: request.body?.itemUrl || request.body?.item_url,
+        maxChargeCents: request.body?.maxChargeCents || request.body?.max_charge_cents,
+        prompt: request.body?.prompt,
+        service: request.body?.service,
+        serviceId: request.body?.serviceId,
+        shippingAddress: request.body?.shippingAddress || request.body?.shipping_address,
+        task: request.body?.task,
+        taskPrompt: request.body?.taskPrompt || request.body?.task_prompt,
+        title: request.body?.title || request.body?.name,
+        url: request.body?.url || request.body?.websiteUrl || request.body?.website_url,
+      });
+
+      response.status(201).json({ task });
+    } catch (error) {
+      response.status(400).json({ error: error.message || "Could not start OttoAuth task." });
+    }
+  });
+
+  app.get("/api/ottoauth/tasks/:ottoAuthTaskId", async (request, response) => {
+    const refresh = request.query.refresh === "1" || request.query.refresh === "true";
+    let task = null;
+    try {
+      task = refresh
+        ? await ottoAuthService.refreshTask(request.params.ottoAuthTaskId)
+        : ottoAuthService.getTask(request.params.ottoAuthTaskId);
+    } catch (error) {
+      response.status(400).json({ error: error.message || "Could not refresh OttoAuth task." });
+      return;
+    }
+
+    if (!task) {
+      response.status(404).json({ error: "OttoAuth task not found." });
+      return;
+    }
+
+    response.json({ task });
+  });
+
+  app.post("/api/ottoauth/tasks/:ottoAuthTaskId/refresh", async (request, response) => {
+    try {
+      const task = await ottoAuthService.refreshTask(request.params.ottoAuthTaskId);
+      if (!task) {
+        response.status(404).json({ error: "OttoAuth task not found." });
+        return;
+      }
+
+      response.json({ task });
+    } catch (error) {
+      response.status(400).json({ error: error.message || "Could not refresh OttoAuth task." });
+    }
   });
 
   app.get("/api/computeruse/device/wait-task", async (request, response) => {
@@ -1689,6 +1877,7 @@ export async function createVibeResearchApp({
         providerId: String(request.body?.providerId || defaultProviderId),
         name: request.body?.name,
         cwd: request.body?.cwd,
+        occupationId: agentPromptStore.selectedPromptId,
       });
 
       response.status(201).json({ session });
@@ -1725,7 +1914,9 @@ export async function createVibeResearchApp({
 
   app.put("/api/agent-prompt", async (request, response) => {
     try {
-      response.json(await agentPromptStore.save(request.body));
+      const payload = await agentPromptStore.save(request.body);
+      sessionManager.setOccupationId(payload.selectedPromptId);
+      response.json(payload);
     } catch (error) {
       response.status(400).json({ error: error.message });
     }
@@ -1733,7 +1924,9 @@ export async function createVibeResearchApp({
 
   app.post("/api/agent-prompt/reload", async (_request, response) => {
     try {
-      response.json(await agentPromptStore.reload());
+      const payload = await agentPromptStore.reload();
+      sessionManager.setOccupationId(payload.selectedPromptId);
+      response.json(payload);
     } catch (error) {
       response.status(400).json({ error: error.message });
     }
@@ -1863,6 +2056,8 @@ export async function createVibeResearchApp({
   await writeServerInfo(stateDir, {
     agentMailReplyToken: agentMailService.replyToken,
     browserUseToken: browserUseService.requestToken,
+    ottoAuthToken: ottoAuthService.requestToken,
+    telegramReplyToken: telegramService.replyToken,
     videoMemoryToken: videoMemoryService.requestToken,
     videoMemoryWebhookToken: videoMemoryService.webhookToken,
     videoMemoryWebhookUrl: videoMemoryService.getWebhookUrl(),
@@ -1957,6 +2152,7 @@ export async function createVibeResearchApp({
       await browserUseService.shutdown();
       await removeServerInfo(stateDir);
       agentMailService.stop();
+      telegramService.stop();
       wikiBackupService.stop();
       sleepPreventionService.stop();
       if (systemMetricsTimer) {
@@ -2016,6 +2212,7 @@ export async function createVibeResearchApp({
     },
     server,
     sessionManager,
+    ottoAuthService,
     videoMemoryService,
     relaunch: () => requestTerminate({ relaunch: true }),
     terminate: requestTerminate,

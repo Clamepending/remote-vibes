@@ -9,6 +9,7 @@ import {
   getDefaultBrowserUseWorkerPath,
   normalizeBrowserUseMaxTurns,
 } from "./browser-use-service.js";
+import { getDefaultOttoAuthBaseUrl } from "./ottoauth-service.js";
 
 const SETTINGS_FILE_VERSION = 1;
 const SETTINGS_FILENAME = "settings.json";
@@ -208,6 +209,16 @@ export class SettingsStore {
       browserUseModel: "",
       browserUseProfileDir: getDefaultBrowserUseProfileDir(this.homeDir),
       browserUseWorkerPath: getDefaultBrowserUseWorkerPath(this.homeDir),
+      ottoAuthBaseUrl: String(this.env.OTTOAUTH_BASE_URL || getDefaultOttoAuthBaseUrl()).trim(),
+      ottoAuthCallbackUrl: String(this.env.OTTOAUTH_CALLBACK_URL || "").trim(),
+      ottoAuthDefaultMaxChargeCents: "",
+      ottoAuthEnabled: false,
+      ottoAuthPrivateKey: String(this.env.OTTOAUTH_PRIVATE_KEY || "").trim(),
+      ottoAuthUsername: String(this.env.OTTOAUTH_USERNAME || "").trim(),
+      telegramAllowedChatIds: String(this.env.TELEGRAM_ALLOWED_CHAT_IDS || "").trim(),
+      telegramBotToken: String(this.env.TELEGRAM_BOT_TOKEN || "").trim(),
+      telegramEnabled: false,
+      telegramProviderId: "claude",
       videoMemoryBaseUrl: String(
         this.env.VIDEOMEMORY_BASE_URL ||
           this.env.VIDEOMEMORY_BASE ||
@@ -288,6 +299,24 @@ export class SettingsStore {
         payload.browserUseWorkerPath || defaults.browserUseWorkerPath,
         this.homeDir,
       ),
+      ottoAuthBaseUrl: String(payload.ottoAuthBaseUrl || defaults.ottoAuthBaseUrl || getDefaultOttoAuthBaseUrl()).trim(),
+      ottoAuthCallbackUrl: String(payload.ottoAuthCallbackUrl || defaults.ottoAuthCallbackUrl || "").trim(),
+      ottoAuthDefaultMaxChargeCents: String(
+        payload.ottoAuthDefaultMaxChargeCents || defaults.ottoAuthDefaultMaxChargeCents || "",
+      ).trim(),
+      ottoAuthEnabled: normalizeBoolean(payload.ottoAuthEnabled, defaults.ottoAuthEnabled),
+      ottoAuthPrivateKey:
+        payload.ottoAuthPrivateKey === undefined
+          ? defaults.ottoAuthPrivateKey
+          : String(payload.ottoAuthPrivateKey || "").trim(),
+      ottoAuthUsername: String(payload.ottoAuthUsername || defaults.ottoAuthUsername || "").trim(),
+      telegramAllowedChatIds: String(payload.telegramAllowedChatIds || defaults.telegramAllowedChatIds || "").trim(),
+      telegramBotToken:
+        payload.telegramBotToken === undefined
+          ? defaults.telegramBotToken
+          : String(payload.telegramBotToken || "").trim(),
+      telegramEnabled: normalizeBoolean(payload.telegramEnabled, defaults.telegramEnabled),
+      telegramProviderId: normalizeAgentProviderId(payload.telegramProviderId || defaults.telegramProviderId),
       videoMemoryBaseUrl: String(payload.videoMemoryBaseUrl || defaults.videoMemoryBaseUrl || "").trim(),
       videoMemoryEnabled: normalizeBoolean(payload.videoMemoryEnabled, defaults.videoMemoryEnabled),
       videoMemoryProviderId: normalizeAgentProviderId(payload.videoMemoryProviderId || defaults.videoMemoryProviderId),
@@ -342,7 +371,7 @@ export class SettingsStore {
     await mkdir(this.settings.wikiPath, { recursive: true });
     const stats = await stat(this.settings.wikiPath);
     if (!stats.isDirectory()) {
-      throw new Error(`Wiki path is not a directory: ${this.settings.wikiPath}`);
+      throw new Error(`Library path is not a directory: ${this.settings.wikiPath}`);
     }
   }
 
@@ -388,7 +417,7 @@ export class SettingsStore {
         return remoteUrl;
       }
     } catch {
-      // Missing remotes are normal for local-only wiki folders.
+      // Missing remotes are normal for local-only Library folders.
     }
 
     try {
@@ -460,7 +489,9 @@ export class SettingsStore {
     agentMailStatus = null,
     backupStatus = null,
     browserUseStatus = null,
+    ottoAuthStatus = null,
     sleepStatus = null,
+    telegramStatus = null,
     videoMemoryStatus = null,
   } = {}) {
     return {
@@ -481,6 +512,12 @@ export class SettingsStore {
       browserUseAnthropicApiKey: "",
       browserUseAnthropicApiKeyConfigured: Boolean(this.settings.browserUseAnthropicApiKey),
       browserUseStatus,
+      ottoAuthPrivateKey: "",
+      ottoAuthPrivateKeyConfigured: Boolean(this.settings.ottoAuthPrivateKey),
+      ottoAuthStatus,
+      telegramBotToken: "",
+      telegramBotTokenConfigured: Boolean(this.settings.telegramBotToken),
+      telegramStatus,
       videoMemoryStatus,
       wikiRelativePath: formatRelativePath(this.cwd, this.settings.wikiPath),
       wikiRelativeRoot: formatRelativePath(this.cwd, this.settings.wikiPath),

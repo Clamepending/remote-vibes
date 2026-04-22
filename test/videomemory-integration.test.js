@@ -43,6 +43,16 @@ async function startFakeVideoMemory() {
         return;
       }
 
+      if (request.method === "GET" && request.url === "/api/devices") {
+        response.end(JSON.stringify({
+          devices: [
+            { io_id: "net0", name: "Desk camera" },
+            { io_id: "net1", name: "Door camera" },
+          ],
+        }));
+        return;
+      }
+
       response.statusCode = 404;
       response.end(JSON.stringify({ error: "not found" }));
     });
@@ -171,6 +181,8 @@ test("Vibe Research creates VideoMemory monitors and wakes provider-agnostic ses
     const statusPayload = await statusResponse.json();
     assert.equal(statusPayload.monitors[0].wakeCount, 1);
     assert.equal(statusPayload.videoMemory.activeCount, 1);
+    assert.equal(statusPayload.videoMemory.deviceCount, 2);
+    assert.equal(statusPayload.videoMemory.devicesKnown, true);
   } finally {
     await app.close();
     await fakeVideoMemory.close();

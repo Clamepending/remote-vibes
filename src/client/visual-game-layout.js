@@ -1,5 +1,5 @@
-const VISUAL_GAME_GRID_COLUMNS = 16;
-const VISUAL_GAME_GRID_ROWS = 9;
+const VISUAL_GAME_GRID_COLUMNS = 30;
+const VISUAL_GAME_GRID_ROWS = 18;
 const VISUAL_GAME_CELL_SIZE = 30;
 const VISUAL_GAME_WORLD_WIDTH = VISUAL_GAME_GRID_COLUMNS * VISUAL_GAME_CELL_SIZE;
 const VISUAL_GAME_WORLD_HEIGHT = VISUAL_GAME_GRID_ROWS * VISUAL_GAME_CELL_SIZE;
@@ -63,63 +63,88 @@ export const VISUAL_GAME_MAP_LAYOUT = Object.freeze({
     cellSize: VISUAL_GAME_CELL_SIZE,
   },
   roads: [
-    { id: "main", cells: cellsInRect(2, 4, 14, 1) },
-    { id: "dormitory-spur", cells: cellsInRect(2, 2, 1, 2) },
-    { id: "gpu-yard-spur", cells: cellsInRect(8, 5, 1, 1) },
-    { id: "dock-spur", cells: cellsInRect(15, 5, 1, 2) },
+    { id: "main", cells: cellsInRect(2, 8, 26, 1) },
+    { id: "dormitory-spur", cells: cellsInRect(4, 4, 1, 4) },
+    { id: "library-spur", cells: cellsInRect(4, 9, 1, 1) },
+    { id: "workshop-spur", cells: cellsInRect(12, 6, 1, 2) },
+    { id: "browser-spur", cells: cellsInRect(20, 6, 1, 2) },
+    { id: "automations-spur", cells: cellsInRect(24, 6, 1, 2) },
+    { id: "gpu-yard-spur", cells: cellsInRect(13, 9, 1, 3) },
+    { id: "camera-spur", cells: cellsInRect(23, 9, 1, 1) },
+    { id: "east-plaza", cells: cellsInRect(23, 9, 5, 1) },
+    { id: "dock-spur", cells: cellsInRect(27, 10, 1, 3) },
   ],
   places: {
-    dormitory: place("dormitory", "Dormitory", 0, 0, 6, 2, {
-      entrance: { side: "bottom", offset: 2.5 / 6 },
+    dormitory: place("dormitory", "Dormitory", 1, 1, 6, 3, {
+      entrance: { side: "bottom", offset: 0.5 },
       beds: [],
       spots: [
-        cellCenter(1, 1, 0, 2),
-        cellCenter(2, 1, 0, 2),
-        cellCenter(3, 1, 0, 2),
-        cellCenter(4, 1, 0, 2),
-        cellCenter(5, 1, -8, 2),
+        cellCenter(2, 2, 0, 4),
+        cellCenter(3, 2, 0, 4),
+        cellCenter(4, 2, 0, 4),
+        cellCenter(5, 2, 0, 4),
+        cellCenter(6, 2, -8, 4),
       ],
     }),
-    library: place("library", "Library", 0, 5, 5, 2, {
-      entrance: { side: "top", offset: 2.5 / 5 },
+    library: place("library", "Library", 1, 10, 6, 3, {
+      entrance: { side: "top", offset: 0.5 },
       spots: [
-        cellCenter(1, 6, -2, 2),
-        cellCenter(2, 6, -1, 3),
-        cellCenter(3, 6, 0, 2),
-        cellCenter(2, 5, 0, 8),
+        cellCenter(2, 11, -2, 2),
+        cellCenter(3, 11, -1, 3),
+        cellCenter(4, 11, 0, 2),
+        cellCenter(3, 10, 0, 8),
       ],
     }),
-    workshop: place("workshop", "Computer Lab", 7, 0, 5, 4, {
-      entrance: { side: "bottom", offset: 2.5 / 5 },
+    workshop: place("workshop", "Computer Lab", 9, 1, 6, 5, {
+      entrance: { side: "bottom", offset: 0.5 },
       spots: [
-        cellCenter(7, 2, 10, -9),
-        cellCenter(8, 2, 20, -9),
-        cellCenter(10, 2, 0, -9),
-        cellCenter(7, 3, 10, -4),
-        cellCenter(8, 3, 20, -4),
-        cellCenter(10, 3, 0, -4),
+        cellCenter(10, 3, 10, -9),
+        cellCenter(11, 3, 20, -9),
+        cellCenter(13, 3, 0, -9),
+        cellCenter(10, 4, 10, -4),
+        cellCenter(11, 4, 20, -4),
+        cellCenter(13, 4, 0, -4),
       ],
     }),
-    browser: place("browser", "Browser", 13, 0, 3, 4, {
-      entrance: { side: "bottom", offset: 1.5 / 3 },
+    browser: place("browser", "Browser", 18, 1, 5, 5, {
+      entrance: { side: "bottom", offset: 0.5 },
       spots: [
-        cellCenter(13, 2, 10, -9),
-        cellCenter(14, 2, 10, -9),
-        cellCenter(13, 3, 10, -4),
-        cellCenter(14, 3, 10, -4),
+        cellCenter(18, 3, 14, -9),
+        cellCenter(20, 3, 0, -9),
+        cellCenter(21, 3, 8, -9),
+        cellCenter(18, 4, 14, -4),
+        cellCenter(20, 4, 0, -4),
+        cellCenter(21, 4, 8, -4),
       ],
     }),
-    camera: place("camera", "Camera", 11, 5, 4, 2, {
-      entrance: { side: "top", offset: 2 / 4 },
+    automations: place("automations", "Automations", 23, 1, 3, 5, {
+      entrance: { side: "bottom", offset: 0.5 },
       spots: [
-        cellCenter(12, 6, -6, 3),
-        cellCenter(13, 6, -3, 3),
-        cellCenter(12, 5, -6, 15),
-        cellCenter(13, 5, -3, 15),
+        cellCenter(23, 5, 10, -5),
+        cellCenter(24, 5, 0, -5),
+        cellCenter(25, 5, -10, -5),
       ],
     }),
-    gpuYard: place("gpuYard", "GPU Yard", 5, 6, 6, 3, {
-      entrance: { side: "top", offset: 3.5 / 6 },
+    ottoauth: place("ottoauth", "OttoAuth", 15, 6, 3, 2, {
+      entrance: { side: "bottom", offset: 0.5 },
+      spots: [
+        cellCenter(15, 7, 10, -3),
+        cellCenter(16, 7, 0, -3),
+        cellCenter(17, 7, -10, -3),
+      ],
+    }),
+    camera: place("camera", "Camera", 21, 10, 5, 3, {
+      entrance: { side: "top", offset: 0.5 },
+      spots: [
+        cellCenter(22, 11, -6, 3),
+        cellCenter(23, 11, -3, 3),
+        cellCenter(24, 11, -3, 3),
+        cellCenter(22, 10, -6, 15),
+        cellCenter(23, 10, -3, 15),
+      ],
+    }),
+    gpuYard: place("gpuYard", "GPU Yard", 9, 12, 8, 4, {
+      entrance: { side: "top", offset: 0.5 },
       factory: {
         columns: 4,
         gap: 4,
@@ -128,17 +153,17 @@ export const VISUAL_GAME_MAP_LAYOUT = Object.freeze({
         size: { width: 54, height: 42 },
       },
     }),
-    dock: place("dock", "Port Dock", 13, 7, 3, 2, {
-      entrance: { side: "top", offset: 2.5 / 3 },
+    dock: place("dock", "Port Dock", 25, 13, 4, 3, {
+      entrance: { side: "top", offset: 0.5 },
     }),
   },
   roamRoutes: [
-    [cellCenter(2, 4), cellCenter(5, 4), cellCenter(8, 4), cellCenter(11, 4), cellCenter(15, 4), cellCenter(8, 4)],
-    [cellCenter(2, 4), cellCenter(2, 3), cellCenter(2, 2), cellCenter(4, 2), cellCenter(4, 4)],
-    [cellCenter(9, 4), cellCenter(9, 3), cellCenter(11, 3), cellCenter(11, 4), cellCenter(14, 4)],
-    [cellCenter(13, 4), cellCenter(13, 5), cellCenter(13, 6), cellCenter(15, 6), cellCenter(15, 4)],
-    [cellCenter(8, 4), cellCenter(8, 5), cellCenter(8, 6), cellCenter(6, 6), cellCenter(6, 4)],
-    [cellCenter(15, 4), cellCenter(15, 5), cellCenter(15, 6), cellCenter(14, 6), cellCenter(14, 4)],
+    [cellCenter(4, 8), cellCenter(9, 8), cellCenter(13, 8), cellCenter(20, 8), cellCenter(27, 8), cellCenter(13, 8)],
+    [cellCenter(4, 8), cellCenter(4, 6), cellCenter(4, 4), cellCenter(4, 6), cellCenter(4, 8)],
+    [cellCenter(12, 8), cellCenter(12, 7), cellCenter(12, 6), cellCenter(12, 7), cellCenter(12, 8)],
+    [cellCenter(20, 8), cellCenter(20, 7), cellCenter(20, 6), cellCenter(20, 7), cellCenter(20, 8)],
+    [cellCenter(13, 8), cellCenter(13, 9), cellCenter(13, 11), cellCenter(13, 9), cellCenter(13, 8)],
+    [cellCenter(23, 8), cellCenter(23, 9), cellCenter(27, 9), cellCenter(27, 12), cellCenter(27, 9), cellCenter(23, 9)],
   ],
 });
 
@@ -174,6 +199,59 @@ export function getVisualGameRoadRects(layout = VISUAL_GAME_MAP_LAYOUT) {
       rect: cellRect(cell),
     })),
   );
+}
+
+export function findVisualGameRoadRoute(start, target, roadRects, options = {}) {
+  const startPoint = normalizeRoutePoint(start);
+  const targetPoint = normalizeRoutePoint(target);
+  if (!startPoint || !targetPoint) {
+    return [];
+  }
+
+  const rects = (Array.isArray(roadRects) ? roadRects : [])
+    .map((entry, index) => normalizeRouteRect(entry?.rect || entry, index))
+    .filter(Boolean);
+
+  if (!rects.length) {
+    return compactVisualGameRoute([startPoint, targetPoint]);
+  }
+
+  const nodes = rects.map((road, index) => ({
+    ...road,
+    index,
+    point: point(road.rect.x + road.rect.width / 2, road.rect.y + road.rect.height / 2),
+    edges: [],
+  }));
+  const tolerance = Math.max(0, Number(options.tolerance ?? 1));
+
+  for (let leftIndex = 0; leftIndex < nodes.length; leftIndex += 1) {
+    for (let rightIndex = leftIndex + 1; rightIndex < nodes.length; rightIndex += 1) {
+      if (!routeRectsConnect(nodes[leftIndex].rect, nodes[rightIndex].rect, tolerance)) {
+        continue;
+      }
+
+      const weight = pointDistance(nodes[leftIndex].point, nodes[rightIndex].point);
+      nodes[leftIndex].edges.push({ index: rightIndex, weight });
+      nodes[rightIndex].edges.push({ index: leftIndex, weight });
+    }
+  }
+
+  const startIndex = getNearestRouteNodeIndex(startPoint, nodes);
+  const targetIndex = getNearestRouteNodeIndex(targetPoint, nodes);
+  if (startIndex < 0 || targetIndex < 0) {
+    return compactVisualGameRoute([startPoint, targetPoint]);
+  }
+
+  const indexes = getShortestRouteNodeIndexes(nodes, startIndex, targetIndex);
+  if (!indexes.length) {
+    return compactVisualGameRoute([startPoint, targetPoint]);
+  }
+
+  return compactVisualGameRoute([
+    startPoint,
+    ...indexes.map((index) => nodes[index].point),
+    targetPoint,
+  ]);
 }
 
 export function getVisualGamePlaceItemSlots(layout, placeId, count, options = {}) {
@@ -349,6 +427,178 @@ export function validateVisualGameLayout(layout = VISUAL_GAME_MAP_LAYOUT) {
 
 function getCellKey(cell) {
   return `${cell.column},${cell.row}`;
+}
+
+function normalizeRoutePoint(entry) {
+  const x = Number(entry?.x ?? entry?.[0]);
+  const y = Number(entry?.y ?? entry?.[1]);
+  if (!Number.isFinite(x) || !Number.isFinite(y)) {
+    return null;
+  }
+
+  return point(x, y);
+}
+
+function normalizeRouteRect(entry, index) {
+  const x = Number(entry?.x);
+  const y = Number(entry?.y);
+  const width = Number(entry?.width);
+  const height = Number(entry?.height);
+  if (!Number.isFinite(x) || !Number.isFinite(y) || !Number.isFinite(width) || !Number.isFinite(height)) {
+    return null;
+  }
+
+  if (width <= 0 || height <= 0) {
+    return null;
+  }
+
+  return {
+    id: entry?.id || `road-${index}`,
+    rect: { x, y, width, height },
+  };
+}
+
+function routeRectsConnect(left, right, tolerance = 0) {
+  const xOverlap = routeRangeOverlap(left.x, left.x + left.width, right.x, right.x + right.width);
+  const yOverlap = routeRangeOverlap(left.y, left.y + left.height, right.y, right.y + right.height);
+  if (xOverlap > tolerance && yOverlap > tolerance) {
+    return true;
+  }
+
+  const horizontalTouch =
+    yOverlap > tolerance
+    && (
+      Math.abs(left.x + left.width - right.x) <= tolerance
+      || Math.abs(right.x + right.width - left.x) <= tolerance
+    );
+  const verticalTouch =
+    xOverlap > tolerance
+    && (
+      Math.abs(left.y + left.height - right.y) <= tolerance
+      || Math.abs(right.y + right.height - left.y) <= tolerance
+    );
+
+  return horizontalTouch || verticalTouch;
+}
+
+function routeRangeOverlap(leftMin, leftMax, rightMin, rightMax) {
+  return Math.min(leftMax, rightMax) - Math.max(leftMin, rightMin);
+}
+
+function getNearestRouteNodeIndex(point, nodes) {
+  let best = null;
+  for (const node of nodes) {
+    const rectDistance = pointToRectDistance(point, node.rect);
+    const centerDistance = pointDistance(point, node.point);
+    const score = rectDistance * 1000 + centerDistance;
+    if (!best || score < best.score) {
+      best = { index: node.index, score };
+    }
+  }
+
+  return best?.index ?? -1;
+}
+
+function getShortestRouteNodeIndexes(nodes, startIndex, targetIndex) {
+  if (startIndex === targetIndex) {
+    return [startIndex];
+  }
+
+  const distances = Array.from({ length: nodes.length }, () => Infinity);
+  const previous = Array.from({ length: nodes.length }, () => -1);
+  const unvisited = new Set(nodes.map((node) => node.index));
+  distances[startIndex] = 0;
+
+  while (unvisited.size) {
+    let currentIndex = -1;
+    let currentDistance = Infinity;
+    for (const index of unvisited) {
+      if (distances[index] < currentDistance) {
+        currentDistance = distances[index];
+        currentIndex = index;
+      }
+    }
+
+    if (currentIndex < 0 || !Number.isFinite(currentDistance)) {
+      break;
+    }
+
+    unvisited.delete(currentIndex);
+    if (currentIndex === targetIndex) {
+      break;
+    }
+
+    for (const edge of nodes[currentIndex].edges) {
+      if (!unvisited.has(edge.index)) {
+        continue;
+      }
+
+      const distance = currentDistance + edge.weight;
+      if (distance < distances[edge.index]) {
+        distances[edge.index] = distance;
+        previous[edge.index] = currentIndex;
+      }
+    }
+  }
+
+  if (!Number.isFinite(distances[targetIndex])) {
+    return [];
+  }
+
+  const route = [];
+  for (let index = targetIndex; index >= 0; index = previous[index]) {
+    route.unshift(index);
+    if (index === startIndex) {
+      return route;
+    }
+  }
+
+  return [];
+}
+
+function compactVisualGameRoute(route) {
+  const points = [];
+  for (const entry of route) {
+    const routePoint = normalizeRoutePoint(entry);
+    if (!routePoint) {
+      continue;
+    }
+
+    const previous = points[points.length - 1];
+    if (previous && pointDistance(previous, routePoint) < 0.001) {
+      continue;
+    }
+
+    while (
+      points.length >= 2
+      && routePointsAreCollinear(points[points.length - 2], points[points.length - 1], routePoint)
+    ) {
+      points.pop();
+    }
+
+    points.push(routePoint);
+  }
+
+  return points;
+}
+
+function routePointsAreCollinear(left, middle, right) {
+  const tolerance = 0.001;
+  return (
+    Math.abs(left.x - middle.x) <= tolerance && Math.abs(middle.x - right.x) <= tolerance
+  ) || (
+    Math.abs(left.y - middle.y) <= tolerance && Math.abs(middle.y - right.y) <= tolerance
+  );
+}
+
+function pointDistance(left, right) {
+  return Math.hypot(left.x - right.x, left.y - right.y);
+}
+
+function pointToRectDistance(entry, area) {
+  const dx = entry.x < area.x ? area.x - entry.x : entry.x > area.x + area.width ? entry.x - (area.x + area.width) : 0;
+  const dy = entry.y < area.y ? area.y - entry.y : entry.y > area.y + area.height ? entry.y - (area.y + area.height) : 0;
+  return Math.hypot(dx, dy);
 }
 
 function cellInsideGrid(cell, columns, rows) {

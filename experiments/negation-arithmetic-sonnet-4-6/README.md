@@ -84,7 +84,7 @@ Result: **63/63 correct (100%), 0 surface-trap.** Specifically:
 - Reports may be about streaming/partial output where an intermediate token looked like the wrong answer before self-correction.
 
 **Not tested:**
-- API-only calls via the raw Anthropic SDK (no Claude Code CLI). I can't easily rule out that Claude Code is adding subtle tuning via agent prompt even with `--system-prompt ""` — there could be other scaffolding. But `--system-prompt ""` should suppress the default system prompt, and the red-car probe still gave 40.
+- API-only calls via the raw Anthropic SDK (no Claude Code CLI). I can't easily rule out that Claude Code is adding subtle tuning via agent instructions even with `--system-prompt ""` — there could be other scaffolding. But `--system-prompt ""` should suppress the default system prompt, and the red-car probe still gave 40.
 - Very long contexts (thousands of tokens of unrelated text before the problem). Buried_01 (a ~100-word narrative) worked fine. Didn't test 5000+ tokens.
 - Problems with intentionally contradictory numbers where the model has to pick a side.
 - Non-English negation.

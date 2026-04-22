@@ -146,10 +146,10 @@ test("UpdateManager reports a clean checkout behind the remote as updateable", a
   }
 });
 
-test("UpdateManager blocks automatic updates when local changes are present", async () => {
+test("UpdateManager allows updates when local app checkout changes are present", async () => {
   const { checkoutDir, sourceDir, tempRoot } = await createRepoPair();
   await commitSourceVersion(sourceDir, "v2");
-  await writeFile(path.join(checkoutDir, "LOCAL.txt"), "work in progress\n", "utf8");
+  await writeFile(path.join(checkoutDir, "VERSION"), "local edit\n", "utf8");
 
   try {
     const manager = new UpdateManager({
@@ -159,11 +159,13 @@ test("UpdateManager blocks automatic updates when local changes are present", as
     });
     const status = await manager.getStatus({ force: true });
 
-    assert.equal(status.status, "blocked");
+    assert.equal(status.status, "available");
     assert.equal(status.updateAvailable, true);
-    assert.equal(status.canUpdate, false);
+    assert.equal(status.canUpdate, true);
     assert.equal(status.dirty, true);
-    assert.match(status.reason, /Local changes/);
+    assert.equal(status.blockingDirty, false);
+    assert.deepEqual(status.dirtyFiles, ["VERSION"]);
+    assert.equal(status.reason, "");
   } finally {
     await rm(tempRoot, { recursive: true, force: true });
   }
@@ -271,6 +273,8 @@ test("UpdateManager schedules a detached pull and restart for clean updates", as
 
     assert.equal(result.scheduled, true);
     assert.equal(spawnCalls.length, 1);
+    assert.match(spawnCalls[0].args[1], /git reset --hard HEAD/);
+    assert.match(spawnCalls[0].args[1], /git clean -fd/);
     assert.match(spawnCalls[0].args[1], /git pull --ff-only 'origin' 'main'/);
     assert.match(spawnCalls[0].args[1], /http:\/\/127\.0\.0\.1:49123\/api\/terminate/);
     assert.equal(spawnCalls[0].options.detached, true);

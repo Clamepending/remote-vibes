@@ -13,6 +13,20 @@ const PROMPT_RETRY_MS = 500;
 const PROMPT_SUBMIT_DELAY_MS = 320;
 const WAKE_COOLDOWN_MS = 60_000;
 const SUPPRESSED_EVENT_PERSIST_MS = 5_000;
+const REMOTE_REFRESH_INTERVAL_MS = 5_000;
+const CAMERA_PERMISSION_MESSAGE =
+  "Camera access is blocked. Open System Settings > Privacy & Security > Camera and allow the app or terminal running VideoMemory, then restart VideoMemory.";
+const CAMERA_PERMISSION_PATTERNS = [
+  /camera access denied/i,
+  /grant camera permissions/i,
+  /camera permission/i,
+  /not authorized to capture video/i,
+  /not authorised to capture video/i,
+  /avfoundation.*can't be used/i,
+  /avfoundation.*can not.*capture/i,
+  /privacy.*camera/i,
+  /operation not permitted.*camera/i,
+];
 
 function normalizeBoolean(value, fallback = false) {
   if (value === true || value === false) {
@@ -43,6 +57,35 @@ function normalizeText(value, limit = 500) {
   }
 
   return `${text.slice(0, Math.max(1, limit - 3)).trim()}...`;
+}
+
+function detectCameraPermissionIssue(...values) {
+  const text = values
+    .map((value) => {
+      if (!value) {
+        return "";
+      }
+      if (typeof value === "string") {
+        return value;
+      }
+      try {
+        return JSON.stringify(value);
+      } catch {
+        return String(value || "");
+      }
+    })
+    .join(" ")
+    .trim();
+
+  if (!text || !CAMERA_PERMISSION_PATTERNS.some((pattern) => pattern.test(text))) {
+    return null;
+  }
+
+  return {
+    detail: normalizeText(text, 900),
+    kind: "camera-permission",
+    message: CAMERA_PERMISSION_MESSAGE,
+  };
 }
 
 function normalizeTerminalText(value) {
@@ -186,6 +229,76 @@ function getPayloadValue(payload, ...keys) {
   return "";
 }
 
+function extractDeviceList(payload) {
+  const roots = [payload, payload?.data, payload?.result, payload?.response].filter(Boolean);
+  const listKeys = ["devices", "inputs", "cameras", "ios", "io", "sources"];
+
+  for (const root of roots) {
+    if (Array.isArray(root)) {
+      return root;
+    }
+
+    if (!root || typeof root !== "object") {
+      continue;
+    }
+
+    for (const key of listKeys) {
+      if (Array.isArray(root[key])) {
+        return root[key];
+      }
+    }
+  }
+
+  return [];
+}
+
+function normalizeVideoMemoryDevice(entry, index) {
+  if (entry === null || entry === undefined) {
+    return null;
+  }
+
+  if (typeof entry !== "object") {
+    const id = String(entry || "").trim();
+    return id ? { id, ioId: id, name: id, kind: "camera", status: "" } : null;
+  }
+
+  const id = String(
+    getPayloadValue(entry, "io_id", "ioId", "id", "device_id", "deviceId", "source_id", "sourceId", "name") ||
+      `device-${index + 1}`,
+  ).trim();
+  const ioId = String(getPayloadValue(entry, "io_id", "ioId") || id).trim();
+  const name = normalizeText(
+    getPayloadValue(entry, "name", "label", "title", "display_name", "displayName", "description") || id,
+    120,
+  );
+  const kind = normalizeText(
+    getPayloadValue(entry, "kind", "type", "device_type", "deviceType", "source_type", "sourceType") || "camera",
+    60,
+  );
+  const status = normalizeText(getPayloadValue(entry, "status", "state", "availability") || "", 80);
+
+  return { id, ioId, name, kind, status };
+}
+
+function extractVideoMemoryDevices(payload) {
+  const seen = new Set();
+  return extractDeviceList(payload)
+    .map((entry, index) => normalizeVideoMemoryDevice(entry, index))
+    .filter((device) => {
+      if (!device) {
+        return false;
+      }
+
+      const key = device.id || device.ioId || device.name;
+      if (seen.has(key)) {
+        return false;
+      }
+
+      seen.add(key);
+      return true;
+    });
+}
+
 function buildHttpError(message, statusCode = 400) {
   const error = new Error(message);
   error.statusCode = statusCode;
@@ -252,6 +365,74 @@ function extractEvent(payload) {
   };
 }
 
+function normalizeTaskNoteEntry(entry) {
+  if (typeof entry === "string") {
+    return { content: normalizeText(entry, PROMPT_TEXT_LIMIT) };
+  }
+
+  if (!entry || typeof entry !== "object") {
+    return null;
+  }
+
+  const content = normalizeText(
+    getPayloadValue(entry, "content", "note", "message", "task_note", "taskNote", "text"),
+    PROMPT_TEXT_LIMIT,
+  );
+  if (!content) {
+    return null;
+  }
+
+  return {
+    content,
+    frameUrl: String(getPayloadValue(entry, "frame_url", "frameUrl", "note_frame_api_url", "noteFrameApiUrl") || "").trim(),
+    noteId: String(getPayloadValue(entry, "note_id", "noteId") || "").trim(),
+    timestamp: String(getPayloadValue(entry, "timestamp", "observed_at", "observedAt", "created_at", "createdAt") || "").trim(),
+    videoUrl: String(getPayloadValue(entry, "video_url", "videoUrl", "note_video_api_url", "noteVideoApiUrl") || "").trim(),
+  };
+}
+
+function getTaskPayloadRoot(payload) {
+  if (payload?.task && typeof payload.task === "object") {
+    return payload.task;
+  }
+  return payload && typeof payload === "object" ? payload : {};
+}
+
+function extractTaskNotes(payload) {
+  const task = getTaskPayloadRoot(payload);
+  const rawNotes = task.task_note ?? task.taskNote ?? task.notes ?? task.taskNotes;
+  const notes = Array.isArray(rawNotes)
+    ? rawNotes
+    : rawNotes
+      ? [rawNotes]
+      : [];
+
+  const normalized = notes.map(normalizeTaskNoteEntry).filter(Boolean);
+  if (normalized.length) {
+    return normalized;
+  }
+
+  const singleNote = normalizeTaskNoteEntry({
+    content: getPayloadValue(task, "note", "message", "error", "last_note", "lastNote"),
+    timestamp: getPayloadValue(task, "timestamp", "observed_at", "observedAt", "updated_at", "updatedAt"),
+  });
+  return singleNote ? [singleNote] : [];
+}
+
+function getCameraPermissionIssueFromTaskPayload(payload) {
+  const task = getTaskPayloadRoot(payload);
+  const notes = extractTaskNotes(payload);
+  const latestNote = notes.at(-1) || null;
+  const issue = detectCameraPermissionIssue(
+    latestNote?.content,
+    getPayloadValue(task, "error", "message", "status", "last_error", "lastError"),
+    payload?.error,
+    payload?.message,
+  );
+
+  return issue ? { ...issue, latestNote } : null;
+}
+
 function buildWakePrompt(monitor, event) {
   const lines = [
     "VideoMemory monitor triggered.",
@@ -286,6 +467,8 @@ export class VideoMemoryService {
     promptReadyIdleMs = PROMPT_READY_IDLE_MS,
     promptReadyTimeoutMs = PROMPT_READY_TIMEOUT_MS,
     promptRetryMs = PROMPT_RETRY_MS,
+    remoteRefreshIntervalMs = REMOTE_REFRESH_INTERVAL_MS,
+    remoteDeviceRefreshIntervalMs = remoteRefreshIntervalMs,
     sessionManager = null,
     setTimeoutImpl = setTimeout,
     nowImpl = Date.now,
@@ -304,12 +487,20 @@ export class VideoMemoryService {
     this.promptReadyTimeoutMs = promptReadyTimeoutMs;
     this.promptRetryMs = promptRetryMs;
     this.promptSubmitDelayMs = promptSubmitDelayMs;
+    this.remoteDeviceRefreshIntervalMs = remoteDeviceRefreshIntervalMs;
+    this.remoteRefreshIntervalMs = remoteRefreshIntervalMs;
     this.sessionManager = sessionManager;
     this.setTimeout = setTimeoutImpl;
     this.suppressedEventPersistMs = suppressedEventPersistMs;
     this.settings = settings || {};
     this.stateDir = stateDir;
     this.storePath = path.join(stateDir, STORE_FILENAME);
+    this.videoMemoryDevices = [];
+    this.lastRemoteDeviceRefreshAt = 0;
+    this.lastRemoteDeviceRefreshError = "";
+    this.lastRemoteDeviceRefreshSucceededAt = 0;
+    this.lastRemoteRefreshAt = 0;
+    this.lastRemoteRefreshError = "";
     this.wakeCooldownMs = wakeCooldownMs;
     this.webhookToken = "";
     this.requestToken = randomUUID();
@@ -365,11 +556,16 @@ export class VideoMemoryService {
       lastEventFrameUrl: String(snapshot.lastEventFrameUrl || ""),
       lastEventId: String(snapshot.lastEventId || ""),
       lastEventNote: normalizeText(snapshot.lastEventNote, 700),
+      lastIssueAt: snapshot.lastIssueAt || null,
+      lastIssueDetail: normalizeText(snapshot.lastIssueDetail, 900),
+      lastIssueKind: String(snapshot.lastIssueKind || ""),
+      lastIssueMessage: normalizeText(snapshot.lastIssueMessage, 900),
       lastSessionId: String(snapshot.lastSessionId || snapshot.sessionId || ""),
       lastSuppressedAt: snapshot.lastSuppressedAt || null,
       lastSuppressedPersistAt: snapshot.lastSuppressedPersistAt || null,
       lastWakeAt: snapshot.lastWakeAt || snapshot.lastEventAt || null,
       name: normalizeText(snapshot.name, 80),
+      needsCameraPermission: normalizeBoolean(snapshot.needsCameraPermission, false),
       providerId: normalizeProviderId(snapshot.providerId, this.getDefaultProviderId()),
       sessionId: String(snapshot.sessionId || ""),
       status: ["active", "paused", "deleted"].includes(snapshot.status) ? snapshot.status : "active",
@@ -427,6 +623,8 @@ export class VideoMemoryService {
   getStatus() {
     const monitors = this.listMonitors();
     const activeCount = monitors.filter((monitor) => monitor.status === "active").length;
+    const cameraPermissionMonitor = monitors.find((monitor) => monitor.needsCameraPermission) || null;
+    const devices = this.listDevices();
     const latestEventAt = monitors
       .map((monitor) => monitor.lastEventAt || monitor.updatedAt || "")
       .filter(Boolean)
@@ -436,15 +634,32 @@ export class VideoMemoryService {
     return {
       activeCount,
       baseUrl: this.resolveBaseUrl(),
+      cameraPermissionIssue: Boolean(cameraPermissionMonitor),
+      cameraPermissionIoId: cameraPermissionMonitor?.ioId || "",
+      cameraPermissionMessage: cameraPermissionMonitor?.lastIssueMessage || CAMERA_PERMISSION_MESSAGE,
+      cameraPermissionMonitorId: cameraPermissionMonitor?.id || "",
+      cameraPermissionUpdatedAt: cameraPermissionMonitor?.lastIssueAt || null,
       command: "vr-videomemory",
       defaultProviderId: this.getDefaultProviderId(),
+      deviceCount: devices.length,
+      devices,
+      devicesKnown: this.lastRemoteDeviceRefreshSucceededAt > 0,
+      devicesUpdatedAt: this.lastRemoteDeviceRefreshSucceededAt
+        ? new Date(this.lastRemoteDeviceRefreshSucceededAt).toISOString()
+        : null,
       enabled: this.isEnabled(),
+      lastDeviceRefreshError: this.lastRemoteDeviceRefreshError,
+      lastRefreshError: this.lastRemoteRefreshError,
       latestEventAt,
       monitorsCount: monitors.length,
       reason: this.isEnabled() ? "" : "VideoMemory plugin is disabled.",
       webhookToken: this.webhookToken,
       webhookUrl: this.getWebhookUrl(),
     };
+  }
+
+  listDevices() {
+    return this.videoMemoryDevices.map((device) => ({ ...device }));
   }
 
   serializeMonitor(monitor) {
@@ -461,10 +676,15 @@ export class VideoMemoryService {
       lastEventFrameUrl: monitor.lastEventFrameUrl,
       lastEventId: monitor.lastEventId,
       lastEventNote: monitor.lastEventNote,
+      lastIssueAt: monitor.lastIssueAt,
+      lastIssueDetail: monitor.lastIssueDetail,
+      lastIssueKind: monitor.lastIssueKind,
+      lastIssueMessage: monitor.lastIssueMessage,
       lastSessionId: monitor.lastSessionId,
       lastSuppressedAt: monitor.lastSuppressedAt,
       lastWakeAt: monitor.lastWakeAt,
       name: monitor.name,
+      needsCameraPermission: Boolean(monitor.needsCameraPermission),
       providerId: monitor.providerId,
       sessionId: monitor.sessionId,
       status: monitor.status,
@@ -586,11 +806,16 @@ export class VideoMemoryService {
       lastEventFrameUrl: "",
       lastEventId: "",
       lastEventNote: "",
+      lastIssueAt: null,
+      lastIssueDetail: "",
+      lastIssueKind: "",
+      lastIssueMessage: "",
       lastSessionId: targetSessionId,
       lastSuppressedAt: null,
       lastSuppressedPersistAt: null,
       lastWakeAt: null,
       name: normalizeText(options.name || options.title || trigger, 80),
+      needsCameraPermission: false,
       providerId: normalizeProviderId(options.providerId || options.provider, this.getDefaultProviderId()),
       sessionId: targetSessionId,
       status: "active",
@@ -732,6 +957,120 @@ export class VideoMemoryService {
     this.setTimeout(attempt, Math.min(this.promptRetryMs, this.promptDelayMs));
   }
 
+  clearMonitorIssue(monitor, kind = "camera-permission") {
+    if (!monitor || monitor.lastIssueKind !== kind) {
+      return false;
+    }
+
+    monitor.lastIssueAt = null;
+    monitor.lastIssueDetail = "";
+    monitor.lastIssueKind = "";
+    monitor.lastIssueMessage = "";
+    monitor.needsCameraPermission = false;
+    if (kind === "camera-permission" && monitor.lastError === CAMERA_PERMISSION_MESSAGE) {
+      monitor.lastError = "";
+    }
+    return true;
+  }
+
+  markMonitorCameraPermissionIssue(monitor, issue, { event = null, latestNote = null, nowMs = this.now() } = {}) {
+    const nowIso = new Date(nowMs).toISOString();
+    const note = event?.note || latestNote?.content || issue?.detail || "";
+    const frameUrl = event?.frameUrl || latestNote?.frameUrl || "";
+
+    if (event?.eventId) {
+      monitor.eventIds = appendRecentEvent(monitor.eventIds, event.eventId);
+      monitor.lastEventId = event.eventId;
+    }
+
+    monitor.lastError = CAMERA_PERMISSION_MESSAGE;
+    monitor.lastEventAt = nowIso;
+    monitor.lastEventFrameUrl = frameUrl || monitor.lastEventFrameUrl;
+    monitor.lastEventNote = normalizeText(note, 700) || monitor.lastEventNote;
+    monitor.lastIssueAt = nowIso;
+    monitor.lastIssueDetail = issue?.detail || "";
+    monitor.lastIssueKind = "camera-permission";
+    monitor.lastIssueMessage = CAMERA_PERMISSION_MESSAGE;
+    monitor.needsCameraPermission = true;
+    monitor.updatedAt = nowIso;
+
+    return {
+      status: "blocked",
+      reason: "camera_permission",
+      eventId: event?.eventId || "",
+      monitor: this.serializeMonitor(monitor),
+    };
+  }
+
+  updateMonitorFromTaskPayload(monitor, payload, nowMs = this.now()) {
+    const issue = getCameraPermissionIssueFromTaskPayload(payload);
+    if (issue) {
+      this.markMonitorCameraPermissionIssue(monitor, issue, {
+        latestNote: issue.latestNote,
+        nowMs,
+      });
+      return true;
+    }
+
+    if (this.clearMonitorIssue(monitor, "camera-permission")) {
+      monitor.updatedAt = new Date(nowMs).toISOString();
+      return true;
+    }
+
+    return false;
+  }
+
+  async refreshRemoteMonitorStates({ force = false } = {}) {
+    if (!this.isEnabled()) {
+      return;
+    }
+
+    const nowMs = this.now();
+    if (!force && this.remoteRefreshIntervalMs > 0 && nowMs - this.lastRemoteRefreshAt < this.remoteRefreshIntervalMs) {
+      return;
+    }
+
+    this.lastRemoteRefreshAt = nowMs;
+    let changed = false;
+    let lastError = "";
+    const monitors = Array.from(this.monitors.values()).filter((monitor) => monitor.status === "active" && monitor.taskId);
+
+    for (const monitor of monitors) {
+      try {
+        const payload = await this.fetchVideoMemoryJson(`/api/task/${encodeURIComponent(monitor.taskId)}`);
+        changed = this.updateMonitorFromTaskPayload(monitor, payload, nowMs) || changed;
+      } catch (error) {
+        lastError = error.message || "Could not refresh VideoMemory task status.";
+      }
+    }
+
+    this.lastRemoteRefreshError = lastError;
+    if (changed) {
+      await this.persist();
+    }
+  }
+
+  async refreshRemoteDevices({ force = false } = {}) {
+    if (!this.isEnabled()) {
+      return;
+    }
+
+    const nowMs = this.now();
+    if (!force && this.remoteDeviceRefreshIntervalMs > 0 && nowMs - this.lastRemoteDeviceRefreshAt < this.remoteDeviceRefreshIntervalMs) {
+      return;
+    }
+
+    this.lastRemoteDeviceRefreshAt = nowMs;
+    try {
+      const payload = await this.fetchVideoMemoryJson("/api/devices");
+      this.videoMemoryDevices = extractVideoMemoryDevices(payload);
+      this.lastRemoteDeviceRefreshError = "";
+      this.lastRemoteDeviceRefreshSucceededAt = nowMs;
+    } catch (error) {
+      this.lastRemoteDeviceRefreshError = error.message || "Could not refresh VideoMemory devices.";
+    }
+  }
+
   getWakeCooldownRemainingMs(monitor, nowMs = this.now()) {
     const cooldownMs = Math.max(0, Number(this.settings.videoMemoryWakeCooldownMs ?? this.wakeCooldownMs) || 0);
     if (!cooldownMs) {
@@ -801,6 +1140,22 @@ export class VideoMemoryService {
     }
 
     const eventReceivedMs = this.now();
+    const cameraPermissionIssue = detectCameraPermissionIssue(
+      event.note,
+      event.taskDescription,
+      event.raw?.error,
+      event.raw?.message,
+      event.raw?.status,
+    );
+    if (cameraPermissionIssue) {
+      const result = this.markMonitorCameraPermissionIssue(monitor, cameraPermissionIssue, {
+        event,
+        nowMs: eventReceivedMs,
+      });
+      await this.persist();
+      return result;
+    }
+
     const cooldownRemainingMs = this.getWakeCooldownRemainingMs(monitor, eventReceivedMs);
     if (cooldownRemainingMs > 0) {
       return this.suppressCooldownEvent(monitor, event, cooldownRemainingMs, eventReceivedMs);
@@ -832,6 +1187,7 @@ export class VideoMemoryService {
       monitor.lastWakeAt = now;
       monitor.updatedAt = now;
       monitor.wakeCount += 1;
+      this.clearMonitorIssue(monitor, "camera-permission");
       delete monitor.wakeInFlightAt;
       await this.persist();
 
@@ -902,7 +1258,10 @@ export class VideoMemoryService {
 
 export const testInternals = {
   buildWakePrompt,
+  detectCameraPermissionIssue,
   extractEvent,
+  extractTaskNotes,
+  getCameraPermissionIssueFromTaskPayload,
   hasClaudeWorkspaceTrustPrompt,
   normalizeBaseUrl,
   providerHasReadyHint,

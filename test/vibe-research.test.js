@@ -87,7 +87,7 @@ async function waitForWikiBackupRun(baseUrl, timeoutMs = 5_000) {
     await new Promise((resolve) => setTimeout(resolve, 50));
   }
 
-  throw new Error("Timed out waiting for wiki backup to finish");
+  throw new Error("Timed out waiting for Library backup to finish");
 }
 
 async function writePersistedSessions(workspaceDir, sessions) {
@@ -122,10 +122,10 @@ async function createBrainGitRemote(workspaceDir, name = "mac-brain") {
   await execFileAsync("git", ["-C", sourceDir, "init", "-b", "main"]);
   await writeFile(
     path.join(sourceDir, "index.md"),
-    `# Existing Brain\n\nLoaded from ${name}.\n`,
+    `# Existing Library\n\nLoaded from ${name}.\n`,
     "utf8",
   );
-  await writeFile(path.join(sourceDir, "log.md"), "# Log\n\n- cloned brain fixture\n", "utf8");
+  await writeFile(path.join(sourceDir, "log.md"), "# Log\n\n- cloned Library fixture\n", "utf8");
   await execFileAsync("git", ["-C", sourceDir, "add", "."]);
   await execFileAsync("git", [
     "-C",
@@ -613,6 +613,274 @@ test("settings api persists installed plugin ids", async () => {
   }
 });
 
+test("Telegram building detail saves through fetch without expanding settings in the grid", async (t) => {
+  const executablePath = await resolveBrowserExecutablePath({ env: process.env });
+  if (!executablePath) {
+    t.skip("No local Chromium/Chrome executable is available for the Telegram plugin setup smoke.");
+    return;
+  }
+
+  const workspaceDir = await createTempWorkspace("vibe-research-telegram-plugin-ui-");
+  const stateDir = await createTempWorkspace("vibe-research-telegram-plugin-state-");
+  const wikiDir = path.join(workspaceDir, "brain");
+  await mkdir(wikiDir, { recursive: true });
+  await mkdir(stateDir, { recursive: true });
+  await writeFile(
+    path.join(stateDir, "settings.json"),
+    `${JSON.stringify(
+      {
+        version: 1,
+        settings: {
+          preventSleepEnabled: false,
+          wikiGitRemoteEnabled: false,
+          wikiPath: wikiDir,
+          wikiPathConfigured: true,
+        },
+      },
+      null,
+      2,
+    )}\n`,
+    "utf8",
+  );
+
+  let telegramSettings = {};
+  const { app, baseUrl } = await startApp({
+    cwd: workspaceDir,
+    stateDir,
+    telegramServiceFactory: (settings) => {
+      telegramSettings = settings;
+      return {
+        replyToken: "test-telegram-reply-token",
+        getStatus() {
+          return {
+            allowedChatIds: String(telegramSettings.telegramAllowedChatIds || "")
+              .split(",")
+              .map((entry) => entry.trim())
+              .filter(Boolean),
+            botTokenConfigured: Boolean(telegramSettings.telegramBotToken),
+            enabled: Boolean(telegramSettings.telegramEnabled),
+            providerId: telegramSettings.telegramProviderId || "claude",
+            ready: Boolean(telegramSettings.telegramEnabled && telegramSettings.telegramBotToken),
+          };
+        },
+        restart(settings) {
+          telegramSettings = settings;
+        },
+        start() {},
+        stop() {},
+      };
+    },
+  });
+  let browser = null;
+  const waitForTelegramSettings = async () => {
+    const deadline = Date.now() + 10_000;
+    let lastPayload = null;
+    while (Date.now() < deadline) {
+      const response = await fetch(`${baseUrl}/api/settings`, { cache: "no-store" });
+      assert.equal(response.status, 200);
+      lastPayload = await response.json();
+      if (
+        lastPayload.settings?.telegramEnabled === true &&
+        lastPayload.settings?.telegramBotTokenConfigured === true
+      ) {
+        return lastPayload;
+      }
+      await new Promise((resolve) => setTimeout(resolve, 50));
+    }
+
+    assert.fail(`Timed out waiting for Telegram settings; last payload: ${JSON.stringify(lastPayload?.settings || {})}`);
+  };
+
+  try {
+    browser = await chromium.launch({ executablePath, headless: true });
+    const page = await browser.newPage();
+    await page.goto(`${baseUrl}/?view=plugins`, { waitUntil: "domcontentloaded" });
+    assert.equal(await page.locator("#plugin-results .communications-form").count(), 0);
+    assert.equal(await page.locator(".plugin-card .plugin-onboarding").count(), 0);
+
+    await page.getByRole("button", { name: "Open Telegram building" }).click();
+    await page.waitForFunction(() => new URL(window.location.href).searchParams.get("building") === "telegram");
+    await page.getByLabel("Telegram bot token").waitFor({ timeout: 10_000 });
+
+    await page.getByRole("button", { name: "Back to Buildings", exact: true }).click();
+    await page.waitForFunction(() => !new URL(window.location.href).searchParams.has("building"));
+    assert.equal(await page.locator("#plugin-results .communications-form").count(), 0);
+    assert.equal(await page.locator(".plugin-card .plugin-onboarding").count(), 0);
+
+    await page.getByRole("button", { name: "Install Telegram" }).click();
+    await page.waitForFunction(() => new URL(window.location.href).searchParams.get("building") === "telegram");
+    await page.getByLabel("Telegram bot token").fill("123456:fake-token-for-ui-test");
+    await page.getByLabel("allowed chat IDs").fill("12345, -99");
+    await page.getByRole("button", { name: "save and install" }).click();
+    const settingsPayload = await waitForTelegramSettings();
+
+    const currentUrl = new URL(page.url());
+    assert.equal(currentUrl.searchParams.get("view"), "plugins");
+    assert.equal(currentUrl.searchParams.get("building"), "telegram");
+    assert.equal(currentUrl.searchParams.has("telegramBotToken"), false);
+
+    assert.equal(settingsPayload.settings.telegramEnabled, true);
+    assert.equal(settingsPayload.settings.telegramBotToken, "");
+    assert.equal(settingsPayload.settings.telegramBotTokenConfigured, true);
+    assert.equal(settingsPayload.settings.telegramAllowedChatIds, "12345, -99");
+    assert.deepEqual(settingsPayload.settings.installedPluginIds, ["telegram"]);
+  } finally {
+    await browser?.close().catch(() => {});
+    await app.close();
+    await removeTempWorkspace(workspaceDir);
+    await removeTempWorkspace(stateDir);
+  }
+});
+
+test("Google Drive building opens as a host connector without fake local-agent install", async (t) => {
+  const executablePath = await resolveBrowserExecutablePath({ env: process.env });
+  if (!executablePath) {
+    t.skip("No local Chromium/Chrome executable is available for the Google Drive building smoke.");
+    return;
+  }
+
+  const workspaceDir = await createTempWorkspace("vibe-research-google-drive-building-ui-");
+  const stateDir = await createTempWorkspace("vibe-research-google-drive-building-state-");
+  const wikiDir = path.join(workspaceDir, "brain");
+  await mkdir(wikiDir, { recursive: true });
+  await mkdir(stateDir, { recursive: true });
+  await writeFile(
+    path.join(stateDir, "settings.json"),
+    `${JSON.stringify(
+      {
+        version: 1,
+        settings: {
+          preventSleepEnabled: false,
+          wikiGitRemoteEnabled: false,
+          wikiPath: wikiDir,
+          wikiPathConfigured: true,
+        },
+      },
+      null,
+      2,
+    )}\n`,
+    "utf8",
+  );
+
+  const { app, baseUrl } = await startApp({ cwd: workspaceDir, stateDir });
+  let browser = null;
+
+  try {
+    browser = await chromium.launch({ executablePath, headless: true });
+    const page = await browser.newPage();
+    await page.goto(`${baseUrl}/?view=plugins`, { waitUntil: "domcontentloaded" });
+    assert.equal(await page.getByRole("button", { name: "Install Google Drive" }).count(), 0);
+    assert.equal(await page.locator("#plugin-results .plugin-onboarding").count(), 0);
+
+    await page.getByRole("button", { name: "Open Google Drive building" }).click();
+    await page.waitForFunction(() => new URL(window.location.href).searchParams.get("building") === "google-drive");
+    await page.locator(".plugin-detail-copy .plugin-status").getByText("MCP-ready", { exact: true }).waitFor({ timeout: 10_000 });
+    await page.getByText(/does not inject Drive tools into local terminal agents/i).waitFor({ timeout: 10_000 });
+    assert.equal(await page.getByRole("button", { name: "Install Google Drive" }).count(), 0);
+    assert.equal(await page.getByRole("button", { name: /finish install/i }).count(), 0);
+
+    await page.getByRole("button", { name: "Back to Buildings", exact: true }).click();
+    await page.waitForFunction(() => !new URL(window.location.href).searchParams.has("building"));
+  } finally {
+    await browser?.close().catch(() => {});
+    await app.close();
+    await removeTempWorkspace(workspaceDir);
+    await removeTempWorkspace(stateDir);
+  }
+});
+
+test("external connector buildings open details and install from their building windows", async (t) => {
+  const executablePath = await resolveBrowserExecutablePath({ env: process.env });
+  if (!executablePath) {
+    t.skip("No local Chromium/Chrome executable is available for the external connector building smoke.");
+    return;
+  }
+
+  const workspaceDir = await createTempWorkspace("vibe-research-external-buildings-ui-");
+  const stateDir = await createTempWorkspace("vibe-research-external-buildings-state-");
+  const wikiDir = path.join(workspaceDir, "brain");
+  await mkdir(wikiDir, { recursive: true });
+  await mkdir(stateDir, { recursive: true });
+  await writeFile(
+    path.join(stateDir, "settings.json"),
+    `${JSON.stringify(
+      {
+        version: 1,
+        settings: {
+          preventSleepEnabled: false,
+          wikiGitRemoteEnabled: false,
+          wikiPath: wikiDir,
+          wikiPathConfigured: true,
+        },
+      },
+      null,
+      2,
+    )}\n`,
+    "utf8",
+  );
+
+  const connectors = [
+    { id: "discord", name: "Discord", access: /Discord credentials/i },
+    { id: "moltbook", name: "Moltbook", access: /Moltbook-compatible API/i },
+    { id: "twitter", name: "Twitter / X", access: /Twitter\/X API/i },
+    { id: "sora", name: "Sora", access: /Videos API/i },
+    { id: "nano-banana", name: "Nano Banana", access: /GEMINI_API_KEY/i },
+    { id: "phone-imessage", name: "Phone / iMessage", access: /phone or iMessage access/i },
+    { id: "home-automation", name: "Home Automation", access: /does not grant device control/i },
+  ];
+
+  const { app, baseUrl } = await startApp({ cwd: workspaceDir, stateDir });
+  let browser = null;
+
+  try {
+    browser = await chromium.launch({ executablePath, headless: true });
+    const page = await browser.newPage();
+    await page.goto(`${baseUrl}/?view=plugins`, { waitUntil: "domcontentloaded" });
+    assert.equal(await page.locator("#plugin-results .plugin-onboarding").count(), 0);
+
+    for (const connector of connectors) {
+      const cardOpen = page.locator(`[data-plugin-open="${connector.id}"]`);
+      await cardOpen.waitFor({ timeout: 10_000 });
+      await cardOpen.click();
+      await page.waitForFunction((buildingId) => new URL(window.location.href).searchParams.get("building") === buildingId, connector.id);
+      await page.getByRole("heading", { name: connector.name }).waitFor({ timeout: 10_000 });
+      await page.locator(".plugin-detail-copy .plugin-status").getByText("not installed", { exact: true }).waitFor({ timeout: 10_000 });
+      await page.locator(".plugin-access-panel").filter({ hasText: connector.access }).waitFor({ timeout: 10_000 });
+      await page.getByRole("button", { name: /finish install/i }).waitFor({ timeout: 10_000 });
+      await page.getByRole("button", { name: /finish install/i }).click();
+      await page.waitForFunction(
+        async (pluginId) => {
+          const response = await fetch("/api/settings");
+          const payload = await response.json();
+          return Array.isArray(payload.settings?.installedPluginIds) && payload.settings.installedPluginIds.includes(pluginId);
+        },
+        connector.id,
+      );
+      await page.locator(".dashboard-actions .plugin-install-button").getByText("Uninstall", { exact: true }).waitFor({ timeout: 10_000 });
+      await page.locator(".plugin-detail-copy .plugin-status").getByText("installed", { exact: true }).waitFor({ timeout: 10_000 });
+      assert.equal(await page.getByRole("button", { name: /finish install/i }).count(), 0);
+      await page.getByRole("button", { name: "Back to Buildings", exact: true }).click();
+      await page.waitForFunction(() => !new URL(window.location.href).searchParams.has("building"));
+      assert.equal(await page.locator("#plugin-results .plugin-onboarding").count(), 0);
+    }
+
+    const settingsPayload = await page.evaluate(async () => {
+      const response = await fetch("/api/settings");
+      return response.json();
+    });
+    assert.deepEqual(
+      settingsPayload.settings.installedPluginIds,
+      connectors.map((connector) => connector.id).sort(),
+    );
+
+  } finally {
+    await browser?.close().catch(() => {});
+    await app.close();
+    await removeTempWorkspace(workspaceDir);
+    await removeTempWorkspace(stateDir);
+  }
+});
+
 test("settings api stores agent credentials redacted and injects them into new sessions", async () => {
   const workspaceDir = await createTempWorkspace("vibe-research-agent-credentials-");
   const stateDir = await createTempWorkspace("vibe-research-agent-credentials-state-");
@@ -744,7 +1012,7 @@ test("saved wiki paths from existing installs count as configured", async () => 
   }
 });
 
-test("wiki clone endpoint sets the brain from an existing git repo", async () => {
+test("Library clone endpoint sets the Library from an existing git repo", async () => {
   const workspaceDir = await createTempWorkspace("vibe-research-clone-brain-");
   const { remoteDir } = await createBrainGitRemote(workspaceDir, "mac-brain");
   const { app, baseUrl } = await startApp({ cwd: workspaceDir });
@@ -779,7 +1047,7 @@ test("wiki clone endpoint sets the brain from an existing git repo", async () =>
   }
 });
 
-test("wiki clone endpoint replaces the installer mac-brain scaffold automatically", async () => {
+test("Library clone endpoint replaces the installer mac-brain scaffold automatically", async () => {
   const workspaceDir = await createTempWorkspace("vibe-research-clone-scaffold-");
   const { remoteDir } = await createBrainGitRemote(workspaceDir, "mac-brain");
   const scaffoldDir = path.join(workspaceDir, "mac-brain");
@@ -787,7 +1055,7 @@ test("wiki clone endpoint replaces the installer mac-brain scaffold automaticall
   await execFileAsync("git", ["-C", scaffoldDir, "init"]);
   await writeFile(
     path.join(scaffoldDir, "README.md"),
-    `# mac-brain\n\nLocal wiki for this Mac.\n\nVibe Research settings live in:\n\n\`\`\`\n${path.join(workspaceDir, ".vibe-research")}\n\`\`\`\n`,
+    `# mac-brain\n\nLocal Library for this Mac.\n\nVibe Research settings live in:\n\n\`\`\`\n${path.join(workspaceDir, ".vibe-research")}\n\`\`\`\n`,
     "utf8",
   );
   await writeFile(path.join(scaffoldDir, ".gitignore"), ".DS_Store\n", "utf8");
@@ -816,10 +1084,10 @@ test("wiki clone endpoint replaces the installer mac-brain scaffold automaticall
     assert.equal(clonePayload.settings.wikiGitRemoteUrl, remoteDir);
 
     const backupReadme = await readFile(path.join(clonePayload.clone.backupPath, "README.md"), "utf8");
-    assert.match(backupReadme, /Local wiki for this Mac/);
+    assert.match(backupReadme, /Local Library for this Mac/);
 
     const clonedReadme = await readFile(path.join(scaffoldDir, "index.md"), "utf8");
-    assert.match(clonedReadme, /Existing Brain/);
+    assert.match(clonedReadme, /Existing Library/);
   } finally {
     await app.close();
     await rm(workspaceDir, { recursive: true, force: true });
@@ -944,7 +1212,7 @@ test("system endpoint reports host storage and utilization metrics", async () =>
   }
 });
 
-test("agent prompt api creates wiki scaffold and managed instruction files", async () => {
+test("occupations api creates Library scaffold and managed instruction files", async () => {
   const workspaceDir = await createTempWorkspace("vibe-research-agent-prompt-");
   const { app, baseUrl } = await startApp({ cwd: workspaceDir });
 
@@ -953,7 +1221,7 @@ test("agent prompt api creates wiki scaffold and managed instruction files", asy
     assert.equal(stateResponse.status, 200);
     const statePayload = await stateResponse.json();
 
-    assert.match(statePayload.agentPrompt.prompt, /Vibe Research Agent Prompt/);
+    assert.match(statePayload.agentPrompt.prompt, /Vibe Research Researcher Occupation/);
     assert.equal(statePayload.agentPrompt.selectedPromptId, "researcher");
     assert.equal(statePayload.agentPrompt.editable, false);
     assert.deepEqual(
@@ -970,15 +1238,15 @@ test("agent prompt api creates wiki scaffold and managed instruction files", asy
 
     assert.match(managedAgents, /vibe-research:managed-agent-prompt/);
     assert.match(managedClaude, /vibe-research:managed-agent-prompt/);
-    assert.match(managedAgents, /Edit this from Vibe Research or \.vibe-research\/agent-prompt\.md/);
-    assert.match(promptSource, /Vibe Research Agent Prompt/);
+    assert.match(managedAgents, /Edit this from Vibe Research Occupations or \.vibe-research\/agent-prompt\.md/);
+    assert.match(promptSource, /Vibe Research Researcher Occupation/);
     assert.match(promptSource, /You are a research agent/);
     assert.match(promptSource, /Always take QUEUE row 1/);
     assert.match(promptSource, /Research grounding/);
     assert.match(promptSource, /cite paper\(s\), citation trail, or current docs/);
     assert.match(promptSource, /Autonomous-loop behavior/);
     assert.match(promptSource, /Self-Unblocking/);
-    assert.match(promptSource, /vibe-research:wiki-v2-protocol:v2/);
+    assert.match(promptSource, /vibe-research:library-v2-protocol:v2/);
     assert.match(promptSource, /Treat links as traversal hints, not decoration/);
     assert.match(promptSource, /Start with the directly named files, notes, messages, or artifacts/);
     assert.doesNotMatch(promptSource, /\/Users\/mark\/mac-brain/);
@@ -986,7 +1254,7 @@ test("agent prompt api creates wiki scaffold and managed instruction files", asy
     assert.doesNotMatch(promptSource, /Agent Mailboxes/);
     assert.doesNotMatch(promptSource, /vr-mailwatch/);
     assert.doesNotMatch(promptSource, /from_name/);
-    assert.match(wikiIndex, /Wiki Index/);
+    assert.match(wikiIndex, /Library Index/);
 
     const updateResponse = await fetch(`${baseUrl}/api/agent-prompt`, {
       method: "PUT",
@@ -1003,14 +1271,14 @@ test("agent prompt api creates wiki scaffold and managed instruction files", asy
     assert.equal(updatedPayload.selectedPromptId, "custom");
     assert.equal(updatedPayload.editable, true);
     assert.match(updatedPayload.prompt, /Custom Prompt/);
-    assert.match(updatedPayload.prompt, /vibe-research:wiki-v2-protocol:v2/);
+    assert.match(updatedPayload.prompt, /vibe-research:library-v2-protocol:v2/);
     assert.match(updatedPayload.prompt, /Prefer fewer, better notes/);
     assert.doesNotMatch(updatedPayload.prompt, /vibe-research:agent-mailbox-protocol/);
     assert.doesNotMatch(updatedPayload.prompt, /Agent Mailboxes/);
 
     const updatedManagedAgents = await readFile(path.join(workspaceDir, "AGENTS.md"), "utf8");
     assert.match(updatedManagedAgents, /Custom Prompt/);
-    assert.match(updatedManagedAgents, /Knowledge Model/);
+    assert.match(updatedManagedAgents, /Library Model/);
     assert.doesNotMatch(updatedManagedAgents, /Agent Mailboxes/);
     assert.doesNotMatch(updatedManagedAgents, /vr-mailwatch/);
   } finally {
@@ -1019,7 +1287,7 @@ test("agent prompt api creates wiki scaffold and managed instruction files", asy
   }
 });
 
-test("agent prompt presets switch active system prompts and only custom is editable", async () => {
+test("occupation presets switch active system prompts and only custom is editable", async () => {
   const workspaceDir = await createTempWorkspace("vibe-research-agent-prompt-presets-");
   const { app, baseUrl } = await startApp({ cwd: workspaceDir });
 
@@ -1033,10 +1301,10 @@ test("agent prompt presets switch active system prompts and only custom is edita
     const engineerPayload = await engineerResponse.json();
     assert.equal(engineerPayload.selectedPromptId, "engineer");
     assert.equal(engineerPayload.editable, false);
-    assert.match(engineerPayload.prompt, /Vibe Research Engineer Prompt/);
+    assert.match(engineerPayload.prompt, /Vibe Research Engineer Occupation/);
 
     const managedAgents = await readFile(path.join(workspaceDir, "AGENTS.md"), "utf8");
-    assert.match(managedAgents, /Vibe Research Engineer Prompt/);
+    assert.match(managedAgents, /Vibe Research Engineer Occupation/);
     assert.doesNotMatch(managedAgents, /You are a research agent/);
 
     const rejectedResponse = await fetch(`${baseUrl}/api/agent-prompt`, {
@@ -1069,7 +1337,7 @@ test("agent prompt presets switch active system prompts and only custom is edita
     assert.equal(customPayload.selectedPromptId, "custom");
     assert.equal(customPayload.editable, true);
     assert.match(customPayload.prompt, /Custom Prompt/);
-    assert.match(customPayload.prompt, /Knowledge Model/);
+    assert.match(customPayload.prompt, /Library Model/);
 
     const savedCustom = await readFile(
       path.join(workspaceDir, ".vibe-research", "custom-agent-prompt.md"),
@@ -1092,7 +1360,7 @@ test("agent prompt presets switch active system prompts and only custom is edita
     const researcherPayload = await researcherResponse.json();
     assert.equal(researcherPayload.selectedPromptId, "researcher");
     assert.equal(researcherPayload.editable, false);
-    assert.match(researcherPayload.prompt, /Vibe Research Agent Prompt/);
+    assert.match(researcherPayload.prompt, /Vibe Research Researcher Occupation/);
     assert.doesNotMatch(researcherPayload.prompt, /Ship the smallest complete fix/);
     assert.match(researcherPayload.customPrompt, /Ship the smallest complete fix/);
   } finally {
@@ -1101,7 +1369,7 @@ test("agent prompt presets switch active system prompts and only custom is edita
   }
 });
 
-test("agent prompt save preserves edits inside the current wiki protocol section", async () => {
+test("occupation save preserves edits inside the current Library protocol section", async () => {
   const workspaceDir = await createTempWorkspace("vibe-research-agent-prompt-save-");
   const { app, baseUrl } = await startApp({ cwd: workspaceDir });
 
@@ -1109,7 +1377,7 @@ test("agent prompt save preserves edits inside the current wiki protocol section
     const response = await fetch(`${baseUrl}/api/agent-prompt`);
     assert.equal(response.status, 200);
     const payload = await response.json();
-    assert.match(payload.prompt, /vibe-research:wiki-v2-protocol:v2/);
+    assert.match(payload.prompt, /vibe-research:library-v2-protocol:v2/);
     assert.match(payload.prompt, /Prefer fewer, better notes/);
 
     const editedPrompt = payload.prompt.replace(
@@ -1140,7 +1408,7 @@ test("agent prompt save preserves edits inside the current wiki protocol section
   }
 });
 
-test("existing prompt files are upgraded with the current built-in wiki protocol only", async () => {
+test("existing prompt files are upgraded with the current built-in Library protocol only", async () => {
   const workspaceDir = await createTempWorkspace("vibe-research-agent-prompt-upgrade-");
   const stateDir = path.join(workspaceDir, ".vibe-research");
   await mkdir(stateDir, { recursive: true });
@@ -1158,7 +1426,7 @@ test("existing prompt files are upgraded with the current built-in wiki protocol
 
     const payload = await response.json();
     assert.match(payload.prompt, /Custom Prompt/);
-    assert.match(payload.prompt, /vibe-research:wiki-v2-protocol:v2/);
+    assert.match(payload.prompt, /vibe-research:library-v2-protocol:v2/);
     assert.match(payload.prompt, /Search And Traversal/);
     assert.match(payload.prompt, /specific exchange or artifact/);
     assert.doesNotMatch(payload.prompt, /vibe-research:agent-mailbox-protocol/);
@@ -1181,7 +1449,7 @@ test("existing prompt files are upgraded with the current built-in wiki protocol
   }
 });
 
-test("legacy built-in prompt sections are replaced with the current versions", async () => {
+test("legacy built-in occupation sections are replaced with the current versions", async () => {
   const workspaceDir = await createTempWorkspace("vibe-research-agent-prompt-legacy-upgrade-");
   const stateDir = path.join(workspaceDir, ".vibe-research");
   await mkdir(stateDir, { recursive: true });
@@ -1193,7 +1461,7 @@ Keep a crisp research log.
 
 <!-- vibe-research:wiki-v2-protocol:v1 -->
 
-## Old Wiki Section
+## Old Library Section
 
 Old guidance.
 
@@ -1216,18 +1484,18 @@ Old mailbox guidance.
     assert.match(payload.prompt, /Custom Prompt/);
     assert.doesNotMatch(payload.prompt, /vibe-research:wiki-v2-protocol:v1/);
     assert.doesNotMatch(payload.prompt, /vibe-research:agent-mailbox-protocol/);
-    assert.match(payload.prompt, /vibe-research:wiki-v2-protocol:v2/);
-    assert.match(payload.prompt, /Knowledge Model/);
+    assert.match(payload.prompt, /vibe-research:library-v2-protocol:v2/);
+    assert.match(payload.prompt, /Library Model/);
     assert.doesNotMatch(payload.prompt, /Agent Mailboxes/);
     assert.doesNotMatch(payload.prompt, /from_name/);
     assert.doesNotMatch(payload.prompt, /vr-mailwatch/);
-    assert.doesNotMatch(payload.prompt, /Old Wiki Section/);
+    assert.doesNotMatch(payload.prompt, /Old Library Section/);
     assert.doesNotMatch(payload.prompt, /Old Mailbox Section/);
 
     const savedPrompt = await readFile(path.join(stateDir, "agent-prompt.md"), "utf8");
     assert.doesNotMatch(savedPrompt, /vibe-research:wiki-v2-protocol:v1/);
     assert.doesNotMatch(savedPrompt, /vibe-research:agent-mailbox-protocol/);
-    assert.match(savedPrompt, /Knowledge Model/);
+    assert.match(savedPrompt, /Library Model/);
   } finally {
     await app.close();
     await rm(workspaceDir, { recursive: true, force: true });
@@ -1246,7 +1514,7 @@ Keep the experiment queue moving.
 
 <!-- remote-vibes:wiki-v2-protocol:v1 -->
 
-## Old Remote Vibes Wiki Section
+## Old Remote Vibes Library Section
 
 Old guidance.
 `,
@@ -1256,7 +1524,7 @@ Old guidance.
     ["AGENTS.md", "CLAUDE.md", "GEMINI.md"].map((filename) =>
       writeFile(
         path.join(workspaceDir, filename),
-        "<!-- remote-vibes:managed-agent-prompt -->\n# Remote Vibes Agent Prompt\n",
+        "<!-- remote-vibes:managed-agent-prompt -->\n# Legacy Managed Prompt\n",
         "utf8",
       ),
     ),
@@ -1271,13 +1539,13 @@ Old guidance.
     const payload = await response.json();
     assert.ok(payload.targets.every((target) => target.status !== "conflict"));
     assert.match(payload.prompt, /Custom Remote Vibes Prompt/);
-    assert.match(payload.prompt, /vibe-research:wiki-v2-protocol:v2/);
+    assert.match(payload.prompt, /vibe-research:library-v2-protocol:v2/);
     assert.doesNotMatch(payload.prompt, /remote-vibes:wiki-v2-protocol/);
-    assert.doesNotMatch(payload.prompt, /Old Remote Vibes Wiki Section/);
+    assert.doesNotMatch(payload.prompt, /Old Remote Vibes Library Section/);
 
     const managedAgents = await readFile(path.join(workspaceDir, "AGENTS.md"), "utf8");
     assert.match(managedAgents, /vibe-research:managed-agent-prompt/);
-    assert.match(managedAgents, /Edit this from Vibe Research/);
+    assert.match(managedAgents, /Edit this from Vibe Research Occupations/);
     assert.doesNotMatch(managedAgents, /remote-vibes:managed-agent-prompt/);
   } finally {
     await app.close();
@@ -1285,7 +1553,7 @@ Old guidance.
   }
 });
 
-test("agent prompt sync does not overwrite unmanaged instruction files", async () => {
+test("occupation sync does not overwrite unmanaged instruction files", async () => {
   const workspaceDir = await createTempWorkspace("vibe-research-agent-conflict-");
   await writeFile(path.join(workspaceDir, "AGENTS.md"), "# User-owned instructions\n", "utf8");
 
@@ -1306,7 +1574,7 @@ test("agent prompt sync does not overwrite unmanaged instruction files", async (
   }
 });
 
-test("knowledge base api indexes markdown notes and linked note content", async () => {
+test("library api indexes markdown notes and linked note content", async () => {
   const workspaceDir = await createTempWorkspace("vibe-research-knowledge-base-");
   const wikiDir = path.join(workspaceDir, ".vibe-research", "wiki");
   const topicsDir = path.join(wikiDir, "topics");
@@ -1314,12 +1582,12 @@ test("knowledge base api indexes markdown notes and linked note content", async 
   await mkdir(topicsDir, { recursive: true });
   await writeFile(
     path.join(wikiDir, "index.md"),
-    "# Wiki Index\n\nSee [Topic A](topics/topic-a.md) and [[log]].\n",
+    "# Library Index\n\nSee [Topic A](topics/topic-a.md) and [[log]].\n",
     "utf8",
   );
   await writeFile(
     path.join(wikiDir, "log.md"),
-    "# Wiki Log\n\nLinked back to [[index]].\n",
+    "# Library Log\n\nLinked back to [[index]].\n",
     "utf8",
   );
   await writeFile(
@@ -1365,14 +1633,14 @@ test("knowledge base api indexes markdown notes and linked note content", async 
       `${baseUrl}/api/knowledge-base/note?path=${encodeURIComponent("../agent-prompt.md")}`,
     );
     assert.equal(invalidNoteResponse.status, 400);
-    assert.match((await invalidNoteResponse.json()).error, /escapes the knowledge base root/i);
+    assert.match((await invalidNoteResponse.json()).error, /escapes the library root/i);
   } finally {
     await app.close();
     await rm(workspaceDir, { recursive: true, force: true });
   }
 });
 
-test("knowledge base api skips inaccessible and system directories", async () => {
+test("library api skips inaccessible and system directories", async () => {
   const workspaceDir = await createTempWorkspace("vibe-research-knowledge-base-skip-");
   const wikiDir = path.join(workspaceDir, ".vibe-research", "wiki");
   const trashDir = path.join(wikiDir, ".Trash");
@@ -1384,7 +1652,7 @@ test("knowledge base api skips inaccessible and system directories", async () =>
   await mkdir(hiddenToolsDir, { recursive: true });
   await mkdir(modulesDir, { recursive: true });
   await mkdir(lockedDir, { recursive: true });
-  await writeFile(path.join(wikiDir, "index.md"), "# Wiki Index\n\nReadable.\n", "utf8");
+  await writeFile(path.join(wikiDir, "index.md"), "# Library Index\n\nReadable.\n", "utf8");
   await writeFile(path.join(trashDir, "deleted.md"), "# Deleted\n\nShould not index.\n", "utf8");
   await writeFile(path.join(hiddenToolsDir, "readme.md"), "# Extension\n\nShould not index.\n", "utf8");
   await writeFile(path.join(modulesDir, "readme.md"), "# Package\n\nShould not index.\n", "utf8");
@@ -1410,14 +1678,14 @@ test("knowledge base api skips inaccessible and system directories", async () =>
   }
 });
 
-test("knowledge base api narrows broad roots to nested vibe research wiki", async () => {
+test("library api narrows broad roots to nested Vibe Research Library", async () => {
   const workspaceDir = await createTempWorkspace("vibe-research-knowledge-base-nested-");
   const wikiDir = path.join(workspaceDir, ".vibe-research", "wiki");
   await mkdir(wikiDir, { recursive: true });
   const canonicalWikiDir = await realpath(wikiDir);
 
   await writeFile(path.join(workspaceDir, "README.md"), "# Project README\n\nNot a wiki note.\n", "utf8");
-  await writeFile(path.join(wikiDir, "index.md"), "# Wiki Index\n\nReadable.\n", "utf8");
+  await writeFile(path.join(wikiDir, "index.md"), "# Library Index\n\nReadable.\n", "utf8");
 
   const { app, baseUrl } = await startApp({ cwd: workspaceDir });
 
@@ -1447,7 +1715,7 @@ test("knowledge base api narrows broad roots to nested vibe research wiki", asyn
   }
 });
 
-test("knowledge base search ranks prefix markdown notes with BM25", async (t) => {
+test("library search ranks prefix markdown notes with BM25", async (t) => {
   const executablePath = await resolveBrowserExecutablePath({ env: process.env });
   if (!executablePath) {
     t.skip("No local Chromium/Chrome executable is available for the knowledge search smoke.");
@@ -1457,7 +1725,7 @@ test("knowledge base search ranks prefix markdown notes with BM25", async (t) =>
   const workspaceDir = await createTempWorkspace("vibe-research-knowledge-search-");
   const wikiDir = path.join(workspaceDir, ".vibe-research", "wiki");
   await mkdir(wikiDir, { recursive: true });
-  await writeFile(path.join(wikiDir, "index.md"), "# Wiki Index\n\nStart here.\n", "utf8");
+  await writeFile(path.join(wikiDir, "index.md"), "# Library Index\n\nStart here.\n", "utf8");
   await writeFile(path.join(wikiDir, "install-guide.md"), "# Install Guide\n\nUse this for setup.\n", "utf8");
   await writeFile(
     path.join(wikiDir, "meeting-notes.md"),
@@ -1499,7 +1767,7 @@ test("knowledge base search ranks prefix markdown notes with BM25", async (t) =>
   }
 });
 
-test("knowledge base graph highlights linked notes on hover and can pulse physics", async (t) => {
+test("library graph highlights linked notes on hover and can pulse physics", async (t) => {
   const executablePath = await resolveBrowserExecutablePath({ env: process.env });
   if (!executablePath) {
     t.skip("No local Chromium/Chrome executable is available for the knowledge graph smoke.");
@@ -1509,7 +1777,7 @@ test("knowledge base graph highlights linked notes on hover and can pulse physic
   const workspaceDir = await createTempWorkspace("vibe-research-knowledge-graph-");
   const wikiDir = path.join(workspaceDir, ".vibe-research", "wiki");
   await mkdir(wikiDir, { recursive: true });
-  await writeFile(path.join(wikiDir, "index.md"), "# Wiki Index\n\nSee [[topic-a]].\n", "utf8");
+  await writeFile(path.join(wikiDir, "index.md"), "# Library Index\n\nSee [[topic-a]].\n", "utf8");
   await writeFile(path.join(wikiDir, "topic-a.md"), "# Topic A\n\nBack to [[index]] and next [[topic-b]].\n", "utf8");
   await writeFile(path.join(wikiDir, "topic-b.md"), "# Topic B\n\nLeaf note.\n", "utf8");
 
@@ -1586,7 +1854,7 @@ test("knowledge base graph highlights linked notes on hover and can pulse physic
   }
 });
 
-test("knowledge base graph keeps dense replay inside the viewport", async (t) => {
+test("library graph keeps dense replay inside the viewport", async (t) => {
   const executablePath = await resolveBrowserExecutablePath({ env: process.env });
   if (!executablePath) {
     t.skip("No local Chromium/Chrome executable is available for the knowledge graph fit smoke.");
@@ -1855,7 +2123,7 @@ test("knowledge base graph keeps dense replay inside the viewport", async (t) =>
   }
 });
 
-test("visual graph empty canvas click closes the selected session panel", async (t) => {
+test("visual graph empty canvas click closes the selected session panel and deleted sessions vanish", async (t) => {
   const executablePath = await resolveBrowserExecutablePath({ env: process.env });
   if (!executablePath) {
     t.skip("No local Chromium/Chrome executable is available for the visual graph smoke.");
@@ -1866,7 +2134,7 @@ test("visual graph empty canvas click closes the selected session panel", async 
   const wikiDir = path.join(workspaceDir, ".vibe-research", "wiki");
   const createdAt = new Date().toISOString();
   await mkdir(wikiDir, { recursive: true });
-  await writeFile(path.join(wikiDir, "index.md"), "# Visual Graph Brain\n", "utf8");
+  await writeFile(path.join(wikiDir, "index.md"), "# Visual Graph Library\n", "utf8");
   await writePersistedSessions(workspaceDir, [
     {
       id: "visual-session-1",
@@ -1878,8 +2146,8 @@ test("visual graph empty canvas click closes the selected session panel", async 
       createdAt,
       updatedAt: createdAt,
       lastOutputAt: createdAt,
-      status: "running",
-      exitCode: null,
+      status: "exited",
+      exitCode: 0,
       exitSignal: null,
       cols: 90,
       rows: 24,
@@ -1894,18 +2162,47 @@ test("visual graph empty canvas click closes the selected session panel", async 
   });
   let browser = null;
 
+  const readCanvasShape = async (page) => {
+    return page.evaluate(() => {
+      const canvas = document.querySelector("#visual-game-canvas");
+      const frame = document.querySelector(".visual-game-frame");
+      const canvasRect = canvas?.getBoundingClientRect();
+      const frameRect = frame?.getBoundingClientRect();
+      return {
+        cssWidth: canvasRect?.width || 0,
+        cssHeight: canvasRect?.height || 0,
+        frameWidth: frameRect?.width || 0,
+        frameHeight: frameRect?.height || 0,
+        backingWidth: canvas?.width || 0,
+        backingHeight: canvas?.height || 0,
+      };
+    });
+  };
+  const assertCanvasTracksFrame = async (page, label) => {
+    const shape = await readCanvasShape(page);
+    assert.ok(shape.cssWidth > 0 && shape.cssHeight > 0, `${label} canvas should be visible`);
+    assert.ok(Math.abs(shape.cssWidth - shape.frameWidth) <= 3, `${label} canvas should fill frame width`);
+    assert.ok(Math.abs(shape.cssHeight - shape.frameHeight) <= 3, `${label} canvas should fill frame height`);
+    const cssAspect = shape.cssWidth / shape.cssHeight;
+    const backingAspect = shape.backingWidth / shape.backingHeight;
+    assert.ok(
+      Math.abs(cssAspect - backingAspect) < 0.02,
+      `${label} backing buffer should match dynamic frame aspect, saw css=${cssAspect.toFixed(3)} backing=${backingAspect.toFixed(3)}`,
+    );
+    return { ...shape, cssAspect, backingAspect };
+  };
   const clickCanvasPoint = async (page, x, y) => {
     const box = await page.locator("#visual-game-canvas").boundingBox();
     assert.ok(box, "visual game canvas should be visible");
-    await page.mouse.click(box.x + (x / 480) * box.width, box.y + (y / 270) * box.height);
+    await page.mouse.click(box.x + x, box.y + y);
   };
-  const findCanvasHoverPoint = async (page, labelText) => {
+  const canvasHoverLabelPoint = async (page, labelText) => {
     const box = await page.locator("#visual-game-canvas").boundingBox();
     assert.ok(box, "visual game canvas should be visible");
 
-    for (let y = 132; y <= 184; y += 8) {
-      for (let x = 48; x <= 456; x += 8) {
-        await page.mouse.move(box.x + (x / 480) * box.width, box.y + (y / 270) * box.height);
+    for (let y = 8; y <= box.height - 8; y += 24) {
+      for (let x = 8; x <= box.width - 8; x += 24) {
+        await page.mouse.move(box.x + x, box.y + y);
         const label = await page.locator(".visual-game-hover").textContent();
 
         if (label?.includes(labelText)) {
@@ -1914,7 +2211,14 @@ test("visual graph empty canvas click closes the selected session panel", async 
       }
     }
 
-    throw new Error(`Could not find visual canvas hit area for ${labelText}.`);
+    return null;
+  };
+  const findCanvasHoverPoint = async (page, labelText) => {
+    const point = await canvasHoverLabelPoint(page, labelText);
+    if (!point) {
+      throw new Error(`Could not find visual canvas hit area for ${labelText}.`);
+    }
+    return point;
   };
 
   try {
@@ -1932,27 +2236,52 @@ test("visual graph empty canvas click closes the selected session panel", async 
     await page.setViewportSize({ width: 1180, height: 740 });
     await page.goto(`${baseUrl}/?view=swarm`, { waitUntil: "domcontentloaded" });
     await page.waitForSelector("#visual-game-canvas", { timeout: 10_000 });
+    await page.locator('.session-card[data-session-id="visual-session-1"]').waitFor({ timeout: 10_000 });
     await page.waitForTimeout(1_200);
+    const initialShape = await assertCanvasTracksFrame(page, "initial visual game canvas");
 
     const agentPoint = await findCanvasHoverPoint(page, "Canvas Agent");
     await clickCanvasPoint(page, agentPoint.x, agentPoint.y);
     await page.waitForSelector(".visual-game-session-panel", { timeout: 10_000 });
+    const sessionPanelShape = await assertCanvasTracksFrame(page, "visual game canvas with session panel");
 
-    await clickCanvasPoint(page, 470, 260);
+    await page.setViewportSize({ width: 1440, height: 620 });
+    await page.waitForTimeout(200);
+    const resizedShape = await assertCanvasTracksFrame(page, "visual game canvas after resize");
+    assert.ok(
+      Math.abs(resizedShape.cssAspect - sessionPanelShape.cssAspect) > 0.05 ||
+        Math.abs(resizedShape.cssAspect - initialShape.cssAspect) > 0.05,
+      "resizing should change the visual game window aspect instead of locking it to 16:9",
+    );
+
+    await clickCanvasPoint(page, resizedShape.cssWidth - 10, 10);
     await page.waitForFunction(() => !document.querySelector(".visual-game-session-panel"), null, {
       timeout: 10_000,
     });
+
+    const deleteStatus = await page.evaluate(async () => {
+      const response = await fetch("/api/sessions/visual-session-1", { method: "DELETE" });
+      return response.status;
+    });
+    assert.equal(deleteStatus, 200);
+    await page.waitForFunction(() => !document.querySelector('[data-session-id="visual-session-1"]'), null, {
+      timeout: 10_000,
+    });
+    await page.waitForSelector("#visual-game-canvas", { timeout: 10_000 });
+    await page.waitForTimeout(500);
+
+    assert.equal(await canvasHoverLabelPoint(page, "Canvas Agent"), null);
   } finally {
     await browser?.close().catch(() => {});
     await app.close();
-    await rm(workspaceDir, { recursive: true, force: true });
+    await removeTempWorkspace(workspaceDir);
   }
 });
 
-test("fresh browser starts on brain folder setup until a folder is chosen", async (t) => {
+test("fresh browser starts on Library folder setup until a folder is chosen", async (t) => {
   const executablePath = await resolveBrowserExecutablePath({ env: process.env });
   if (!executablePath) {
-    t.skip("No local Chromium/Chrome executable is available for the brain setup smoke.");
+    t.skip("No local Chromium/Chrome executable is available for the Library setup smoke.");
     return;
   }
 
@@ -1960,7 +2289,7 @@ test("fresh browser starts on brain folder setup until a folder is chosen", asyn
   const { remoteDir } = await createBrainGitRemote(workspaceDir, "brain-remote");
   const brainDir = path.join(workspaceDir, "brain-repo");
   await mkdir(brainDir, { recursive: true });
-  await writeFile(path.join(brainDir, "index.md"), "# Local Brain\n", "utf8");
+  await writeFile(path.join(brainDir, "index.md"), "# Local Library\n", "utf8");
   await execFileAsync("git", ["-C", brainDir, "init", "-b", "main"]);
   await execFileAsync("git", ["-C", brainDir, "remote", "add", "origin", remoteDir]);
   const { app, baseUrl } = await startApp({ cwd: workspaceDir });
@@ -1971,7 +2300,7 @@ test("fresh browser starts on brain folder setup until a folder is chosen", asyn
     const page = await browser.newPage();
     await page.goto(baseUrl, { waitUntil: "domcontentloaded" });
     await page.waitForSelector(".brain-setup-screen", { timeout: 10_000 });
-    await page.waitForSelector("text=Select a brain folder", { timeout: 10_000 });
+    await page.waitForSelector("text=Select a Library folder", { timeout: 10_000 });
     await page.waitForSelector("text=Insert GitHub URL", { timeout: 10_000 });
     assert.equal(await page.locator(".app-shell").count(), 0);
 
@@ -2000,10 +2329,10 @@ test("fresh browser starts on brain folder setup until a folder is chosen", asyn
   }
 });
 
-test("brain setup can clone an existing git brain from the browser", async (t) => {
+test("Library setup can clone an existing git Library from the browser", async (t) => {
   const executablePath = await resolveBrowserExecutablePath({ env: process.env });
   if (!executablePath) {
-    t.skip("No local Chromium/Chrome executable is available for the brain clone smoke.");
+    t.skip("No local Chromium/Chrome executable is available for the Library clone smoke.");
     return;
   }
 
@@ -2024,7 +2353,7 @@ test("brain setup can clone an existing git brain from the browser", async (t) =
     await page.waitForSelector(".knowledge-base-markdown", { timeout: 10_000 });
 
     const renderedText = await page.locator(".knowledge-base-markdown").textContent();
-    assert.match(renderedText || "", /Existing Brain/);
+    assert.match(renderedText || "", /Existing Library/);
 
     const settingsResponse = await fetch(`${baseUrl}/api/settings`);
     assert.equal(settingsResponse.status, 200);
@@ -2127,7 +2456,7 @@ test("brain setup remains scrollable on short viewports", async (t) => {
   }
 });
 
-test("knowledge base markdown viewer renders GitHub-style tables", async (t) => {
+test("library markdown viewer renders GitHub-style tables", async (t) => {
   const executablePath = await resolveBrowserExecutablePath({ env: process.env });
   if (!executablePath) {
     t.skip("No local Chromium/Chrome executable is available for the markdown table smoke.");
@@ -2137,7 +2466,7 @@ test("knowledge base markdown viewer renders GitHub-style tables", async (t) => 
   const workspaceDir = await createTempWorkspace("vibe-research-markdown-table-");
   const wikiDir = path.join(workspaceDir, ".vibe-research", "wiki");
   await mkdir(wikiDir, { recursive: true });
-  await writeFile(path.join(wikiDir, "index.md"), "# Wiki Index\n\nSee [[leaderboard]].\n", "utf8");
+  await writeFile(path.join(wikiDir, "index.md"), "# Library Index\n\nSee [[leaderboard]].\n", "utf8");
   await writeFile(
     path.join(wikiDir, "leaderboard.md"),
     [
@@ -2196,7 +2525,7 @@ test("knowledge base markdown viewer renders GitHub-style tables", async (t) => 
   }
 });
 
-test("knowledge base markdown viewer renders image, GIF, and video media links", async (t) => {
+test("library markdown viewer renders image, GIF, and video media links", async (t) => {
   const executablePath = await resolveBrowserExecutablePath({ env: process.env });
   if (!executablePath) {
     t.skip("No local Chromium/Chrome executable is available for the markdown media smoke.");
@@ -2214,7 +2543,7 @@ test("knowledge base markdown viewer renders image, GIF, and video media links",
   await writeFile(path.join(assetsDir, "flow.gif"), GIF_FIXTURE);
   await writeFile(path.join(assetsDir, "demo.mp4"), Buffer.from("not a real video, but enough for a DOM smoke\n"));
   await writeFile(absoluteImagePath, PNG_FIXTURE);
-  await writeFile(path.join(wikiDir, "index.md"), "# Wiki Index\n\nSee [[media]].\n", "utf8");
+  await writeFile(path.join(wikiDir, "index.md"), "# Library Index\n\nSee [[media]].\n", "utf8");
   await writeFile(
     path.join(wikiDir, "media.md"),
     [
@@ -2308,7 +2637,7 @@ test("knowledge base markdown viewer renders image, GIF, and video media links",
   }
 });
 
-test("settings api moves the wiki folder, refreshes agent instructions, and the knowledge base follows", async () => {
+test("settings api moves the Library folder, refreshes agent instructions, and the Library follows", async () => {
   const workspaceDir = await createTempWorkspace("vibe-research-custom-wiki-");
   const customWikiDir = path.join(workspaceDir, "mac-brain");
   await mkdir(path.join(customWikiDir, "topics"), { recursive: true });
@@ -2326,7 +2655,7 @@ test("settings api moves the wiki folder, refreshes agent instructions, and the 
     "remote",
     "add",
     "origin",
-    "git@github.com:example/private-mac-brain.git",
+    "git@github.com:example/private-library.git",
   ]);
 
   const { app, baseUrl } = await startApp({ cwd: workspaceDir });
@@ -2353,12 +2682,12 @@ test("settings api moves the wiki folder, refreshes agent instructions, and the 
     assert.equal(settingsPayload.settings.wikiGitBackupEnabled, false);
     assert.equal(
       settingsPayload.settings.wikiGitRemoteUrl,
-      "git@github.com:example/private-mac-brain.git",
+      "git@github.com:example/private-library.git",
     );
     assert.equal(settingsPayload.agentPrompt.wikiRoot, "mac-brain");
 
     const managedAgents = await readFile(path.join(workspaceDir, "AGENTS.md"), "utf8");
-    assert.match(managedAgents, /Use `mac-brain` as the workspace memory system/);
+    assert.match(managedAgents, /Use `mac-brain` as the workspace Library/);
     assert.match(managedAgents, /`mac-brain\/raw\/sources\/`/);
     assert.doesNotMatch(managedAgents, /Agent Mailboxes/);
 
@@ -2377,7 +2706,7 @@ test("settings api moves the wiki folder, refreshes agent instructions, and the 
   }
 });
 
-test("{{WIKI}} placeholder stays in source but expands in managed files and tracks wiki path changes", async () => {
+test("{{LIBRARY}} placeholder stays in source but expands in managed files and tracks library path changes", async () => {
   const workspaceDir = await createTempWorkspace("vibe-research-wiki-placeholder-");
   const customWikiDir = path.join(workspaceDir, "mac-brain");
   await mkdir(customWikiDir, { recursive: true });
@@ -2387,8 +2716,8 @@ test("{{WIKI}} placeholder stays in source but expands in managed files and trac
   try {
     const customPrompt =
       "# Custom Prompt\n\n" +
-      "Notes live in `{{WIKI}}/experiments/`.\n" +
-      "Log updates at `{{WIKI}}/log.md`.\n";
+      "Notes live in `{{LIBRARY}}/experiments/`.\n" +
+      "Log updates at `{{LIBRARY}}/log.md`.\n";
 
     const updateResponse = await fetch(`${baseUrl}/api/agent-prompt`, {
       method: "PUT",
@@ -2401,11 +2730,11 @@ test("{{WIKI}} placeholder stays in source but expands in managed files and trac
       path.join(workspaceDir, ".vibe-research", "agent-prompt.md"),
       "utf8",
     );
-    assert.match(defaultSource, /`\{\{WIKI\}\}\/experiments\/`/);
-    assert.match(defaultSource, /`\{\{WIKI\}\}\/log\.md`/);
+    assert.match(defaultSource, /`\{\{LIBRARY\}\}\/experiments\/`/);
+    assert.match(defaultSource, /`\{\{LIBRARY\}\}\/log\.md`/);
 
     const defaultManaged = await readFile(path.join(workspaceDir, "CLAUDE.md"), "utf8");
-    assert.ok(!defaultManaged.includes("{{WIKI}}"), "managed file should not contain raw placeholders");
+    assert.ok(!defaultManaged.includes("{{LIBRARY}}"), "managed file should not contain raw placeholders");
     assert.match(defaultManaged, /`\.vibe-research\/wiki\/experiments\/`/);
     assert.match(defaultManaged, /`\.vibe-research\/wiki\/log\.md`/);
 
@@ -2424,11 +2753,11 @@ test("{{WIKI}} placeholder stays in source but expands in managed files and trac
       path.join(workspaceDir, ".vibe-research", "agent-prompt.md"),
       "utf8",
     );
-    assert.match(movedSource, /`\{\{WIKI\}\}\/experiments\/`/);
-    assert.match(movedSource, /`\{\{WIKI\}\}\/log\.md`/);
+    assert.match(movedSource, /`\{\{LIBRARY\}\}\/experiments\/`/);
+    assert.match(movedSource, /`\{\{LIBRARY\}\}\/log\.md`/);
 
     const movedManaged = await readFile(path.join(workspaceDir, "CLAUDE.md"), "utf8");
-    assert.ok(!movedManaged.includes("{{WIKI}}"), "managed file should not contain raw placeholders after wiki move");
+    assert.ok(!movedManaged.includes("{{LIBRARY}}"), "managed file should not contain raw placeholders after library move");
     assert.match(movedManaged, /`mac-brain\/experiments\/`/);
     assert.match(movedManaged, /`mac-brain\/log\.md`/);
   } finally {
@@ -2437,7 +2766,7 @@ test("{{WIKI}} placeholder stays in source but expands in managed files and trac
   }
 });
 
-test("wiki backup endpoint initializes git and commits wiki changes", async () => {
+test("Library backup endpoint initializes git and commits Library changes", async () => {
   const workspaceDir = await createTempWorkspace("vibe-research-wiki-backup-");
   const { app, baseUrl } = await startApp({ cwd: workspaceDir });
   const wikiDir = path.join(workspaceDir, ".vibe-research", "wiki");
@@ -2451,7 +2780,7 @@ test("wiki backup endpoint initializes git and commits wiki changes", async () =
     assert.equal(firstBackupPayload.backup.lastStatus, "committed");
     assert.match(firstBackupPayload.backup.lastCommit, /^[0-9a-f]+$/);
 
-    await writeFile(path.join(wikiDir, "log.md"), "# Wiki Log\n\n- new note\n", "utf8");
+    await writeFile(path.join(wikiDir, "log.md"), "# Library Log\n\n- new note\n", "utf8");
     const secondBackupResponse = await fetch(`${baseUrl}/api/wiki/backup`, {
       method: "POST",
     });
@@ -2460,7 +2789,7 @@ test("wiki backup endpoint initializes git and commits wiki changes", async () =
     assert.equal(secondBackupPayload.backup.lastStatus, "committed");
 
     const { stdout } = await execFileAsync("git", ["-C", wikiDir, "log", "--oneline"]);
-    assert.match(stdout, /Vibe Research wiki backup/);
+    assert.match(stdout, /Vibe Research Library backup/);
     assert.ok(stdout.trim().split("\n").length >= 2);
   } finally {
     await app.close();
@@ -2468,7 +2797,7 @@ test("wiki backup endpoint initializes git and commits wiki changes", async () =
   }
 });
 
-test("wiki backup endpoint can push to a configured private remote", async () => {
+test("Library backup endpoint can push to a configured private remote", async () => {
   const workspaceDir = await createTempWorkspace("vibe-research-wiki-remote-backup-");
   const remoteDir = path.join(workspaceDir, "private-wiki.git");
   const { app, baseUrl } = await startApp({ cwd: workspaceDir });
@@ -2511,7 +2840,7 @@ test("wiki backup endpoint can push to a configured private remote", async () =>
       "--oneline",
       "refs/heads/main",
     ]);
-    assert.match(stdout, /Vibe Research wiki backup/);
+    assert.match(stdout, /Vibe Research Library backup/);
   } finally {
     await app.close();
     await rm(workspaceDir, { recursive: true, force: true });

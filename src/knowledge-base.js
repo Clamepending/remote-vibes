@@ -42,7 +42,7 @@ function normalizeRelativePath(value) {
   }
 
   if (normalized.startsWith("../") || normalized === "..") {
-    throw buildHttpError("Path escapes the knowledge base root.", 400);
+    throw buildHttpError("Path escapes the library root.", 400);
   }
 
   return normalized;
@@ -58,7 +58,7 @@ function ensurePathInsideRoot(rootPath, targetPath) {
     return normalizeRelativePath(relativePath);
   }
 
-  throw buildHttpError("Path escapes the knowledge base root.", 400);
+  throw buildHttpError("Path escapes the library root.", 400);
 }
 
 function isMarkdownFile(fileName) {
@@ -191,7 +191,7 @@ function resolveNoteTarget(rawTarget, currentPath, notePathSet) {
 async function resolveKnowledgeBaseRoot(rootPath) {
   const realRootPath = await realpath(rootPath).catch((error) => {
     if (error?.code === "ENOENT") {
-      throw buildHttpError("Knowledge base root does not exist.", 404);
+      throw buildHttpError("Library root does not exist.", 404);
     }
 
     throw error;
@@ -199,14 +199,14 @@ async function resolveKnowledgeBaseRoot(rootPath) {
 
   const rootStats = await stat(realRootPath).catch((error) => {
     if (error?.code === "ENOENT") {
-      throw buildHttpError("Knowledge base root does not exist.", 404);
+      throw buildHttpError("Library root does not exist.", 404);
     }
 
     throw error;
   });
 
   if (!rootStats.isDirectory()) {
-    throw buildHttpError("Knowledge base root is not a directory.", 400);
+    throw buildHttpError("Library root is not a directory.", 400);
   }
 
   return realRootPath;
@@ -373,17 +373,17 @@ export async function readKnowledgeBaseNote({ rootPath, relativePath, relativeRo
   const normalizedRelativePath = normalizeRelativePath(relativePath);
 
   if (!normalizedRelativePath) {
-    throw buildHttpError("Knowledge base note path is required.", 400);
+    throw buildHttpError("Library note path is required.", 400);
   }
 
   if (!isMarkdownFile(normalizedRelativePath)) {
-    throw buildHttpError("Knowledge base notes must be markdown files.", 400);
+    throw buildHttpError("Library notes must be markdown files.", 400);
   }
 
   const requestedPath = path.resolve(resolvedRootPath, normalizedRelativePath);
   const realTargetPath = await realpath(requestedPath).catch((error) => {
     if (error?.code === "ENOENT") {
-      throw buildHttpError(`Knowledge base note does not exist: ${normalizedRelativePath}`, 404);
+      throw buildHttpError(`Library note does not exist: ${normalizedRelativePath}`, 404);
     }
 
     throw error;
@@ -392,18 +392,18 @@ export async function readKnowledgeBaseNote({ rootPath, relativePath, relativeRo
   const nextRelativePath = ensurePathInsideRoot(resolvedRootPath, realTargetPath);
   const entryStats = await stat(realTargetPath).catch((error) => {
     if (error?.code === "ENOENT") {
-      throw buildHttpError(`Knowledge base note does not exist: ${nextRelativePath}`, 404);
+      throw buildHttpError(`Library note does not exist: ${nextRelativePath}`, 404);
     }
 
     throw error;
   });
 
   if (!entryStats.isFile()) {
-    throw buildHttpError("Requested knowledge base path is not a file.", 400);
+    throw buildHttpError("Requested library path is not a file.", 400);
   }
 
   if (!isMarkdownFile(nextRelativePath)) {
-    throw buildHttpError("Knowledge base notes must be markdown files.", 400);
+    throw buildHttpError("Library notes must be markdown files.", 400);
   }
 
   const content = await readFile(realTargetPath, "utf8");

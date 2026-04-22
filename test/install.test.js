@@ -120,6 +120,7 @@ test("install.sh clones and updates a checkout in one command", async () => {
     assert.ok(await stat(path.join(installDir, "start.sh")));
     assert.equal(await readFile(path.join(installDir, "VERSION"), "utf8"), "v1\n");
 
+    await writeFile(path.join(installDir, "VERSION"), "local edit\n");
     await writeFile(path.join(repoDir, "VERSION"), "v2\n");
     await execFile("git", ["add", "VERSION"], { cwd: repoDir });
     await execFile("git", ["commit", "-m", "Update"], { cwd: repoDir });
@@ -133,6 +134,7 @@ test("install.sh clones and updates a checkout in one command", async () => {
     });
 
     assert.match(secondRun.stdout, /Updating existing checkout/);
+    assert.match(secondRun.stdout, /Discarding local app checkout changes before update/);
     assert.equal(await readFile(path.join(installDir, "VERSION"), "utf8"), "v2\n");
   } finally {
     await rm(tempRoot, { recursive: true, force: true });
@@ -1027,7 +1029,7 @@ test("install.sh can launch vibe research in one command", async () => {
     assert.match(combinedOutput, /Background server pid:/);
     assert.match(combinedOutput, /will keep running after this terminal closes/);
     assert.match(combinedOutput, new RegExp(`State directory: ${escapeRegExp(path.join(installRoot, "state"))}`));
-    assert.match(combinedOutput, new RegExp(`Wiki directory: ${escapeRegExp(path.join(installRoot, "mac-brain"))}`));
+    assert.match(combinedOutput, new RegExp(`Library directory: ${escapeRegExp(path.join(installRoot, "mac-brain"))}`));
     assert.ok(await stat(path.join(installRoot, "state", ".git")));
     assert.ok(await stat(path.join(installRoot, "mac-brain", ".git")));
 
@@ -1115,7 +1117,7 @@ test("start.sh migrates an old home checkout into app and uses home root for set
     assert.ok(await stat(path.join(homeVibeResearchDir, ".git")));
     const migratedPrompt = await readFile(path.join(homeVibeResearchDir, "agent-prompt.md"), "utf8");
     assert.match(migratedPrompt, /^remember root state\n/);
-    assert.match(migratedPrompt, /vibe-research:wiki-v2-protocol:v2/);
+    assert.match(migratedPrompt, /vibe-research:library-v2-protocol:v2/);
     const sessionsPayload = JSON.parse(await readFile(path.join(homeVibeResearchDir, "sessions.json"), "utf8"));
     assert.deepEqual(sessionsPayload.sessions, []);
     assert.equal(
@@ -1180,7 +1182,7 @@ test("start.sh migrates a Remote Vibes home checkout and state into Vibe Researc
     assert.ok(await stat(path.join(homeVibeResearchDir, "app", "src", "server.js")));
     const migratedPrompt = await readFile(path.join(homeVibeResearchDir, "agent-prompt.md"), "utf8");
     assert.match(migratedPrompt, /^# Old Remote Vibes Prompt\n/);
-    assert.match(migratedPrompt, /vibe-research:wiki-v2-protocol:v2/);
+    assert.match(migratedPrompt, /vibe-research:library-v2-protocol:v2/);
     assert.equal(
       await readFile(path.join(homeVibeResearchDir, "port-aliases.json"), "utf8"),
       "{\"aliases\":{\"api\":4123}}\n",

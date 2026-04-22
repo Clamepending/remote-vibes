@@ -290,6 +290,30 @@ test("custom session names are left alone after the first prompt", async () => {
   }
 });
 
+test("sessions record the selected occupation and forks inherit it", async () => {
+  const { manager, workspaceDir, userHomeDir } = await createManager({ occupationId: "engineer" });
+
+  try {
+    const engineerSession = manager.createSession({
+      providerId: "shell",
+      cwd: workspaceDir,
+    });
+    assert.equal(engineerSession.occupationId, "engineer");
+
+    manager.setOccupationId("custom");
+    const customSession = manager.createSession({
+      providerId: "shell",
+      cwd: workspaceDir,
+    });
+    assert.equal(customSession.occupationId, "custom");
+
+    const forkSession = manager.forkSession(engineerSession.id);
+    assert.equal(forkSession.occupationId, "engineer");
+  } finally {
+    await cleanupManager(manager, workspaceDir, userHomeDir);
+  }
+});
+
 test("agent sessions expose working and done activity states", async () => {
   const workspaceDir = await mkdtemp(path.join(os.tmpdir(), "vibe-research-session-manager-"));
   const userHomeDir = await mkdtemp(path.join(os.tmpdir(), "vibe-research-session-home-"));

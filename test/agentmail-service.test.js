@@ -206,6 +206,95 @@ test("AgentMail WebSocket listener subscribes and queues incoming email into an 
   assert.equal(createdSessions.length, 3, "nested message_received payloads should be accepted");
 });
 
+test("AgentMail reuses one dedicated communications session when session lookup is available", async () => {
+  const createdSessions = [];
+  const liveSessions = new Map();
+  const writes = [];
+  const service = new AgentMailService({
+    promptDelayMs: 0,
+    remoteClaimEnabled: false,
+    sessionManager: {
+      createSession(input) {
+        const session = {
+          id: `session-${createdSessions.length + 1}`,
+          ...input,
+          buffer: "Claude Code\n❯ ",
+          createdAt: new Date(0).toISOString(),
+          lastOutputAt: new Date(0).toISOString(),
+          status: "running",
+          updatedAt: new Date(0).toISOString(),
+        };
+        createdSessions.push(session);
+        liveSessions.set(session.id, session);
+        return session;
+      },
+      getSession(sessionId) {
+        return liveSessions.get(sessionId) || null;
+      },
+      listSessions() {
+        return [...liveSessions.values()];
+      },
+      write(sessionId, input) {
+        writes.push({ input, sessionId });
+        return true;
+      },
+    },
+    setTimeoutImpl(callback) {
+      callback();
+      return 1;
+    },
+    settings: {
+      agentMailApiKey: "am_test",
+      agentMailEnabled: true,
+      agentMailInboxId: "agent@example.com",
+      agentMailProviderId: "claude",
+      wikiPath: "/tmp/wiki",
+    },
+  });
+
+  const firstSession = await service.handleIncomingMessage(
+    {
+      eventId: "evt-dedicated-1",
+      message: {
+        from: "person@example.com",
+        inbox_id: "agent@example.com",
+        message_id: "<dedicated-1@example.com>",
+        subject: "First note",
+        text: "Please answer the first email.",
+        to: ["agent@example.com"],
+      },
+    },
+    { source: "websocket" },
+  );
+  const secondSession = await service.handleIncomingMessage(
+    {
+      eventId: "evt-dedicated-2",
+      message: {
+        from: "person@example.com",
+        inbox_id: "agent@example.com",
+        message_id: "<dedicated-2@example.com>",
+        subject: "Second note",
+        text: "Please answer the second email.",
+        to: ["agent@example.com"],
+      },
+    },
+    { source: "websocket" },
+  );
+
+  assert.equal(firstSession.id, "session-1");
+  assert.equal(secondSession.id, "session-1");
+  assert.equal(createdSessions.length, 1);
+  assert.equal(createdSessions[0].name, "AgentMail communications");
+  assert.equal(createdSessions[0].providerId, "claude");
+  assert.equal(writes.length, 4);
+  assert.equal(writes[0].sessionId, "session-1");
+  assert.match(writes[0].input, /First note/);
+  assert.deepEqual(writes[1], { input: "\r", sessionId: "session-1" });
+  assert.equal(writes[2].sessionId, "session-1");
+  assert.match(writes[2].input, /Second note/);
+  assert.deepEqual(writes[3], { input: "\r", sessionId: "session-1" });
+});
+
 test("AgentMail recognizes ML Intern interactive startup as ready", () => {
   assert.equal(testInternals.providerHasReadyHint("ml-intern", "ML Intern\n> "), true);
   assert.equal(testInternals.providerHasReadyHint("ml-intern", "Hugging Face Agent\n> "), true);
@@ -316,7 +405,7 @@ test("AgentMail polling backfills unread inbox messages and persists processed i
   }
 });
 
-test("AgentMail retries a message when the agent prompt could not be delivered", async () => {
+test("AgentMail retries a message when the agent instructions could not be delivered", async () => {
   const stateDir = await mkdtemp(path.join(os.tmpdir(), "vibe-research-agentmail-retry-"));
   const message = {
     from: "person@example.com",
@@ -909,7 +998,7 @@ test("AgentMail REST helpers create inboxes and send replies without exposing th
   });
   assert.doesNotMatch(prompt, /am_test/);
   assert.match(prompt, /vr-agentmail-reply/);
-  assert.match(prompt, /wiki\/knowledge base/);
+  assert.match(prompt, /Vibe Research Library/);
   assert.match(prompt, /not just draft a response/i);
 });
 
