@@ -1045,6 +1045,13 @@ test("agent prompt presets switch active system prompts and only custom is edita
     });
     assert.equal(rejectedResponse.status, 400);
 
+    const invalidPresetResponse = await fetch(`${baseUrl}/api/agent-prompt`, {
+      method: "PUT",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ selectedPromptId: "not-a-preset" }),
+    });
+    assert.equal(invalidPresetResponse.status, 400);
+
     const customResponse = await fetch(`${baseUrl}/api/agent-prompt`, {
       method: "PUT",
       headers: { "Content-Type": "application/json" },

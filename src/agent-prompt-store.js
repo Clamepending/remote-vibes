@@ -421,9 +421,15 @@ export class AgentPromptStore {
       input && typeof input === "object"
         ? input.selectedPromptId || input.promptId || input.presetId
         : "";
-    const hasRequestedPromptId = Boolean(String(requestedPromptId || "").trim());
+    const requestedPromptIdValue = String(requestedPromptId || "").trim();
+    const hasRequestedPromptId = Boolean(requestedPromptIdValue);
+
+    if (hasRequestedPromptId && !isValidPromptId(requestedPromptIdValue)) {
+      throw new Error("Unknown prompt preset.");
+    }
+
     const nextPromptId = normalizePromptId(
-      requestedPromptId,
+      requestedPromptIdValue,
       hasPrompt && !hasRequestedPromptId ? CUSTOM_PROMPT_ID : this.selectedPromptId,
     );
 
