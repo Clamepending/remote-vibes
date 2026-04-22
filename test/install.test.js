@@ -1172,6 +1172,7 @@ exit 0
     });
 
     assert.match(result.stdout, /SOURCE_VERSION=v1/);
+    assert.match(result.stdout, /Stopping existing systemd service vibe-research-test\.service before update/);
     assert.match(result.stdout, /Installing systemd service vibe-research-test\.service/);
     assert.match(result.stdout, /Enabled vibe-research-test\.service/);
 
@@ -1188,6 +1189,8 @@ exit 0
     assert.match(unit, /KillMode=process/);
 
     assert.deepEqual((await readFile(systemctlLog, "utf8")).trim().split("\n"), [
+      "cat vibe-research-test.service",
+      "stop vibe-research-test.service",
       "is-system-running",
       "daemon-reload",
       "enable vibe-research-test.service",
@@ -1239,6 +1242,7 @@ exit 1
     assert.match(result.stdout, /Skipping service install because systemd is not available/);
     await assert.rejects(() => stat(path.join(serviceDir, "vibe-research.service")));
     assert.deepEqual((await readFile(systemctlLog, "utf8")).trim().split("\n"), [
+      "cat vibe-research.service",
       "is-system-running",
     ]);
   } finally {
@@ -1499,6 +1503,10 @@ if [ ! -f ${JSON.stringify(npmCacheState)} ]; then
 fi
 mkdir -p node_modules/playwright-core
 printf '{}\\n' > node_modules/playwright-core/package.json
+mkdir -p node_modules/esbuild
+printf '{}\\n' > node_modules/esbuild/package.json
+mkdir -p node_modules/node-pty
+printf '{}\\n' > node_modules/node-pty/package.json
 `,
     );
     await writeFile(

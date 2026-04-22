@@ -375,8 +375,28 @@ track_vibe_research_settings() {
   commit_staged_changes "$RUNTIME_DIR" "Track Vibe Research settings"
 }
 
-dependencies_need_install() {
+dependency_tree_has_required_packages() {
   if [ ! -d node_modules ]; then
+    return 1
+  fi
+
+  if [ ! -f node_modules/playwright-core/package.json ]; then
+    return 1
+  fi
+
+  if [ ! -f node_modules/esbuild/package.json ]; then
+    return 1
+  fi
+
+  if [ ! -f node_modules/node-pty/package.json ]; then
+    return 1
+  fi
+
+  return 0
+}
+
+dependencies_need_install() {
+  if ! dependency_tree_has_required_packages; then
     return 0
   fi
 
@@ -389,10 +409,6 @@ dependencies_need_install() {
   fi
 
   if [ package-lock.json -nt "$NPM_STAMP_FILE" ]; then
-    return 0
-  fi
-
-  if [ ! -f node_modules/playwright-core/package.json ]; then
     return 0
   fi
 
@@ -443,7 +459,14 @@ run_npm_dependency_install() {
     --fetch-retry-factor "$(positive_int_or_default "$NPM_FETCH_RETRY_FACTOR" 2)" \
     --fetch-retry-mintimeout "$(positive_int_or_default "$NPM_FETCH_RETRY_MINTIMEOUT" 20000)" \
     --fetch-retry-maxtimeout "$(positive_int_or_default "$NPM_FETCH_RETRY_MAXTIMEOUT" 120000)" \
-    --fetch-timeout "$(positive_int_or_default "$NPM_FETCH_TIMEOUT" 300000)"
+    --fetch-timeout "$(positive_int_or_default "$NPM_FETCH_TIMEOUT" 300000)" || return 1
+
+  if ! dependency_tree_has_required_packages; then
+    log "Dependency install completed but required packages are missing; retrying"
+    return 1
+  fi
+
+  return 0
 }
 
 esbuild_platform_package_name() {

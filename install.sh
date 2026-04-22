@@ -972,6 +972,29 @@ systemd_is_running() {
   [ "$state" = "running" ] || [ "$state" = "degraded" ]
 }
 
+stop_existing_systemd_service() {
+  if [ "$INSTALL_SERVICE" = "0" ]; then
+    return
+  fi
+
+  if ! is_linux || ! has_command systemctl; then
+    return
+  fi
+
+  if ! is_root && ! has_command sudo; then
+    return
+  fi
+
+  if ! try_run_as_root systemctl cat "${SERVICE_NAME}.service" >/dev/null 2>&1; then
+    return
+  fi
+
+  log "Stopping existing systemd service ${SERVICE_NAME}.service before update"
+  if ! try_run_as_root systemctl stop "${SERVICE_NAME}.service"; then
+    log "Could not stop existing systemd service; continuing with foreground launch"
+  fi
+}
+
 install_systemd_service() {
   local service_user state_dir wiki_dir port service_file temp_file
 
@@ -1247,6 +1270,7 @@ sync_app_checkout() {
 }
 
 prepare_app_checkout() {
+  stop_existing_systemd_service
   sync_app_checkout
 
   cd "$INSTALL_DIR"
