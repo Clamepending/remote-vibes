@@ -95,7 +95,7 @@ export default defineBuilding({
 - `id` is normalized with `normalizeBuildingId` and must be stable.
 - `install.enabledSetting` lets the generic install button toggle a persisted settings key.
 - `install.storedFallback: false` means the settings key is the source of truth for installed state.
-- `visual.shape` selects the generic card/town building treatment.
+- `visual.shape` selects the generic card/town building treatment. Use `lab` for sandboxed eval providers where working agents should visually sit inside glass test pods.
 - `visual.specialTownPlace: true` reserves a custom hand-drawn Agent Town place, such as OttoAuth or VideoMemory.
 - `ui.mode` is `panel`, `wide`, or `workspace`; workspace buildings can open a compact town panel first and expand into a full-screen app.
 - `ui.entryView` names the compact building panel implementation; `ui.workspaceView` names the routed view used when the building needs the whole screen.
@@ -141,3 +141,9 @@ The core registry is client-side, while BuildingHub catalogs are loaded by a ser
 Treat image and video generation products as separate provider buildings, not one generic image-generation building. Sora, Nano Banana, Veo, Runway, or similar tools can share a `Generative Media` category while keeping their own auth expectations, model families, output artifacts, deprecation notes, and onboarding copy.
 
 Use `visual.shape: "studio"` for prompt-to-image or prompt-to-video provider cards unless the integration has a more specific custom place. Keep provider credentials in the agent runtime or provider connector; the building catalog should describe the requirement without storing raw API keys in the client manifest.
+
+## Evaluation Buildings
+
+Use `visual.shape: "lab"` for sandboxed agent-evaluation systems such as Harbor. These buildings should make the setup boundary explicit: the catalog can tell agents when Harbor is warranted, how to check the CLI, and which docs/commands to start from, but model keys, cloud sandbox credentials, and costly run approval stay in the agent runtime and human workflow.
+
+When the runtime can identify an active eval from commands, paths, or session naming, Agent Town may route that working agent into the lab so the map reflects an agent inside a sandboxed test environment.

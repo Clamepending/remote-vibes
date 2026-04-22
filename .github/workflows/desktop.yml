@@ -32,8 +32,41 @@ jobs:
       - name: Install desktop dependencies
         run: npm --prefix desktop ci
 
+      - name: Require signing and notarization secrets for release tags
+        if: startsWith(github.ref, 'refs/tags/v')
+        run: |
+          missing=()
+          for name in CSC_LINK CSC_KEY_PASSWORD APPLE_ID APPLE_APP_SPECIFIC_PASSWORD APPLE_TEAM_ID; do
+            if [ -z "${!name:-}" ]; then
+              missing+=("$name")
+            fi
+          done
+
+          if [ "${#missing[@]}" -gt 0 ]; then
+            printf 'Missing required macOS release secret(s): %s\n' "${missing[*]}" >&2
+            exit 1
+          fi
+        env:
+          CSC_LINK: ${{ secrets.MACOS_CSC_LINK }}
+          CSC_KEY_PASSWORD: ${{ secrets.MACOS_CSC_KEY_PASSWORD }}
+          APPLE_ID: ${{ secrets.APPLE_ID }}
+          APPLE_APP_SPECIFIC_PASSWORD: ${{ secrets.APPLE_APP_SPECIFIC_PASSWORD }}
+          APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
+
       - name: Build desktop app
-        run: npm --prefix desktop run dist -- --mac dmg zip --publish never
+        run: |
+          if [[ "$GITHUB_REF" == refs/tags/v* ]]; then
+            npm --prefix desktop run dist -- --mac dmg zip --universal --publish always
+          else
+            npm --prefix desktop run dist -- --mac dmg zip --universal --publish never
+          fi
+        env:
+          GH_TOKEN: ${{ github.token }}
+          CSC_LINK: ${{ secrets.MACOS_CSC_LINK }}
+          CSC_KEY_PASSWORD: ${{ secrets.MACOS_CSC_KEY_PASSWORD }}
+          APPLE_ID: ${{ secrets.APPLE_ID }}
+          APPLE_APP_SPECIFIC_PASSWORD: ${{ secrets.APPLE_APP_SPECIFIC_PASSWORD }}
+          APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
 
       - name: Upload desktop artifacts
         uses: actions/upload-artifact@v4
@@ -43,9 +76,4 @@ jobs:
             desktop/dist/*.dmg
             desktop/dist/*.zip
             desktop/dist/*.blockmap
-
-      - name: Attach artifacts to GitHub Release
-        if: startsWith(github.ref, 'refs/tags/v')
-        run: gh release upload "${GITHUB_REF_NAME}" desktop/dist/*.dmg desktop/dist/*.zip desktop/dist/*.blockmap --clobber
-        env:
-          GH_TOKEN: ${{ github.token }}
+            desktop/dist/latest-mac.yml

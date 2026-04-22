@@ -20997,6 +20997,15 @@ function drawVisualGameClaudeCodeStationProp(context, visualDestination) {
     context.fillRect(14, 12, 6, 4);
     context.fillStyle = "#3a2b42";
     context.fillRect(14, 19, 6, 2);
+  } else if (visualDestination === "harbor") {
+    context.fillStyle = "#20343b";
+    context.fillRect(7, 20, 20, 8);
+    context.fillStyle = "rgba(184, 244, 242, 0.5)";
+    context.fillRect(10, 14, 14, 11);
+    context.fillStyle = "#b8f4f2";
+    context.fillRect(12, 12, 10, 3);
+    context.fillStyle = "#163b3f";
+    context.fillRect(13, 18, 8, 2);
   }
 }
 
@@ -21193,6 +21202,7 @@ function drawVisualGameAgent(context, agent, time, hitAreas) {
       || agent.destination === "browser"
       || agent.destination === "ottoauth"
       || agent.destination === "camera"
+      || agent.destination === "harbor"
       || agent.destination === "library"
       || agent.destination === "sleep"
     );
@@ -21301,6 +21311,15 @@ function drawVisualGameAgent(context, agent, time, hitAreas) {
     context.fillRect(7, 12, 5, 4);
     context.fillStyle = "#3a2b42";
     context.fillRect(7, 19, 5, 2);
+  } else if (visualDestination === "harbor") {
+    context.fillStyle = "#20343b";
+    context.fillRect(2, 19, 15, 8);
+    context.fillStyle = "rgba(184, 244, 242, 0.5)";
+    context.fillRect(5, 14, 9, 10);
+    context.fillStyle = "#b8f4f2";
+    context.fillRect(6, 12, 7, 3);
+    context.fillStyle = "#163b3f";
+    context.fillRect(7, 18, 5, 2);
   }
 
   if (!isClaudeCodeAgent && !isOpenClawAgent && visualDestination !== "sleep") {
@@ -21338,6 +21357,8 @@ function drawVisualGameAgent(context, agent, time, hitAreas) {
             ? "#ffd27a"
           : agent.destination === "camera"
             ? "#7ce7f0"
+          : agent.destination === "harbor"
+            ? "#b8f4f2"
             : agent.destination === "library" ? "#f0cf72" : "#79bdf8";
       context.fillRect(3, 22, 13, 1);
     } else if (isRoamingIdle) {
@@ -21365,6 +21386,8 @@ function drawVisualGameAgent(context, agent, time, hitAreas) {
           ? "#ffd27a"
         : agent.destination === "camera"
           ? "#7ce7f0"
+        : agent.destination === "harbor"
+          ? "#b8f4f2"
           : agent.destination === "library" ? "#f0cf72" : "#79bdf8";
     context.fillRect(statusBadgeX, statusBadgeY, 4, 4);
   }
@@ -21376,7 +21399,7 @@ function drawVisualGameAgent(context, agent, time, hitAreas) {
 
   context.restore();
 
-  if (!isWalking && (agent.destination === "desk" || agent.destination === "browser" || agent.destination === "ottoauth" || agent.destination === "camera")) {
+  if (!isWalking && (agent.destination === "desk" || agent.destination === "browser" || agent.destination === "ottoauth" || agent.destination === "camera" || agent.destination === "harbor")) {
     drawVisualGameNameplate(
       context,
       truncateSwarmLabel(agent.name, agent.isSubagent ? 12 : 14),
@@ -21408,6 +21431,7 @@ function getVisualGameAgentHoverLabel(agent) {
       browser: "browser lab",
       ottoauth: "OttoAuth",
       camera: "camera room",
+      harbor: "Harbor lab",
       sleep: "beds",
       desk: "computer lab",
       library: "library",
@@ -21426,6 +21450,10 @@ function getVisualGameAgentHoverLabel(agent) {
 
   if (agent.destination === "camera") {
     return `${agent.name} - camera room`;
+  }
+
+  if (agent.destination === "harbor") {
+    return `${agent.name} - in Harbor lab`;
   }
 
   if (agent.destination === "sleep") {

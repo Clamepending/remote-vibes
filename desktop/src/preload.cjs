@@ -10,6 +10,9 @@ contextBridge.exposeInMainWorld("vibeDesktop", {
   openBrowser() {
     return ipcRenderer.invoke("vibe-open-browser");
   },
+  installUpdate() {
+    return ipcRenderer.invoke("vibe-install-update");
+  },
   quit() {
     return ipcRenderer.invoke("vibe-quit");
   },

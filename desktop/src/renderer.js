@@ -3,6 +3,7 @@ const detail = document.querySelector("#detail");
 const phase = document.querySelector("#phase");
 const log = document.querySelector("#log");
 const retry = document.querySelector("#retry");
+const installUpdate = document.querySelector("#install-update");
 const openBrowser = document.querySelector("#open-browser");
 const quit = document.querySelector("#quit");
 const progressBar = document.querySelector("#progress-bar");
@@ -12,6 +13,7 @@ const progressByPhase = {
   installing: "46%",
   starting: "74%",
   loading: "92%",
+  "update-downloaded": "100%",
   failed: "100%",
 };
 
@@ -23,6 +25,7 @@ function renderStatus(payload = {}) {
   phase.textContent = currentPhase;
   progressBar.style.width = progressByPhase[currentPhase] || "34%";
   retry.hidden = currentPhase !== "failed";
+  installUpdate.hidden = currentPhase !== "update-downloaded";
 
   if (Array.isArray(payload.logLines)) {
     log.textContent = payload.logLines.join("\n");
@@ -37,6 +40,10 @@ retry.addEventListener("click", () => {
 
 openBrowser.addEventListener("click", () => {
   window.vibeDesktop.openBrowser();
+});
+
+installUpdate.addEventListener("click", () => {
+  window.vibeDesktop.installUpdate();
 });
 
 quit.addEventListener("click", () => {

@@ -1,9 +1,18 @@
-const { app, BrowserWindow, Menu, ipcMain, shell } = require("electron");
+const { app, BrowserWindow, Menu, dialog, ipcMain, shell } = require("electron");
+const { autoUpdater } = require("electron-updater");
 const { spawn } = require("node:child_process");
-const { existsSync, chmodSync } = require("node:fs");
+const { chmodSync, existsSync } = require("node:fs");
 const http = require("node:http");
 const os = require("node:os");
 const path = require("node:path");
+
+const {
+  copyTemplateApp,
+  expandHome,
+  looksLikeVibeResearchApp,
+  readPackageVersion,
+  shouldSyncTemplate,
+} = require("./runtime.cjs");
 
 const appName = "Vibe Research";
 const defaultPort = Number(process.env.VIBE_RESEARCH_PORT || process.env.REMOTE_VIBES_PORT || 4123);
@@ -12,20 +21,9 @@ const state = {
   booting: false,
   lastLogLines: [],
   mainWindow: null,
+  manualUpdateCheck: false,
+  updateReady: false,
 };
-
-function expandHome(input) {
-  if (!input) {
-    return input;
-  }
-  if (input === "~") {
-    return os.homedir();
-  }
-  if (input.startsWith("~/")) {
-    return path.join(os.homedir(), input.slice(2));
-  }
-  return input;
-}
 
 function sourceRootDir() {
   return path.resolve(__dirname, "..", "..");
@@ -35,13 +33,9 @@ function installedAppDir() {
   return expandHome(process.env.VIBE_RESEARCH_HOME || process.env.REMOTE_VIBES_HOME || "~/.vibe-research/app");
 }
 
-function looksLikeVibeResearchApp(appDir) {
-  return Boolean(
-    appDir &&
-      existsSync(path.join(appDir, "start.sh")) &&
-      existsSync(path.join(appDir, "src", "server.js")) &&
-      existsSync(path.join(appDir, "package.json")),
-  );
+function bundledTemplateDir() {
+  const templateDir = path.join(process.resourcesPath || "", "app-template");
+  return existsSync(templateDir) ? templateDir : "";
 }
 
 function shouldUseSourceCheckout() {
@@ -101,8 +95,8 @@ function appendLog(line) {
     return;
   }
   state.lastLogLines.push(text);
-  if (state.lastLogLines.length > 400) {
-    state.lastLogLines.splice(0, state.lastLogLines.length - 400);
+  if (state.lastLogLines.length > 500) {
+    state.lastLogLines.splice(0, state.lastLogLines.length - 500);
   }
   sendStatus({ phase: "log" });
 }
@@ -115,7 +109,10 @@ function splitAndLog(chunk) {
 
 function runCommand(command, args, options = {}) {
   return new Promise((resolve, reject) => {
-    appendLog(`$ ${[command, ...args].join(" ")}`);
+    if (options.logCommand !== false) {
+      appendLog(`$ ${[command, ...args].join(" ")}`);
+    }
+
     const child = spawn(command, args, {
       cwd: options.cwd,
       env: options.env,
@@ -132,6 +129,18 @@ function runCommand(command, args, options = {}) {
         reject(new Error(`${options.label || command} exited with code ${code}`));
       }
     });
+  });
+}
+
+function commandSucceeds(command, args, options = {}) {
+  return new Promise((resolve) => {
+    const child = spawn(command, args, {
+      cwd: options.cwd,
+      env: options.env,
+      stdio: "ignore",
+    });
+    child.on("error", () => resolve(false));
+    child.on("close", (code) => resolve(code === 0));
   });
 }
 
@@ -184,12 +193,20 @@ async function waitForServer({ timeoutMs = 60000 } = {}) {
   throw lastError || new Error("Timed out waiting for Vibe Research");
 }
 
-async function installIfNeeded() {
-  if (process.platform === "win32") {
-    throw new Error("The desktop installer currently supports macOS and Linux. Use WSL on Windows for now.");
-  }
+async function externalNodeIsReady() {
+  return commandSucceeds(
+    "bash",
+    [
+      "-lc",
+      "node -e \"process.exit(Number(process.versions.node.split('.')[0]) >= 20 ? 0 : 1)\" && npm -v >/dev/null",
+    ],
+    { env: desktopEnv() },
+  );
+}
 
-  if (looksLikeVibeResearchApp(activeAppDir())) {
+async function ensureExternalNodeRuntime() {
+  if (await externalNodeIsReady()) {
+    appendLog("Node.js runtime is ready.");
     return;
   }
 
@@ -206,8 +223,37 @@ async function installIfNeeded() {
 
   sendStatus({
     phase: "installing",
+    title: "Installing Node.js",
+    detail: "Vibe Research needs a local Node.js runtime. macOS may ask for an administrator password.",
+  });
+
+  await runCommand("bash", [script, "--ensure-node-only"], {
+    label: "Node.js setup",
+    env: desktopEnv({
+      VIBE_RESEARCH_INSTALL_SERVICE: "0",
+      REMOTE_VIBES_INSTALL_SERVICE: "0",
+      VIBE_RESEARCH_INSTALL_UI: "plain",
+      REMOTE_VIBES_INSTALL_UI: "plain",
+    }),
+  });
+}
+
+async function installViaShellInstaller() {
+  const script = installerPath();
+  if (!existsSync(script)) {
+    throw new Error(`Could not find install.sh at ${script}`);
+  }
+
+  try {
+    chmodSync(script, 0o755);
+  } catch {
+    // The script may live in a read-only app bundle; bash can still read it.
+  }
+
+  sendStatus({
+    phase: "installing",
     title: "Installing Vibe Research",
-    detail: "This can take a few minutes the first time while Node.js and app files are prepared.",
+    detail: "Downloading the latest release and preparing the local app.",
   });
 
   await runCommand("bash", [script], {
@@ -221,6 +267,48 @@ async function installIfNeeded() {
       REMOTE_VIBES_INSTALL_UI: "plain",
     }),
   });
+}
+
+async function prepareAppInstall() {
+  if (process.platform === "win32") {
+    throw new Error("The desktop installer currently supports macOS and Linux. Use WSL on Windows for now.");
+  }
+
+  if (shouldUseSourceCheckout()) {
+    return;
+  }
+
+  const templateDir = bundledTemplateDir();
+  if (templateDir) {
+    const appDir = installedAppDir();
+    if (shouldSyncTemplate({ templateDir, appDir, force: process.env.VIBE_RESEARCH_DESKTOP_RESYNC === "1" })) {
+      const templateVersion = readPackageVersion(templateDir);
+      sendStatus({
+        phase: "installing",
+        title: looksLikeVibeResearchApp(appDir) ? "Updating Vibe Research" : "Installing Vibe Research",
+        detail: `Copying the bundled Vibe Research ${templateVersion || "release"} into your local app folder.`,
+      });
+
+      const result = copyTemplateApp({
+        templateDir,
+        appDir,
+        logger: appendLog,
+      });
+      appendLog(`Prepared bundled Vibe Research ${result.templateVersion} (${result.fileCount} files).`);
+    } else {
+      appendLog(`Bundled Vibe Research ${readPackageVersion(templateDir)} is already installed.`);
+    }
+
+    await ensureExternalNodeRuntime();
+    return;
+  }
+
+  if (looksLikeVibeResearchApp(activeAppDir())) {
+    await ensureExternalNodeRuntime();
+    return;
+  }
+
+  await installViaShellInstaller();
 }
 
 async function startServer() {
@@ -256,7 +344,7 @@ async function startServer() {
     ),
   });
 
-  await waitForServer({ timeoutMs: 90000 });
+  await waitForServer({ timeoutMs: 120000 });
 }
 
 async function loadVibeResearch() {
@@ -282,11 +370,14 @@ async function boot({ force = false } = {}) {
       title: "Checking Vibe Research",
       detail: shouldUseSourceCheckout()
         ? "Using this source checkout for desktop development."
-        : "Looking for the installed local app.",
+        : "Preparing the installed local app.",
     });
-    await installIfNeeded();
+    await prepareAppInstall();
     await startServer();
     await loadVibeResearch();
+    setTimeout(() => {
+      void checkForDesktopUpdates();
+    }, 2500);
   } catch (error) {
     sendStatus({
       phase: "failed",
@@ -319,7 +410,7 @@ function createWindow() {
   });
 
   state.mainWindow.webContents.on("will-navigate", (event, url) => {
-    if (url.startsWith(localUrl) || url.startsWith("http://localhost:")) {
+    if (url.startsWith(localUrl) || url.startsWith(`http://localhost:${defaultPort}/`)) {
       return;
     }
     event.preventDefault();
@@ -332,12 +423,107 @@ function createWindow() {
   });
 }
 
+async function showUpdateReadyDialog(info) {
+  state.updateReady = true;
+  installMenu();
+  const version = info?.version ? ` ${info.version}` : "";
+  const result = await dialog.showMessageBox(state.mainWindow, {
+    type: "info",
+    buttons: ["Restart and install", "Later"],
+    defaultId: 0,
+    cancelId: 1,
+    title: "Vibe Research update ready",
+    message: `Vibe Research${version} is ready to install.`,
+    detail: "Restarting will close this desktop window, install the update, and reopen the app normally.",
+  });
+
+  if (result.response === 0) {
+    autoUpdater.quitAndInstall(false, true);
+  }
+}
+
+function configureAutoUpdates() {
+  if (!app.isPackaged || process.env.VIBE_RESEARCH_DESKTOP_AUTO_UPDATE === "0") {
+    return;
+  }
+
+  autoUpdater.autoDownload = true;
+  autoUpdater.autoInstallOnAppQuit = true;
+
+  autoUpdater.on("checking-for-update", () => {
+    appendLog("Checking for desktop updates.");
+  });
+  autoUpdater.on("update-available", (info) => {
+    appendLog(`Desktop update ${info?.version || ""} is available; downloading.`);
+  });
+  autoUpdater.on("download-progress", (progress) => {
+    if (progress?.percent) {
+      appendLog(`Desktop update download ${Math.round(progress.percent)}%.`);
+    }
+  });
+  autoUpdater.on("update-not-available", () => {
+    appendLog("Desktop app is already up to date.");
+    if (state.manualUpdateCheck) {
+      state.manualUpdateCheck = false;
+      void dialog.showMessageBox(state.mainWindow, {
+        type: "info",
+        title: "No update available",
+        message: "Vibe Research is already up to date.",
+      });
+    }
+  });
+  autoUpdater.on("update-downloaded", (info) => {
+    appendLog(`Desktop update ${info?.version || ""} downloaded.`);
+    sendStatus({
+      phase: "update-downloaded",
+      title: "Update Ready",
+      detail: "Restart Vibe Research to install the downloaded desktop update.",
+    });
+    void showUpdateReadyDialog(info);
+  });
+  autoUpdater.on("error", (error) => {
+    appendLog(`Desktop update check failed: ${error?.message || error}`);
+    if (state.manualUpdateCheck) {
+      state.manualUpdateCheck = false;
+      void dialog.showErrorBox("Update check failed", error?.message || String(error));
+    }
+  });
+}
+
+async function checkForDesktopUpdates({ manual = false } = {}) {
+  if (!app.isPackaged || process.env.VIBE_RESEARCH_DESKTOP_AUTO_UPDATE === "0") {
+    if (manual) {
+      await dialog.showMessageBox(state.mainWindow, {
+        type: "info",
+        title: "Updates unavailable in development",
+        message: "Desktop auto-update runs in packaged release builds.",
+      });
+    }
+    return;
+  }
+
+  state.manualUpdateCheck = manual;
+  await autoUpdater.checkForUpdatesAndNotify();
+}
+
 function installMenu() {
   const template = [
     {
       label: appName,
       submenu: [
         { role: "about" },
+        { type: "separator" },
+        {
+          label: "Check for Updates",
+          click: () => {
+            void checkForDesktopUpdates({ manual: true });
+          },
+        },
+        {
+          label: "Install Downloaded Update",
+          enabled: state.updateReady,
+          click: () => autoUpdater.quitAndInstall(false, true),
+        },
         { type: "separator" },
         {
           label: "Open in Browser",
@@ -376,12 +562,19 @@ ipcMain.handle("vibe-open-browser", async () => {
   await shell.openExternal(localUrl);
 });
 
+ipcMain.handle("vibe-install-update", () => {
+  if (state.updateReady) {
+    autoUpdater.quitAndInstall(false, true);
+  }
+});
+
 ipcMain.handle("vibe-quit", () => {
   app.quit();
 });
 
 app.whenReady().then(async () => {
   app.setName(appName);
+  configureAutoUpdates();
   installMenu();
   createWindow();
   await boot();

@@ -15,7 +15,7 @@ Vibe Research is a local control plane for your machine. Do not expose port `412
 
 ## Desktop App
 
-There is now a thin desktop launcher in `desktop/` for people who should not have to paste a curl command. The app opens a native window, runs the normal installer on first launch, starts the local Vibe Research server, then loads the UI at `http://127.0.0.1:4123/`.
+There is now a thin desktop launcher in `desktop/` for people who should not have to paste a curl command. Release builds open a native window, copy a bundled Vibe Research source template into `~/.vibe-research/app`, ensure Node.js exists, start the local server, then load the UI at `http://127.0.0.1:4123/`. This avoids requiring Git for a first-run desktop install.
 
 Build it locally with:
 
@@ -24,7 +24,7 @@ npm run desktop:install
 npm run desktop:dist
 ```
 
-macOS artifacts are written to `desktop/dist/`. The GitHub Actions `Desktop` workflow builds unsigned `.dmg` and `.zip` artifacts on `macos-latest`; public distribution should use Apple Developer ID signing and notarization.
+macOS artifacts are written to `desktop/dist/`. The GitHub Actions `Desktop` workflow builds `.dmg` and `.zip` artifacts plus update metadata. Release tags require Developer ID signing and Apple notarization secrets, then publish the files through GitHub Releases so installed desktop apps can auto-update.
 
 ## Official Sources
 

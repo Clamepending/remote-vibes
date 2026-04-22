@@ -3299,6 +3299,31 @@ input[readonly][data-folder-picker-target] {
   clip-path: polygon(0 76%, 26% 10%, 51% 63%, 78% 0, 100% 74%, 58% 54%, 48% 100%, 37% 55%);
 }
 
+.plugin-building-logo-rentahuman {
+  --building-logo-background: #18181b;
+  --building-logo-border: #18181b;
+  --building-logo-radius: 7px;
+  --building-logo-shadow: 0 2px 0 rgba(24, 24, 27, 0.28);
+}
+
+.plugin-building-logo-rentahuman::before {
+  left: 10px;
+  top: 6px;
+  width: 17px;
+  height: 14px;
+  background: #f87214;
+  clip-path: polygon(0 0, 100% 0, 100% 76%, 55% 76%, 55% 100%, 0 100%, 0 42%, 38% 42%, 38% 0);
+}
+
+.plugin-building-logo-rentahuman::after {
+  left: 6px;
+  top: 13px;
+  width: 16px;
+  height: 10px;
+  background: #27272a;
+  clip-path: polygon(0 0, 48% 0, 48% 58%, 100% 58%, 100% 100%, 0 100%);
+}
+
 .plugin-building-window,
 .plugin-building-door,
 .plugin-building-awning,
@@ -3601,6 +3626,19 @@ input[readonly][data-folder-picker-target] {
   --town-room-trim: #342c46;
   --town-room-fixture: #b16a47;
   --town-room-screen: #ffe7a8;
+}
+
+.plugin-building-harbor {
+  --building-body: #4d6e76;
+  --building-roof: #9b6852;
+  --building-window: #b8f4f2;
+  --building-ground: #263c3d;
+  --building-accent: #f0c36f;
+  --town-room-floor: #294853;
+  --town-room-trim: #163b3f;
+  --town-room-fixture: #25343c;
+  --town-room-screen: #b8f4f2;
+  --town-room-shadow: rgba(11, 28, 34, 0.42);
 }
 
 .plugin-building-google-drive {
@@ -4390,6 +4428,33 @@ input[readonly][data-folder-picker-target] {
   display: none;
 }
 
+.plugin-building-rentahuman.plugin-building-shape-market {
+  --town-room-floor: #f6f3ee;
+  --town-room-trim: #18181b;
+  --town-room-fixture: #27272a;
+  --town-room-screen: #fff7ed;
+  --town-room-path: #f87214;
+  --town-room-shadow: rgba(24, 24, 27, 0.34);
+}
+
+.plugin-building-rentahuman.plugin-building-shape-market .plugin-building-body {
+  background:
+    linear-gradient(180deg, rgba(248, 114, 20, 0.18) 4px, transparent 4px),
+    repeating-linear-gradient(0deg, transparent 0 11px, rgba(24, 24, 27, 0.09) 11px 12px),
+    repeating-linear-gradient(90deg, transparent 0 17px, rgba(24, 24, 27, 0.11) 17px 18px),
+    var(--town-room-floor);
+}
+
+.plugin-building-rentahuman.plugin-building-shape-market .plugin-building-body::before {
+  background:
+    linear-gradient(#27272a 0 0) 0 23px / 100% 9px no-repeat,
+    linear-gradient(#f87214 0 0) 5px 4px / 16px 14px no-repeat,
+    linear-gradient(#18181b 0 0) 8px 0 / 10px 5px no-repeat,
+    linear-gradient(#fff7ed 0 0) right 7px bottom 9px / 17px 12px no-repeat,
+    linear-gradient(#18181b 0 0) right 11px bottom 12px / 9px 5px no-repeat;
+  box-shadow: 0 2px 0 rgba(248, 114, 20, 0.18);
+}
+
 .plugin-building-shape-browser {
   --town-room-floor: #253433;
   --town-room-trim: #223a2c;
@@ -4581,6 +4646,141 @@ input[readonly][data-folder-picker-target] {
   height: 5px;
   border: 0;
   background: rgba(10, 13, 11, 0.16);
+  transform: translateX(-50%);
+}
+
+.plugin-building-shape-lab {
+  --town-room-shadow: rgba(11, 28, 34, 0.42);
+  --town-room-path: #d0a85d;
+  background:
+    linear-gradient(180deg, rgba(184, 244, 242, 0.16), transparent 44%),
+    repeating-linear-gradient(0deg, rgba(255, 255, 255, 0.03) 0 1px, transparent 1px 16px),
+    repeating-linear-gradient(90deg, rgba(255, 255, 255, 0.03) 0 1px, transparent 1px 16px),
+    linear-gradient(90deg, #274c48 0 25%, #2b5a52 25% 50%, #244943 50% 75%, #274c48 75%),
+    var(--building-ground);
+}
+
+.plugin-building-shape-lab::before {
+  height: 50px;
+  background:
+    linear-gradient(90deg, transparent 0 40%, rgba(82, 58, 31, 0.22) 40% 44%, transparent 44% 56%, rgba(82, 58, 31, 0.22) 56% 60%, transparent 60%),
+    linear-gradient(90deg, transparent 0 40%, #c09a52 40% 60%, transparent 60%),
+    linear-gradient(90deg, transparent 0 43%, var(--town-room-path) 43% 57%, transparent 57%),
+    repeating-linear-gradient(90deg, transparent 0 18px, rgba(184, 244, 242, 0.16) 18px 20px, transparent 20px 32px);
+}
+
+.plugin-building-shape-lab .plugin-building-roof {
+  display: none;
+}
+
+.plugin-building-shape-lab .plugin-building-body {
+  bottom: 32px;
+  width: 122px;
+  height: 72px;
+  border-color: var(--town-room-trim);
+  background:
+    linear-gradient(180deg, rgba(184, 244, 242, 0.16) 4px, transparent 4px),
+    repeating-linear-gradient(0deg, transparent 0 11px, rgba(184, 244, 242, 0.1) 11px 12px),
+    repeating-linear-gradient(90deg, transparent 0 17px, rgba(14, 38, 45, 0.24) 17px 18px),
+    var(--town-room-floor);
+  box-shadow:
+    3px 6px 0 var(--town-room-shadow),
+    inset -2px -2px rgba(10, 13, 11, 0.18),
+    inset 1px 1px rgba(230, 252, 255, 0.18);
+  clip-path: none;
+}
+
+.plugin-building-shape-lab .plugin-building-body::before {
+  content: "";
+  position: absolute;
+  left: 15px;
+  top: 19px;
+  width: 91px;
+  height: 38px;
+  border: 2px solid var(--town-room-trim);
+  border-radius: 2px 2px 8px 8px;
+  background:
+    linear-gradient(90deg, transparent 0 27px, var(--town-room-trim) 27px 31px, transparent 31px 60px, var(--town-room-trim) 60px 64px, transparent 64px),
+    linear-gradient(180deg, rgba(255, 255, 255, 0.48) 0 3px, transparent 3px 13px, rgba(184, 244, 242, 0.2) 13px 23px, transparent 23px),
+    linear-gradient(90deg, rgba(184, 244, 242, 0.48), rgba(184, 244, 242, 0.12));
+  box-shadow:
+    0 0 10px rgba(184, 244, 242, 0.22),
+    4px 31px 0 -14px rgba(0, 0, 0, 0.42);
+}
+
+.plugin-building-shape-lab .plugin-building-body::after {
+  inset: auto 40px -5px;
+  height: 7px;
+  background: var(--town-room-path);
+  box-shadow: inset 0 -2px var(--town-room-trim);
+}
+
+.plugin-building-shape-lab .plugin-building-sign {
+  left: 18px;
+  top: 9px;
+  width: 31px;
+  height: 24px;
+  border-color: var(--town-room-trim);
+  border-radius: 3px;
+  background: #d1af63;
+  color: #251a11;
+  transform: none;
+}
+
+.plugin-building-shape-lab .plugin-building-window {
+  top: 45px;
+  width: 14px;
+  height: 18px;
+  border-color: var(--town-room-trim);
+  border-radius: 2px 2px 6px 6px;
+  background:
+    linear-gradient(180deg, rgba(255, 255, 255, 0.62) 0 2px, transparent 2px 7px),
+    var(--town-room-screen);
+  box-shadow: 0 0 10px rgba(184, 244, 242, 0.24);
+}
+
+.plugin-building-shape-lab .plugin-building-window-a {
+  left: 22px;
+}
+
+.plugin-building-shape-lab .plugin-building-window-b {
+  right: 22px;
+}
+
+.plugin-building-shape-lab .plugin-building-door {
+  left: 50%;
+  bottom: -3px;
+  width: 24px;
+  height: 15px;
+  border-color: var(--town-room-trim);
+  border-radius: 2px 2px 0 0;
+  background: var(--town-room-fixture);
+  transform: translateX(-50%);
+}
+
+.plugin-building-shape-lab .plugin-building-door::after {
+  display: none;
+}
+
+.plugin-building-shape-lab .plugin-building-awning {
+  left: 50%;
+  bottom: 65px;
+  width: 86px;
+  height: 8px;
+  border: 0;
+  background:
+    linear-gradient(90deg, transparent 0 38%, var(--building-accent) 38% 62%, transparent 62%),
+    var(--town-room-fixture);
+  transform: translateX(-50%);
+}
+
+.plugin-building-shape-lab .plugin-building-base {
+  left: 50%;
+  bottom: 30px;
+  width: 132px;
+  height: 5px;
+  border: 0;
+  background: rgba(10, 13, 11, 0.18);
   transform: translateX(-50%);
 }
 

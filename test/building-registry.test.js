@@ -24,6 +24,7 @@ test("building registry exposes core building manifests", () => {
   assert.ok(ids.includes("discord"));
   assert.ok(ids.includes("moltbook"));
   assert.ok(ids.includes("twitter"));
+  assert.ok(ids.includes("rentahuman"));
   assert.ok(ids.includes("sora"));
   assert.ok(ids.includes("nano-banana"));
   assert.ok(ids.includes("wandb"));
@@ -164,6 +165,16 @@ test("building registry exposes core building manifests", () => {
   assert.equal(ottoAuth.visual.shape, "market");
   assert.equal(ottoAuth.onboarding.setupSelector, ".ottoauth-plugin-card");
   assert.ok(AGENT_TOWN_SPECIAL_BUILDING_IDS.has("ottoauth"));
+
+  const rentAHuman = BUILDING_CATALOG.find((building) => building.id === "rentahuman");
+  assert.equal(rentAHuman.category, "Commerce");
+  assert.equal(rentAHuman.status, "MCP-ready");
+  assert.equal(rentAHuman.visual.shape, "market");
+  assert.equal(rentAHuman.visual.logo, "rentahuman");
+  assert.match(rentAHuman.description, /MCP server|REST API/i);
+  assert.match(rentAHuman.access.detail, /operator pairing|escrow approval/i);
+  assert.ok(rentAHuman.agentGuide.docs.some((doc) => doc.url.includes("rentahuman.ai/mcp")));
+  assert.ok(rentAHuman.agentGuide.commands.some((command) => command.command.includes("rentahuman-mcp")));
 
   for (const building of BUILDING_CATALOG) {
     assert.equal(typeof building.name, "string");
