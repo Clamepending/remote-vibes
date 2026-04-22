@@ -1011,6 +1011,44 @@ wait_for_systemd_service_active() {
   return 1
 }
 
+vibe_research_server_is_running() {
+  local state_dir port pid
+
+  state_dir="$1"
+  port="$2"
+
+  if [ -s "$state_dir/server.pid" ]; then
+    pid="$(cat "$state_dir/server.pid" 2>/dev/null || true)"
+    if [ -n "$pid" ] && kill -0 "$pid" >/dev/null 2>&1; then
+      return 0
+    fi
+  fi
+
+  if has_command curl && curl -fsS --max-time 2 "http://127.0.0.1:${port}/api/state" -H "X-Vibe-Research-API: 1" >/dev/null 2>&1; then
+    return 0
+  fi
+
+  return 1
+}
+
+wait_for_vibe_research_server() {
+  local state_dir port attempt max_attempts
+
+  state_dir="$1"
+  port="$2"
+  max_attempts="${VIBE_RESEARCH_SERVER_START_ATTEMPTS:-${REMOTE_VIBES_SERVER_START_ATTEMPTS:-6}}"
+  attempt=1
+  while [ "$attempt" -le "$max_attempts" ]; do
+    if vibe_research_server_is_running "$state_dir" "$port"; then
+      return 0
+    fi
+    sleep 1
+    attempt=$((attempt + 1))
+  done
+
+  return 1
+}
+
 install_systemd_service() {
   local service_user state_dir wiki_dir port service_file temp_file
 
@@ -1089,10 +1127,18 @@ EOF
   if ! try_run_as_root systemctl restart "${SERVICE_NAME}.service" >/dev/null 2>&1; then
     log "systemd restart did not report success; checking ${SERVICE_NAME}.service status"
     if ! wait_for_systemd_service_active; then
+      if wait_for_vibe_research_server "$state_dir" "$port"; then
+        log "Vibe Research is running; ${SERVICE_NAME}.service is enabled but still settling"
+        return
+      fi
       log "Could not start systemd service; Vibe Research is still running for this session"
       return
     fi
   elif ! wait_for_systemd_service_active; then
+    if wait_for_vibe_research_server "$state_dir" "$port"; then
+      log "Vibe Research is running; ${SERVICE_NAME}.service is enabled but still settling"
+      return
+    fi
     log "Could not confirm systemd service startup; Vibe Research is still running for this session"
     return
   fi
