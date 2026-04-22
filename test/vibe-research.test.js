@@ -1280,6 +1280,100 @@ test("AgentMall applies and persists the Agent Town theme", async (t) => {
   }
 });
 
+test("placed cosmetic buildings open an Agent Town drawer", async (t) => {
+  const executablePath = await resolveBrowserExecutablePath({ env: process.env });
+  if (!executablePath) {
+    t.skip("No local Chromium/Chrome executable is available for the cosmetic building smoke.");
+    return;
+  }
+
+  const workspaceDir = await createTempWorkspace("vibe-research-cosmetic-building-ui-");
+  const stateDir = await createTempWorkspace("vibe-research-cosmetic-building-state-");
+  const wikiDir = getWorkspaceLibraryDir(workspaceDir);
+  await mkdir(wikiDir, { recursive: true });
+  await writeFile(path.join(wikiDir, "index.md"), "# Cosmetic Building Library\n", "utf8");
+  const { app, baseUrl } = await startApp({ cwd: workspaceDir, stateDir });
+  let browser = null;
+
+  const clickCanvasPoint = async (page, x, y) => {
+    const box = await page.locator("#visual-game-canvas").boundingBox();
+    assert.ok(box, "visual game canvas should be visible");
+    await page.mouse.click(box.x + x, box.y + y);
+  };
+  const findCanvasHoverPoint = async (page, labelText) => {
+    const box = await page.locator("#visual-game-canvas").boundingBox();
+    assert.ok(box, "visual game canvas should be visible");
+
+    for (let y = 8; y <= box.height - 8; y += 16) {
+      for (let x = 8; x <= box.width - 8; x += 16) {
+        await page.mouse.move(box.x + x, box.y + y);
+        const label = await page.locator(".visual-game-hover").textContent();
+
+        if (label?.includes(labelText)) {
+          return { x, y };
+        }
+      }
+    }
+
+    return null;
+  };
+
+  try {
+    const settingsResponse = await fetch(`${baseUrl}/api/settings`, {
+      method: "PATCH",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        preventSleepEnabled: false,
+        wikiGitRemoteEnabled: false,
+        wikiPath: wikiDir,
+      }),
+    });
+    assert.equal(settingsResponse.status, 200);
+
+    const createResponse = await fetch(`${baseUrl}/api/sessions`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ providerId: "shell", cwd: workspaceDir, name: "Cosmetic Agent" }),
+    });
+    assert.equal(createResponse.status, 201);
+
+    browser = await chromium.launch({ executablePath, headless: true });
+    const page = await browser.newPage();
+    await page.setViewportSize({ width: 1280, height: 720 });
+    await page.addInitScript(() => {
+      window.localStorage.setItem(
+        "vibe-research-agent-town-layout-v1",
+        JSON.stringify({
+          decorations: [{ id: "decor-test-shed", itemId: "shed", x: 330, y: 300 }],
+          functional: {},
+          pendingFunctional: [],
+          places: {},
+          roads: {},
+        }),
+      );
+    });
+    await page.goto(`${baseUrl}/?view=swarm`, { waitUntil: "domcontentloaded" });
+    await page.waitForSelector("#visual-game-canvas", { timeout: 10_000 });
+    await page.waitForTimeout(800);
+
+    const shedPoint = await findCanvasHoverPoint(page, "Tiny Shed");
+    assert.ok(shedPoint, "Tiny Shed cosmetic building should be clickable");
+    await clickCanvasPoint(page, shedPoint.x, shedPoint.y);
+    await page.locator('[aria-label="Tiny Shed cosmetic UI"]').waitFor({ timeout: 10_000 });
+    await page.getByRole("button", { name: "Remove" }).click();
+    await page.waitForFunction(() => !document.querySelector(".visual-game-building-panel"));
+    assert.equal(
+      await page.evaluate(() => JSON.parse(window.localStorage.getItem("vibe-research-agent-town-layout-v1")).decorations.length),
+      0,
+    );
+  } finally {
+    await browser?.close().catch(() => {});
+    await app.close();
+    await removeTempWorkspace(workspaceDir);
+    await removeTempWorkspace(stateDir);
+  }
+});
+
 test("external connector buildings open details and install from their building windows", async (t) => {
   const executablePath = await resolveBrowserExecutablePath({ env: process.env });
   if (!executablePath) {
