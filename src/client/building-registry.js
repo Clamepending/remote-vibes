@@ -755,6 +755,9 @@ const CORE_BUILDING_MANIFESTS = [
     },
     status: "setup available",
     source: "vibe-research",
+    visual: {
+      logo: "agentmail",
+    },
     onboarding: {
       setupSelector: ".communications-plugin-card",
       variables: [
@@ -791,6 +794,9 @@ const CORE_BUILDING_MANIFESTS = [
     },
     status: "setup available",
     source: "vibe-research",
+    visual: {
+      logo: "telegram",
+    },
     onboarding: {
       setupSelector: ".communications-plugin-card",
       variables: [

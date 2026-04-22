@@ -72,6 +72,12 @@ test("building registry exposes core building manifests", () => {
   assert.match(agentMall.description, /theme skins/i);
   assert.match(agentMall.access.detail, /browser-local/i);
 
+  const agentMail = BUILDING_CATALOG.find((building) => building.id === "agentmail");
+  assert.equal(agentMail.visual.logo, "agentmail");
+
+  const telegram = BUILDING_CATALOG.find((building) => building.id === "telegram");
+  assert.equal(telegram.visual.logo, "telegram");
+
   const doghouse = BUILDING_CATALOG.find((building) => building.id === "doghouse");
   assert.equal(doghouse.install.system, true);
   assert.equal(doghouse.visual.shape, "doghouse");
@@ -181,6 +187,7 @@ test("custom building manifests normalize through the registry sdk", () => {
       steps: [{ title: "Save variables", detail: "Add the API key." }],
     },
     visual: {
+      logo: "Example Logo!",
       shape: "Market",
       specialTownPlace: true,
     },
@@ -203,6 +210,7 @@ test("custom building manifests normalize through the registry sdk", () => {
   assert.equal(building.install.system, false);
   assert.equal(building.install.storedFallback, false);
   assert.equal(building.ui.mode, "panel");
+  assert.equal(building.visual.logo, "example-logo");
   assert.equal(building.visual.shape, "market");
   assert.deepEqual(building.agentGuide.commands[0], {
     command: "example-commerce status",

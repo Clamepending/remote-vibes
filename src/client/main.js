@@ -320,6 +320,7 @@ const SYSTEM_CHART_COLORS = [
   "#ececef",
 ];
 const CORE_BUILDING_IDS = new Set(BUILDING_CATALOG.map((building) => normalizeBuildingId(building.id)));
+const BUILDING_SIGN_LOGO_IDS = new Set(["agentmail", "telegram", "instacart"]);
 const PLUGIN_CATALOG = [...BUILDING_CATALOG];
 const AUTOMATION_CADENCE_OPTIONS = [
   ["hourly", "Every hour"],
@@ -10144,6 +10145,7 @@ function normalizeCommunityBuildingForClient(manifest) {
     },
     visual: {
       ...visual,
+      logo: normalizeBuildingId(visual.logo || ""),
       shape: normalizeBuildingId(visual.shape || "plugin") || "plugin",
       specialTownPlace: false,
     },
@@ -10784,6 +10786,25 @@ function getPluginBuildingShape(plugin) {
   return plugin?.visual?.shape || "plugin";
 }
 
+function getPluginBuildingLogo(plugin) {
+  const logo = normalizeBuildingId(plugin?.visual?.logo || plugin?.logo || "");
+  if (logo) {
+    return logo;
+  }
+
+  const pluginId = getPluginId(plugin);
+  return BUILDING_SIGN_LOGO_IDS.has(pluginId) ? pluginId : "";
+}
+
+function renderPluginBuildingSign(plugin) {
+  const logo = getPluginBuildingLogo(plugin);
+  if (!logo) {
+    return `<span class="plugin-building-sign">${renderIcon(plugin.icon || Plug)}</span>`;
+  }
+
+  return `<span class="plugin-building-sign plugin-building-logo plugin-building-logo-${escapeHtml(logo)}"></span>`;
+}
+
 function renderBuildingIssueBadge(issue) {
   if (!issue) {
     return "";
@@ -10804,7 +10825,7 @@ function renderPluginBuilding(plugin, { issue = getPluginBuildingIssue(plugin) }
       <span class="plugin-building-shadow"></span>
       <span class="plugin-building-roof"></span>
       <span class="plugin-building-body">
-        <span class="plugin-building-sign">${renderIcon(plugin.icon || Plug)}</span>
+        ${renderPluginBuildingSign(plugin)}
         <span class="plugin-building-window plugin-building-window-a"></span>
         <span class="plugin-building-window plugin-building-window-b"></span>
         <span class="plugin-building-door"></span>
@@ -14947,6 +14968,9 @@ function getAgentTownProviderDormPalette(providerId) {
       trim: "#3b251f",
       blanket: "#d77b4a",
       pillow: "#f2d2b2",
+      floorPattern: "claude",
+      floorPatternColor: "#ffe8c7",
+      floorPatternAlpha: 0.62,
     },
     codex: {
       floor: "#23584c",
@@ -14954,6 +14978,9 @@ function getAgentTownProviderDormPalette(providerId) {
       trim: "#112b26",
       blanket: "#7ce3c7",
       pillow: "#d8fff6",
+      floorPattern: "codex",
+      floorPatternColor: "#d8fff6",
+      floorPatternAlpha: 0.46,
     },
     "ml-intern": {
       floor: "#8b6b2d",
@@ -15997,6 +16024,13 @@ function drawVisualGameRoomFloor(context, x, y, width, height, options = {}) {
     context.fillRect(column, y + 5, 1, Math.max(0, height - 10));
   }
 
+  drawVisualGameProviderFloorPattern(context, x, y, width, height, {
+    pattern: options.floorPattern,
+    color: options.floorPatternColor || room.edgeLight || "rgba(255, 238, 176, 0.16)",
+    alpha: options.floorPatternAlpha,
+    trim,
+  });
+
   context.fillStyle = room.edgeShadow || "rgba(10, 13, 11, 0.16)";
   context.fillRect(x, y + height - 2, width, 2);
   context.fillRect(x + width - 2, y, 2, height);
@@ -16062,6 +16096,73 @@ function getVisualGameRenderedEntrance(place) {
     ...(place?.entrance || { side: "bottom" }),
     anchor: getVisualGameTownPlaceAnchor(place),
   };
+}
+
+function drawVisualGameProviderFloorPattern(context, x, y, width, height, options = {}) {
+  const pattern = String(options.pattern || "").trim();
+  if (!pattern) {
+    return;
+  }
+
+  const motifSize = Math.max(16, Math.min(24, Math.floor(Math.min(width, height) * 0.38)));
+  const centers = [
+    { x: x + Math.round(width * 0.5), y: y + Math.round(height * 0.7) },
+  ];
+
+  context.save();
+  context.beginPath();
+  context.rect(x + 3, y + 4, Math.max(0, width - 6), Math.max(0, height - 8));
+  context.clip();
+  context.globalAlpha = clamp(Number(options.alpha) || 0.42, 0.1, 0.75);
+  for (const center of centers) {
+    if (pattern === "claude") {
+      drawVisualGameClaudeFloorLogo(context, center.x, center.y, motifSize, options.color);
+    } else if (pattern === "codex") {
+      drawVisualGameCodexFloorLogo(context, center.x, center.y, motifSize, options.color, options.trim);
+    }
+  }
+  context.restore();
+}
+
+function drawVisualGameClaudeFloorLogo(context, centerX, centerY, size, color) {
+  context.save();
+  context.translate(centerX, centerY);
+  context.fillStyle = color || "#ffd0a3";
+  for (let index = 0; index < 8; index += 1) {
+    context.save();
+    context.rotate((Math.PI * 2 * index) / 8);
+    context.beginPath();
+    context.ellipse(0, -size * 0.3, size * 0.12, size * 0.38, 0, 0, Math.PI * 2);
+    context.fill();
+    context.restore();
+  }
+  context.fillStyle = "rgba(255, 244, 215, 0.82)";
+  context.beginPath();
+  context.arc(0, 0, size * 0.16, 0, Math.PI * 2);
+  context.fill();
+  context.restore();
+}
+
+function drawVisualGameCodexFloorLogo(context, centerX, centerY, size, color, trim) {
+  context.save();
+  context.translate(centerX, centerY);
+  context.strokeStyle = color || "#d8fff6";
+  context.lineWidth = Math.max(1.5, size * 0.12);
+  context.lineCap = "round";
+  context.lineJoin = "round";
+  for (let index = 0; index < 6; index += 1) {
+    context.save();
+    context.rotate((Math.PI * 2 * index) / 6);
+    context.beginPath();
+    context.ellipse(size * 0.18, 0, size * 0.28, size * 0.11, Math.PI / 5, 0, Math.PI * 2);
+    context.stroke();
+    context.restore();
+  }
+  context.fillStyle = trim || "#112b26";
+  context.beginPath();
+  context.arc(0, 0, size * 0.11, 0, Math.PI * 2);
+  context.fill();
+  context.restore();
 }
 
 function drawVisualGameComputerStation(context, desk, occupied, time, index, screenColor = "#79bdf8") {
@@ -16282,6 +16383,9 @@ function drawVisualGameSleepRoom(context, room) {
     wall: palette.wall,
     trim: palette.trim,
     entrance,
+    floorPattern: palette.floorPattern,
+    floorPatternColor: palette.floorPatternColor,
+    floorPatternAlpha: palette.floorPatternAlpha,
   });
   drawVisualGameBuildingSign(context, x + 8, y + 7, Math.min(width - 16, 88), 23, label, meta);
   for (const bed of beds) {

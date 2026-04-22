@@ -40,6 +40,7 @@ function normalizeVisualContract(visual) {
 
   return {
     ...visual,
+    logo: normalizeBuildingId(visual.logo || ""),
     shape: normalizeBuildingId(visual.shape || "plugin") || "plugin",
     specialTownPlace: Boolean(visual.specialTownPlace),
   };

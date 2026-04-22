@@ -2949,6 +2949,117 @@ input[readonly][data-folder-picker-target] {
   stroke-width: 2.35;
 }
 
+.plugin-building-logo {
+  overflow: hidden;
+}
+
+.plugin-building-logo::before,
+.plugin-building-logo::after {
+  content: "";
+  position: absolute;
+  display: block;
+  pointer-events: none;
+}
+
+.plugin-building-logo-agentmail {
+  --building-logo-background: #0f172a;
+  --building-logo-border: #152238;
+  --building-logo-radius: 7px;
+  --building-logo-shadow: 0 2px 0 rgba(15, 23, 42, 0.28);
+  border-color: var(--building-logo-border);
+  border-radius: var(--building-logo-radius);
+  background: var(--building-logo-background);
+  box-shadow: var(--building-logo-shadow);
+}
+
+.plugin-building-logo-agentmail::before {
+  left: 6px;
+  top: 8px;
+  width: 17px;
+  height: 11px;
+  border: 2px solid #f5efe1;
+  border-radius: 3px;
+  background:
+    linear-gradient(145deg, transparent 48%, #f5efe1 49% 55%, transparent 56%),
+    linear-gradient(35deg, transparent 48%, #f5efe1 49% 55%, transparent 56%);
+}
+
+.plugin-building-logo-agentmail::after {
+  content: "A";
+  right: 5px;
+  bottom: 5px;
+  width: 12px;
+  height: 12px;
+  border-radius: 999px;
+  background: #315a86;
+  color: #f5efe1;
+  font-size: 8px;
+  font-weight: 800;
+  line-height: 12px;
+  text-align: center;
+}
+
+.plugin-building-logo-telegram {
+  --building-logo-background: linear-gradient(145deg, #37b7f3, #229ed9);
+  --building-logo-border: #168acd;
+  --building-logo-radius: 999px;
+  --building-logo-shadow: 0 2px 0 rgba(22, 138, 205, 0.28);
+  border-color: var(--building-logo-border);
+  border-radius: var(--building-logo-radius);
+  background: var(--building-logo-background);
+  box-shadow: var(--building-logo-shadow);
+}
+
+.plugin-building-logo-telegram::before {
+  left: 7px;
+  top: 7px;
+  width: 18px;
+  height: 15px;
+  background: #fff;
+  clip-path: polygon(0 45%, 100% 0, 74% 100%, 51% 67%, 35% 88%);
+}
+
+.plugin-building-logo-telegram::after {
+  left: 16px;
+  top: 15px;
+  width: 7px;
+  height: 2px;
+  border-radius: 999px;
+  background: #d6f1ff;
+  transform: rotate(-46deg);
+  transform-origin: left center;
+}
+
+.plugin-building-logo-instacart {
+  --building-logo-background: #fffdf6;
+  --building-logo-border: #43b02a;
+  --building-logo-radius: 8px;
+  --building-logo-shadow: 0 2px 0 rgba(67, 176, 42, 0.24);
+  border-color: var(--building-logo-border);
+  border-radius: var(--building-logo-radius);
+  background: var(--building-logo-background);
+  box-shadow: var(--building-logo-shadow);
+}
+
+.plugin-building-logo-instacart::before {
+  left: 12px;
+  top: 10px;
+  width: 9px;
+  height: 14px;
+  border-radius: 7px 7px 9px 9px;
+  background: #ff7f32;
+  transform: rotate(-18deg);
+}
+
+.plugin-building-logo-instacart::after {
+  left: 10px;
+  top: 5px;
+  width: 15px;
+  height: 9px;
+  background: #43b02a;
+  clip-path: polygon(0 76%, 26% 10%, 51% 63%, 78% 0, 100% 74%, 58% 54%, 48% 100%, 37% 55%);
+}
+
 .plugin-building-window,
 .plugin-building-door,
 .plugin-building-awning,
@@ -3335,6 +3446,18 @@ input[readonly][data-folder-picker-target] {
   --building-window: #d9f2ff;
   --building-ground: #263842;
   --building-accent: #f2d079;
+}
+
+.plugin-building-instacart {
+  --building-body: #4f7d4c;
+  --building-roof: #ff7f32;
+  --building-window: #fff0b8;
+  --building-ground: #263d2a;
+  --building-accent: #f5f1dc;
+  --town-room-floor: #4f744c;
+  --town-room-trim: #243d27;
+  --town-room-fixture: #ff7f32;
+  --town-room-screen: #fff0b8;
 }
 
 .plugin-building-discord {
@@ -4254,6 +4377,26 @@ input[readonly][data-folder-picker-target] {
   width: 62px;
   height: 22px;
   transform: translateX(-50%);
+}
+
+:is(
+  .plugin-building-shape-plugin,
+  .plugin-building-shape-post,
+  .plugin-building-shape-browser,
+  .plugin-building-shape-camera,
+  .plugin-building-shape-library,
+  .plugin-building-shape-market,
+  .plugin-building-shape-studio,
+  .plugin-building-shape-school,
+  .plugin-building-shape-dock,
+  .plugin-building-shape-portal
+) .plugin-building-logo {
+  width: 32px;
+  height: 28px;
+  border-color: var(--building-logo-border, var(--building-trim));
+  border-radius: var(--building-logo-radius, 5px);
+  background: var(--building-logo-background, var(--building-accent));
+  box-shadow: var(--building-logo-shadow, none);
 }
 
 .plugin-building-shape-dock .plugin-building-window,
