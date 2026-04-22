@@ -4827,6 +4827,7 @@ input[readonly][data-folder-picker-target] {
   .plugin-building-shape-market,
   .plugin-building-shape-studio,
   .plugin-building-shape-school,
+  .plugin-building-shape-lab,
   .plugin-building-shape-dock,
   .plugin-building-shape-portal
 ) .plugin-building-logo {

@@ -431,7 +431,7 @@ const CORE_BUILDING_MANIFESTS = [
       ],
       steps: [
         { title: "Install Harbor", detail: "Install the CLI in the agent environment and confirm harbor --help works." },
-        { title: "Choose the eval", detail: "Name the registry dataset, local task path, or job config before running." },
+        { title: "Choose the eval", detail: "Pick a registry dataset, local task path, local dataset, or job config before starting a run." },
         { title: "Confirm runtime", detail: "Verify Docker or the selected cloud sandbox credentials are available." },
         { title: "Install the building", detail: "Add the Harbor lab once agents should consider Harbor evals for this project.", completeWhen: { type: "installed" } },
       ],
@@ -443,7 +443,8 @@ const CORE_BUILDING_MANIFESTS = [
         "Run a local Harbor task or dataset to test an agent in a containerized sandbox.",
         "Compare CLI agents such as Codex, Claude Code, Gemini CLI, OpenHands, or a custom Harbor agent import.",
         "Generate rollouts, trajectories, or rewards for eval, prompt optimization, SFT, or RL workflows.",
-        "Scale slow evals horizontally through a supported cloud sandbox provider when credentials and budget are approved.",
+        "Create reproducible evidence for an agent-evaluation result before admitting it into project memory.",
+        "Scale an eval across cloud sandboxes after checking quota, credentials, and cost approval.",
       ],
       setup: [
         "Read the Harbor docs for the task shape before creating or adapting datasets.",
@@ -451,6 +452,7 @@ const CORE_BUILDING_MANIFESTS = [
         "Use Harbor only when sandboxed agent evaluation is warranted; keep quick local checks outside Harbor.",
         "Record dataset or task version, agent, model, sandbox provider, command, output directory, and commit in result docs.",
         "Ask before running expensive cloud sandboxes or broad benchmark sweeps.",
+        "Do not print or store model keys, sandbox provider keys, or private task data in the Library or generated guides.",
       ],
       commands: [
         { label: "Check Harbor CLI", command: "command -v harbor && harbor --help", detail: "Confirms the CLI is installed in the current agent environment." },
@@ -462,11 +464,11 @@ const CORE_BUILDING_MANIFESTS = [
         { label: "Run custom agent", command: "harbor run -d \"<dataset@version>\" --agent-import-path path.to.agent:SomeAgent", detail: "Uses Harbor's custom agent import hook without modifying Harbor source." },
       ],
       env: [
-        { name: "OPENAI_API_KEY", required: false, detail: "Model provider credential; never print it." },
-        { name: "ANTHROPIC_API_KEY", required: false, detail: "Model provider credential; never print it." },
-        { name: "GEMINI_API_KEY", required: false, detail: "Model provider credential; never print it." },
-        { name: "DAYTONA_API_KEY", required: false, detail: "Cloud sandbox credential when using Daytona." },
-        { name: "MODAL_TOKEN_ID / MODAL_TOKEN_SECRET", required: false, detail: "Cloud sandbox credentials when using Modal." },
+        { name: "OPENAI_API_KEY", detail: "Model provider key for OpenAI-backed Harbor runs; keep secret.", required: false },
+        { name: "ANTHROPIC_API_KEY", detail: "Model provider key for Anthropic-backed Harbor runs; keep secret.", required: false },
+        { name: "GEMINI_API_KEY", detail: "Model provider key for Gemini-backed Harbor runs; keep secret.", required: false },
+        { name: "DAYTONA_API_KEY", detail: "Cloud sandbox provider key when using Daytona environments; keep secret.", required: false },
+        { name: "MODAL_TOKEN_ID / MODAL_TOKEN_SECRET", detail: "Cloud sandbox credentials when using Modal environments; keep secret.", required: false },
       ],
       docs: [
         { label: "Harbor docs", url: "https://www.harborframework.com/docs" },

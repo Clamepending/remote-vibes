@@ -55,6 +55,12 @@ test("writeBuildingAgentGuides writes an index and one guide per catalog buildin
     assert.match(tailscaleGuide, /tailscale status/);
     assert.match(tailscaleGuide, /Tailscale Serve docs/);
     assert.doesNotMatch(tailscaleGuide, /This duplicate should not replace the core guide/);
+
+    const harborGuide = await readFile(getBuildingAgentGuidePath(systemRootPath, "harbor"), "utf8");
+    assert.match(harborGuide, /Harbor CLI \+ sandbox runtime/);
+    assert.match(harborGuide, /Use Harbor only when sandboxed agent evaluation is warranted/);
+    assert.match(harborGuide, /harbor run -d/);
+    assert.match(harborGuide, /harborframework\.com\/docs/);
   } finally {
     await rm(systemRootPath, { recursive: true, force: true });
   }
