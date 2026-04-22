@@ -470,6 +470,9 @@ const WORKSPACE_TABS_STORAGE_KEY = "vibe-research-workspace-tabs-v1";
 const WORKSPACE_GROUPS_STORAGE_KEY = "vibe-research-workspace-groups-v1";
 const AGENT_TOWN_LAYOUT_STORAGE_KEY = "vibe-research-agent-town-layout-v1";
 const AGENT_TOWN_THEME_STORAGE_KEY = "vibe-research-agent-town-theme-v1";
+const AGENT_TOWN_DOG_NAME_STORAGE_KEY = "vibe-research-agent-town-dog-name-v1";
+const AGENT_TOWN_DOG_NAME_DEFAULT = "Dog";
+const AGENT_TOWN_DOG_NAME_MAX_LENGTH = 14;
 const SIDEBAR_DEFAULT_WIDTH = 276;
 const SIDEBAR_MIN_WIDTH = 220;
 const SIDEBAR_MAX_WIDTH = 520;
@@ -947,9 +950,26 @@ function loadAgentTownThemePreference() {
   }
 }
 
+function normalizeAgentTownDogName(value) {
+  const text = String(value ?? "")
+    .replace(/[\u0000-\u001f\u007f]/g, " ")
+    .replace(/\s+/g, " ")
+    .trim();
+  return text ? text.slice(0, AGENT_TOWN_DOG_NAME_MAX_LENGTH) : AGENT_TOWN_DOG_NAME_DEFAULT;
+}
+
+function loadAgentTownDogNamePreference() {
+  try {
+    return normalizeAgentTownDogName(window.localStorage.getItem(AGENT_TOWN_DOG_NAME_STORAGE_KEY));
+  } catch {
+    return AGENT_TOWN_DOG_NAME_DEFAULT;
+  }
+}
+
 const layoutPreferences = loadLayoutPreferences();
 const agentTownLayoutPreferences = loadAgentTownLayoutPreferences();
 const agentTownThemePreference = loadAgentTownThemePreference();
+const agentTownDogNamePreference = loadAgentTownDogNamePreference();
 
 const state = {
   providers: [],
@@ -1006,6 +1026,7 @@ const state = {
     editMode: false,
     customLayout: agentTownLayoutPreferences,
     themeId: agentTownThemePreference,
+    dogName: agentTownDogNamePreference,
     selectedSessionId: "",
     selectedBrowserUseSessionId: "",
     selectedBuildingId: "",
@@ -14331,6 +14352,65 @@ function renderAgentMallBuildingPanel() {
   `;
 }
 
+function renderDoghouseBuildingPanel(plugin) {
+  const issue = plugin ? getPluginBuildingIssue(plugin) : null;
+  const dogName = getAgentTownDogName();
+
+  return `
+    <div class="visual-building-panel-scroll visual-building-plugin-panel visual-building-doghouse-panel">
+      ${
+        plugin
+          ? `
+            <section class="visual-building-plugin-card">
+              ${renderPluginBuilding(plugin, { issue })}
+              <div class="plugin-detail-copy">
+                <span class="main-search-kind">${escapeHtml(plugin.source || "building")}</span>
+                <h2>${escapeHtml(plugin.name)}</h2>
+                <p>${escapeHtml(plugin.description)}</p>
+                <span class="plugin-status ${issue ? "is-warning" : ""}">${escapeHtml(getPluginStatusBadgeLabel(plugin, issue))}</span>
+                ${issue?.detail ? `<div class="settings-status is-warning">${escapeHtml(issue.detail)}</div>` : ""}
+              </div>
+            </section>
+          `
+          : ""
+      }
+      <section class="plugin-detail-settings visual-building-plugin-settings">
+        <section class="visual-building-summary">
+          <span class="main-search-kind">companion</span>
+          <strong>${escapeHtml(dogName)} is roaming from the Doghouse.</strong>
+        </section>
+        <form class="settings-form doghouse-name-form">
+          <label class="field-label" for="doghouse-dog-name">dog name</label>
+          <input
+            class="file-root-input"
+            id="doghouse-dog-name"
+            name="dogName"
+            type="text"
+            value="${escapeHtml(dogName)}"
+            maxlength="${escapeHtml(String(AGENT_TOWN_DOG_NAME_MAX_LENGTH))}"
+            autocomplete="off"
+            autocorrect="off"
+            autocapitalize="words"
+            spellcheck="false"
+          />
+          <div class="plugin-onboarding-actions">
+            <button class="primary-button settings-save-button" type="submit">
+              ${renderIcon(Pencil)}
+              <span>save name</span>
+            </button>
+            <button class="ghost-button settings-save-button" type="button" data-doghouse-name-reset>
+              ${renderIcon(RefreshCw)}
+              <span>reset</span>
+            </button>
+          </div>
+          <div class="settings-status">Browser-local name tag.</div>
+        </form>
+        ${plugin ? renderPluginDetailSettings(plugin) : ""}
+      </section>
+    </div>
+  `;
+}
+
 function renderVisualGamePluginBuildingPanel(plugin) {
   const issue = getPluginBuildingIssue(plugin);
   return `
@@ -14363,6 +14443,10 @@ function renderVisualGameBuildingPanelContent(buildingId, plugin) {
 
   if (buildingId === "agentmall") {
     return renderAgentMallBuildingPanel();
+  }
+
+  if (buildingId === VISUAL_GAME_DOGHOUSE_BUILDING_ID) {
+    return renderDoghouseBuildingPanel(plugin);
   }
 
   if (buildingId === "system") {
@@ -14599,6 +14683,37 @@ function setAgentTownTheme(themeId, { render = true } = {}) {
 
   state.visualGame.themeId = nextThemeId;
   saveAgentTownThemePreference();
+  if (render) {
+    renderShell();
+  }
+  return true;
+}
+
+function getAgentTownDogName() {
+  return normalizeAgentTownDogName(state.visualGame.dogName);
+}
+
+function saveAgentTownDogNamePreference() {
+  try {
+    const dogName = getAgentTownDogName();
+    if (dogName === AGENT_TOWN_DOG_NAME_DEFAULT) {
+      window.localStorage.removeItem(AGENT_TOWN_DOG_NAME_STORAGE_KEY);
+    } else {
+      window.localStorage.setItem(AGENT_TOWN_DOG_NAME_STORAGE_KEY, dogName);
+    }
+  } catch {
+    // The dog name is cosmetic; storage failures should not block Agent Town.
+  }
+}
+
+function setAgentTownDogName(value, { render = true } = {}) {
+  const nextDogName = normalizeAgentTownDogName(value);
+  if (state.visualGame.dogName === nextDogName) {
+    return false;
+  }
+
+  state.visualGame.dogName = nextDogName;
+  saveAgentTownDogNamePreference();
   if (render) {
     renderShell();
   }
@@ -16500,6 +16615,8 @@ function drawVisualGameDoghouse(context, hitAreas, time) {
   }
 
   const { x, y, width, height } = place.rect;
+  const dogName = getAgentTownDogName();
+  const signWidth = Math.min(82, Math.max(44, dogName.length * 7 + 18));
   const wagGlow = 0.14 + Math.sin(time / 280) * 0.04;
   drawVisualGameShadow(context, x + 4, y + height - 1, width - 8, 6);
 
@@ -16549,11 +16666,11 @@ function drawVisualGameDoghouse(context, hitAreas, time) {
   context.fillStyle = "#5f2f24";
   context.fillRect(x + width - 15, y + height - 12, 3, 1);
 
-  drawVisualGameBuildingSign(context, x + 4, y - 6, Math.min(width - 8, 54), 19, "Dog", "roam");
+  drawVisualGameBuildingSign(context, x + width / 2 - signWidth / 2, y - 6, signWidth, 19, dogName, "roam");
   pushAgentTownPlaceHit(hitAreas, place, {
     kind: "building",
     buildingId: VISUAL_GAME_DOGHOUSE_BUILDING_ID,
-    label: `${place.label} building`,
+    label: `${dogName}'s ${place.label} building`,
   });
 }
 
@@ -17120,6 +17237,7 @@ function drawVisualGameDog(context, time, hitAreas) {
     return;
   }
 
+  const dogName = getAgentTownDogName();
   const step = Math.floor(time / 145) % 4;
   const tailWag = Math.floor(Math.sin(time / 95) * 2);
   const bob = Math.floor(Math.sin(time / 190) * 1);
@@ -17167,6 +17285,7 @@ function drawVisualGameDog(context, time, hitAreas) {
   context.fillRect(4, 17, 4, 2);
 
   context.restore();
+  drawVisualGameNameplate(context, truncateSwarmLabel(dogName, AGENT_TOWN_DOG_NAME_MAX_LENGTH), x, y - 43, 0.86);
 
   hitAreas.push({
     x: x - 18,
@@ -17175,7 +17294,7 @@ function drawVisualGameDog(context, time, hitAreas) {
     height: 31,
     kind: "building",
     buildingId: VISUAL_GAME_DOGHOUSE_BUILDING_ID,
-    label: "Dog - roaming from Doghouse",
+    label: `${dogName} - roaming from Doghouse`,
   });
 }
 
@@ -24352,6 +24471,24 @@ function bindFolderPickerDragEvents() {
   });
 }
 
+function bindDoghouseNameEvents() {
+  document.querySelectorAll(".doghouse-name-form").forEach((formElement) => {
+    formElement.addEventListener("submit", (event) => {
+      event.preventDefault();
+      const form = event.currentTarget;
+      const formData = new FormData(form);
+      setAgentTownDogName(formData.get("dogName"));
+    });
+  });
+
+  document.querySelectorAll("[data-doghouse-name-reset]").forEach((button) => {
+    button.addEventListener("click", (event) => {
+      event.preventDefault();
+      setAgentTownDogName(AGENT_TOWN_DOG_NAME_DEFAULT);
+    });
+  });
+}
+
 function bindShellEvents() {
   bindLineNumberEditors();
   ensureSessionProviderPickerGlobalListeners();
@@ -24539,6 +24676,7 @@ function bindShellEvents() {
   bindBuildingHubCatalogControls();
   bindAutomationEvents();
   bindVisualBuildingLibraryEvents();
+  bindDoghouseNameEvents();
   bindUpdateEvents();
   bindSystemToastEvents();
 
