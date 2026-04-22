@@ -7,13 +7,19 @@ LEGACY_REMOTE_VIBES_HOME="$HOME/.remote-vibes"
 RUNTIME_DIR="${VIBE_RESEARCH_STATE_DIR:-${REMOTE_VIBES_STATE_DIR:-$DEFAULT_VIBE_RESEARCH_HOME}}"
 LEGACY_RUNTIME_DIR="$ROOT_DIR/.vibe-research"
 LEGACY_REMOTE_VIBES_RUNTIME_DIR="$ROOT_DIR/.remote-vibes"
-WIKI_DIR="${VIBE_RESEARCH_WIKI_DIR:-${REMOTE_VIBES_WIKI_DIR:-$HOME/mac-brain}}"
+WIKI_DIR="${VIBE_RESEARCH_WIKI_DIR:-${REMOTE_VIBES_WIKI_DIR:-}}"
 PID_FILE="$RUNTIME_DIR/server.pid"
 LOG_FILE="$RUNTIME_DIR/server.log"
 NPM_STAMP_FILE="$RUNTIME_DIR/npm-install.stamp"
 READY_TIMEOUT_SECONDS="${VIBE_RESEARCH_READY_TIMEOUT_SECONDS:-${REMOTE_VIBES_READY_TIMEOUT_SECONDS:-30}}"
+CONFIGURED_DEFAULT_SESSION_CWD="${VIBE_RESEARCH_DEFAULT_CWD:-${REMOTE_VIBES_DEFAULT_CWD:-}}"
+DEFAULT_WORKSPACE_DIR=""
 export VIBE_RESEARCH_STATE_DIR="$RUNTIME_DIR"
 export REMOTE_VIBES_STATE_DIR="${REMOTE_VIBES_STATE_DIR:-$RUNTIME_DIR}"
+if [ -n "$WIKI_DIR" ]; then
+  export VIBE_RESEARCH_WIKI_DIR="$WIKI_DIR"
+  export REMOTE_VIBES_WIKI_DIR="${REMOTE_VIBES_WIKI_DIR:-$WIKI_DIR}"
+fi
 cd "$ROOT_DIR"
 
 log() {
@@ -23,6 +29,59 @@ log() {
 fail() {
   printf '[vibe-research] %s\n' "$*" >&2
   exit 1
+}
+
+resolve_default_session_cwd() {
+  local candidate
+
+  if [ -n "$CONFIGURED_DEFAULT_SESSION_CWD" ]; then
+    candidate="$CONFIGURED_DEFAULT_SESSION_CWD"
+    case "$candidate" in
+      "~")
+        printf '%s\n' "$HOME"
+        ;;
+      "~/"*)
+        printf '%s/%s\n' "$HOME" "${candidate#~/}"
+        ;;
+      *)
+        printf '%s\n' "$candidate"
+        ;;
+    esac
+    return
+  fi
+
+  local default_app_dir legacy_app_dir
+  default_app_dir="$(canonicalize_dir "$DEFAULT_VIBE_RESEARCH_HOME")/app"
+  legacy_app_dir="$(canonicalize_dir "$LEGACY_REMOTE_VIBES_HOME")/app"
+
+  if [ "$ROOT_DIR" = "$default_app_dir" ] || [ "$ROOT_DIR" = "$legacy_app_dir" ]; then
+    printf '%s\n' "$HOME/vibe-projects"
+    return
+  fi
+
+  printf '%s\n' "$ROOT_DIR"
+}
+
+ensure_default_session_cwd() {
+  local default_session_cwd
+  default_session_cwd="$(resolve_default_session_cwd)"
+
+  if [ -z "$default_session_cwd" ]; then
+    default_session_cwd="$ROOT_DIR"
+  fi
+
+  if ! mkdir -p "$default_session_cwd" >/dev/null 2>&1; then
+    log "Could not create default project folder $default_session_cwd; using $ROOT_DIR"
+    default_session_cwd="$ROOT_DIR"
+  fi
+
+  DEFAULT_WORKSPACE_DIR="$default_session_cwd"
+  export VIBE_RESEARCH_WORKSPACE_DIR="${VIBE_RESEARCH_WORKSPACE_DIR:-$DEFAULT_WORKSPACE_DIR}"
+  export REMOTE_VIBES_WORKSPACE_DIR="${REMOTE_VIBES_WORKSPACE_DIR:-$VIBE_RESEARCH_WORKSPACE_DIR}"
+  if [ -n "$CONFIGURED_DEFAULT_SESSION_CWD" ]; then
+    export VIBE_RESEARCH_DEFAULT_CWD="$default_session_cwd"
+    export REMOTE_VIBES_DEFAULT_CWD="${REMOTE_VIBES_DEFAULT_CWD:-$default_session_cwd}"
+  fi
 }
 
 ensure_runtime_dir() {
@@ -249,6 +308,10 @@ EOF
 }
 
 ensure_mac_brain_wiki() {
+  if [ -z "$WIKI_DIR" ]; then
+    return
+  fi
+
   if [ "${VIBE_RESEARCH_CREATE_WIKI:-${REMOTE_VIBES_CREATE_WIKI:-1}}" = "0" ]; then
     return
   fi
@@ -621,6 +684,7 @@ migrate_legacy_runtime_dir
 migrate_home_checkout_to_app
 ensure_vibe_research_settings_repo
 ensure_mac_brain_wiki
+ensure_default_session_cwd
 
 if workspace_cwd="$(probe_running_vibe_research_workspace)"; then
   canonical_workspace_cwd="$(canonicalize_dir "$workspace_cwd")"
@@ -663,9 +727,14 @@ if ! wait_for_server_ready "$server_pid"; then
   fail "Vibe Research failed to start within ${READY_TIMEOUT_SECONDS}s."
 fi
 
-print_startup_log
 track_vibe_research_settings
 log "Background server pid: $server_pid"
 log "Server is detached and will keep running after this terminal closes."
 log "State directory: $RUNTIME_DIR"
-log "Library directory: $WIKI_DIR"
+log "Workspace directory: ${VIBE_RESEARCH_WORKSPACE_DIR:-$DEFAULT_WORKSPACE_DIR}"
+if [ -n "$WIKI_DIR" ]; then
+  log "Library directory: $WIKI_DIR"
+else
+  log "Library directory: ${VIBE_RESEARCH_WORKSPACE_DIR:-$DEFAULT_WORKSPACE_DIR}/vibe-research/buildings/library"
+fi
+print_startup_log

@@ -15,6 +15,9 @@ const SETTINGS_FILE_VERSION = 1;
 const SETTINGS_FILENAME = "settings.json";
 const DEFAULT_WIKI_BACKUP_INTERVAL_MS = 5 * 60 * 1000;
 const LEGACY_WIKI_BACKUP_INTERVAL_MS = 10 * 60 * 1000;
+const WORKSPACE_DATA_FOLDER_NAME = "vibe-research";
+const WORKSPACE_LIBRARY_RELATIVE_PATH = path.join(WORKSPACE_DATA_FOLDER_NAME, "buildings", "library");
+const WORKSPACE_USER_RELATIVE_PATH = path.join(WORKSPACE_DATA_FOLDER_NAME, "user");
 const execFileAsync = promisify(execFile);
 
 function normalizeSecret(value) {
@@ -190,9 +193,11 @@ export class SettingsStore {
     env = process.env,
     homeDir = os.homedir(),
     defaultBackupIntervalMs = DEFAULT_WIKI_BACKUP_INTERVAL_MS,
+    defaultAgentSpawnPath = "",
   }) {
     this.cwd = cwd;
     this.defaultBackupIntervalMs = defaultBackupIntervalMs;
+    this.defaultAgentSpawnPath = defaultAgentSpawnPath;
     this.env = env;
     this.homeDir = homeDir;
     this.stateDir = stateDir;
@@ -201,6 +206,21 @@ export class SettingsStore {
   }
 
   buildDefaults() {
+    const configuredWorkspaceRootPath = String(
+      this.env.VIBE_RESEARCH_WORKSPACE_DIR || this.env.REMOTE_VIBES_WORKSPACE_DIR || "",
+    ).trim();
+    const configuredWikiPath = String(this.env.VIBE_RESEARCH_WIKI_DIR || this.env.REMOTE_VIBES_WIKI_DIR || "").trim();
+    const configuredAgentSpawnPath = String(
+      this.defaultAgentSpawnPath ||
+        this.env.VIBE_RESEARCH_AGENT_SPAWN_DIR ||
+        this.env.REMOTE_VIBES_AGENT_SPAWN_DIR ||
+        this.env.VIBE_RESEARCH_DEFAULT_CWD ||
+        this.env.REMOTE_VIBES_DEFAULT_CWD ||
+        "",
+    ).trim();
+    const workspaceRootPath = this.normalizeWorkspaceRootPath(configuredWorkspaceRootPath || this.cwd);
+    const workspacePaths = this.deriveWorkspacePaths(workspaceRootPath);
+
     return {
       agentAnthropicApiKey: "",
       agentHfToken: "",
@@ -252,23 +272,52 @@ export class SettingsStore {
       wikiGitRemoteName: "origin",
       wikiGitRemoteUrl: "",
       wikiBackupIntervalMs: this.defaultBackupIntervalMs,
-      wikiPath: path.join(this.stateDir, "wiki"),
-      wikiPathConfigured: false,
+      workspaceRootPath,
+      agentSpawnPath: configuredAgentSpawnPath
+        ? this.normalizeAgentSpawnPath(configuredAgentSpawnPath, workspacePaths.agentSpawnPath)
+        : workspacePaths.agentSpawnPath,
+      wikiPath: configuredWikiPath
+        ? this.normalizeWikiPath(configuredWikiPath, workspacePaths.wikiPath)
+        : workspacePaths.wikiPath,
+      wikiPathConfigured: Boolean(configuredWikiPath),
     };
   }
 
-  normalizeWikiPath(value) {
+  normalizePath(value, fallbackPath) {
     const rawValue = String(value || "").trim();
     const expanded = expandHomePath(rawValue, this.homeDir);
-    const nextPath = expanded ? path.resolve(this.cwd, expanded) : path.join(this.stateDir, "wiki");
-    return nextPath;
+    return expanded ? path.resolve(this.cwd, expanded) : fallbackPath;
+  }
+
+  normalizeWorkspaceRootPath(value, fallbackPath = this.cwd) {
+    return this.normalizePath(value, path.resolve(this.cwd, fallbackPath || this.cwd));
+  }
+
+  normalizeAgentSpawnPath(value, fallbackPath) {
+    return this.normalizePath(value, fallbackPath);
+  }
+
+  normalizeWikiPath(value, fallbackPath = path.join(this.stateDir, "wiki")) {
+    return this.normalizePath(value, fallbackPath);
+  }
+
+  deriveWorkspacePaths(workspaceRootPath) {
+    const normalizedRoot = this.normalizeWorkspaceRootPath(workspaceRootPath);
+    return {
+      workspaceRootPath: normalizedRoot,
+      agentSpawnPath: path.join(normalizedRoot, WORKSPACE_USER_RELATIVE_PATH),
+      wikiPath: path.join(normalizedRoot, WORKSPACE_LIBRARY_RELATIVE_PATH),
+    };
   }
 
   normalizeSettings(payload = {}) {
     const defaults = this.buildDefaults();
+    const workspaceRootPath = this.normalizeWorkspaceRootPath(payload.workspaceRootPath || defaults.workspaceRootPath);
+    const workspacePaths = this.deriveWorkspacePaths(workspaceRootPath);
     const wikiPathConfigured =
       payload.wikiPathConfigured === true ||
-      (payload.wikiPathConfigured === undefined && Boolean(String(payload.wikiPath || "").trim()));
+      (payload.wikiPathConfigured === undefined &&
+        (defaults.wikiPathConfigured || Boolean(String(payload.wikiPath || payload.workspaceRootPath || "").trim())));
 
     return {
       agentAnthropicApiKey:
@@ -365,7 +414,9 @@ export class SettingsStore {
       wikiBackupIntervalMs: normalizeIntervalMs(
         payload.wikiBackupIntervalMs ?? defaults.wikiBackupIntervalMs,
       ),
-      wikiPath: this.normalizeWikiPath(payload.wikiPath || defaults.wikiPath),
+      workspaceRootPath,
+      agentSpawnPath: this.normalizeAgentSpawnPath(payload.agentSpawnPath || defaults.agentSpawnPath, workspacePaths.agentSpawnPath),
+      wikiPath: this.normalizeWikiPath(payload.wikiPath || defaults.wikiPath, workspacePaths.wikiPath),
       wikiPathConfigured,
     };
   }
@@ -385,16 +436,23 @@ export class SettingsStore {
     }
 
     this.settings = this.normalizeSettings(payload);
-    await this.ensureWikiDirectory();
+    await this.ensureWorkspaceDirectories();
     await this.hydrateWikiGitRemoteFromRepository();
     await this.save();
   }
 
-  async ensureWikiDirectory() {
+  async ensureWorkspaceDirectories() {
+    await mkdir(this.settings.workspaceRootPath, { recursive: true });
     await mkdir(this.settings.wikiPath, { recursive: true });
     const stats = await stat(this.settings.wikiPath);
     if (!stats.isDirectory()) {
       throw new Error(`Library path is not a directory: ${this.settings.wikiPath}`);
+    }
+
+    await mkdir(this.settings.agentSpawnPath, { recursive: true });
+    const agentStats = await stat(this.settings.agentSpawnPath);
+    if (!agentStats.isDirectory()) {
+      throw new Error(`New agent folder is not a directory: ${this.settings.agentSpawnPath}`);
     }
   }
 
@@ -488,12 +546,24 @@ export class SettingsStore {
       }
     }
 
+    if (nextSettings.workspaceRootPath !== undefined && String(nextSettings.workspaceRootPath || "").trim()) {
+      const workspacePaths = this.deriveWorkspacePaths(nextSettings.workspaceRootPath);
+      mergedSettings.workspaceRootPath = workspacePaths.workspaceRootPath;
+      if (nextSettings.wikiPath === undefined) {
+        mergedSettings.wikiPath = workspacePaths.wikiPath;
+      }
+      if (nextSettings.agentSpawnPath === undefined) {
+        mergedSettings.agentSpawnPath = workspacePaths.agentSpawnPath;
+      }
+      mergedSettings.wikiPathConfigured = true;
+    }
+
     if (nextSettings.wikiPath !== undefined && String(nextSettings.wikiPath || "").trim()) {
       mergedSettings.wikiPathConfigured = true;
     }
 
     this.settings = this.normalizeSettings(mergedSettings);
-    await this.ensureWikiDirectory();
+    await this.ensureWorkspaceDirectories();
     const wikiPathChanged = path.resolve(previousWikiPath) !== path.resolve(this.settings.wikiPath);
     const nextRemoteUrl =
       nextSettings.wikiGitRemoteUrl === undefined
@@ -546,6 +616,8 @@ export class SettingsStore {
       videoMemoryStatus,
       wikiRelativePath: formatRelativePath(this.cwd, this.settings.wikiPath),
       wikiRelativeRoot: formatRelativePath(this.cwd, this.settings.wikiPath),
+      workspaceRelativeRoot: formatRelativePath(this.cwd, this.settings.workspaceRootPath),
+      agentSpawnRelativePath: formatRelativePath(this.cwd, this.settings.agentSpawnPath),
       wikiBackup: backupStatus,
       sleepPrevention: sleepStatus,
     };

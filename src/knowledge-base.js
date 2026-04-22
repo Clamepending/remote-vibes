@@ -214,6 +214,7 @@ async function resolveKnowledgeBaseRoot(rootPath) {
 
 async function resolveNestedKnowledgeBaseRoot(realRootPath) {
   const nestedRootCandidates = [
+    path.join(realRootPath, "vibe-research", "buildings", "library"),
     path.join(realRootPath, ".vibe-research", "wiki"),
     path.join(realRootPath, ".remote-vibes", "wiki"),
   ];
@@ -297,7 +298,7 @@ async function collectMarkdownFiles(rootPath, relativeDirectory = "", scanState 
   return results;
 }
 
-export async function listKnowledgeBase({ rootPath, relativeRoot = ".vibe-research/wiki" }) {
+export async function listKnowledgeBase({ rootPath, relativeRoot = "vibe-research/buildings/library" }) {
   const rootInfo = await resolveKnowledgeBaseRootInfo(rootPath);
   const resolvedRootPath = rootInfo.rootPath;
   const scanState = { skippedEntries: 0 };
@@ -367,7 +368,7 @@ export async function listKnowledgeBase({ rootPath, relativeRoot = ".vibe-resear
   };
 }
 
-export async function readKnowledgeBaseNote({ rootPath, relativePath, relativeRoot = ".vibe-research/wiki" }) {
+export async function readKnowledgeBaseNote({ rootPath, relativePath, relativeRoot = "vibe-research/buildings/library" }) {
   const rootInfo = await resolveKnowledgeBaseRootInfo(rootPath);
   const resolvedRootPath = rootInfo.rootPath;
   const normalizedRelativePath = normalizeRelativePath(relativePath);
