@@ -440,6 +440,13 @@ test("Agent Town API exposes action items, mirrored layout predicates, and event
       method: "PUT",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({
+        layout: {
+          decorations: [{ id: "server-shed", itemId: "shed", x: 312, y: 284 }],
+          functional: {},
+          pendingFunctional: [],
+          themeId: "snowy",
+          dogName: "Relay",
+        },
         layoutSummary: {
           cosmeticCount: 1,
           functionalCount: 0,
@@ -479,6 +486,100 @@ test("Agent Town API exposes action items, mirrored layout predicates, and event
       body: JSON.stringify({ predicate: "unknown_predicate", timeoutMs: 1 }),
     });
     assert.equal(badWaitResponse.status, 400);
+  } finally {
+    await app.close();
+    await removeTempWorkspace(workspaceDir);
+    await removeTempWorkspace(stateDir);
+  }
+});
+
+test("Agent Town layout API supports durable blueprints, snapshots, undo, redo, and validation", async () => {
+  const workspaceDir = await createTempWorkspace("vibe-research-agent-town-layout-api-");
+  const stateDir = await createTempWorkspace("vibe-research-agent-town-layout-api-state-");
+  const { app, baseUrl } = await startApp({ cwd: workspaceDir, stateDir });
+
+  try {
+    const firstLayout = {
+      decorations: [{ id: "road-one", itemId: "road-square", x: 100, y: 140 }],
+      functional: { github: { x: 240, y: 308 } },
+      pendingFunctional: ["agent-inbox"],
+      themeId: "desert",
+      dogName: "Beacon",
+    };
+    const importResponse = await fetch(`${baseUrl}/api/agent-town/layout`, {
+      method: "PUT",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ reason: "api test import", layout: firstLayout }),
+    });
+    assert.equal(importResponse.status, 200);
+    const importPayload = await importResponse.json();
+    assert.equal(importPayload.validation.ok, true);
+    assert.equal(importPayload.agentTown.layout.decorations.length, 1);
+    assert.equal(importPayload.agentTown.layout.themeId, "desert");
+    assert.equal(importPayload.agentTown.layout.dogName, "Beacon");
+    assert.equal(importPayload.agentTown.layoutHistory.canUndo, true);
+    assert.equal(importPayload.agentTown.alerts[0].id, "pending-functional-buildings");
+
+    const snapshotResponse = await fetch(`${baseUrl}/api/agent-town/layout/snapshots`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ id: "api-snapshot", name: "API Snapshot" }),
+    });
+    assert.equal(snapshotResponse.status, 201);
+    const snapshotPayload = await snapshotResponse.json();
+    assert.equal(snapshotPayload.snapshot.name, "API Snapshot");
+    assert.equal(snapshotPayload.agentTown.layoutSnapshots.length, 1);
+
+    const secondLayout = {
+      ...firstLayout,
+      decorations: [
+        ...firstLayout.decorations,
+        { id: "planter-one", itemId: "planter", x: 128, y: 140 },
+      ],
+      pendingFunctional: [],
+    };
+    const secondImportResponse = await fetch(`${baseUrl}/api/agent-town/layout`, {
+      method: "PUT",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ reason: "api test second import", layout: secondLayout }),
+    });
+    assert.equal(secondImportResponse.status, 200);
+    assert.equal((await secondImportResponse.json()).agentTown.layout.decorations.length, 2);
+
+    const undoResponse = await fetch(`${baseUrl}/api/agent-town/layout/undo`, { method: "POST" });
+    assert.equal(undoResponse.status, 200);
+    const undoPayload = await undoResponse.json();
+    assert.equal(undoPayload.changed, true);
+    assert.equal(undoPayload.agentTown.layout.decorations.length, 1);
+    assert.equal(undoPayload.agentTown.layoutHistory.canRedo, true);
+
+    const redoResponse = await fetch(`${baseUrl}/api/agent-town/layout/redo`, { method: "POST" });
+    assert.equal(redoResponse.status, 200);
+    const redoPayload = await redoResponse.json();
+    assert.equal(redoPayload.changed, true);
+    assert.equal(redoPayload.agentTown.layout.decorations.length, 2);
+
+    const restoreResponse = await fetch(`${baseUrl}/api/agent-town/layout/snapshots/api-snapshot/restore`, {
+      method: "POST",
+    });
+    assert.equal(restoreResponse.status, 200);
+    const restorePayload = await restoreResponse.json();
+    assert.equal(restorePayload.agentTown.layout.decorations.length, 1);
+
+    const validationResponse = await fetch(`${baseUrl}/api/agent-town/layout/validate`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        layout: {
+          functional: { github: { x: 10, y: 10 } },
+          pendingFunctional: ["github"],
+        },
+      }),
+    });
+    assert.equal(validationResponse.status, 200);
+    const validationPayload = await validationResponse.json();
+    assert.equal(validationPayload.validation.ok, true);
+    assert.match(validationPayload.validation.warnings.join("\n"), /github is marked pending and placed/);
   } finally {
     await app.close();
     await removeTempWorkspace(workspaceDir);
@@ -2050,6 +2151,13 @@ test("fresh Agent Town browser does not erase mirrored layout state", async (t) 
       method: "PUT",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({
+        layout: {
+          decorations: [{ id: "server-shed", itemId: "shed", x: 312, y: 284 }],
+          functional: {},
+          pendingFunctional: [],
+          themeId: "snowy",
+          dogName: "Relay",
+        },
         layoutSummary: {
           cosmeticCount: 1,
           functionalCount: 0,
@@ -2080,6 +2188,99 @@ test("fresh Agent Town browser does not erase mirrored layout state", async (t) 
     assert.equal(stateResponse.status, 200);
     const statePayload = await stateResponse.json();
     assert.equal(statePayload.agentTown.layoutSummary.cosmeticCount, 1);
+    assert.equal(statePayload.agentTown.layout.decorations[0].id, "server-shed");
+    assert.equal(statePayload.agentTown.layout.themeId, "snowy");
+
+    const browserLayout = await page.evaluate(() => ({
+      layout: JSON.parse(window.localStorage.getItem("vibe-research-agent-town-layout-v1") || "{}"),
+      themeId: window.localStorage.getItem("vibe-research-agent-town-theme-v1"),
+      dogName: window.localStorage.getItem("vibe-research-agent-town-dog-name-v1"),
+    }));
+    assert.equal(browserLayout.layout.decorations[0].id, "server-shed");
+    assert.equal(browserLayout.themeId, "snowy");
+    assert.equal(browserLayout.dogName, "Relay");
+  } finally {
+    await browser?.close().catch(() => {});
+    await app.close();
+    await removeTempWorkspace(workspaceDir);
+    await removeTempWorkspace(stateDir);
+  }
+});
+
+test("Agent Town builder applies starter blueprint and rolls layout backward and forward", async (t) => {
+  const executablePath = await resolveBrowserExecutablePath({ env: process.env });
+  if (!executablePath) {
+    t.skip("No local Chromium/Chrome executable is available for the Agent Town builder smoke.");
+    return;
+  }
+
+  const workspaceDir = await createTempWorkspace("vibe-research-agent-town-builder-blueprint-");
+  const stateDir = await createTempWorkspace("vibe-research-agent-town-builder-state-");
+  const wikiDir = getWorkspaceLibraryDir(workspaceDir);
+  await mkdir(wikiDir, { recursive: true });
+  await writeFile(path.join(wikiDir, "index.md"), "# Agent Town Builder Library\n", "utf8");
+  const { app, baseUrl } = await startApp({ cwd: workspaceDir, stateDir });
+  let browser = null;
+
+  try {
+    const settingsResponse = await fetch(`${baseUrl}/api/settings`, {
+      method: "PATCH",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        preventSleepEnabled: false,
+        wikiGitRemoteEnabled: false,
+        wikiPath: wikiDir,
+        workspaceRootPath: workspaceDir,
+      }),
+    });
+    assert.equal(settingsResponse.status, 200);
+
+    const createSessionResponse = await fetch(`${baseUrl}/api/sessions`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ providerId: "shell", cwd: workspaceDir, name: "Builder Agent" }),
+    });
+    assert.equal(createSessionResponse.status, 201);
+
+    browser = await chromium.launch({ executablePath, headless: true });
+    const page = await browser.newPage();
+    await page.setViewportSize({ width: 1280, height: 720 });
+    await page.goto(`${baseUrl}/?view=swarm`, { waitUntil: "domcontentloaded" });
+    await page.waitForSelector("#visual-game-canvas", { timeout: 10_000 });
+    await page.locator("[data-agent-town-builder-toggle]").click();
+    await page.waitForSelector(".agent-town-builder-ops", { timeout: 10_000 });
+    await page.getByRole("tab", { name: /Functional/ }).click();
+    await page.waitForSelector(".agent-town-building-health", { timeout: 10_000 });
+    await page.locator("[data-agent-town-layout-starter]").click();
+    await page.waitForFunction(async () => {
+      const response = await fetch("/api/agent-town/state");
+      const payload = await response.json();
+      return (payload.agentTown.layout?.decorations || []).length >= 5;
+    }, null, { timeout: 10_000 });
+
+    let stateResponse = await fetch(`${baseUrl}/api/agent-town/state`);
+    let statePayload = await stateResponse.json();
+    assert.equal(statePayload.agentTown.layoutValidation.ok, true);
+    assert.ok(statePayload.agentTown.layoutHistory.canUndo);
+    assert.ok(statePayload.agentTown.alerts.some((alert) => alert.id === "no-layout-snapshot"));
+
+    await page.locator("[data-agent-town-layout-undo]").click();
+    await page.waitForFunction(async () => {
+      const response = await fetch("/api/agent-town/state");
+      const payload = await response.json();
+      return (payload.agentTown.layout?.decorations || []).length === 0 && payload.agentTown.layoutHistory.canRedo;
+    }, null, { timeout: 10_000 });
+
+    await page.locator("[data-agent-town-layout-redo]").click();
+    await page.waitForFunction(async () => {
+      const response = await fetch("/api/agent-town/state");
+      const payload = await response.json();
+      return (payload.agentTown.layout?.decorations || []).length >= 5;
+    }, null, { timeout: 10_000 });
+
+    stateResponse = await fetch(`${baseUrl}/api/agent-town/state`);
+    statePayload = await stateResponse.json();
+    assert.equal(statePayload.agentTown.layout.decorations.length, 5);
   } finally {
     await browser?.close().catch(() => {});
     await app.close();

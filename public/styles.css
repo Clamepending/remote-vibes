@@ -2596,7 +2596,7 @@ input[readonly][data-folder-picker-target] {
 
 .agent-inbox-summary {
   display: grid;
-  grid-template-columns: repeat(4, minmax(0, 1fr));
+  grid-template-columns: repeat(auto-fit, minmax(140px, 1fr));
   gap: 8px;
   min-width: 0;
 }
@@ -2629,6 +2629,15 @@ input[readonly][data-folder-picker-target] {
 
 .agent-inbox-card {
   border-radius: 8px;
+}
+
+.agent-inbox-card.is-alert {
+  border-color: rgba(255, 207, 87, 0.24);
+}
+
+.agent-inbox-card.is-alert .automation-card-icon {
+  background: rgba(255, 207, 87, 0.14);
+  color: #ffd66f;
 }
 
 .agent-inbox-card-head,
@@ -6731,10 +6740,138 @@ button.visual-agent-tile:focus-visible,
 
 .agent-town-builder-body {
   display: grid;
-  grid-template-rows: auto minmax(0, 1fr);
+  grid-template-rows: auto auto minmax(0, 1fr);
   min-width: 0;
   min-height: 0;
   overflow: hidden;
+}
+
+.agent-town-builder-ops {
+  display: grid;
+  gap: 8px;
+  min-width: 0;
+  padding: 12px 12px 4px;
+}
+
+.agent-town-alert-strip,
+.agent-town-quest-strip {
+  display: grid;
+  min-width: 0;
+  gap: 4px;
+  padding: 10px;
+  border: 1px solid rgba(255, 255, 255, 0.09);
+  border-radius: 8px;
+  background: rgba(255, 255, 255, 0.045);
+  color: var(--text);
+  text-align: left;
+}
+
+button.agent-town-alert-strip {
+  cursor: pointer;
+}
+
+.agent-town-alert-strip {
+  grid-template-columns: 22px minmax(0, 1fr);
+  align-items: center;
+}
+
+.agent-town-alert-strip span {
+  display: inline-grid;
+  place-items: center;
+  width: 22px;
+  height: 22px;
+  color: #ffcf57;
+}
+
+.agent-town-alert-strip strong,
+.agent-town-alert-strip em,
+.agent-town-quest-strip strong,
+.agent-town-quest-strip p {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.agent-town-alert-strip em {
+  grid-column: 2;
+  color: var(--text-subtle);
+  font-size: 0.73rem;
+  font-style: normal;
+}
+
+.agent-town-alert-strip.is-urgent {
+  border-color: rgba(255, 127, 121, 0.45);
+}
+
+.agent-town-alert-strip.is-warning {
+  border-color: rgba(255, 207, 87, 0.42);
+}
+
+.agent-town-alert-strip.is-quest {
+  border-color: rgba(157, 215, 255, 0.38);
+}
+
+.agent-town-quest-strip p {
+  margin: 0;
+  color: var(--text-subtle);
+  font-size: 0.74rem;
+}
+
+.agent-town-layout-actions {
+  display: grid;
+  grid-template-columns: repeat(6, 36px) minmax(0, 1fr);
+  align-items: center;
+  gap: 6px;
+  min-width: 0;
+}
+
+.agent-town-layout-actions > .icon-button {
+  width: 36px;
+  min-width: 36px;
+  height: 36px;
+  min-height: 36px;
+  padding: 0;
+}
+
+.agent-town-layout-status {
+  min-width: 0;
+  overflow: hidden;
+  color: var(--text-subtle);
+  font-size: 0.72rem;
+  font-weight: 700;
+  text-align: right;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.agent-town-layout-status.is-blocked {
+  color: #ffb390;
+}
+
+.agent-town-snapshot-row {
+  display: flex;
+  gap: 6px;
+  min-width: 0;
+  overflow-x: auto;
+  padding-bottom: 2px;
+  scrollbar-width: none;
+}
+
+.agent-town-snapshot-row::-webkit-scrollbar {
+  display: none;
+}
+
+.agent-town-snapshot-row .toolbar-control {
+  flex: 0 0 auto;
+  max-width: 150px;
+}
+
+.agent-town-snapshot-row .toolbar-control span {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 .agent-town-builder-tab-panel {
@@ -6826,6 +6963,10 @@ button.visual-agent-tile:focus-visible,
   color: var(--text);
 }
 
+.agent-town-builder-functional-card {
+  grid-template-columns: 48px minmax(0, 1fr) auto auto;
+}
+
 button.agent-town-builder-card {
   cursor: grab;
   text-align: left;
@@ -6868,6 +7009,38 @@ button.agent-town-builder-card {
   min-width: 72px;
   justify-content: center;
   white-space: nowrap;
+}
+
+.agent-town-building-health {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 68px;
+  max-width: 96px;
+  height: 26px;
+  overflow: hidden;
+  padding: 0 8px;
+  border: 1px solid rgba(157, 211, 151, 0.32);
+  border-radius: 8px;
+  background: rgba(98, 145, 92, 0.14);
+  color: #dff6d9;
+  font-size: 0.68rem;
+  font-weight: 800;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.agent-town-building-health.is-warning,
+.agent-town-building-health.is-offline {
+  border-color: rgba(255, 207, 87, 0.38);
+  background: rgba(255, 207, 87, 0.12);
+  color: #ffe6a0;
+}
+
+.agent-town-building-health.is-blocked {
+  border-color: rgba(255, 127, 121, 0.42);
+  background: rgba(255, 127, 121, 0.13);
+  color: #ffd6d3;
 }
 
 .agent-town-builder-preview,

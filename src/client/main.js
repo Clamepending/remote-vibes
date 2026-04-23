@@ -1122,9 +1122,13 @@ function normalizeAgentTownPendingFunctional(value) {
   return [...new Set(value.map(normalizeBuildingId).filter(Boolean))].slice(0, 80);
 }
 
+function getEmptyAgentTownLayout() {
+  return { places: {}, roads: {}, decorations: [], functional: {}, pendingFunctional: [] };
+}
+
 function normalizeAgentTownLayout(value) {
   if (!value || typeof value !== "object" || Array.isArray(value)) {
-    return { places: {}, roads: {}, decorations: [], functional: {}, pendingFunctional: [] };
+    return getEmptyAgentTownLayout();
   }
 
   return {
@@ -1140,7 +1144,7 @@ function loadAgentTownLayoutPreferences() {
   try {
     return normalizeAgentTownLayout(JSON.parse(window.localStorage.getItem(AGENT_TOWN_LAYOUT_STORAGE_KEY) || "{}"));
   } catch {
-    return { places: {}, roads: {}, decorations: [], functional: {}, pendingFunctional: [] };
+    return getEmptyAgentTownLayout();
   }
 }
 
@@ -1171,6 +1175,80 @@ function loadAgentTownDogNamePreference() {
   } catch {
     return AGENT_TOWN_DOG_NAME_DEFAULT;
   }
+}
+
+function normalizeAgentTownPersistedLayout(value) {
+  const source = value && typeof value === "object" && !Array.isArray(value) ? value : {};
+  return {
+    ...normalizeAgentTownLayout(source),
+    themeId: normalizeAgentTownThemeId(source.themeId || source.theme),
+    dogName: normalizeAgentTownDogName(source.dogName || source.companionName),
+  };
+}
+
+function getAgentTownCurrentLayout() {
+  return normalizeAgentTownPersistedLayout({
+    ...state.visualGame.customLayout,
+    themeId: state.visualGame.themeId,
+    dogName: state.visualGame.dogName,
+  });
+}
+
+function hasAgentTownLayoutCustomizations(layoutInput) {
+  const layout = normalizeAgentTownPersistedLayout(layoutInput || {});
+  return Boolean(
+    Object.keys(layout.places || {}).length ||
+    Object.keys(layout.roads || {}).length ||
+    Object.keys(layout.functional || {}).length ||
+    (Array.isArray(layout.decorations) && layout.decorations.length) ||
+    (Array.isArray(layout.pendingFunctional) && layout.pendingFunctional.length) ||
+    layout.themeId !== AGENT_TOWN_DEFAULT_THEME_ID ||
+    layout.dogName !== AGENT_TOWN_DOG_NAME_DEFAULT,
+  );
+}
+
+function getAgentTownLayoutSignature(layoutInput) {
+  return JSON.stringify(normalizeAgentTownPersistedLayout(layoutInput || {}));
+}
+
+function saveAgentTownLayoutFallback(layoutInput = getAgentTownCurrentLayout()) {
+  const layout = normalizeAgentTownPersistedLayout(layoutInput);
+  try {
+    window.localStorage.setItem(AGENT_TOWN_LAYOUT_STORAGE_KEY, JSON.stringify(normalizeAgentTownLayout(layout)));
+  } catch {
+    // Local map customization is a convenience; storage failures should not block the town.
+  }
+
+  try {
+    if (layout.themeId === AGENT_TOWN_DEFAULT_THEME_ID) {
+      window.localStorage.removeItem(AGENT_TOWN_THEME_STORAGE_KEY);
+    } else {
+      window.localStorage.setItem(AGENT_TOWN_THEME_STORAGE_KEY, layout.themeId);
+    }
+  } catch {
+    // Theme selection is cosmetic; storage failures should not block Agent Town.
+  }
+
+  try {
+    if (layout.dogName === AGENT_TOWN_DOG_NAME_DEFAULT) {
+      window.localStorage.removeItem(AGENT_TOWN_DOG_NAME_STORAGE_KEY);
+    } else {
+      window.localStorage.setItem(AGENT_TOWN_DOG_NAME_STORAGE_KEY, layout.dogName);
+    }
+  } catch {
+    // The dog name is cosmetic; storage failures should not block Agent Town.
+  }
+}
+
+function applyAgentTownPersistedLayout(layoutInput, { persistLocal = true } = {}) {
+  const layout = normalizeAgentTownPersistedLayout(layoutInput);
+  state.visualGame.customLayout = normalizeAgentTownLayout(layout);
+  state.visualGame.themeId = layout.themeId;
+  state.visualGame.dogName = layout.dogName;
+  if (persistLocal) {
+    saveAgentTownLayoutFallback(layout);
+  }
+  return layout;
 }
 
 function loadAgentSetupCompletePreference() {
@@ -1261,8 +1339,16 @@ const state = {
   },
   agentTown: {
     actionItems: [],
+    alerts: [],
     canvases: [],
     events: [],
+    layout: null,
+    layoutHistory: {
+      pastCount: 0,
+      futureCount: 0,
+      canUndo: false,
+      canRedo: false,
+    },
     layoutSummary: {
       cosmeticCount: 0,
       functionalCount: 0,
@@ -1270,6 +1356,10 @@ const state = {
       pendingFunctionalIds: [],
       themeId: AGENT_TOWN_DEFAULT_THEME_ID,
     },
+    layoutSnapshots: [],
+    layoutValidation: { ok: true, issues: [], warnings: [] },
+    quests: [],
+    snapshots: [],
     signals: {
       agentClickedCount: 0,
       automationCreatedCount: 0,
@@ -1303,6 +1393,7 @@ const state = {
     customLayout: agentTownLayoutPreferences,
     themeId: agentTownThemePreference,
     dogName: agentTownDogNamePreference,
+    serverLayoutLoaded: false,
     builderOpen: false,
     builderTab: AGENT_TOWN_BUILDER_DEFAULT_TAB,
     builderPlacement: null,
@@ -2072,6 +2163,7 @@ function getSessionActivityStyle(status) {
 function getAgentInboxSummary() {
   const summary = {
     actions: getAgentTownOpenActionItems().length,
+    alerts: getAgentTownInboxAlerts().length,
     exited: 0,
     read: 0,
     total: state.sessions.length,
@@ -2097,6 +2189,9 @@ function getAgentInboxSummary() {
 
 function getAgentInboxNavMeta() {
   const summary = getAgentInboxSummary();
+  if (summary.alerts > 0) {
+    return `${summary.alerts} alerts`;
+  }
   if (summary.actions > 0) {
     return `${summary.actions} actions`;
   }
@@ -2125,6 +2220,15 @@ function getAgentTownOpenActionItems() {
           return leftRank - rightRank || timestampMs(right.createdAt) - timestampMs(left.createdAt);
         })
     : [];
+}
+
+function getAgentTownInboxAlerts() {
+  return (Array.isArray(state.agentTown?.alerts) ? state.agentTown.alerts : [])
+    .filter((alert) => alert?.id && !String(alert.id).startsWith("action-"))
+    .sort((left, right) => {
+      const severityRank = { urgent: 0, warning: 1, quest: 2, info: 3 };
+      return (severityRank[left.severity] ?? 4) - (severityRank[right.severity] ?? 4);
+    });
 }
 
 function getAgentInboxPriority(status) {
@@ -13053,6 +13157,7 @@ function renderAutomationsView() {
 function renderAgentInboxSummaryCards() {
   const summary = getAgentInboxSummary();
   const cards = [
+    ["alerts", summary.alerts, "ranked bottlenecks from Agent Town"],
     ["actions", summary.actions, "tutorial and agent-requested next steps"],
     ["to review", summary.unread, "finished sessions you have not opened yet"],
     ["working", summary.working, "sessions with active work, monitors, or subagents"],
@@ -13145,6 +13250,52 @@ function renderAgentTownActionItemCard(item) {
   `;
 }
 
+function renderAgentTownAlertCard(alert) {
+  const severityLabel = alert.severity === "urgent"
+    ? "urgent"
+    : alert.severity === "warning"
+      ? "bottleneck"
+      : alert.severity === "quest"
+        ? "quest"
+        : "notice";
+  return `
+    <article class="automation-card agent-inbox-card is-alert is-${escapeHtml(alert.severity || "info")}" data-agent-town-alert="${escapeHtml(alert.id)}">
+      <div class="agent-inbox-card-head">
+        <div class="automation-card-icon" aria-hidden="true">${renderIcon(Zap)}</div>
+        <span class="plugin-status">${escapeHtml(severityLabel)}</span>
+      </div>
+      <strong>${escapeHtml(alert.title || "Agent Town alert")}</strong>
+      <p>${escapeHtml(alert.detail || "Open Agent Town to inspect this bottleneck.")}</p>
+      <div class="agent-inbox-card-meta">${escapeHtml([alert.priority, alert.target?.label].filter(Boolean).join(" · ") || "ranked town alert")}</div>
+      <div class="plugin-onboarding-actions">
+        <button class="primary-button toolbar-control" type="button" data-agent-town-alert-open="${escapeHtml(alert.id)}">open</button>
+      </div>
+    </article>
+  `;
+}
+
+function openAgentTownAlertHref(alertId) {
+  const id = String(alertId || "").trim();
+  const alert = getAgentTownRankedAlerts().find((candidate) => candidate.id === id);
+  const href = String(alert?.href || "").trim();
+  if (href) {
+    if (href.startsWith("?")) {
+      window.location.href = `${window.location.pathname}${href}`;
+      return;
+    }
+
+    if (href.startsWith("#")) {
+      window.location.hash = href.slice(1);
+      return;
+    }
+
+    window.location.href = href;
+    return;
+  }
+
+  openAgentTownBuilder({ tab: "functional" });
+}
+
 function getAgentTownActionItemKindLabel(item) {
   const priority = String(item.priority || "normal");
   if (priority === "urgent") {
@@ -13201,11 +13352,13 @@ function getAgentTownActionItemMetaLabel(item) {
 function renderAgentInboxCards() {
   const items = getAgentInboxItems();
   const actionItems = getAgentTownOpenActionItems();
-  if (!items.length && !actionItems.length) {
+  const alerts = getAgentTownInboxAlerts();
+  if (!items.length && !actionItems.length && !alerts.length) {
     return `<div class="blank-state">no agent sessions yet</div>`;
   }
 
   return [
+    ...alerts.map(renderAgentTownAlertCard),
     ...actionItems.map(renderAgentTownActionItemCard),
     ...items.map(renderAgentInboxCard),
   ].join("");
@@ -13213,16 +13366,18 @@ function renderAgentInboxCards() {
 
 function renderAgentInboxView() {
   const summary = getAgentInboxSummary();
-  const attentionLabel = summary.actions > 0
-    ? `${summary.actions} action${summary.actions === 1 ? "" : "s"} ready`
-    : summary.unread > 0
-    ? `${summary.unread} waiting for review`
-    : summary.working > 0
-      ? `${summary.working} still working`
-      : "all caught up";
+  const attentionLabel = summary.alerts > 0
+    ? `${summary.alerts} town alert${summary.alerts === 1 ? "" : "s"}`
+    : summary.actions > 0
+      ? `${summary.actions} action${summary.actions === 1 ? "" : "s"} ready`
+      : summary.unread > 0
+        ? `${summary.unread} waiting for review`
+        : summary.working > 0
+          ? `${summary.working} still working`
+          : "all caught up";
 
   return `
-    <section class="dashboard-panel main-view agent-inbox-view" ${renderMainViewAttributes("agent-inbox", `agent-inbox:${summary.total}:${summary.unread}:${summary.working}:${summary.actions}`)}>
+    <section class="dashboard-panel main-view agent-inbox-view" ${renderMainViewAttributes("agent-inbox", `agent-inbox:${summary.total}:${summary.unread}:${summary.working}:${summary.actions}:${summary.alerts}`)}>
       <div class="dashboard-toolbar">
         <button class="icon-button hidden-desktop" type="button" id="open-sidebar" aria-label="Open sidebar" ${tooltipAttributes("Open sidebar")}>${renderIcon(Menu)}</button>
         <div class="dashboard-copy">
@@ -15915,6 +16070,11 @@ function renderDoghouseBuildingPanel(plugin) {
 
 function renderVisualGamePluginBuildingPanel(plugin) {
   const issue = getPluginBuildingIssue(plugin);
+  const health = isAgentTownFunctionalPlugin(plugin)
+    ? getAgentTownBuildingHealth(plugin)
+    : issue
+      ? { status: "blocked", label: issue.label || "needs setup", detail: issue.detail || "" }
+      : { status: "ok", label: "healthy", detail: "Built in and ready." };
   return `
     <div class="visual-building-panel-scroll visual-building-plugin-panel">
       <section class="visual-building-plugin-card">
@@ -15924,6 +16084,8 @@ function renderVisualGamePluginBuildingPanel(plugin) {
           <h2>${escapeHtml(plugin.name)}</h2>
           <p>${escapeHtml(plugin.description)}</p>
           <span class="plugin-status ${issue ? "is-warning" : ""}">${escapeHtml(getPluginStatusBadgeLabel(plugin, issue))}</span>
+          ${renderAgentTownBuildingHealthBadge(health)}
+          <div class="settings-status ${health.status === "blocked" || health.status === "warning" ? "is-warning" : ""}">${escapeHtml(health.detail)}</div>
           ${issue?.detail ? `<div class="settings-status is-warning">${escapeHtml(issue.detail)}</div>` : ""}
         </div>
       </section>
@@ -16149,6 +16311,30 @@ function getAgentTownFunctionalStatus(plugin) {
   return "auto";
 }
 
+function getAgentTownBuildingHealth(plugin) {
+  const pluginId = getPluginId(plugin);
+  const issue = getPluginBuildingIssue(plugin);
+  const status = getAgentTownFunctionalStatus(plugin);
+  if (issue) {
+    return { status: "blocked", label: issue.label || "needs setup", detail: issue.detail || "Setup is incomplete." };
+  }
+  if (status === "available") {
+    return { status: "offline", label: "not installed", detail: "Install this building before agents use it." };
+  }
+  if (status === "unplaced") {
+    return { status: "warning", label: "needs spot", detail: "Place this installed building on the town map." };
+  }
+  if (status === "placed") {
+    return { status: "ok", label: "healthy", detail: "Installed and placed on the map." };
+  }
+  return { status: "ok", label: "auto placed", detail: "Installed and using an automatic town slot." };
+}
+
+function renderAgentTownBuildingHealthBadge(health) {
+  const status = String(health?.status || "ok");
+  return `<span class="agent-town-building-health is-${escapeHtml(status)}">${escapeHtml(health?.label || "healthy")}</span>`;
+}
+
 function renderAgentTownBuilderFunctionalCard(plugin) {
   const pluginId = getPluginId(plugin);
   const status = getAgentTownFunctionalStatus(plugin);
@@ -16156,6 +16342,7 @@ function renderAgentTownBuilderFunctionalCard(plugin) {
   const installing = Boolean(pendingAction);
   const active = state.visualGame.builderPlacement?.kind === "functional" && state.visualGame.builderPlacement.pluginId === pluginId;
   const issue = getPluginBuildingIssue(plugin);
+  const health = getAgentTownBuildingHealth(plugin);
   const statusLabel =
     status === "available"
       ? "not installed"
@@ -16182,8 +16369,9 @@ function renderAgentTownBuilderFunctionalCard(plugin) {
       <span class="agent-town-builder-building-icon" aria-hidden="true">${renderIcon(plugin.icon || Plug)}</span>
       <span class="agent-town-builder-card-copy">
         <strong>${escapeHtml(plugin.name)}</strong>
-        <em>${escapeHtml(statusLabel)}</em>
+        <em>${escapeHtml(`${statusLabel} · ${health.label}`)}</em>
       </span>
+      ${renderAgentTownBuildingHealthBadge(health)}
       <button
         class="${status === "available" ? "primary-button" : "ghost-button"} agent-town-builder-card-action"
         type="button"
@@ -16192,6 +16380,92 @@ function renderAgentTownBuilderFunctionalCard(plugin) {
         ${installing ? "disabled" : ""}
       >${escapeHtml(actionLabel)}</button>
     </article>
+  `;
+}
+
+function getAgentTownQuests() {
+  return Array.isArray(state.agentTown?.quests) ? state.agentTown.quests : [];
+}
+
+function getAgentTownActiveQuest() {
+  return getAgentTownQuests().find((quest) => quest.status === "active") || null;
+}
+
+function getAgentTownRankedAlerts() {
+  const severityRank = { urgent: 0, warning: 1, quest: 2, info: 3 };
+  return (Array.isArray(state.agentTown?.alerts) ? state.agentTown.alerts : [])
+    .slice()
+    .sort((left, right) => (
+      (severityRank[left.severity] ?? 4) - (severityRank[right.severity] ?? 4)
+      || timestampMs(right.createdAt) - timestampMs(left.createdAt)
+    ));
+}
+
+function getAgentTownLayoutSnapshots() {
+  return Array.isArray(state.agentTown?.layoutSnapshots)
+    ? state.agentTown.layoutSnapshots
+    : Array.isArray(state.agentTown?.snapshots) ? state.agentTown.snapshots : [];
+}
+
+function renderAgentTownBuilderOps() {
+  const activeQuest = getAgentTownActiveQuest();
+  const completedQuests = getAgentTownQuests().filter((quest) => quest.status === "completed").length;
+  const questCount = getAgentTownQuests().length;
+  const alert = getAgentTownRankedAlerts()[0] || null;
+  const history = state.agentTown?.layoutHistory || {};
+  const snapshots = getAgentTownLayoutSnapshots().slice(0, 3);
+  const validation = state.agentTown?.layoutValidation || { ok: true, issues: [], warnings: [] };
+  const validationLabel = validation.ok
+    ? validation.warnings?.length ? `${validation.warnings.length} warning${validation.warnings.length === 1 ? "" : "s"}` : "valid"
+    : `${validation.issues?.length || 1} issue${validation.issues?.length === 1 ? "" : "s"}`;
+
+  return `
+    <div class="agent-town-builder-ops" aria-label="Town operations">
+      ${
+        alert
+          ? `
+            <button class="agent-town-alert-strip is-${escapeHtml(alert.severity)}" type="button" data-agent-town-alert-open="${escapeHtml(alert.id)}">
+              <span>${renderIcon(Zap)}</span>
+              <strong>${escapeHtml(alert.title)}</strong>
+              <em>${escapeHtml(alert.detail || "Open the related town item.")}</em>
+            </button>
+          `
+          : ""
+      }
+      ${
+        activeQuest
+          ? `
+            <div class="agent-town-quest-strip">
+              <span class="main-search-kind">quest ${escapeHtml(String(completedQuests + 1))}/${escapeHtml(String(Math.max(questCount, 1)))}</span>
+              <strong>${escapeHtml(activeQuest.title)}</strong>
+              <p>${escapeHtml(activeQuest.detail || "")}</p>
+            </div>
+          `
+          : ""
+      }
+      <div class="agent-town-layout-actions" role="toolbar" aria-label="Town layout actions">
+        <button class="icon-button toolbar-control" type="button" data-agent-town-layout-undo aria-label="Undo layout" ${history.canUndo ? "" : "disabled"} ${tooltipAttributes("Undo layout")}>${renderIcon(RotateCcw)}</button>
+        <button class="icon-button toolbar-control" type="button" data-agent-town-layout-redo aria-label="Redo layout" ${history.canRedo ? "" : "disabled"} ${tooltipAttributes("Redo layout")}>${renderIcon(RefreshCw)}</button>
+        <button class="icon-button toolbar-control" type="button" data-agent-town-layout-snapshot aria-label="Save snapshot" ${tooltipAttributes("Save snapshot")}>${renderIcon(Plus)}</button>
+        <button class="icon-button toolbar-control" type="button" data-agent-town-layout-starter aria-label="Apply starter base" ${tooltipAttributes("Apply starter base")}>${renderIcon(Zap)}</button>
+        <button class="icon-button toolbar-control" type="button" data-agent-town-layout-export aria-label="Copy blueprint" ${tooltipAttributes("Copy blueprint")}>${renderIcon(FileText)}</button>
+        <button class="icon-button toolbar-control" type="button" data-agent-town-layout-import aria-label="Import blueprint" ${tooltipAttributes("Import blueprint")}>${renderIcon(BookOpen)}</button>
+        <span class="agent-town-layout-status is-${validation.ok ? "ok" : "blocked"}">${escapeHtml(validationLabel)}</span>
+      </div>
+      ${
+        snapshots.length
+          ? `
+            <div class="agent-town-snapshot-row" aria-label="Saved town snapshots">
+              ${snapshots.map((snapshot) => `
+                <button class="ghost-button toolbar-control" type="button" data-agent-town-layout-restore="${escapeHtml(snapshot.id)}">
+                  <span>${escapeHtml(snapshot.name)}</span>
+                </button>
+              `).join("")}
+            </div>
+          `
+          : ""
+      }
+    </div>
   `;
 }
 
@@ -16230,6 +16504,7 @@ function renderAgentTownBuilderDrawer() {
         </div>
       </div>
       <div class="agent-town-builder-body">
+        ${renderAgentTownBuilderOps()}
         <div class="agent-town-builder-tabs" role="tablist" aria-label="Builder categories">
           <button class="agent-town-builder-tab ${activeTab === "cosmetic" ? "is-active" : ""}" type="button" data-agent-town-builder-tab="cosmetic" role="tab" aria-selected="${activeTab === "cosmetic" ? "true" : "false"}">${renderIcon(Palette)}<span>Cosmetic</span></button>
           <button class="agent-town-builder-tab ${activeTab === "functional" ? "is-active" : ""} ${unplacedCount ? "has-alert" : ""}" type="button" data-agent-town-builder-tab="functional" role="tab" aria-selected="${activeTab === "functional" ? "true" : "false"}">${renderIcon(Plug)}<span>Functional</span>${unplacedCount ? `<b aria-hidden="true">!</b>` : ""}</button>
@@ -16885,23 +17160,13 @@ function startAgentTownFunctionalPlacement(pluginId, { markPending = false, rend
   return startAgentTownBuilderPlacement("functional", normalizedPluginId, { render });
 }
 
-function isAgentTownLayoutCustomized() {
-  return Boolean(
-    Object.keys(state.visualGame.customLayout?.places || {}).length ||
-    Object.keys(state.visualGame.customLayout?.roads || {}).length ||
-    Object.keys(state.visualGame.customLayout?.functional || {}).length ||
-    (Array.isArray(state.visualGame.customLayout?.decorations) && state.visualGame.customLayout.decorations.length) ||
-    (Array.isArray(state.visualGame.customLayout?.pendingFunctional) && state.visualGame.customLayout.pendingFunctional.length),
-  );
+function isAgentTownLayoutCustomized(layoutInput = getAgentTownCurrentLayout()) {
+  return hasAgentTownLayoutCustomizations(layoutInput);
 }
 
-function saveAgentTownLayoutPreferences() {
-  try {
-    window.localStorage.setItem(AGENT_TOWN_LAYOUT_STORAGE_KEY, JSON.stringify(normalizeAgentTownLayout(state.visualGame.customLayout)));
-  } catch {
-    // Local map customization is a convenience; storage failures should not block the town.
-  }
-  void mirrorAgentTownState({ refreshUi: false });
+function saveAgentTownLayoutPreferences({ reason = "layout-update" } = {}) {
+  saveAgentTownLayoutFallback();
+  void mirrorAgentTownState({ refreshUi: false, reason });
 }
 
 function getAgentTownLayoutSummary() {
@@ -16934,12 +17199,14 @@ async function loadAgentTownState({ refreshUi = true } = {}) {
   }
 }
 
-async function mirrorAgentTownState({ refreshUi = true } = {}) {
+async function mirrorAgentTownState({ refreshUi = true, reason = "mirror" } = {}) {
   try {
     const payload = await fetchJson("/api/agent-town/state", {
       method: "PUT",
       body: JSON.stringify({
+        layout: getAgentTownCurrentLayout(),
         layoutSummary: getAgentTownLayoutSummary(),
+        reason,
       }),
     });
     applyAgentTownState(payload.agentTown);
@@ -16952,6 +17219,149 @@ async function mirrorAgentTownState({ refreshUi = true } = {}) {
     console.warn("[vibe-research] Agent Town state mirror failed", error);
     return null;
   }
+}
+
+function refreshAgentTownLayoutUi(message = "", tone = "success") {
+  if (message) {
+    setAgentTownBuilderFeedback(message, tone);
+  }
+  renderShell();
+  refreshAgentTownActionItemUi();
+  refreshAgentCanvasUi();
+}
+
+async function applyAgentTownLayoutResponse(promise, { successMessage = "Town updated", failureMessage = "Agent Town layout update failed" } = {}) {
+  try {
+    const payload = await promise;
+    applyAgentTownState(payload.agentTown || payload.state || payload);
+    refreshAgentTownLayoutUi(successMessage, "success");
+    return payload;
+  } catch (error) {
+    console.warn("[vibe-research] Agent Town layout operation failed", error);
+    window.alert(error.message || failureMessage);
+    setAgentTownBuilderFeedback(failureMessage, "blocked", { render: true });
+    return null;
+  }
+}
+
+function getAgentTownStarterBlueprintLayout() {
+  const current = getAgentTownCurrentLayout();
+  const existingIds = new Set(current.decorations.map((decoration) => decoration.id));
+  const createDecoration = (id, itemId, x, y, rotation = 0) => {
+    let nextId = id;
+    let suffix = 1;
+    while (existingIds.has(nextId)) {
+      suffix += 1;
+      nextId = `${id}-${suffix}`;
+    }
+    existingIds.add(nextId);
+    return normalizeAgentTownDecoration({ id: nextId, itemId, x, y, rotation });
+  };
+  const starterDecorations = [
+    createDecoration("starter-road-1", "road-square", 328, 264),
+    createDecoration("starter-road-2", "road-square", 356, 264),
+    createDecoration("starter-road-3", "road-square", 384, 264),
+    createDecoration("starter-planter-1", "planter", 328, 292),
+    createDecoration("starter-shed-1", "shed", 384, 292),
+  ].filter(Boolean);
+
+  return normalizeAgentTownPersistedLayout({
+    ...current,
+    decorations: [...current.decorations, ...starterDecorations],
+  });
+}
+
+async function saveAgentTownLayoutSnapshot() {
+  const fallbackName = `Snapshot ${new Date().toLocaleDateString()}`;
+  const name = window.prompt("Snapshot name", fallbackName);
+  if (name === null) {
+    return null;
+  }
+
+  return applyAgentTownLayoutResponse(
+    fetchJson("/api/agent-town/layout/snapshots", {
+      method: "POST",
+      body: JSON.stringify({
+        name: String(name || fallbackName).trim() || fallbackName,
+        layout: getAgentTownCurrentLayout(),
+      }),
+    }),
+    { successMessage: "Snapshot saved", failureMessage: "Snapshot failed" },
+  );
+}
+
+async function restoreAgentTownLayoutSnapshot(snapshotId) {
+  const id = String(snapshotId || "").trim();
+  if (!id) {
+    return null;
+  }
+
+  return applyAgentTownLayoutResponse(
+    fetchJson(`/api/agent-town/layout/snapshots/${encodeURIComponent(id)}/restore`, { method: "POST" }),
+    { successMessage: "Snapshot restored", failureMessage: "Restore failed" },
+  );
+}
+
+async function undoAgentTownLayout() {
+  return applyAgentTownLayoutResponse(
+    fetchJson("/api/agent-town/layout/undo", { method: "POST" }),
+    { successMessage: "Town layout undone", failureMessage: "Undo failed" },
+  );
+}
+
+async function redoAgentTownLayout() {
+  return applyAgentTownLayoutResponse(
+    fetchJson("/api/agent-town/layout/redo", { method: "POST" }),
+    { successMessage: "Town layout redone", failureMessage: "Redo failed" },
+  );
+}
+
+async function applyAgentTownStarterBlueprint() {
+  return applyAgentTownLayoutResponse(
+    fetchJson("/api/agent-town/layout", {
+      method: "PUT",
+      body: JSON.stringify({
+        reason: "starter blueprint",
+        layout: getAgentTownStarterBlueprintLayout(),
+      }),
+    }),
+    { successMessage: "Starter base applied", failureMessage: "Starter blueprint failed" },
+  );
+}
+
+async function exportAgentTownBlueprint() {
+  const blueprint = JSON.stringify(getAgentTownCurrentLayout(), null, 2);
+  try {
+    await navigator.clipboard?.writeText(blueprint);
+    setAgentTownBuilderFeedback("Blueprint copied", "success", { render: true });
+  } catch {
+    window.prompt("Copy Agent Town blueprint", blueprint);
+    setAgentTownBuilderFeedback("Blueprint ready", "info", { render: true });
+  }
+}
+
+async function importAgentTownBlueprint() {
+  const text = window.prompt("Paste Agent Town blueprint JSON");
+  if (text === null) {
+    return null;
+  }
+
+  let layout;
+  try {
+    layout = JSON.parse(text);
+  } catch {
+    window.alert("Blueprint JSON could not be parsed.");
+    setAgentTownBuilderFeedback("Invalid blueprint JSON", "blocked", { render: true });
+    return null;
+  }
+
+  return applyAgentTownLayoutResponse(
+    fetchJson("/api/agent-town/layout", {
+      method: "PUT",
+      body: JSON.stringify({ reason: "import blueprint", layout }),
+    }),
+    { successMessage: "Blueprint imported", failureMessage: "Blueprint rejected" },
+  );
 }
 
 async function recordAgentTownEvent(type, detail = {}) {
@@ -17031,7 +17441,7 @@ function setAgentTownTheme(themeId, { render = true } = {}) {
 
   state.visualGame.themeId = nextThemeId;
   saveAgentTownThemePreference();
-  void mirrorAgentTownState({ refreshUi: false });
+  void mirrorAgentTownState({ refreshUi: false, reason: "theme changed" });
   if (render) {
     renderShell();
   }
@@ -17063,6 +17473,7 @@ function setAgentTownDogName(value, { render = true } = {}) {
 
   state.visualGame.dogName = nextDogName;
   saveAgentTownDogNamePreference();
+  void mirrorAgentTownState({ refreshUi: false, reason: "dog name changed" });
   if (render) {
     renderShell();
   }
@@ -17070,12 +17481,12 @@ function setAgentTownDogName(value, { render = true } = {}) {
 }
 
 function resetAgentTownLayout({ render = true } = {}) {
-  state.visualGame.customLayout = { places: {}, roads: {}, decorations: [], functional: {}, pendingFunctional: [] };
+  state.visualGame.customLayout = getEmptyAgentTownLayout();
   state.visualGame.builderPlacement = null;
   state.visualGame.builderFeedback = null;
   state.visualGame.builderPulse = null;
   state.visualGame.builderConstruction = null;
-  saveAgentTownLayoutPreferences();
+  saveAgentTownLayoutPreferences({ reason: "layout reset" });
   if (render) {
     renderShell();
   }
@@ -18699,6 +19110,7 @@ function drawVisualGameScene(context, graph, model, time, hitAreas, visibleWorld
   if (isLocalhostAppsEnabled()) {
     drawVisualGameDock(context, hitAreas, time);
   }
+  drawAgentTownBottleneckOverlays(context, time);
 
   if (isAgentTownEditMode()) {
     drawAgentTownEditOutlines(context, hitAreas);
@@ -21473,7 +21885,7 @@ function drawVisualGameAgent(context, agent, time, hitAreas) {
 
   context.restore();
 
-  if (!isWalking && (agent.destination === "desk" || agent.destination === "browser" || agent.destination === "ottoauth" || agent.destination === "camera" || agent.destination === "harbor")) {
+  if (!isWalking && (agent.destination === "desk" || agent.destination === "browser" || agent.destination === "ottoauth" || agent.destination === "camera" || agent.destination === "harbor" || getVisualGameAgentPluginDestinationId(agent.destination))) {
     drawVisualGameNameplate(
       context,
       truncateSwarmLabel(agent.name, agent.isSubagent ? 12 : 14),
@@ -21500,6 +21912,13 @@ function drawVisualGameAgent(context, agent, time, hitAreas) {
 }
 
 function getVisualGameAgentHoverLabel(agent) {
+  const pluginDestinationId = getVisualGameAgentPluginDestinationId(agent.destination);
+  if (pluginDestinationId) {
+    const plugin = getPluginById(pluginDestinationId);
+    const label = plugin?.name || pluginDestinationId;
+    return agent.walking ? `${agent.name} - walking to ${label}` : `${agent.name} - at ${label}`;
+  }
+
   if (agent.walking && agent.destination !== "roam") {
     const destinationLabel = {
       browser: "browser lab",
@@ -21605,6 +22024,74 @@ function drawVisualGameBuildingIssueBadge(context, rect) {
   context.fillRect(badgeX + 9, badgeY + 16, 4, 3);
 }
 
+function getAgentTownAlertTargetRect(alert) {
+  const targetId = normalizeBuildingId(alert?.target?.id || alert?.target?.buildingId || "");
+  if (!targetId || targetId === "agent-town") {
+    return getAgentTownPluginBuildingPlaces().find((place) => place.pluginId === "buildinghub")?.rect || null;
+  }
+
+  const pluginPlace = getAgentTownPluginBuildingPlaces().find((place) => place.pluginId === targetId || place.id === `building-${targetId}`);
+  if (pluginPlace?.rect) {
+    return pluginPlace.rect;
+  }
+
+  const townPlace = getVisualGameTownPlace(targetId === "buildinghub" ? "buildinghub" : targetId);
+  if (townPlace?.rect) {
+    return townPlace.rect;
+  }
+
+  if (targetId === "buildinghub") {
+    return getAgentTownPluginBuildingPlaces().find((place) => place.pluginId === "buildinghub")?.rect || null;
+  }
+
+  return null;
+}
+
+function drawAgentTownBottleneckBadge(context, rect, alert, index, time) {
+  if (!rect) {
+    return;
+  }
+
+  const pulse = 0.5 + Math.sin(time / 260 + index) * 0.2;
+  const severity = alert?.severity || "info";
+  const fill = severity === "urgent"
+    ? "#ff7f79"
+    : severity === "warning"
+      ? "#ffcf57"
+      : severity === "quest"
+        ? "#9dd7ff"
+        : "#b6d084";
+  const badgeSize = 18;
+  const badgeX = Math.round(rect.x + rect.width - badgeSize - 9 - index * 4);
+  const badgeY = Math.round(rect.y - 8 + index * 4);
+
+  context.save();
+  context.globalAlpha = 0.22 + pulse * 0.22;
+  context.strokeStyle = fill;
+  context.lineWidth = 2;
+  context.strokeRect(Math.round(rect.x - 4), Math.round(rect.y - 4), Math.round(rect.width + 8), Math.round(rect.height + 8));
+  context.globalAlpha = 1;
+  context.fillStyle = "rgba(20, 15, 12, 0.55)";
+  context.fillRect(badgeX + 2, badgeY + 2, badgeSize, badgeSize);
+  context.fillStyle = "#1a1713";
+  context.fillRect(badgeX, badgeY, badgeSize, badgeSize);
+  context.fillStyle = fill;
+  context.fillRect(badgeX + 2, badgeY + 2, badgeSize - 4, badgeSize - 4);
+  context.fillStyle = "#21150f";
+  context.fillRect(badgeX + 8, badgeY + 5, 3, 7);
+  context.fillRect(badgeX + 8, badgeY + 14, 3, 2);
+  context.restore();
+}
+
+function drawAgentTownBottleneckOverlays(context, time) {
+  getAgentTownRankedAlerts()
+    .filter((alert) => alert.severity !== "info")
+    .slice(0, 4)
+    .forEach((alert, index) => {
+      drawAgentTownBottleneckBadge(context, getAgentTownAlertTargetRect(alert), alert, index, time);
+    });
+}
+
 function drawVisualGamePaintedWallSign(context, x, y, width, height, label, meta) {
   const signX = Math.round(x);
   const signY = Math.round(y);
@@ -21673,6 +22160,7 @@ function getVisualGameAgents(graph, time) {
   const libraryIndex = { value: 0 };
   const evidenceIndex = { value: 0 };
   const roamingIndex = { value: 0 };
+  const pluginDestinationIndexes = new Map();
   return getVisualInterfaceAgents(graph).map((agent, index) => {
     const statusClass = getVisualStatusClass(agent.status);
     const destination = getVisualGameAgentDestination(agent, statusClass);
@@ -21686,7 +22174,16 @@ function getVisualGameAgents(graph, time) {
     };
 
     let target;
-    if (destination === "browser") {
+    const pluginDestinationId = getVisualGameAgentPluginDestinationId(destination);
+    if (pluginDestinationId) {
+      const pluginDestinationIndex = pluginDestinationIndexes.get(pluginDestinationId) || 0;
+      const pluginTarget = getVisualGamePluginBuildingSpot(pluginDestinationId, pluginDestinationIndex);
+      target = pluginTarget || getVisualGameDeskSpot(deskIndex.value);
+      pluginDestinationIndexes.set(pluginDestinationId, pluginDestinationIndex + 1);
+      if (!pluginTarget) {
+        deskIndex.value += 1;
+      }
+    } else if (destination === "browser") {
       target = getVisualGameBrowserSpot(browserIndex.value);
       browserIndex.value += 1;
     } else if (destination === "ottoauth") {
@@ -21763,6 +22260,11 @@ function getVisualGameAgentDestination(agent, statusClass) {
     return "library";
   }
 
+  const semanticPluginId = activelyGenerating ? getVisualGameSemanticPluginDestination(agent) : "";
+  if (semanticPluginId) {
+    return `building:${semanticPluginId}`;
+  }
+
   if (activelyGenerating) {
     return "desk";
   }
@@ -21836,6 +22338,67 @@ function hasVisualGameHarborActivity(agent) {
   ];
 
   return references.some(isVisualGameHarborReference);
+}
+
+function getVisualGameAgentReferenceText(agent) {
+  return [
+    agent.name,
+    agent.subtitle,
+    agent.meta,
+    agent.agentType,
+    agent.source,
+    agent.providerId,
+    agent.status,
+    ...(Array.isArray(agent.paths) ? agent.paths : []),
+    ...(Array.isArray(agent.commands) ? agent.commands : []),
+  ].join("\n").toLowerCase();
+}
+
+function getVisualGameSemanticPluginDestination(agent) {
+  const text = getVisualGameAgentReferenceText(agent);
+  const candidates = [
+    {
+      pluginId: "github",
+      pattern: /\b(github|pull request|pr #|gh\s|git push|git commit|review thread|issue #)\b/,
+    },
+    {
+      pluginId: "ci-repair-shop",
+      pattern: /\b(ci|github actions|failing check|check run|test failure|workflow run|build failed)\b/,
+    },
+    {
+      pluginId: "agent-inbox",
+      pattern: /\b(agent inbox|approval|action item|human review|needs review)\b/,
+    },
+    {
+      pluginId: "automations",
+      pattern: /\b(automation|schedule|cron|recurring|heartbeat)\b/,
+    },
+    {
+      pluginId: "localhost-apps",
+      pattern: /\b(localhost|127\.0\.0\.1|dev server|port\s+\d{2,5}|vite|next dev)\b/,
+    },
+    {
+      pluginId: "tailscale",
+      pattern: /\b(tailscale|tailnet|serve status|private url)\b/,
+    },
+    {
+      pluginId: "agentmail",
+      pattern: /\b(agentmail|email|inbox|mailwatch)\b/,
+    },
+    {
+      pluginId: "telegram",
+      pattern: /\b(telegram|bot token|chat id)\b/,
+    },
+  ];
+
+  const match = candidates.find((candidate) => candidate.pattern.test(text) && isPluginIdInstalled(candidate.pluginId));
+  return match?.pluginId || "";
+}
+
+function getVisualGameAgentPluginDestinationId(destination) {
+  const match = String(destination || "").match(/^building:(.+)$/);
+  const pluginId = normalizeBuildingId(match?.[1] || "");
+  return pluginId && isPluginIdInstalled(pluginId) ? pluginId : "";
 }
 
 function isVisualGameHarborReference(value) {
@@ -22194,6 +22757,36 @@ function getVisualGameHarborSpot(index) {
     { x: x + width * 0.28, y: y + height - 15 },
     { x: x + width * 0.72, y: y + height - 15 },
     { x: x + width * 0.5, y: y + height - 31 },
+  ];
+  const spot = spots[index % spots.length];
+  const row = Math.floor(index / spots.length);
+  return {
+    x: Math.round(spot.x) + row * 6,
+    y: Math.round(spot.y) + row * 5,
+    routeAnchor: getVisualGameTownPlaceAnchor(place),
+  };
+}
+
+function getVisualGamePluginBuildingSpot(pluginId, index) {
+  const normalizedPluginId = normalizeBuildingId(pluginId);
+  if (normalizedPluginId === "automations") {
+    return getVisualGamePlaceSpot("automations", index, { x: 6, y: 5 });
+  }
+  if (normalizedPluginId === "localhost-apps") {
+    return getVisualGamePlaceSpot("dock", index, { x: 8, y: 5 });
+  }
+
+  const place = getAgentTownPluginBuildingPlaces().find((candidate) => candidate.pluginId === normalizedPluginId);
+  if (!place?.rect) {
+    return null;
+  }
+
+  const { x, y, width, height } = place.rect;
+  const spots = [
+    { x: x + width * 0.5, y: y + height - 13 },
+    { x: x + width * 0.26, y: y + height - 14 },
+    { x: x + width * 0.74, y: y + height - 14 },
+    { x: x + width * 0.5, y: y + height - 30 },
   ];
   const spot = spots[index % spots.length];
   const row = Math.floor(index / spots.length);
@@ -27866,13 +28459,106 @@ function normalizeAgentTownCanvases(value) {
     : [];
 }
 
+function normalizeAgentTownLayoutHistory(value) {
+  const source = value && typeof value === "object" && !Array.isArray(value) ? value : {};
+  return {
+    pastCount: Math.max(0, Math.floor(Number(source.pastCount ?? source.past?.length) || 0)),
+    futureCount: Math.max(0, Math.floor(Number(source.futureCount ?? source.future?.length) || 0)),
+    canUndo: Boolean(source.canUndo || Number(source.pastCount ?? source.past?.length) > 0),
+    canRedo: Boolean(source.canRedo || Number(source.futureCount ?? source.future?.length) > 0),
+  };
+}
+
+function normalizeAgentTownLayoutSnapshot(value) {
+  if (!value || typeof value !== "object" || Array.isArray(value) || !value.id) {
+    return null;
+  }
+
+  return {
+    id: String(value.id || ""),
+    name: String(value.name || "Town snapshot").trim() || "Town snapshot",
+    layout: normalizeAgentTownPersistedLayout(value.layout || value),
+    createdAt: String(value.createdAt || ""),
+    updatedAt: String(value.updatedAt || value.createdAt || ""),
+  };
+}
+
+function normalizeAgentTownLayoutSnapshots(value) {
+  return Array.isArray(value)
+    ? value.map(normalizeAgentTownLayoutSnapshot).filter(Boolean).slice(0, 30)
+    : [];
+}
+
+function normalizeAgentTownLayoutValidation(value) {
+  const source = value && typeof value === "object" && !Array.isArray(value) ? value : {};
+  return {
+    ok: source.ok !== false,
+    issues: Array.isArray(source.issues) ? source.issues.map((entry) => String(entry || "")).filter(Boolean) : [],
+    warnings: Array.isArray(source.warnings) ? source.warnings.map((entry) => String(entry || "")).filter(Boolean) : [],
+  };
+}
+
+function normalizeAgentTownQuest(value) {
+  if (!value || typeof value !== "object" || Array.isArray(value) || !value.id || !value.title) {
+    return null;
+  }
+
+  const status = ["active", "completed", "locked"].includes(value.status) ? value.status : "locked";
+  const priority = ["low", "normal", "high", "urgent"].includes(value.priority) ? value.priority : "normal";
+  return {
+    id: String(value.id || ""),
+    title: String(value.title || ""),
+    detail: String(value.detail || ""),
+    href: String(value.href || ""),
+    cta: String(value.cta || "Open"),
+    priority,
+    status,
+  };
+}
+
+function normalizeAgentTownQuests(value) {
+  return Array.isArray(value) ? value.map(normalizeAgentTownQuest).filter(Boolean) : [];
+}
+
+function normalizeAgentTownAlert(value) {
+  if (!value || typeof value !== "object" || Array.isArray(value) || !value.id || !value.title) {
+    return null;
+  }
+
+  const severity = ["urgent", "warning", "quest", "info"].includes(value.severity) ? value.severity : "info";
+  const priority = ["low", "normal", "high", "urgent"].includes(value.priority) ? value.priority : "normal";
+  return {
+    id: String(value.id || ""),
+    severity,
+    priority,
+    title: String(value.title || ""),
+    detail: String(value.detail || ""),
+    href: String(value.href || ""),
+    target: value.target && typeof value.target === "object" ? value.target : null,
+  };
+}
+
+function normalizeAgentTownAlerts(value) {
+  return Array.isArray(value) ? value.map(normalizeAgentTownAlert).filter(Boolean).slice(0, 12) : [];
+}
+
 function applyAgentTownState(payload) {
   const agentTown = payload?.agentTown || payload || {};
   const layoutSummary = agentTown.layoutSummary || {};
+  const serverLayout = agentTown.layout && typeof agentTown.layout === "object" && !Array.isArray(agentTown.layout)
+    ? normalizeAgentTownPersistedLayout(agentTown.layout)
+    : null;
+  const localLayout = getAgentTownCurrentLayout();
+  const nextLayout = serverLayout || localLayout;
+  const snapshots = normalizeAgentTownLayoutSnapshots(agentTown.layoutSnapshots || agentTown.snapshots);
+
   state.agentTown = {
     actionItems: normalizeAgentTownActionItems(agentTown.actionItems),
+    alerts: normalizeAgentTownAlerts(agentTown.alerts),
     canvases: normalizeAgentTownCanvases(agentTown.canvases),
     events: Array.isArray(agentTown.events) ? agentTown.events : [],
+    layout: nextLayout,
+    layoutHistory: normalizeAgentTownLayoutHistory(agentTown.layoutHistory),
     layoutSummary: {
       cosmeticCount: Number(layoutSummary.cosmeticCount) || 0,
       functionalCount: Number(layoutSummary.functionalCount) || 0,
@@ -27880,12 +28566,36 @@ function applyAgentTownState(payload) {
       pendingFunctionalIds: Array.isArray(layoutSummary.pendingFunctionalIds) ? layoutSummary.pendingFunctionalIds : [],
       themeId: layoutSummary.themeId || AGENT_TOWN_DEFAULT_THEME_ID,
     },
+    layoutSnapshots: snapshots,
+    layoutValidation: normalizeAgentTownLayoutValidation(agentTown.layoutValidation),
+    quests: normalizeAgentTownQuests(agentTown.quests),
+    snapshots,
     signals: {
       agentClickedCount: Number(agentTown.signals?.agentClickedCount) || 0,
       automationCreatedCount: Number(agentTown.signals?.automationCreatedCount) || 0,
       libraryNoteSavedCount: Number(agentTown.signals?.libraryNoteSavedCount) || 0,
     },
   };
+
+  if (!serverLayout) {
+    return;
+  }
+
+  const serverIsCustomized = hasAgentTownLayoutCustomizations(serverLayout);
+  const localIsCustomized = hasAgentTownLayoutCustomizations(localLayout);
+  const firstServerLayout = !state.visualGame.serverLayoutLoaded;
+  state.visualGame.serverLayoutLoaded = true;
+
+  if (firstServerLayout && localIsCustomized && !serverIsCustomized) {
+    queueMicrotask(() => {
+      void mirrorAgentTownState({ refreshUi: false, reason: "migrate local layout" });
+    });
+    return;
+  }
+
+  if (getAgentTownLayoutSignature(localLayout) !== getAgentTownLayoutSignature(serverLayout)) {
+    applyAgentTownPersistedLayout(serverLayout);
+  }
 }
 
 function applySettingsState(payload) {
@@ -28696,6 +29406,62 @@ function bindAgentTownBuilderEvents() {
     button.addEventListener("click", (event) => {
       event.preventDefault();
       setAgentTownBuilderTab(button.getAttribute("data-agent-town-builder-tab") || AGENT_TOWN_BUILDER_DEFAULT_TAB);
+    });
+  });
+
+  document.querySelectorAll("[data-agent-town-layout-undo]").forEach((button) => {
+    button.addEventListener("click", (event) => {
+      event.preventDefault();
+      void undoAgentTownLayout();
+    });
+  });
+
+  document.querySelectorAll("[data-agent-town-layout-redo]").forEach((button) => {
+    button.addEventListener("click", (event) => {
+      event.preventDefault();
+      void redoAgentTownLayout();
+    });
+  });
+
+  document.querySelectorAll("[data-agent-town-layout-snapshot]").forEach((button) => {
+    button.addEventListener("click", (event) => {
+      event.preventDefault();
+      void saveAgentTownLayoutSnapshot();
+    });
+  });
+
+  document.querySelectorAll("[data-agent-town-layout-starter]").forEach((button) => {
+    button.addEventListener("click", (event) => {
+      event.preventDefault();
+      void applyAgentTownStarterBlueprint();
+    });
+  });
+
+  document.querySelectorAll("[data-agent-town-layout-export]").forEach((button) => {
+    button.addEventListener("click", (event) => {
+      event.preventDefault();
+      void exportAgentTownBlueprint();
+    });
+  });
+
+  document.querySelectorAll("[data-agent-town-layout-import]").forEach((button) => {
+    button.addEventListener("click", (event) => {
+      event.preventDefault();
+      void importAgentTownBlueprint();
+    });
+  });
+
+  document.querySelectorAll("[data-agent-town-layout-restore]").forEach((button) => {
+    button.addEventListener("click", (event) => {
+      event.preventDefault();
+      void restoreAgentTownLayoutSnapshot(button.getAttribute("data-agent-town-layout-restore") || "");
+    });
+  });
+
+  document.querySelectorAll("[data-agent-town-alert-open]").forEach((button) => {
+    button.addEventListener("click", (event) => {
+      event.preventDefault();
+      openAgentTownAlertHref(button.getAttribute("data-agent-town-alert-open") || "");
     });
   });
 

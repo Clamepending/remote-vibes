@@ -101,6 +101,90 @@ test("AgentTownStore persists signals and supports immediate predicate waits aft
   }
 });
 
+test("AgentTownStore persists layouts with snapshots, undo/redo, quests, and ranked alerts", async () => {
+  const stateDir = await createTempStateDir();
+
+  try {
+    const store = new AgentTownStore({ stateDir });
+    await store.initialize();
+    const initialLayout = {
+      decorations: [{ id: "starter-road", itemId: "road-square", x: 120, y: 160 }],
+      functional: {
+        github: { x: 240, y: 320 },
+      },
+      pendingFunctional: ["agent-inbox"],
+      themeId: "snowy",
+      dogName: "Scout",
+    };
+
+    await store.updateMirror({ layout: initialLayout, reason: "test layout" });
+    let state = store.getState();
+    assert.equal(state.layout.decorations.length, 1);
+    assert.equal(state.layout.functional.github.x, 240);
+    assert.equal(state.layout.themeId, "snowy");
+    assert.equal(state.layout.dogName, "Scout");
+    assert.equal(state.layoutSummary.cosmeticCount, 1);
+    assert.equal(state.layoutSummary.functionalCount, 1);
+    assert.equal(state.layoutHistory.canUndo, true);
+    assert.equal(state.quests.find((quest) => quest.id === "place-first-building")?.status, "completed");
+    assert.equal(state.alerts[0].id, "pending-functional-buildings");
+
+    const snapshotPayload = await store.createLayoutSnapshot({ id: "before-edit", name: "Before edit" });
+    assert.equal(snapshotPayload.snapshot.name, "Before edit");
+    assert.equal(store.getState().layoutSnapshots.length, 1);
+
+    await store.importLayout({
+      reason: "second layout",
+      layout: {
+        ...initialLayout,
+        decorations: [
+          ...initialLayout.decorations,
+          { id: "starter-planter", itemId: "planter", x: 148, y: 160 },
+        ],
+        pendingFunctional: [],
+      },
+    });
+    state = store.getState();
+    assert.equal(state.layout.decorations.length, 2);
+    assert.equal(state.layoutHistory.canUndo, true);
+    assert.equal(state.layoutHistory.canRedo, false);
+
+    const undoPayload = await store.undoLayout();
+    assert.equal(undoPayload.changed, true);
+    assert.equal(store.getState().layout.decorations.length, 1);
+    assert.equal(store.getState().layoutHistory.canRedo, true);
+
+    const redoPayload = await store.redoLayout();
+    assert.equal(redoPayload.changed, true);
+    assert.equal(store.getState().layout.decorations.length, 2);
+
+    await store.restoreLayoutSnapshot("before-edit");
+    state = store.getState();
+    assert.equal(state.layout.decorations.length, 1);
+    assert.equal(state.layoutSnapshots[0].id, "before-edit");
+
+    const validation = await store.validateLayout({
+      layout: {
+        decorations: [{ id: "dup", itemId: "road-square", x: 1, y: 1 }],
+        functional: { github: { x: 10, y: 10 } },
+        pendingFunctional: ["github"],
+      },
+    });
+    assert.equal(validation.ok, true);
+    assert.match(validation.warnings.join("\n"), /github is marked pending and placed/);
+
+    const reloadedStore = new AgentTownStore({ stateDir });
+    await reloadedStore.initialize();
+    const reloadedState = reloadedStore.getState();
+    assert.equal(reloadedState.layout.decorations.length, 1);
+    assert.equal(reloadedState.layoutSnapshots[0].name, "Before edit");
+    assert.equal(reloadedState.layout.themeId, "snowy");
+    assert.equal(reloadedState.layout.dogName, "Scout");
+  } finally {
+    await removeTempStateDir(stateDir);
+  }
+});
+
 test("AgentTownStore normalizes approval metadata while preserving backward-compatible action defaults", async () => {
   const stateDir = await createTempStateDir();
   const store = new AgentTownStore({ stateDir });
