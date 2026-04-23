@@ -98,6 +98,11 @@ async function waitForWikiBackupRun(baseUrl, timeoutMs = 5_000) {
   throw new Error("Timed out waiting for Library backup to finish");
 }
 
+async function selectSidebarTab(page, tab) {
+  await page.locator(`[data-sidebar-tab="${tab}"]`).click();
+  await page.locator(`[data-sidebar-active-panel="${tab}"]`).waitFor({ timeout: 10_000 });
+}
+
 async function writePersistedSessions(workspaceDir, sessions) {
   const stateDir = path.join(workspaceDir, ".vibe-research");
   await mkdir(stateDir, { recursive: true });
@@ -1599,6 +1604,7 @@ test("Agent Town share opens Twitter intent with screenshot copied", async (t) =
 
     await page.setViewportSize({ width: 1280, height: 720 });
     await page.goto(baseUrl, { waitUntil: "domcontentloaded" });
+    await selectSidebarTab(page, "windows");
     await page.locator("[data-share-agent-town]").click();
     await page.waitForSelector("#visual-game-canvas", { timeout: 10_000 });
     await page.waitForFunction(
@@ -3623,6 +3629,7 @@ test("visual graph empty canvas click closes the selected session panel and dele
     await page.setViewportSize({ width: 1180, height: 740 });
     await page.goto(`${baseUrl}/?view=swarm`, { waitUntil: "domcontentloaded" });
     await page.waitForSelector("#visual-game-canvas", { timeout: 10_000 });
+    await selectSidebarTab(page, "agents");
     await page.locator('.session-card[data-session-id="visual-session-1"]').waitFor({ timeout: 10_000 });
 
     await page.locator('.session-card[data-session-id="visual-session-1"]').click();
@@ -3667,6 +3674,7 @@ test("visual graph empty canvas click closes the selected session panel and dele
 
     await page.goto(`${baseUrl}/?view=swarm`, { waitUntil: "domcontentloaded" });
     await page.waitForSelector("#visual-game-canvas", { timeout: 10_000 });
+    await selectSidebarTab(page, "agents");
     await page.locator('.session-card[data-session-id="visual-session-1"]').waitFor({ timeout: 10_000 });
     await page.waitForTimeout(1_200);
     const initialShape = await assertCanvasTracksFrame(page, "initial visual game canvas");
