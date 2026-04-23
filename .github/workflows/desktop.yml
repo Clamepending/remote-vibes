@@ -65,12 +65,16 @@ jobs:
 
       - name: Notarize signed desktop app
         if: startsWith(github.ref, 'refs/tags/v')
-        timeout-minutes: 100
+        timeout-minutes: 230
         run: node desktop/scripts/notarize-macos-app.mjs
         env:
           APPLE_ID: ${{ secrets.APPLE_ID }}
           APPLE_APP_SPECIFIC_PASSWORD: ${{ secrets.APPLE_APP_SPECIFIC_PASSWORD }}
           APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
+          NOTARY_SUBMIT_ATTEMPTS: "6"
+          NOTARY_WAIT_ATTEMPTS: "6"
+          NOTARY_WAIT_TIMEOUT_MS: "1800000"
+          NOTARY_WAIT_RETRY_DELAY_MS: "60000"
 
       - name: Build and publish desktop artifacts
         timeout-minutes: 30

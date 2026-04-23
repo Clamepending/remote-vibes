@@ -17,9 +17,10 @@ const appleTeamId = requireEnv("APPLE_TEAM_ID");
 
 const submitAttempts = numberEnv("NOTARY_SUBMIT_ATTEMPTS", 5);
 const submitTimeoutMs = numberEnv("NOTARY_SUBMIT_TIMEOUT_MS", 10 * 60 * 1000);
-const infoTimeoutMs = numberEnv("NOTARY_INFO_TIMEOUT_MS", 90 * 1000);
-const pollTimeoutMs = numberEnv("NOTARY_POLL_TIMEOUT_MS", 90 * 60 * 1000);
-const pollIntervalMs = numberEnv("NOTARY_POLL_INTERVAL_MS", 45 * 1000);
+const infoTimeoutMs = numberEnv("NOTARY_INFO_TIMEOUT_MS", 2 * 60 * 1000);
+const waitAttempts = numberEnv("NOTARY_WAIT_ATTEMPTS", 4);
+const waitTimeoutMs = numberEnv("NOTARY_WAIT_TIMEOUT_MS", 45 * 60 * 1000);
+const waitRetryDelayMs = numberEnv("NOTARY_WAIT_RETRY_DELAY_MS", 60 * 1000);
 const stapleAttempts = numberEnv("NOTARY_STAPLE_ATTEMPTS", 5);
 
 await access(appPath);
@@ -92,13 +93,12 @@ async function submitForNotarization() {
 }
 
 async function waitForAcceptedNotarization(submissionId) {
-  const startedAt = Date.now();
   let lastStatus = "Unknown";
 
-  while (Date.now() - startedAt < pollTimeoutMs) {
-    const result = await run("notarytool info", "xcrun", [
+  for (let attempt = 1; attempt <= waitAttempts; attempt += 1) {
+    const result = await run(`notarytool wait attempt ${attempt}/${waitAttempts}`, "xcrun", [
       "notarytool",
-      "info",
+      "wait",
       submissionId,
       "--apple-id",
       appleId,
@@ -108,19 +108,34 @@ async function waitForAcceptedNotarization(submissionId) {
       appleTeamId,
       "--output-format",
       "json",
+      "--timeout",
+      `${Math.round(waitTimeoutMs / 1000)}s`,
     ], {
-      timeoutMs: infoTimeoutMs,
+      timeoutMs: waitTimeoutMs + 2 * 60 * 1000,
     });
 
-    if (result.status !== 0) {
-      console.log(`notarytool info failed with exit code ${result.status}; continuing to poll`);
-      await sleep(pollIntervalMs);
-      continue;
+    if (result.status === 0) {
+      const payload = parseJson(result.stdout, "notarytool wait");
+      lastStatus = payload.status ?? payload.Status ?? lastStatus;
+      console.log(`notarytool status: ${lastStatus}`);
+
+      if (lastStatus === "Accepted") {
+        return;
+      }
+
+      if (["Invalid", "Rejected"].includes(lastStatus)) {
+        await downloadNotaryLog(submissionId);
+        throw new Error(`notarytool status is ${lastStatus}`);
+      }
+    } else {
+      console.log(`notarytool wait exited with ${result.status}; checking current submission state`);
     }
 
-    const payload = parseJson(result.stdout, "notarytool info");
-    lastStatus = payload.status ?? payload.Status ?? lastStatus;
-    console.log(`notarytool status: ${lastStatus}`);
+    const info = await getSubmissionInfo(submissionId);
+    if (info.status) {
+      lastStatus = info.status;
+      console.log(`notarytool status: ${lastStatus}`);
+    }
 
     if (lastStatus === "Accepted") {
       return;
@@ -131,10 +146,41 @@ async function waitForAcceptedNotarization(submissionId) {
       throw new Error(`notarytool status is ${lastStatus}`);
     }
 
-    await sleep(pollIntervalMs);
+    if (attempt < waitAttempts) {
+      await sleep(waitRetryDelayMs);
+    }
   }
 
-  throw new Error(`notarytool did not finish within ${Math.round(pollTimeoutMs / 60000)} minutes; last status: ${lastStatus}`);
+  throw new Error(
+    `notarytool did not reach Accepted after ${waitAttempts} wait attempts of ${Math.round(waitTimeoutMs / 60000)} minutes each; last status: ${lastStatus}`,
+  );
+}
+
+async function getSubmissionInfo(submissionId) {
+  const result = await run("notarytool info", "xcrun", [
+    "notarytool",
+    "info",
+    submissionId,
+    "--apple-id",
+    appleId,
+    "--password",
+    applePassword,
+    "--team-id",
+    appleTeamId,
+    "--output-format",
+    "json",
+  ], {
+    timeoutMs: infoTimeoutMs,
+  });
+
+  if (result.status !== 0) {
+    return {};
+  }
+
+  const payload = parseJson(result.stdout, "notarytool info");
+  return {
+    status: payload.status ?? payload.Status ?? null,
+  };
 }
 
 async function downloadNotaryLog(submissionId) {
