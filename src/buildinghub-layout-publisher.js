@@ -9,6 +9,12 @@ const BUILDINGHUB_ID_PATTERN = /^[a-z0-9][a-z0-9-]*$/;
 const DEFAULT_LAYOUT_VERSION = "0.1.0";
 const DEFAULT_CATEGORY = "Shared Base";
 const DEFAULT_DESCRIPTION = "A shared Agent Town base layout.";
+const DEFAULT_LAYOUT_DECORATION = Object.freeze({
+  id: "default-road-anchor",
+  itemId: "road-square",
+  x: 548,
+  y: 98,
+});
 const MAX_TEXT_LENGTH = 2_000;
 const IMAGE_EXTENSIONS = new Set([".apng", ".avif", ".bmp", ".gif", ".jpeg", ".jpg", ".png", ".webp"]);
 
@@ -457,9 +463,7 @@ async function readJsonIfPresent(filePath) {
 
 function ensurePublishableLayout({ layout, layoutId }) {
   if (!layout.decorations.length) {
-    const error = new Error("Add at least one cosmetic town piece before publishing to BuildingHub.");
-    error.statusCode = 400;
-    throw error;
+    layout.decorations = [{ ...DEFAULT_LAYOUT_DECORATION }];
   }
 
   for (const decoration of layout.decorations) {

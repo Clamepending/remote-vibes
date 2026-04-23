@@ -1769,20 +1769,6 @@ test("Agent Town share opens and copies a BuildingHub town link", async (t) => {
     });
     assert.equal(settingsResponse.status, 200);
 
-    const mirrorResponse = await fetch(`${baseUrl}/api/agent-town/state`, {
-      method: "PUT",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({
-        layout: {
-          decorations: [{ id: "share-road-1", itemId: "road-square", x: 328, y: 264 }],
-          functional: {},
-          themeId: "default",
-          dogName: "Scout",
-        },
-      }),
-    });
-    assert.equal(mirrorResponse.status, 200);
-
     const createResponse = await fetch(`${baseUrl}/api/sessions`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
@@ -1857,6 +1843,16 @@ test("Agent Town share opens and copies a BuildingHub town link", async (t) => {
     assert.match(townSharesPayload.townShares[0].imageUrl, /\/api\/agent-town\/town-shares\/town-[a-f0-9]+\/image$/);
     assert.match(townSharesPayload.townShares[0].shareUrl, /^https:\/\/buildinghub\.example\.test\/catalog\/layouts\/town-[a-f0-9]+\/$/);
     assert.equal(townSharesPayload.townShares[0].buildingHub.pushed, true);
+    const exportedLayoutId = townSharesPayload.townShares[0].buildingHub.layoutId;
+    const exportedManifest = JSON.parse(
+      await readFile(path.join(buildingHub.repoDir, "layouts", exportedLayoutId, "layout.json"), "utf8"),
+    );
+    assert.deepEqual(exportedManifest.layout.decorations[0], {
+      id: "default-road-anchor",
+      itemId: "road-square",
+      x: 548,
+      y: 98,
+    });
 
     await page.goto(`${baseUrl}/?view=plugins`, { waitUntil: "domcontentloaded" });
     await page.locator(".buildinghub-town-card").waitFor({ timeout: 10_000 });
