@@ -38,15 +38,21 @@ test("building registry exposes core building manifests", () => {
 
   const googleDrive = BUILDING_CATALOG.find((building) => building.id === "google-drive");
   assert.equal(googleDrive.install.system, true);
-  assert.equal(googleDrive.status, "MCP-ready");
-  assert.match(googleDrive.access.detail, /does not inject Drive tools into local terminal agents/i);
+  assert.equal(googleDrive.status, "ready");
+  assert.equal(googleDrive.source, "google");
+  assert.match(googleDrive.access.detail, /Drive access is enabled/i);
   assert.match(
     googleDrive.onboarding.steps.map((step) => `${step.title} ${step.detail}`).join("\n"),
-    /local CLI\/provider separately/i,
+    /Enable Drive access/i,
   );
+  assert.equal(googleDrive.onboarding.steps[0].completeWhen?.buildingAccessConfirmed, true);
 
   const googleCalendar = BUILDING_CATALOG.find((building) => building.id === "google-calendar");
   assert.equal(googleCalendar.install.system, true);
+  assert.equal(googleCalendar.status, "ready");
+  assert.equal(googleCalendar.source, "google");
+  assert.equal(googleCalendar.onboarding.steps[0].title, "Enable Calendar access");
+  assert.equal(googleCalendar.onboarding.steps[0].completeWhen?.buildingAccessConfirmed, true);
 
   const github = BUILDING_CATALOG.find((building) => building.id === "github");
   assert.equal(github.install.system, true);

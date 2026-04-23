@@ -106,7 +106,8 @@ export default defineBuilding({
 - `onboarding.variables[].setting` makes a setup row clickable: the UI looks for a form control with that exact `name`, scrolls to it, focuses it, and briefly highlights it.
 - `onboarding.variables[].focusSelector` can override `setting` when the target is not a normal form control. Keep selectors scoped to first-party UI; BuildingHub community manifests cannot provide executable setup selectors.
 - `onboarding.variables[].setupUrl`, `setupLabel`, and `setupHint` add beginner-friendly help for keys, pairing codes, or provider setup pages. Only use public HTTPS URLs; never put secrets or user-specific codes in manifests.
-- `onboarding.steps[].completeWhen` can use `{ type: "installed" }`, `{ setting: "key" }`, `{ configuredSetting: "key" }`, `{ allConfigured: ["key"] }`, or `{ anyConfigured: ["key"] }`.
+- `onboarding.steps[].completeWhen` can use `{ type: "installed" }`, `{ setting: "key" }`, `{ configuredSetting: "key" }`, `{ allConfigured: ["key"] }`, `{ anyConfigured: ["key"] }`, or `{ buildingAccessConfirmed: true }` for one-click external access confirmations.
+- `onboarding.steps[].setupUrl` and `setupLabel` power the single next-step button shown while that step is incomplete. Keep this copy human-facing: "Enable Calendar access", not protocol or provider plumbing.
 - `agentGuide` powers generated Markdown manuals for Codex, Claude Code, OpenClaw, and shell agents. The generated index is available at `$VIBE_RESEARCH_BUILDING_GUIDES_INDEX`; per-building files live in `$VIBE_RESEARCH_BUILDING_GUIDES_DIR/<building-id>.md`.
 - `agentGuide.commands` are declarative setup or inspection commands for agents to try when appropriate. They are not automatically executed by the catalog.
 - `agentGuide.env` should name runtime environment variables and credential expectations without including secret values.

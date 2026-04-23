@@ -2980,6 +2980,62 @@ input[readonly][data-folder-picker-target] {
   border-top: 1px solid rgba(255, 255, 255, 0.08);
 }
 
+.plugin-next-step {
+  display: grid;
+  gap: 10px;
+  min-width: 0;
+  padding: 16px;
+  border: 1px solid rgba(255, 196, 103, 0.24);
+  border-radius: 8px;
+  background: rgba(255, 196, 103, 0.07);
+}
+
+.plugin-next-step-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  min-width: 0;
+}
+
+.plugin-next-step-head strong {
+  color: rgba(255, 238, 204, 0.96);
+  font-size: 0.82rem;
+}
+
+.plugin-next-step-head span {
+  color: #ffe1ae;
+  font-family: "IBM Plex Mono", monospace;
+  font-size: 0.66rem;
+  font-weight: 700;
+  letter-spacing: 0.03em;
+  text-transform: uppercase;
+  white-space: nowrap;
+}
+
+.plugin-next-step p {
+  max-width: 62ch;
+  margin: 0;
+  color: rgba(244, 247, 251, 0.76);
+  font-size: 0.82rem;
+  line-height: 1.42;
+}
+
+.plugin-next-step-button {
+  gap: 7px;
+  min-height: 36px;
+  padding: 0 14px;
+  border-radius: 999px;
+  font-size: 0.76rem;
+  font-weight: 780;
+  letter-spacing: 0;
+}
+
+.plugin-next-step-button .vr-icon {
+  width: 15px;
+  height: 15px;
+}
+
 .plugin-install-form {
   gap: 9px;
   padding-top: 2px;

@@ -2307,6 +2307,7 @@ export async function createVibeResearchApp({
         browserUseModel: request.body?.browserUseModel,
         browserUseProfileDir: request.body?.browserUseProfileDir,
         browserUseWorkerPath: request.body?.browserUseWorkerPath,
+        buildingAccessConfirmedIds: request.body?.buildingAccessConfirmedIds,
         buildingHubCatalogPath: request.body?.buildingHubCatalogPath,
         buildingHubCatalogUrl: request.body?.buildingHubCatalogUrl,
         buildingHubEnabled: request.body?.buildingHubEnabled,

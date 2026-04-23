@@ -1519,13 +1519,11 @@ test("Telegram building detail saves through fetch and opens placement without e
 
     await page.getByRole("button", { name: "Open Telegram building" }).click();
     await page.waitForFunction(() => new URL(window.location.href).searchParams.get("building") === "telegram");
+    await page.locator(".plugin-detail-copy .plugin-status").getByText("not configured", { exact: true }).waitFor({ timeout: 10_000 });
+    assert.equal(await page.locator(".plugin-next-step").count(), 1);
+    assert.equal(await page.locator(".plugin-onboarding-steps").count(), 0);
+    assert.equal(await page.locator(".plugin-onboarding-vars").count(), 0);
     await page.getByLabel("Telegram bot token").waitFor({ timeout: 10_000 });
-    await page.locator('[data-plugin-setup-setting="telegramBotToken"]').click();
-    await page.waitForFunction(() => document.activeElement?.getAttribute("name") === "telegramBotToken");
-    assert.equal(
-      await page.locator('a.plugin-onboarding-var-help[href="https://telegram.me/botfather"]').count(),
-      1,
-    );
 
     await page.getByRole("button", { name: "Back to BuildingHub", exact: true }).click();
     await page.waitForFunction(() => !new URL(window.location.href).searchParams.has("building"));
@@ -1560,15 +1558,15 @@ test("Telegram building detail saves through fetch and opens placement without e
   }
 });
 
-test("Google Drive building opens as a host connector without fake local-agent install", async (t) => {
+test("Google access buildings show one friendly next step before configuration", async (t) => {
   const executablePath = await resolveBrowserExecutablePath({ env: process.env });
   if (!executablePath) {
-    t.skip("No local Chromium/Chrome executable is available for the Google Drive building smoke.");
+    t.skip("No local Chromium/Chrome executable is available for the Google building setup smoke.");
     return;
   }
 
-  const workspaceDir = await createTempWorkspace("vibe-research-google-drive-building-ui-");
-  const stateDir = await createTempWorkspace("vibe-research-google-drive-building-state-");
+  const workspaceDir = await createTempWorkspace("vibe-research-google-building-ui-");
+  const stateDir = await createTempWorkspace("vibe-research-google-building-state-");
   const wikiDir = path.join(workspaceDir, "brain");
   await mkdir(wikiDir, { recursive: true });
   await mkdir(stateDir, { recursive: true });
@@ -1596,19 +1594,47 @@ test("Google Drive building opens as a host connector without fake local-agent i
   try {
     browser = await chromium.launch({ executablePath, headless: true });
     const page = await browser.newPage();
+    await page.addInitScript(() => {
+      window.__openedSetupUrls = [];
+      const originalOpen = window.open.bind(window);
+      window.open = (url, target, features) => {
+        window.__openedSetupUrls.push(String(url || ""));
+        return originalOpen("about:blank", target, features);
+      };
+    });
     await page.goto(`${baseUrl}/?view=plugins`, { waitUntil: "domcontentloaded" });
     assert.equal(await page.getByRole("button", { name: "Install Google Drive" }).count(), 0);
     assert.equal(await page.locator("#plugin-results .plugin-onboarding").count(), 0);
 
     await page.getByRole("button", { name: "Open Google Drive building" }).click();
     await page.waitForFunction(() => new URL(window.location.href).searchParams.get("building") === "google-drive");
-    await page.locator(".plugin-detail-copy .plugin-status").getByText("MCP-ready", { exact: true }).waitFor({ timeout: 10_000 });
-    await page.getByText(/does not inject Drive tools into local terminal agents/i).waitFor({ timeout: 10_000 });
+    await page.locator(".plugin-detail-copy .plugin-status").getByText("not configured", { exact: true }).waitFor({ timeout: 10_000 });
+    await page.getByRole("button", { name: "Enable Drive access" }).waitFor({ timeout: 10_000 });
+    assert.equal(await page.locator(".plugin-access-panel").count(), 0);
+    assert.equal(await page.locator(".plugin-onboarding-steps").count(), 0);
+    assert.equal(await page.getByText(/MCP|Connect the MCP/i).count(), 0);
     assert.equal(await page.getByRole("button", { name: "Install Google Drive" }).count(), 0);
     assert.equal(await page.getByRole("button", { name: /finish install/i }).count(), 0);
 
+    await page.getByRole("button", { name: "Enable Drive access" }).click();
+    await page.waitForFunction(async () => {
+      const response = await fetch("/api/settings");
+      const payload = await response.json();
+      return Array.isArray(payload.settings?.buildingAccessConfirmedIds)
+        && payload.settings.buildingAccessConfirmedIds.includes("google-drive");
+    });
+    assert.deepEqual(await page.evaluate(() => window.__openedSetupUrls), ["https://drive.google.com/"]);
+    await page.locator(".plugin-detail-copy .plugin-status").getByText("ready", { exact: true }).waitFor({ timeout: 10_000 });
+
     await page.getByRole("button", { name: "Back to BuildingHub", exact: true }).click();
     await page.waitForFunction(() => !new URL(window.location.href).searchParams.has("building"));
+    await page.getByRole("button", { name: "Open Google Calendar building" }).click();
+    await page.waitForFunction(() => new URL(window.location.href).searchParams.get("building") === "google-calendar");
+    await page.locator(".plugin-detail-copy .plugin-status").getByText("not configured", { exact: true }).waitFor({ timeout: 10_000 });
+    await page.getByRole("button", { name: "Enable Calendar access" }).waitFor({ timeout: 10_000 });
+    assert.equal(await page.locator(".plugin-access-panel").count(), 0);
+    assert.equal(await page.locator(".plugin-onboarding-steps").count(), 0);
+    assert.equal(await page.getByText(/MCP|Connect the MCP/i).count(), 0);
   } finally {
     await browser?.close().catch(() => {});
     await app.close();
@@ -2549,10 +2575,11 @@ test("external connector buildings open details and install from their building 
       await cardOpen.click();
       await page.waitForFunction((buildingId) => new URL(window.location.href).searchParams.get("building") === buildingId, connector.id);
       await page.getByRole("heading", { name: connector.name }).waitFor({ timeout: 10_000 });
-      await page.locator(".plugin-detail-copy .plugin-status").getByText("not installed", { exact: true }).waitFor({ timeout: 10_000 });
-      await page.locator(".plugin-access-panel").filter({ hasText: connector.access }).waitFor({ timeout: 10_000 });
-      await page.getByRole("button", { name: /finish install/i }).waitFor({ timeout: 10_000 });
-      await page.getByRole("button", { name: /finish install/i }).click();
+      await page.locator(".plugin-detail-copy .plugin-status").getByText("not configured", { exact: true }).waitFor({ timeout: 10_000 });
+      assert.equal(await page.locator(".plugin-access-panel").count(), 0);
+      assert.equal(await page.locator(".plugin-onboarding-steps").count(), 0);
+      await page.getByRole("button", { name: `Add ${connector.name}` }).waitFor({ timeout: 10_000 });
+      await page.getByRole("button", { name: `Add ${connector.name}` }).click();
       await page.waitForFunction(
         async (pluginId) => {
           const response = await fetch("/api/settings");
@@ -2563,7 +2590,8 @@ test("external connector buildings open details and install from their building 
       );
       await page.locator(".dashboard-actions .plugin-install-button").getByText("Uninstall", { exact: true }).waitFor({ timeout: 10_000 });
       await page.locator(".plugin-detail-copy .plugin-status").getByText("installed", { exact: true }).waitFor({ timeout: 10_000 });
-      assert.equal(await page.getByRole("button", { name: /finish install/i }).count(), 0);
+      await page.locator(".plugin-access-panel").filter({ hasText: connector.access }).waitFor({ timeout: 10_000 });
+      assert.equal(await page.getByRole("button", { name: new RegExp(`Add ${connector.name}`) }).count(), 0);
       await page.getByRole("button", { name: "Back to BuildingHub", exact: true }).click();
       await page.waitForFunction(() => !new URL(window.location.href).searchParams.has("building"));
       assert.equal(await page.locator("#plugin-results .plugin-onboarding").count(), 0);

@@ -100,6 +100,10 @@ function normalizeCompleteWhen(completeWhen) {
     return null;
   }
 
+  if (completeWhen.buildingAccessConfirmed) {
+    return { buildingAccessConfirmed: true };
+  }
+
   if (completeWhen.type === "installed") {
     return { type: "installed" };
   }
@@ -140,6 +144,8 @@ function normalizeOnboardingStep(step, index) {
 
   const title = normalizeText(step.title || `Step ${index + 1}`, 160);
   const detail = normalizeText(step.detail || step.description, 700);
+  const setupUrl = normalizeOptionalUrl(step.setupUrl || step.helpUrl || step.url);
+  const setupLabel = normalizeText(step.setupLabel || step.actionLabel || step.helpLabel, 80);
   if (!title && !detail) {
     return null;
   }
@@ -148,6 +154,8 @@ function normalizeOnboardingStep(step, index) {
   return {
     title,
     detail,
+    ...(setupUrl ? { setupUrl } : {}),
+    ...(setupLabel ? { setupLabel } : {}),
     ...(completeWhen ? { completeWhen } : {}),
   };
 }

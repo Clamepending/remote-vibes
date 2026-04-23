@@ -1574,6 +1574,7 @@ const state = {
     videoMemoryEnabled: false,
     videoMemoryProviderId: "claude",
     videoMemoryStatus: null,
+    buildingAccessConfirmedIds: [],
     installedPluginIds: [],
     preventSleepEnabled: true,
     sleepPrevention: null,
@@ -11968,6 +11969,26 @@ function getPluginMissingConfiguration(plugin) {
   return variables.find((variable) => variable?.required && !isOnboardingVariableConfigured(variable)) || null;
 }
 
+function getBuildingAccessConfirmedIds() {
+  return new Set(
+    Array.isArray(state.settings?.buildingAccessConfirmedIds)
+      ? state.settings.buildingAccessConfirmedIds.map(normalizeBuildingId).filter(Boolean)
+      : [],
+  );
+}
+
+function isPluginBuildingAccessConfirmed(plugin) {
+  const pluginId = getPluginId(plugin);
+  return Boolean(pluginId && getBuildingAccessConfirmedIds().has(pluginId));
+}
+
+function getPluginIncompleteOnboardingStep(plugin) {
+  const steps = Array.isArray(plugin?.onboarding?.steps) ? plugin.onboarding.steps : [];
+  return steps.find((step) =>
+    step?.completeWhen?.buildingAccessConfirmed && !isPluginOnboardingStepComplete(plugin, step)
+  ) || null;
+}
+
 function getPluginBuildingIssue(plugin) {
   if (!plugin) {
     return null;
@@ -11990,6 +12011,14 @@ function getPluginBuildingIssue(plugin) {
   if (enabledSetting && state.settings?.[enabledSetting] !== true) {
     return {
       detail: "This building is installed but disabled.",
+      label: "not configured",
+    };
+  }
+
+  const incompleteStep = getPluginIncompleteOnboardingStep(plugin);
+  if (incompleteStep) {
+    return {
+      detail: incompleteStep.detail || `${incompleteStep.title || "Next step"} is not done yet.`,
       label: "not configured",
     };
   }
@@ -12046,12 +12075,25 @@ function getOnboardingVariableSetupUrl(variable) {
   return normalizePluginSetupUrl(variable?.setupUrl || variable?.helpUrl || variable?.url);
 }
 
+function getOnboardingStepSetupUrl(step) {
+  return normalizePluginSetupUrl(step?.setupUrl || step?.helpUrl || step?.url);
+}
+
 function getOnboardingVariableSetupLabel(variable) {
   const label = String(variable?.setupLabel || variable?.helpLabel || "").trim();
   if (label) {
     return label;
   }
   return variable?.secret ? "Get key" : "Open guide";
+}
+
+function getOnboardingStepSetupLabel(step) {
+  const label = String(step?.setupLabel || step?.actionLabel || step?.helpLabel || "").trim();
+  if (label) {
+    return label;
+  }
+  const title = String(step?.title || "").trim();
+  return title || "Continue";
 }
 
 function getOnboardingVariableActionHint(variable, configured) {
@@ -12151,6 +12193,10 @@ function isPluginOnboardingStepComplete(plugin, step) {
   const check = step?.completeWhen;
   if (!check || typeof check !== "object") {
     return false;
+  }
+
+  if (check.buildingAccessConfirmed) {
+    return isPluginBuildingAccessConfirmed(plugin);
   }
 
   if (check.type === "installed") {
@@ -12344,6 +12390,142 @@ function renderPluginInstallSetup(plugin) {
     default:
       return "";
   }
+}
+
+function getPluginNextSetupAction(plugin) {
+  const pluginId = getPluginId(plugin);
+  const setupForm = renderPluginInstallSetup(plugin);
+
+  if (getPluginPendingAction(plugin)) {
+    return null;
+  }
+
+  if (!isPluginInstalled(plugin)) {
+    return setupForm
+      ? { type: "form", detail: "Enable this building and save the required access.", form: setupForm }
+      : {
+          type: "install",
+          detail: "Add this building to Agent Town.",
+          label: `Add ${plugin.name}`,
+          pluginId,
+        };
+  }
+
+  const enabledSetting = String(plugin?.install?.enabledSetting || "").trim();
+  if (enabledSetting && state.settings?.[enabledSetting] !== true) {
+    return setupForm
+      ? { type: "form", detail: "Enable this building and save the required access.", form: setupForm }
+      : {
+          type: "enable",
+          detail: `Enable ${plugin.name} for Agent Town.`,
+          label: `Enable ${plugin.name}`,
+          pluginId,
+        };
+  }
+
+  const missingVariable = getPluginMissingConfiguration(plugin);
+  if (missingVariable) {
+    return setupForm
+      ? { type: "form", detail: `Add ${missingVariable.label || "the required value"}.`, form: setupForm }
+      : {
+          type: "variable",
+          detail: getOnboardingVariableActionHint(missingVariable, false),
+          label: missingVariable.label || missingVariable.setting || "Add required access",
+          pluginId,
+          setupUrl: getOnboardingVariableSetupUrl(missingVariable),
+          setupLabel: getOnboardingVariableSetupLabel(missingVariable),
+          target: getOnboardingVariableSetupTarget(plugin, missingVariable),
+        };
+  }
+
+  const incompleteStep = getPluginIncompleteOnboardingStep(plugin);
+  if (incompleteStep) {
+    return {
+      type: incompleteStep.completeWhen?.buildingAccessConfirmed ? "confirm-access" : "step",
+      detail: incompleteStep.detail || "",
+      label: getOnboardingStepSetupLabel(incompleteStep),
+      pluginId,
+      setupUrl: getOnboardingStepSetupUrl(incompleteStep),
+    };
+  }
+
+  const runtimeIssue = getPluginRuntimeIssue(plugin);
+  if (runtimeIssue) {
+    return setupForm
+      ? { type: "form", detail: runtimeIssue.detail || "Review the building setup.", form: setupForm }
+      : {
+          type: "review",
+          detail: runtimeIssue.detail || "Review the building setup.",
+          label: "Review access",
+          pluginId,
+        };
+  }
+
+  return null;
+}
+
+function renderPluginNextSetupAction(plugin, issue = getPluginBuildingIssue(plugin)) {
+  const action = getPluginNextSetupAction(plugin);
+  if (!action) {
+    return "";
+  }
+
+  if (action.type === "form") {
+    return `
+      <section class="plugin-next-step" aria-label="${escapeHtml(`${plugin.name} next step`)}" data-plugin-setup-root="${escapeHtml(getPluginId(plugin))}">
+        <div class="plugin-next-step-head">
+          <strong>Next step</strong>
+          ${issue?.label ? `<span>${escapeHtml(issue.label)}</span>` : ""}
+        </div>
+        ${action.detail ? `<p>${escapeHtml(action.detail)}</p>` : ""}
+        ${action.form}
+      </section>
+    `;
+  }
+
+  const buttonLabel = action.label || "Continue";
+  const setupUrl = action.setupUrl || "";
+  const confirmAttrs = action.type === "confirm-access"
+    ? `data-plugin-confirm-access="${escapeHtml(action.pluginId)}" data-plugin-setup-url="${escapeHtml(setupUrl)}"`
+    : "";
+  const installAttrs = action.type === "install" || action.type === "enable"
+    ? `data-plugin-finish-install="${escapeHtml(action.pluginId)}"`
+    : "";
+  const variableAttrs = action.type === "variable" && action.target
+    ? `data-plugin-setup-focus="${escapeHtml(action.target.pluginId)}" data-plugin-setup-setting="${escapeHtml(action.target.setting)}" data-plugin-setup-selector="${escapeHtml(action.target.selector)}"`
+    : "";
+  const fallbackHref = action.type === "variable" && setupUrl
+    ? `href="${escapeHtml(setupUrl)}" target="_blank" rel="noreferrer"`
+    : "";
+  const canRenderButton = Boolean(confirmAttrs || installAttrs || variableAttrs);
+
+  return `
+    <section class="plugin-next-step" aria-label="${escapeHtml(`${plugin.name} next step`)}" data-plugin-setup-root="${escapeHtml(getPluginId(plugin))}">
+      <div class="plugin-next-step-head">
+        <strong>Next step</strong>
+        ${issue?.label ? `<span>${escapeHtml(issue.label)}</span>` : ""}
+      </div>
+      ${action.detail ? `<p>${escapeHtml(action.detail)}</p>` : ""}
+      <div class="plugin-onboarding-actions">
+        ${
+          canRenderButton
+            ? `<button class="primary-button plugin-next-step-button" type="button" ${confirmAttrs || installAttrs || variableAttrs}>
+                <span aria-hidden="true">${renderIcon(plugin.icon || Plug)}</span>
+                <span>${escapeHtml(buttonLabel)}</span>
+              </button>`
+            : fallbackHref
+              ? `<a class="primary-button plugin-next-step-button" ${fallbackHref}>
+                  <span aria-hidden="true">${renderIcon(plugin.icon || Plug)}</span>
+                  <span>${escapeHtml(action.setupLabel || buttonLabel)}</span>
+                </a>`
+              : `<button class="primary-button plugin-next-step-button" type="button" disabled>
+                  <span aria-hidden="true">${renderIcon(plugin.icon || Plug)}</span>
+                  <span>${escapeHtml(buttonLabel)}</span>
+                </button>`
+        }
+      </div>
+    </section>
+  `;
 }
 
 function renderBrowserUseInstallForm() {
@@ -12647,6 +12829,10 @@ function renderPluginCards() {
 }
 
 function renderPluginDetailAction(plugin) {
+  if (getPluginBuildingIssue(plugin)) {
+    return "";
+  }
+
   const installed = isPluginInstalled(plugin);
   if (hasPluginSetupFlow(plugin) && !installed) {
     return "";
@@ -12684,6 +12870,11 @@ function renderPluginWorkspaceAction(plugin) {
 }
 
 function renderPluginDetailSettings(plugin) {
+  const issue = getPluginBuildingIssue(plugin);
+  if (issue) {
+    return renderPluginNextSetupAction(plugin, issue);
+  }
+
   const access = getPluginAccess(plugin);
   const setup = renderPluginOnboarding(plugin, { force: true });
   const workspaceAction = renderPluginWorkspaceAction(plugin);
@@ -12715,8 +12906,10 @@ function renderPluginDetailSettings(plugin) {
 
 function renderPluginDetailView(plugin) {
   const pluginId = getPluginId(plugin);
+  const issue = getPluginBuildingIssue(plugin);
   const progress = getPluginOnboardingProgress(plugin);
-  const progressLabel = progress.total ? `${progress.complete}/${progress.total} checks ready` : getPluginStatusLabel(plugin);
+  const statusLabel = getPluginStatusBadgeLabel(plugin, issue);
+  const progressLabel = issue?.label || (progress.total ? `${progress.complete}/${progress.total} checks ready` : getPluginStatusLabel(plugin));
 
   return `
     <section class="dashboard-panel main-view plugins-view plugin-detail-view" ${renderMainViewAttributes(
@@ -12731,7 +12924,7 @@ function renderPluginDetailView(plugin) {
         </button>
         <div class="dashboard-copy">
           <strong>${escapeHtml(plugin.name)}</strong>
-          <div class="terminal-meta">${escapeHtml(`${plugin.category} · ${getPluginStatusLabel(plugin)} · ${progressLabel}`)}</div>
+          <div class="terminal-meta">${escapeHtml(`${plugin.category} · ${statusLabel} · ${progressLabel}`)}</div>
         </div>
         <div class="dashboard-actions">
           ${renderPluginDetailAction(plugin)}
@@ -12739,12 +12932,12 @@ function renderPluginDetailView(plugin) {
       </div>
       <div class="plugin-detail-layout">
         <section class="plugin-detail-hero">
-          ${renderPluginBuilding(plugin)}
+          ${renderPluginBuilding(plugin, { issue })}
           <div class="plugin-detail-copy">
             <span class="main-search-kind">${escapeHtml(plugin.source || "building")}</span>
             <h2>${escapeHtml(plugin.name)}</h2>
             <p>${escapeHtml(plugin.description)}</p>
-            <span class="plugin-status">${escapeHtml(getPluginStatusLabel(plugin))}</span>
+            <span class="plugin-status ${issue ? "is-warning" : ""}">${escapeHtml(statusLabel)}</span>
           </div>
         </section>
         <section class="plugin-detail-settings">
@@ -16531,8 +16724,7 @@ function renderVisualGamePluginBuildingPanel(plugin) {
           <p>${escapeHtml(plugin.description)}</p>
           <span class="plugin-status ${issue ? "is-warning" : ""}">${escapeHtml(getPluginStatusBadgeLabel(plugin, issue))}</span>
           ${renderAgentTownBuildingHealthBadge(health)}
-          <div class="settings-status ${health.status === "blocked" || health.status === "warning" ? "is-warning" : ""}">${escapeHtml(health.detail)}</div>
-          ${issue?.detail ? `<div class="settings-status is-warning">${escapeHtml(issue.detail)}</div>` : ""}
+          ${issue ? "" : `<div class="settings-status ${health.status === "blocked" || health.status === "warning" ? "is-warning" : ""}">${escapeHtml(health.detail)}</div>`}
         </div>
       </section>
       <section class="plugin-detail-settings visual-building-plugin-settings">
@@ -26559,6 +26751,34 @@ async function setPluginInstalled(pluginId, installed, { force = false, placeAft
   }
 }
 
+async function confirmPluginBuildingAccess(pluginId, setupUrl = "") {
+  const normalizedPluginId = normalizeBuildingId(pluginId);
+  const plugin = getPluginById(normalizedPluginId);
+  if (!plugin) {
+    return;
+  }
+
+  const url = normalizePluginSetupUrl(setupUrl);
+  if (url) {
+    window.open(url, "_blank", "noopener,noreferrer");
+  }
+
+  const confirmedIds = getBuildingAccessConfirmedIds();
+  confirmedIds.add(normalizedPluginId);
+  const payload = await fetchJson("/api/settings", {
+    method: "PATCH",
+    body: JSON.stringify({
+      buildingAccessConfirmedIds: [...confirmedIds].sort(),
+    }),
+  });
+
+  applySettingsState(payload.settings);
+  if (payload.agentPrompt) {
+    applyAgentPromptState(payload.agentPrompt);
+  }
+  renderShell();
+}
+
 function findNamedSetupControl(setting, root = document) {
   if (!setting) {
     return null;
@@ -26706,6 +26926,24 @@ function handlePluginSetupFocus(button) {
 }
 
 function bindPluginCardEvents() {
+  document.querySelectorAll("[data-plugin-confirm-access]").forEach((button) => {
+    button.addEventListener("click", () => {
+      if (!(button instanceof HTMLButtonElement)) {
+        return;
+      }
+
+      button.disabled = true;
+      button.querySelector("span:last-child")?.replaceChildren(document.createTextNode("Opening..."));
+      void confirmPluginBuildingAccess(
+        button.getAttribute("data-plugin-confirm-access") || "",
+        button.getAttribute("data-plugin-setup-url") || "",
+      ).catch((error) => {
+        window.alert(error.message);
+        renderShell();
+      });
+    });
+  });
+
   document.querySelectorAll("[data-plugin-setup-focus]").forEach((button) => {
     button.addEventListener("click", () => {
       if (!(button instanceof HTMLButtonElement)) {
@@ -29879,6 +30117,9 @@ function applySettingsState(payload) {
     videoMemoryProviderId:
       settings.videoMemoryProviderId || state.settings.videoMemoryProviderId || "claude",
     videoMemoryStatus: videoMemoryStatus || null,
+    buildingAccessConfirmedIds: Array.isArray(settings.buildingAccessConfirmedIds)
+      ? settings.buildingAccessConfirmedIds.map((pluginId) => String(pluginId || "")).filter(Boolean)
+      : state.settings.buildingAccessConfirmedIds || [],
     installedPluginIds: Array.isArray(settings.installedPluginIds)
       ? settings.installedPluginIds.map((pluginId) => String(pluginId || "")).filter(Boolean)
       : state.settings.installedPluginIds || [],

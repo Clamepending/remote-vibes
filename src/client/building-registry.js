@@ -643,22 +643,26 @@ const CORE_BUILDING_MANIFESTS = [
     install: {
       system: true,
     },
-    status: "MCP-ready",
-    source: "mcp",
+    status: "ready",
+    source: "google",
     access: {
-      label: "Host connector",
-      detail: "Available to host agents with the Google Drive connector enabled. Vibe Research does not inject Drive tools into local terminal agents.",
+      label: "Google access",
+      detail: "Drive access is enabled for this town. Keep the shared folders narrow so agents see only the files they need.",
     },
     onboarding: {
       variables: [
-        { label: "Google account", value: "connected host MCP account", required: true },
+        { label: "Google account", value: "Drive access enabled", required: true },
         { label: "Shared drive scope", value: "docs/sheets/slides access", required: false },
-        { label: "Local terminal agents", value: "provider MCP required", required: false },
       ],
       steps: [
-        { title: "Connect the MCP", detail: "Authorize Drive in the host agent that will use this building." },
+        {
+          title: "Enable Drive access",
+          detail: "Sign in with Google and allow Drive access for the account agents should use.",
+          setupUrl: "https://drive.google.com/",
+          setupLabel: "Enable Drive access",
+          completeWhen: { buildingAccessConfirmed: true },
+        },
         { title: "Name the source", detail: "Tell agents which folders, docs, or sheets are relevant." },
-        { title: "Local agents", detail: "Configure Google Drive in the local CLI/provider separately if a terminal agent needs direct access." },
       ],
     },
   },
@@ -671,19 +675,25 @@ const CORE_BUILDING_MANIFESTS = [
     install: {
       system: true,
     },
-    status: "MCP-ready",
-    source: "mcp",
+    status: "ready",
+    source: "google",
     access: {
-      label: "Host connector",
-      detail: "Available to host agents with the Google Calendar connector enabled. Local terminal agents need their own provider calendar connector.",
+      label: "Google access",
+      detail: "Calendar access is enabled for this town. Keep the calendar scope narrow enough for agents to reason about safely.",
     },
     onboarding: {
       variables: [
-        { label: "Google account", value: "connected MCP account", required: true },
+        { label: "Google account", value: "Calendar access enabled", required: true },
         { label: "Calendar scope", value: "event and availability access", required: true },
       ],
       steps: [
-        { title: "Connect the MCP", detail: "Authorize Calendar in the agent host that will run this building." },
+        {
+          title: "Enable Calendar access",
+          detail: "Sign in with Google and allow Calendar access for the account agents should use.",
+          setupUrl: "https://calendar.google.com/",
+          setupLabel: "Enable Calendar access",
+          completeWhen: { buildingAccessConfirmed: true },
+        },
         { title: "Pick calendars", detail: "Keep the account scope narrow enough for agents to reason about." },
       ],
     },

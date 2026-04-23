@@ -306,6 +306,7 @@ export class SettingsStore {
       videoMemoryEnabled: false,
       videoMemoryProviderId: "claude",
       agentAutomations: [],
+      buildingAccessConfirmedIds: [],
       installedPluginIds: [],
       preventSleepEnabled: true,
       wikiGitBackupEnabled: true,
@@ -470,6 +471,9 @@ export class SettingsStore {
       videoMemoryEnabled: normalizeBoolean(payload.videoMemoryEnabled, defaults.videoMemoryEnabled),
       videoMemoryProviderId: normalizeAgentProviderId(payload.videoMemoryProviderId || defaults.videoMemoryProviderId),
       agentAutomations: normalizeAgentAutomations(payload.agentAutomations || defaults.agentAutomations),
+      buildingAccessConfirmedIds: normalizePluginIds(
+        payload.buildingAccessConfirmedIds || defaults.buildingAccessConfirmedIds,
+      ),
       installedPluginIds: normalizePluginIds(payload.installedPluginIds || defaults.installedPluginIds),
       preventSleepEnabled: normalizeBoolean(
         payload.preventSleepEnabled,
