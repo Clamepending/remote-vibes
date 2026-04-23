@@ -26,7 +26,8 @@
       {
         "provider": "github",
         "owner": "Clamepending",
-        "repo": "vibe-research"
+        "repo": "vibe-research",
+        "releaseType": "release"
       }
     ],
     "files": [
