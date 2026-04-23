@@ -4857,6 +4857,10 @@ input[readonly][data-folder-picker-target] {
   top: 0;
 }
 
+.settings-layout .mcp-import-card {
+  position: static;
+}
+
 .plugins-side-stack .mcp-import-card {
   position: static;
 }

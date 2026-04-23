@@ -135,6 +135,7 @@ const AGENT_SETUP_PENDING_STORAGE_KEY = "vibeResearch.agentSetupPending.v1";
 const AGENT_TOWN_SHARE_TEXT = "I set up my vibe-research.net town!";
 const AGENT_TOWN_SHARE_URL = "https://vibe-research.net";
 const AGENT_TOWN_SHARE_INTENT_URL = "https://twitter.com/intent/tweet";
+const AGENT_TOWN_SHARE_CLIPBOARD_TIMEOUT_MS = 1500;
 const SESSION_WORKING_SPINNER_MS = 900;
 const FILE_IMAGE_MIN_ZOOM = 1;
 const FILE_IMAGE_MAX_ZOOM = 8;
@@ -10895,6 +10896,12 @@ function waitForAnimationFrames(count = 1) {
   });
 }
 
+function delay(ms, value) {
+  return new Promise((resolve) => {
+    window.setTimeout(() => resolve(value), Math.max(0, Number(ms) || 0));
+  });
+}
+
 async function waitForAgentTownCanvas() {
   for (let attempt = 0; attempt < 20; attempt += 1) {
     const canvas = document.querySelector("#visual-game-canvas");
@@ -10910,10 +10917,19 @@ async function waitForAgentTownCanvas() {
 
 async function getAgentTownShareCanvas() {
   const canvas = document.querySelector("#visual-game-canvas");
+  let openPromise = null;
   if (!(canvas instanceof HTMLCanvasElement)) {
-    await openVisualInterface();
+    openPromise = openVisualInterface().catch((error) => {
+      console.warn("[vibe-research] Agent Town share view open failed", error);
+    });
   }
 
+  const readyCanvas = await waitForAgentTownCanvas();
+  if (readyCanvas || !openPromise) {
+    return readyCanvas;
+  }
+
+  await openPromise;
   return waitForAgentTownCanvas();
 }
 
@@ -10923,9 +10939,13 @@ function getCanvasPngBlob(canvas) {
   }
 
   if (typeof canvas.toBlob === "function") {
-    return new Promise((resolve) => {
-      canvas.toBlob((blob) => resolve(blob), "image/png");
-    });
+    try {
+      return new Promise((resolve) => {
+        canvas.toBlob((blob) => resolve(blob), "image/png");
+      });
+    } catch {
+      return Promise.resolve(null);
+    }
   }
 
   try {
@@ -10962,6 +10982,36 @@ async function copyAgentTownScreenshotToClipboard(blob) {
   }
 }
 
+function getAgentTownShareClipboardTimeoutMs() {
+  const testOverride = Number(globalThis.__agentTownShareClipboardTimeoutMs);
+  if (Number.isFinite(testOverride) && testOverride >= 0) {
+    return testOverride;
+  }
+
+  return AGENT_TOWN_SHARE_CLIPBOARD_TIMEOUT_MS;
+}
+
+async function copyAgentTownScreenshotToClipboardWithTimeout() {
+  const timedOut = Symbol("agent-town-share-timeout");
+  const copyPromise = (async () => {
+    const screenshotBlob = await captureAgentTownScreenshotBlob();
+    return copyAgentTownScreenshotToClipboard(screenshotBlob);
+  })().catch((error) => {
+    console.warn("[vibe-research] Agent Town screenshot capture failed", error);
+    return false;
+  });
+
+  const result = await Promise.race([
+    copyPromise,
+    delay(getAgentTownShareClipboardTimeoutMs(), timedOut),
+  ]);
+
+  return {
+    copied: result === true,
+    timedOut: result === timedOut,
+  };
+}
+
 function openAgentTownSharePlaceholderWindow() {
   try {
     const targetWindow = window.open("about:blank", "_blank");
@@ -10971,9 +11021,11 @@ function openAgentTownSharePlaceholderWindow() {
 
     targetWindow.opener = null;
     targetWindow.document.title = "Share Agent Town";
+    const intentUrl = getAgentTownShareIntentUrl();
     targetWindow.document.body.innerHTML = `
-      <main style="display:grid;place-items:center;min-height:100vh;margin:0;background:#111114;color:#f4f4f2;font:16px sans-serif;">
-        Preparing Agent Town share...
+      <main style="display:grid;gap:12px;place-items:center;align-content:center;min-height:100vh;margin:0;background:#111114;color:#f4f4f2;font:16px sans-serif;text-align:center;">
+        <div>Preparing Agent Town share...</div>
+        <a href="${escapeHtml(intentUrl)}" style="color:#8ab4f8;">Open Twitter now</a>
       </main>
     `;
     return targetWindow;
@@ -10986,11 +11038,21 @@ function openAgentTownTwitterIntent(targetWindow = null) {
   const intentUrl = getAgentTownShareIntentUrl();
   try {
     if (targetWindow && !targetWindow.closed) {
-      targetWindow.location.replace(intentUrl);
+      targetWindow.location.href = intentUrl;
+      try {
+        targetWindow.focus?.();
+      } catch {
+        // Focusing a prepared popup is best-effort; navigation already happened.
+      }
       return true;
     }
   } catch {
-    // Fall back to opening a fresh window below.
+    try {
+      targetWindow.location.replace(intentUrl);
+      return true;
+    } catch {
+      // Fall back to opening a fresh window below.
+    }
   }
 
   const opened = window.open(intentUrl, "_blank", "noopener,noreferrer");
@@ -11000,6 +11062,18 @@ function openAgentTownTwitterIntent(targetWindow = null) {
   return Boolean(opened);
 }
 
+function getAgentTownShareToastMessage({ screenshotCopied = false, screenshotTimedOut = false } = {}) {
+  if (screenshotCopied) {
+    return "Twitter opened with the share text. Paste the copied screenshot into the post if it is not attached automatically.";
+  }
+
+  if (screenshotTimedOut) {
+    return "Twitter opened with the share text. The screenshot copy is taking too long, so add the image manually if needed.";
+  }
+
+  return "Twitter opened with the share text. This browser did not allow copying the Agent Town screenshot.";
+}
+
 async function shareAgentTownToTwitter({ targetWindow = null } = {}) {
   if (state.agentTownShare.inProgress) {
     return;
@@ -11007,17 +11081,17 @@ async function shareAgentTownToTwitter({ targetWindow = null } = {}) {
 
   setAgentTownShareInProgress(true);
   let screenshotCopied = false;
+  let screenshotTimedOut = false;
 
   try {
-    const screenshotBlob = await captureAgentTownScreenshotBlob();
-    screenshotCopied = await copyAgentTownScreenshotToClipboard(screenshotBlob);
+    const screenshotResult = await copyAgentTownScreenshotToClipboardWithTimeout();
+    screenshotCopied = screenshotResult.copied;
+    screenshotTimedOut = screenshotResult.timedOut;
     openAgentTownTwitterIntent(targetWindow);
     setAgentTownShareToast({
       type: "info",
       title: screenshotCopied ? "Agent Town screenshot copied" : "Twitter is ready",
-      message: screenshotCopied
-        ? "Twitter opened with the share text. Paste the copied screenshot into the post if it is not attached automatically."
-        : "Twitter opened with the share text. This browser did not allow copying the Agent Town screenshot.",
+      message: getAgentTownShareToastMessage({ screenshotCopied, screenshotTimedOut }),
     });
   } catch (error) {
     console.error(error);

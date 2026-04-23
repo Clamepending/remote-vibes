@@ -1440,6 +1440,78 @@ export async function createVibeResearchApp({
     }
   });
 
+  app.post("/api/agent-town/layout/validate", async (request, response) => {
+    try {
+      const validation = await agentTownStore.validateLayout(request.body || {});
+      response.json({ validation });
+    } catch (error) {
+      response.status(error.statusCode || 400).json({ error: error.message || "Could not validate Agent Town layout." });
+    }
+  });
+
+  app.put("/api/agent-town/layout", async (request, response) => {
+    try {
+      const payload = await agentTownStore.importLayout(request.body || {});
+      response.json({
+        validation: payload.validation,
+        agentTown: payload.state,
+      });
+    } catch (error) {
+      response.status(error.statusCode || 400).json({
+        error: error.message || "Could not import Agent Town layout.",
+        validation: error.validation,
+      });
+    }
+  });
+
+  app.post("/api/agent-town/layout/snapshots", async (request, response) => {
+    try {
+      const payload = await agentTownStore.createLayoutSnapshot(request.body || {});
+      response.status(201).json({
+        snapshot: payload.snapshot,
+        agentTown: payload.state,
+      });
+    } catch (error) {
+      response.status(error.statusCode || 400).json({ error: error.message || "Could not save Agent Town snapshot." });
+    }
+  });
+
+  app.post("/api/agent-town/layout/snapshots/:snapshotId/restore", async (request, response) => {
+    try {
+      const payload = await agentTownStore.restoreLayoutSnapshot(request.params.snapshotId);
+      response.json({
+        snapshot: payload.snapshot,
+        agentTown: payload.state,
+      });
+    } catch (error) {
+      response.status(error.statusCode || 400).json({ error: error.message || "Could not restore Agent Town snapshot." });
+    }
+  });
+
+  app.post("/api/agent-town/layout/undo", async (_request, response) => {
+    try {
+      const payload = await agentTownStore.undoLayout();
+      response.json({
+        changed: payload.changed,
+        agentTown: payload.state,
+      });
+    } catch (error) {
+      response.status(error.statusCode || 400).json({ error: error.message || "Could not undo Agent Town layout." });
+    }
+  });
+
+  app.post("/api/agent-town/layout/redo", async (_request, response) => {
+    try {
+      const payload = await agentTownStore.redoLayout();
+      response.json({
+        changed: payload.changed,
+        agentTown: payload.state,
+      });
+    } catch (error) {
+      response.status(error.statusCode || 400).json({ error: error.message || "Could not redo Agent Town layout." });
+    }
+  });
+
   app.post("/api/agent-town/events", async (request, response) => {
     try {
       const payload = await agentTownStore.recordEvent(request.body || {});
