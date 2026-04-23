@@ -2110,6 +2110,10 @@ input[readonly][data-folder-picker-target] {
     linear-gradient(180deg, rgba(18, 18, 21, 0.98), rgba(12, 12, 15, 0.98));
 }
 
+.settings-view {
+  grid-template-rows: auto minmax(0, 1fr);
+}
+
 .main-search-shell {
   display: grid;
   grid-template-columns: 24px minmax(0, 1fr) auto;
