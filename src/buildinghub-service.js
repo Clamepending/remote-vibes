@@ -417,6 +417,26 @@ function normalizeLayoutFunctionalPlacements(value) {
   );
 }
 
+function normalizeLayoutOffsetMap(value) {
+  if (!isPlainObject(value)) {
+    return {};
+  }
+
+  return Object.fromEntries(
+    Object.entries(value)
+      .map(([id, offset]) => {
+        const normalizedId = normalizeBuildingId(id);
+        if (!normalizedId || !isPlainObject(offset)) {
+          return null;
+        }
+        const x = normalizeLayoutCoordinate(offset.x);
+        const y = normalizeLayoutCoordinate(offset.y);
+        return x === null || y === null ? null : [normalizedId, { x, y }];
+      })
+      .filter(Boolean),
+  );
+}
+
 function normalizeBuildingHubLayout(layout, { sourceId = "buildinghub" } = {}) {
   if (!isPlainObject(layout)) {
     return null;
@@ -434,12 +454,25 @@ function normalizeBuildingHubLayout(layout, { sourceId = "buildinghub" } = {}) {
   }
 
   const normalizedLayout = {
+    places: normalizeLayoutOffsetMap(blueprint.places),
+    roads: normalizeLayoutOffsetMap(blueprint.roads),
     decorations,
     functional: normalizeLayoutFunctionalPlacements(blueprint.functional),
   };
   const themeId = normalizeBuildingId(blueprint.themeId || layout.themeId || "");
   if (themeId) {
     normalizedLayout.themeId = themeId;
+  }
+  const dogName = normalizeText(blueprint.dogName || layout.dogName, 48);
+  if (dogName) {
+    normalizedLayout.dogName = dogName;
+  }
+  const pendingFunctional = safeArray(blueprint.pendingFunctional)
+    .map(normalizeBuildingId)
+    .filter(Boolean)
+    .slice(0, 80);
+  if (pendingFunctional.length) {
+    normalizedLayout.pendingFunctional = pendingFunctional;
   }
 
   const requiredBuildings = [...new Set(safeArray(layout.requiredBuildings)
@@ -738,11 +771,20 @@ export class BuildingHubService {
       ...layout,
       layout: {
         ...layout.layout,
+        places: Object.fromEntries(
+          Object.entries(isPlainObject(layout.layout?.places) ? layout.layout.places : {})
+            .map(([id, offset]) => [id, { ...offset }]),
+        ),
+        roads: Object.fromEntries(
+          Object.entries(isPlainObject(layout.layout?.roads) ? layout.layout.roads : {})
+            .map(([id, offset]) => [id, { ...offset }]),
+        ),
         decorations: safeArray(layout.layout?.decorations).map((decoration) => ({ ...decoration })),
         functional: Object.fromEntries(
           Object.entries(isPlainObject(layout.layout?.functional) ? layout.layout.functional : {})
             .map(([id, placement]) => [id, { ...placement }]),
         ),
+        pendingFunctional: safeArray(layout.layout?.pendingFunctional),
       },
       tags: [...layout.tags],
       requiredBuildings: [...layout.requiredBuildings],

@@ -285,6 +285,34 @@ function normalizeTownShareVisibility(value) {
   return normalizeSlug(value, 32) === "unlisted" ? "unlisted" : "listed";
 }
 
+function normalizeTownShareBuildingHub(value = {}) {
+  if (!value || typeof value !== "object" || Array.isArray(value)) {
+    return null;
+  }
+
+  const layoutId = normalizeSlug(value.layoutId || value.id, 96).replaceAll("_", "-");
+  const layoutUrl = normalizeText(value.layoutUrl || value.url || value.homepageUrl, 2_000);
+  const repositoryUrl = normalizeText(value.repositoryUrl || value.repoUrl, 2_000);
+  const previewUrl = normalizeText(value.previewUrl || value.imageUrl, 2_000);
+  const commit = normalizeText(value.commit || value.commitSha, 120);
+  if (!layoutId && !layoutUrl && !repositoryUrl && !commit) {
+    return null;
+  }
+
+  return {
+    layoutId,
+    layoutUrl,
+    repositoryUrl,
+    previewUrl,
+    commit,
+    commitUrl: normalizeText(value.commitUrl, 2_000),
+    branch: normalizeText(value.branch, 160),
+    pushed: Boolean(value.pushed),
+    publishedAt: normalizeText(value.publishedAt, 64) || nowIso(),
+    status: normalizeText(value.status || "published", 48) || "published",
+  };
+}
+
 function normalizeTownShare(value = {}) {
   if (!value || typeof value !== "object" || Array.isArray(value)) {
     return null;
@@ -309,6 +337,7 @@ function normalizeTownShare(value = {}) {
     imageMimeType: normalizeText(value.imageMimeType || value.thumbnailMimeType, 96),
     imageByteLength,
     imageUpdatedAt: normalizeText(value.imageUpdatedAt || value.thumbnailUpdatedAt, 64),
+    buildingHub: normalizeTownShareBuildingHub(value.buildingHub || value.buildinghub),
     createdAt: normalizeText(value.createdAt, 64) || now,
     updatedAt: normalizeText(value.updatedAt, 64) || now,
   };
@@ -992,6 +1021,7 @@ export class AgentTownStore {
       imageMimeType: input.imageMimeType === undefined ? existing?.imageMimeType : input.imageMimeType,
       imageByteLength: input.imageByteLength === undefined ? existing?.imageByteLength : input.imageByteLength,
       imageUpdatedAt: input.imageUpdatedAt === undefined ? existing?.imageUpdatedAt : input.imageUpdatedAt,
+      buildingHub: input.buildingHub === undefined ? existing?.buildingHub : input.buildingHub,
       createdAt: existing?.createdAt || input.createdAt || requestedShare.createdAt,
       updatedAt: nowIso(),
     });

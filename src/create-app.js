@@ -21,6 +21,7 @@ import { AgentMailService } from "./agentmail-service.js";
 import { AgentPromptStore } from "./agent-prompt-store.js";
 import { AgentRunStore } from "./agent-run-store.js";
 import { AgentTownStore } from "./agent-town-store.js";
+import { publishTownShareToBuildingHub } from "./buildinghub-layout-publisher.js";
 import { writeBuildingAgentGuides } from "./building-agent-guides.js";
 import { BuildingHubService } from "./buildinghub-service.js";
 import { BrowserUseService } from "./browser-use-service.js";
@@ -324,10 +325,17 @@ function withTownShareUrls(townShare, request) {
   const encodedId = encodeURIComponent(townShare.id);
   const sharePath = `/buildinghub/towns/${encodedId}`;
   const imagePath = `/api/agent-town/town-shares/${encodedId}/image`;
+  const buildingHubUrl = String(
+    townShare.buildingHub?.layoutUrl ||
+      townShare.buildingHub?.homepageUrl ||
+      townShare.buildingHub?.repositoryUrl ||
+      "",
+  ).trim();
   return {
     ...townShare,
     sharePath,
-    shareUrl: origin ? `${origin}${sharePath}` : sharePath,
+    buildingHubUrl,
+    shareUrl: buildingHubUrl || (origin ? `${origin}${sharePath}` : sharePath),
     imageUrl: townShare.imagePath ? `${origin}${imagePath}` : "",
   };
 }
@@ -1719,7 +1727,7 @@ export async function createVibeResearchApp({
             mimeType: body.imageMimeType,
           })
         : {};
-      const payload = await agentTownStore.publishTownShare({
+      const localPayload = await agentTownStore.publishTownShare({
         ...body,
         id: shareId,
         imagePath: image.imagePath,
@@ -1727,10 +1735,24 @@ export async function createVibeResearchApp({
         imageByteLength: image.imageByteLength,
         imageUpdatedAt: image.imageUpdatedAt,
       });
+      const buildingHub = await publishTownShareToBuildingHub({
+        townShare: localPayload.townShare,
+        stateDir,
+        settings: settingsStore.settings,
+        cwd,
+        env: serverEnv,
+      });
+      const payload = await agentTownStore.publishTownShare({
+        ...localPayload.townShare,
+        buildingHub,
+      });
+      await buildingHubService.refresh({ force: true });
+      await syncBuildingAgentGuides();
       response.status(201).json({
         townShare: withTownShareUrls(payload.townShare, request),
         validation: payload.validation,
         agentTown: payload.state,
+        buildingHub,
       });
     } catch (error) {
       response.status(error.statusCode || 400).json({

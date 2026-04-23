@@ -154,6 +154,41 @@ async function createBrainGitRemote(workspaceDir, name = "mac-brain") {
   };
 }
 
+async function createBuildingHubRepoFixture(prefix = "vibe-research-buildinghub-publish-") {
+  const repoDir = await createTempWorkspace(prefix);
+  const remoteDir = `${repoDir}-remote.git`;
+  await mkdir(path.join(repoDir, "bin"), { recursive: true });
+  await mkdir(path.join(repoDir, "layouts"), { recursive: true });
+  await mkdir(path.join(repoDir, "site"), { recursive: true });
+  await writeFile(
+    path.join(repoDir, "package.json"),
+    `${JSON.stringify({ name: "buildinghub-fixture", private: true, type: "module" }, null, 2)}\n`,
+    "utf8",
+  );
+  await writeFile(path.join(repoDir, "README.md"), "# BuildingHub Fixture\n", "utf8");
+  await writeFile(
+    path.join(repoDir, "bin", "buildinghub.mjs"),
+    "#!/usr/bin/env node\nprocess.stdout.write('buildinghub fixture\\n');\n",
+    "utf8",
+  );
+  await writeFile(path.join(repoDir, "site", "index.html"), "<!doctype html><title>BuildingHub</title>\n", "utf8");
+  await execFileAsync("git", ["-C", repoDir, "init", "-b", "main"]);
+  await execFileAsync("git", ["-C", repoDir, "config", "user.name", "Vibe Research Test"]);
+  await execFileAsync("git", ["-C", repoDir, "config", "user.email", "vibe-research@example.test"]);
+  await execFileAsync("git", ["-C", repoDir, "add", "."]);
+  await execFileAsync("git", ["-C", repoDir, "commit", "-m", "seed buildinghub fixture"]);
+  await execFileAsync("git", ["clone", "--bare", repoDir, remoteDir]);
+  await execFileAsync("git", ["-C", repoDir, "remote", "add", "origin", remoteDir]);
+  await execFileAsync("git", ["-C", repoDir, "push", "-u", "origin", "main"]);
+
+  return {
+    publicBaseUrl: "https://buildinghub.example.test/catalog/",
+    registryUrl: "https://buildinghub.example.test/catalog/registry.json",
+    remoteDir,
+    repoDir,
+  };
+}
+
 async function waitForShutdown(baseUrl) {
   for (let attempt = 0; attempt < 30; attempt += 1) {
     try {
@@ -832,12 +867,24 @@ test("agent canvas API stores session image paths and serves the image", async (
   }
 });
 
-test("Agent Town share API publishes thumbnails, pages, and imports layouts", async () => {
+test("Agent Town share API publishes thumbnails, BuildingHub pages, and imports layouts", async () => {
   const workspaceDir = await createTempWorkspace("vibe-research-agent-town-share-api-");
   const stateDir = await createTempWorkspace("vibe-research-agent-town-share-api-state-");
+  const buildingHub = await createBuildingHubRepoFixture();
   const { app, baseUrl } = await startApp({ cwd: workspaceDir, stateDir });
 
   try {
+    const settingsResponse = await fetch(`${baseUrl}/api/settings`, {
+      method: "PATCH",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        buildingHubCatalogPath: buildingHub.repoDir,
+        buildingHubCatalogUrl: buildingHub.registryUrl,
+        buildingHubEnabled: true,
+      }),
+    });
+    assert.equal(settingsResponse.status, 200);
+
     const imageDataUrl = `data:image/png;base64,${PNG_FIXTURE.toString("base64")}`;
     const publishResponse = await fetch(`${baseUrl}/api/agent-town/town-shares`, {
       method: "POST",
@@ -859,16 +906,39 @@ test("Agent Town share API publishes thumbnails, pages, and imports layouts", as
     assert.equal(publishResponse.status, 201);
     const publishPayload = await publishResponse.json();
     assert.equal(publishPayload.townShare.id, "launch-base");
-    assert.match(publishPayload.townShare.shareUrl, /\/buildinghub\/towns\/launch-base$/);
+    assert.equal(publishPayload.townShare.shareUrl, `${buildingHub.publicBaseUrl}layouts/launch-base/`);
+    assert.equal(publishPayload.townShare.buildingHub.layoutId, "launch-base");
+    assert.equal(publishPayload.townShare.buildingHub.pushed, true);
     assert.match(publishPayload.townShare.imageUrl, /\/api\/agent-town\/town-shares\/launch-base\/image$/);
     assert.equal(publishPayload.townShare.layoutSummary.cosmeticCount, 1);
+
+    const layoutManifest = JSON.parse(await readFile(path.join(buildingHub.repoDir, "layouts", "launch-base", "layout.json"), "utf8"));
+    assert.equal(layoutManifest.id, "launch-base");
+    assert.equal(layoutManifest.homepageUrl, `${buildingHub.publicBaseUrl}layouts/launch-base/`);
+    assert.equal(layoutManifest.previewUrl, `${buildingHub.publicBaseUrl}assets/layouts/launch-base.png`);
+    assert.equal(layoutManifest.layout.themeId, "snowy");
+    assert.equal(layoutManifest.layout.dogName, "Scout");
+    assert.deepEqual(layoutManifest.requiredBuildings, ["buildinghub"]);
+    assert.deepEqual(
+      Buffer.from(await readFile(path.join(buildingHub.repoDir, "site", "assets", "layouts", "launch-base.png"))),
+      PNG_FIXTURE,
+    );
+
+    const staticPageText = await readFile(path.join(buildingHub.repoDir, "site", "layouts", "launch-base", "index.html"), "utf8");
+    assert.match(staticPageText, /<meta property="og:title" content="Launch base - BuildingHub"/);
+    assert.match(staticPageText, /https:\/\/buildinghub\.example\.test\/catalog\/assets\/layouts\/launch-base\.png/);
+
+    const commitSubject = await execFileAsync("git", ["-C", buildingHub.repoDir, "log", "-1", "--format=%s"]);
+    assert.equal(commitSubject.stdout.trim(), "Publish Agent Town layout launch-base");
+    const remoteSubject = await execFileAsync("git", ["--git-dir", buildingHub.remoteDir, "log", "-1", "--format=%s"]);
+    assert.equal(remoteSubject.stdout.trim(), "Publish Agent Town layout launch-base");
 
     const imageResponse = await fetch(publishPayload.townShare.imageUrl);
     assert.equal(imageResponse.status, 200);
     assert.match(imageResponse.headers.get("content-type") || "", /image\/png/);
     assert.deepEqual(Buffer.from(await imageResponse.arrayBuffer()), PNG_FIXTURE);
 
-    const pageResponse = await fetch(publishPayload.townShare.shareUrl);
+    const pageResponse = await fetch(`${baseUrl}${publishPayload.townShare.sharePath}`);
     assert.equal(pageResponse.status, 200);
     const pageText = await pageResponse.text();
     assert.match(pageText, /<meta property="og:title" content="Launch base · BuildingHub"/);
@@ -891,10 +961,13 @@ test("Agent Town share API publishes thumbnails, pages, and imports layouts", as
     const listPayload = await listResponse.json();
     assert.equal(listPayload.townShares.length, 1);
     assert.equal(listPayload.townShares[0].sharePath, "/buildinghub/towns/launch-base");
+    assert.equal(listPayload.townShares[0].shareUrl, `${buildingHub.publicBaseUrl}layouts/launch-base/`);
   } finally {
     await app.close();
     await removeTempWorkspace(workspaceDir);
     await removeTempWorkspace(stateDir);
+    await removeTempWorkspace(buildingHub.repoDir);
+    await removeTempWorkspace(buildingHub.remoteDir);
   }
 });
 
@@ -1668,6 +1741,7 @@ test("Agent Town share opens Twitter intent with a BuildingHub town link", async
 
   const workspaceDir = await createTempWorkspace("vibe-research-agent-town-share-ui-");
   const stateDir = await createTempWorkspace("vibe-research-agent-town-share-state-");
+  const buildingHub = await createBuildingHubRepoFixture("vibe-research-agent-town-share-buildinghub-");
   const wikiDir = getWorkspaceLibraryDir(workspaceDir);
   await mkdir(wikiDir, { recursive: true });
   await writeFile(path.join(wikiDir, "index.md"), "# Agent Town Share Library\n", "utf8");
@@ -1679,12 +1753,29 @@ test("Agent Town share opens Twitter intent with a BuildingHub town link", async
       method: "PATCH",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({
+        buildingHubCatalogPath: buildingHub.repoDir,
+        buildingHubCatalogUrl: buildingHub.registryUrl,
+        buildingHubEnabled: true,
         preventSleepEnabled: false,
         wikiGitRemoteEnabled: false,
         wikiPath: wikiDir,
       }),
     });
     assert.equal(settingsResponse.status, 200);
+
+    const mirrorResponse = await fetch(`${baseUrl}/api/agent-town/state`, {
+      method: "PUT",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        layout: {
+          decorations: [{ id: "share-road-1", itemId: "road-square", x: 328, y: 264 }],
+          functional: {},
+          themeId: "default",
+          dogName: "Scout",
+        },
+      }),
+    });
+    assert.equal(mirrorResponse.status, 200);
 
     const createResponse = await fetch(`${baseUrl}/api/sessions`, {
       method: "POST",
@@ -1738,7 +1829,10 @@ test("Agent Town share opens Twitter intent with a BuildingHub town link", async
 
     assert.match(shareState.openedUrl, /twitter\.com\/intent\/tweet/);
     assert.equal(new URL(shareState.openedUrl).searchParams.get("text"), "I set up my vibe-research.net town!");
-    assert.match(new URL(shareState.openedUrl).searchParams.get("url") || "", /\/buildinghub\/towns\/town-[a-f0-9]+$/);
+    assert.match(
+      new URL(shareState.openedUrl).searchParams.get("url") || "",
+      /^https:\/\/buildinghub\.example\.test\/catalog\/layouts\/town-[a-f0-9]+\/$/,
+    );
     assert.match(shareState.toastText, /Agent Town link ready/);
 
     const townSharesResponse = await fetch(`${baseUrl}/api/agent-town/town-shares`);
@@ -1746,6 +1840,8 @@ test("Agent Town share opens Twitter intent with a BuildingHub town link", async
     const townSharesPayload = await townSharesResponse.json();
     assert.equal(townSharesPayload.townShares.length, 1);
     assert.match(townSharesPayload.townShares[0].imageUrl, /\/api\/agent-town\/town-shares\/town-[a-f0-9]+\/image$/);
+    assert.match(townSharesPayload.townShares[0].shareUrl, /^https:\/\/buildinghub\.example\.test\/catalog\/layouts\/town-[a-f0-9]+\/$/);
+    assert.equal(townSharesPayload.townShares[0].buildingHub.pushed, true);
 
     await page.goto(`${baseUrl}/?view=plugins`, { waitUntil: "domcontentloaded" });
     await page.locator(".buildinghub-town-card").waitFor({ timeout: 10_000 });
@@ -1756,6 +1852,8 @@ test("Agent Town share opens Twitter intent with a BuildingHub town link", async
     await app.close();
     await removeTempWorkspace(workspaceDir);
     await removeTempWorkspace(stateDir);
+    await removeTempWorkspace(buildingHub.repoDir);
+    await removeTempWorkspace(buildingHub.remoteDir);
   }
 });
 

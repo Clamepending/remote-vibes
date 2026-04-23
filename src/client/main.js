@@ -11296,7 +11296,7 @@ function openAgentTownSharePlaceholderWindow() {
     const intentUrl = getAgentTownShareIntentUrl();
     targetWindow.document.body.innerHTML = `
       <main style="display:grid;gap:12px;place-items:center;align-content:center;min-height:100vh;margin:0;background:#111114;color:#f4f4f2;font:16px sans-serif;text-align:center;">
-        <div>Preparing Agent Town share...</div>
+        <div>Publishing Agent Town to BuildingHub...</div>
         <a href="${escapeHtml(intentUrl)}" style="color:#8ab4f8;">Open Twitter now</a>
       </main>
     `;
@@ -12841,14 +12841,14 @@ function getTownShareSummaryText(townShare) {
 
 function renderBuildingHubTownShareCard(townShare) {
   const shareUrl = getAgentTownShareUrl(townShare);
-  const sharePath = townShare.sharePath || getAgentTownSharePath(townShare.id);
+  const openUrl = shareUrl || townShare.sharePath || getAgentTownSharePath(townShare.id);
   const updated = townShare.updatedAt ? relativeTime(townShare.updatedAt) : "saved";
   const image = townShare.imageUrl
     ? `<img src="${escapeHtml(townShare.imageUrl)}" alt="${escapeHtml(`${townShare.name} town snapshot`)}" loading="lazy" />`
     : `<div class="buildinghub-town-card-empty">${renderIcon(ImageIcon)}<span>no snapshot</span></div>`;
   return `
     <article class="buildinghub-town-card">
-      <a class="buildinghub-town-card-image" href="${escapeHtml(sharePath)}" target="_blank" rel="noreferrer" aria-label="${escapeHtml(`Open ${townShare.name}`)}">
+      <a class="buildinghub-town-card-image" href="${escapeHtml(openUrl)}" target="_blank" rel="noreferrer" aria-label="${escapeHtml(`Open ${townShare.name}`)}">
         ${image}
       </a>
       <div class="buildinghub-town-card-body">
@@ -12858,7 +12858,7 @@ function renderBuildingHubTownShareCard(townShare) {
         </div>
         <p>${escapeHtml(getTownShareSummaryText(townShare))}</p>
         <div class="buildinghub-town-card-actions">
-          <a class="icon-button toolbar-control" href="${escapeHtml(sharePath)}" target="_blank" rel="noreferrer" aria-label="Open town link" ${tooltipAttributes("Open town link")}>${renderIcon(Waypoints)}</a>
+          <a class="icon-button toolbar-control" href="${escapeHtml(openUrl)}" target="_blank" rel="noreferrer" aria-label="Open town link" ${tooltipAttributes("Open town link")}>${renderIcon(Waypoints)}</a>
           <button class="icon-button toolbar-control" type="button" data-town-share-twitter="${escapeHtml(townShare.id)}" aria-label="Share town to X" ${tooltipAttributes("Share to X")} ${shareUrl ? "" : "disabled"}>${renderIcon(Share2)}</button>
           <button class="ghost-button toolbar-control" type="button" data-town-share-import="${escapeHtml(townShare.id)}">import</button>
         </div>
@@ -29169,6 +29169,16 @@ function getAgentTownShareUrl(share) {
     return explicitUrl;
   }
 
+  const buildingHubUrl = String(
+    share?.buildingHub?.layoutUrl ||
+      share?.buildingHub?.homepageUrl ||
+      share?.buildingHub?.repositoryUrl ||
+      "",
+  ).trim();
+  if (buildingHubUrl) {
+    return buildingHubUrl;
+  }
+
   const sharePath = String(share?.sharePath || getAgentTownSharePath(share?.id)).trim();
   if (!sharePath) {
     return "";
@@ -29280,6 +29290,14 @@ function normalizeAgentTownTownShares(value) {
             imageUrl: "",
             sharePath: String(share.sharePath || getAgentTownSharePath(share.id)),
             shareUrl: "",
+            buildingHub: share.buildingHub && typeof share.buildingHub === "object" && !Array.isArray(share.buildingHub)
+              ? {
+                  ...share.buildingHub,
+                  layoutUrl: String(share.buildingHub.layoutUrl || ""),
+                  repositoryUrl: String(share.buildingHub.repositoryUrl || ""),
+                  previewUrl: String(share.buildingHub.previewUrl || ""),
+                }
+              : null,
             createdAt: String(share.createdAt || ""),
             updatedAt: String(share.updatedAt || share.createdAt || ""),
           };
