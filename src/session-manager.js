@@ -1962,6 +1962,7 @@ export class SessionManager {
     sessionActivityIdleMs = SESSION_ACTIVITY_IDLE_MS,
     persistentTerminals = true,
     extraSubagentsProvider = null,
+    sessionEnvironmentProvider = null,
     occupationId = "researcher",
     userHomeDir = env?.HOME || os.homedir(),
     setTimeoutFn = setTimeout,
@@ -1981,6 +1982,8 @@ export class SessionManager {
     this.env = env && typeof env === "object" ? { ...env } : { ...process.env };
     this.persistentTerminals = Boolean(persistentTerminals);
     this.extraSubagentsProvider = typeof extraSubagentsProvider === "function" ? extraSubagentsProvider : null;
+    this.sessionEnvironmentProvider =
+      typeof sessionEnvironmentProvider === "function" ? sessionEnvironmentProvider : null;
     this.occupationId = normalizeSessionOccupationId(occupationId);
     this.tmuxAvailable = null;
     this.tmuxEnvironmentArgsAvailable = null;
@@ -2033,6 +2036,11 @@ export class SessionManager {
   setExtraSubagentsProvider(extraSubagentsProvider) {
     this.extraSubagentsProvider =
       typeof extraSubagentsProvider === "function" ? extraSubagentsProvider : null;
+  }
+
+  setSessionEnvironmentProvider(sessionEnvironmentProvider) {
+    this.sessionEnvironmentProvider =
+      typeof sessionEnvironmentProvider === "function" ? sessionEnvironmentProvider : null;
   }
 
   setOccupationId(occupationId) {
@@ -2243,7 +2251,7 @@ export class SessionManager {
   }
 
   buildSessionEnvironment(session, providerId = session.providerId) {
-    return buildSessionEnv(
+    const env = buildSessionEnv(
       session.id,
       providerId,
       this.providers,
@@ -2253,6 +2261,18 @@ export class SessionManager {
       this.wikiRootPath,
       this.systemRootPath,
     );
+
+    if (!this.sessionEnvironmentProvider) {
+      return env;
+    }
+
+    try {
+      const provided = this.sessionEnvironmentProvider(session, providerId, env);
+      return provided && typeof provided === "object" ? { ...env, ...provided } : env;
+    } catch (error) {
+      console.warn("[vibe-research] failed to build session environment extension", error);
+      return env;
+    }
   }
 
   isTmuxAvailable(env) {

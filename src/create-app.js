@@ -18,6 +18,7 @@ import {
   pickPreferredUrl,
 } from "./access-url.js";
 import { AgentMailService } from "./agentmail-service.js";
+import { AgentCallbackService } from "./agent-callback-service.js";
 import { AgentPromptStore } from "./agent-prompt-store.js";
 import { AgentRunStore } from "./agent-run-store.js";
 import { AgentTownStore } from "./agent-town-store.js";
@@ -990,12 +991,29 @@ export async function createVibeResearchApp({
           settings: settingsStore.settings,
           stateDir,
         });
+  const agentCallbackService = new AgentCallbackService({
+    serverBaseUrl: getHelperBaseUrl(host, port),
+    sessionManager,
+    stateDir,
+  });
+  sessionManager.setSessionEnvironmentProvider((session) => {
+    const callback = agentCallbackService.getCallback(session.id);
+    return {
+      REMOTE_VIBES_AGENT_CALLBACK_HELP:
+        "Pass this URL to buildings or services that need to notify this exact agent later. POST JSON with buildingId, serviceId, event, message, and payload.",
+      REMOTE_VIBES_AGENT_CALLBACK_URL: callback.url,
+      VIBE_RESEARCH_AGENT_CALLBACK_HELP:
+        "Pass this URL to buildings or services that need to notify this exact agent later. POST JSON with buildingId, serviceId, event, message, and payload.",
+      VIBE_RESEARCH_AGENT_CALLBACK_URL: callback.url,
+    };
+  });
   await agentRunStore.initialize();
   await agentTownStore.initialize();
   await portAliasStore.initialize();
   await browserUseService.initialize();
   await ottoAuthService.initialize();
   await videoMemoryService.initialize();
+  await agentCallbackService.initialize();
   await sessionManager.initialize();
   await agentPromptStore.initialize();
   sessionManager.setOccupationId(agentPromptStore.selectedPromptId);
@@ -1121,9 +1139,11 @@ export async function createVibeResearchApp({
       REMOTE_VIBES_PORT: String(resolvedPort),
       REMOTE_VIBES_SERVER_URL: helperBaseUrl || "",
       REMOTE_VIBES_URL: preferredUrl || helperBaseUrl || "",
+      REMOTE_VIBES_AGENT_CALLBACK_BASE_URL: agentCallbackService.getCallbackBaseUrl(),
       VIBE_RESEARCH_PORT: String(resolvedPort),
       VIBE_RESEARCH_SERVER_URL: helperBaseUrl || "",
       VIBE_RESEARCH_URL: preferredUrl || helperBaseUrl || "",
+      VIBE_RESEARCH_AGENT_CALLBACK_BASE_URL: agentCallbackService.getCallbackBaseUrl(),
       VIBE_RESEARCH_AGENT_TOWN_API: `${helperBaseUrl || `http://127.0.0.1:${resolvedPort}`}/api/agent-town`,
     };
   }
@@ -2424,6 +2444,23 @@ export async function createVibeResearchApp({
     }
   });
 
+  async function handleAgentCallback(request, response) {
+    try {
+      const result = await agentCallbackService.handleRequest({
+        body: request.body,
+        headers: request.headers,
+        sessionId: request.params.sessionId,
+        token: request.params.token,
+      });
+      response.json(result);
+    } catch (error) {
+      response.status(error.statusCode || 400).json({ error: error.message || "Could not deliver agent callback." });
+    }
+  }
+
+  app.post("/api/agent-callbacks/:sessionId/:token", handleAgentCallback);
+  app.post("/api/agent-callbacks/:sessionId", handleAgentCallback);
+
   app.get("/api/browser-use/sessions", (_request, response) => {
     response.json({ sessions: browserUseService.listSessions() });
   });
@@ -2486,8 +2523,15 @@ export async function createVibeResearchApp({
         return;
       }
 
+      const callerSessionId = String(request.body?.callerSessionId || request.body?.parentSessionId || "").trim();
+      const callbackUrl = String(request.body?.callbackUrl || request.body?.callback_url || "").trim()
+        || (callerSessionId && sessionManager.getSession(callerSessionId)
+          ? agentCallbackService.getCallback(callerSessionId).url
+          : "");
+
       const task = await ottoAuthService.createTask({
-        callerSessionId: request.body?.callerSessionId || request.body?.parentSessionId,
+        callbackUrl,
+        callerSessionId,
         cwd: request.body?.cwd,
         itemUrl: request.body?.itemUrl || request.body?.item_url,
         maxChargeCents: request.body?.maxChargeCents || request.body?.max_charge_cents,
@@ -2825,6 +2869,20 @@ export async function createVibeResearchApp({
     response.json({ sessions: sessionManager.listSessions() });
   });
 
+  app.get("/api/sessions/:sessionId/callback", (request, response) => {
+    try {
+      const callback = agentCallbackService.getCallbackForSession(request.params.sessionId);
+      response.json({
+        callback: {
+          sessionId: callback.sessionId,
+          url: callback.url,
+        },
+      });
+    } catch (error) {
+      response.status(error.statusCode || 400).json({ error: error.message || "Could not read agent callback." });
+    }
+  });
+
   const handleSessionRename = (request, response) => {
     try {
       const session = sessionManager.renameSession(request.params.sessionId, request.body?.name);
@@ -2986,12 +3044,14 @@ export async function createVibeResearchApp({
   urls = await accessUrlsProvider(host, resolvedPort);
   preferredUrl = pickPreferredUrl(urls)?.url ?? urls[0]?.url ?? null;
   helperBaseUrl = getHelperBaseUrl(host, resolvedPort);
+  agentCallbackService.setServerBaseUrl(helperBaseUrl);
   sessionManager.setEnvironment(buildSessionManagerEnvironment());
   await syncBuildingAgentGuides({ refreshBuildingHub: true });
   browserUseService.setServerBaseUrl(helperBaseUrl);
   videoMemoryService.setServerBaseUrl(helperBaseUrl);
   await writeServerInfo(stateDir, {
     agentMailReplyToken: agentMailService.replyToken,
+    agentCallbackBaseUrl: agentCallbackService.getCallbackBaseUrl(),
     browserUseToken: browserUseService.requestToken,
     ottoAuthToken: ottoAuthService.requestToken,
     telegramReplyToken: telegramService.replyToken,

@@ -99,6 +99,7 @@ const CORE_BUILDING_MANIFESTS = [
       ],
       env: [
         { name: "VIBE_RESEARCH_AGENT_TOWN_API", detail: "Base URL for the local Agent Town API, such as http://127.0.0.1:4123/api/agent-town." },
+        { name: "VIBE_RESEARCH_AGENT_CALLBACK_URL", detail: "Per-agent webhook URL for buildings or services that need to send later notifications back to this session." },
         { name: "VIBE_RESEARCH_AGENT_CANVAS_HELP", detail: "Example command for publishing the current session's visible canvas image." },
       ],
       setup: [
@@ -768,6 +769,7 @@ const CORE_BUILDING_MANIFESTS = [
       ],
       env: [
         { name: "VIBE_RESEARCH_OTTOAUTH_COMMAND", detail: "Canonical helper command for local agents." },
+        { name: "VIBE_RESEARCH_AGENT_CALLBACK_URL", detail: "Automatically passed by vr-ottoauth so OttoAuth services can send multi-turn updates back to this agent." },
       ],
     },
     onboarding: {
