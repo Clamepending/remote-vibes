@@ -81,6 +81,9 @@ prepend_path_dir() {
 refresh_managed_node_path() {
   prepend_path_dir "$NODE_BIN_DIR"
   prepend_path_dir "$NODE_INSTALL_ROOT/current/bin"
+  prepend_path_dir "$HOME/.local/bin"
+  prepend_path_dir "/usr/local/bin"
+  prepend_path_dir "/opt/homebrew/bin"
   hash -r 2>/dev/null || true
 }
 
