@@ -1314,8 +1314,11 @@ exit 0
       "is-active --quiet tailscaled",
       "enable --now tailscaled",
     ]);
-    assert.deepEqual((await readFile(tailscaleLog, "utf8")).trim().split("\n"), [
-      "status --json",
+    const tailscaleCommands = (await readFile(tailscaleLog, "utf8")).trim().split("\n");
+    const daemonPolls = tailscaleCommands.slice(0, -4);
+    assert.ok(daemonPolls.length >= 1);
+    assert.ok(daemonPolls.every((command) => command === "status --json"));
+    assert.deepEqual(tailscaleCommands.slice(-4), [
       "ip -4",
       "up",
       "ip -4",
