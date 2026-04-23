@@ -54,12 +54,36 @@ jobs:
           APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
 
       - name: Build desktop app
+        timeout-minutes: 120
         run: |
+          set -euo pipefail
+
+          publish=never
           if [[ "$GITHUB_REF" == refs/tags/v* ]]; then
-            npm --prefix desktop run dist -- --mac dmg zip --universal --publish always
-          else
-            npm --prefix desktop run dist -- --mac dmg zip --universal --publish never
+            publish=always
           fi
+
+          max_attempts=2
+          for attempt in $(seq 1 "$max_attempts"); do
+            echo "::group::electron-builder attempt ${attempt}/${max_attempts}"
+            set +e
+            npm --prefix desktop run dist -- --mac dmg zip --universal --publish "$publish"
+            status=$?
+            set -e
+            echo "::endgroup::"
+
+            if [ "$status" -eq 0 ]; then
+              exit 0
+            fi
+
+            if [ "$attempt" -eq "$max_attempts" ]; then
+              exit "$status"
+            fi
+
+            echo "Desktop build failed with exit code ${status}; retrying after a short cooldown."
+            rm -rf desktop/dist
+            sleep 90
+          done
         env:
           GH_TOKEN: ${{ github.token }}
           CSC_LINK: ${{ secrets.MACOS_CSC_LINK }}
