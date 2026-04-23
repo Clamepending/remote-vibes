@@ -3,12 +3,19 @@ import { mkdir, readFile, rename, writeFile } from "node:fs/promises";
 import path from "node:path";
 
 const AGENT_TOWN_STATE_FILENAME = "agent-town-state.json";
-const AGENT_TOWN_STATE_VERSION = 3;
+const AGENT_TOWN_STATE_VERSION = 4;
 const MAX_ACTION_ITEMS = 100;
 const MAX_EVENTS = 200;
 const MAX_CANVASES = 100;
+const MAX_LAYOUT_HISTORY = 60;
+const MAX_LAYOUT_SNAPSHOTS = 30;
+const MAX_LAYOUT_DECORATIONS = 180;
+const MAX_LAYOUT_ENTRIES = 120;
+const MAX_ALERTS = 12;
 const MAX_WAIT_TIMEOUT_MS = 30_000;
 const DEFAULT_WAIT_TIMEOUT_MS = 10_000;
+const DEFAULT_AGENT_TOWN_THEME_ID = "default";
+const DEFAULT_AGENT_TOWN_DOG_NAME = "Dog";
 const VALID_ACTION_ITEM_STATUSES = new Set(["open", "completed", "dismissed"]);
 const VALID_ACTION_ITEM_KINDS = new Set(["action", "approval", "review", "setup"]);
 const VALID_ACTION_ITEM_PRIORITIES = new Set(["low", "normal", "high", "urgent"]);
@@ -98,7 +105,238 @@ function normalizeLayoutSummary(value = {}) {
     functionalCount,
     functionalIds,
     pendingFunctionalIds,
-    themeId: normalizeText(value.themeId || "default", 48) || "default",
+    themeId: normalizeText(value.themeId || DEFAULT_AGENT_TOWN_THEME_ID, 48) || DEFAULT_AGENT_TOWN_THEME_ID,
+  };
+}
+
+function normalizeLayoutOffset(value = {}) {
+  if (!value || typeof value !== "object" || Array.isArray(value)) {
+    return null;
+  }
+
+  const x = Number(value.x);
+  const y = Number(value.y);
+  if (!Number.isFinite(x) || !Number.isFinite(y)) {
+    return null;
+  }
+
+  return {
+    x: Math.round(x),
+    y: Math.round(y),
+  };
+}
+
+function normalizeLayoutOffsetMap(value = {}) {
+  if (!value || typeof value !== "object" || Array.isArray(value)) {
+    return {};
+  }
+
+  return Object.fromEntries(
+    Object.entries(value)
+      .map(([id, offset]) => [normalizeSlug(id, 96), normalizeLayoutOffset(offset)])
+      .filter(([id, offset]) => id && offset)
+      .slice(0, MAX_LAYOUT_ENTRIES),
+  );
+}
+
+function normalizeRotation(value) {
+  const number = Number(value);
+  return Number.isFinite(number) && Math.abs(Math.round(number)) % 2 === 1 ? 1 : 0;
+}
+
+function normalizeDecoration(value = {}) {
+  if (!value || typeof value !== "object" || Array.isArray(value)) {
+    return null;
+  }
+
+  const itemId = normalizeSlug(value.itemId || value.kind || value.id, 96);
+  const x = Number(value.x);
+  const y = Number(value.y);
+  if (!itemId || !Number.isFinite(x) || !Number.isFinite(y)) {
+    return null;
+  }
+
+  const rotation = normalizeRotation(value.rotation ?? value.rotated);
+  const decoration = {
+    id: normalizeId(value.id, "decor"),
+    itemId,
+    x: Math.max(0, Math.round(x)),
+    y: Math.max(0, Math.round(y)),
+  };
+  if (rotation) {
+    decoration.rotation = rotation;
+  }
+  return decoration;
+}
+
+function normalizeDecorations(value = []) {
+  return Array.isArray(value)
+    ? value.map(normalizeDecoration).filter(Boolean).slice(0, MAX_LAYOUT_DECORATIONS)
+    : [];
+}
+
+function normalizeFunctionalPlacement(value = {}) {
+  if (!value || typeof value !== "object" || Array.isArray(value)) {
+    return null;
+  }
+
+  const x = Number(value.x);
+  const y = Number(value.y);
+  if (!Number.isFinite(x) || !Number.isFinite(y)) {
+    return null;
+  }
+
+  const rotation = normalizeRotation(value.rotation ?? value.rotated);
+  const placement = {
+    x: Math.max(0, Math.round(x)),
+    y: Math.max(0, Math.round(y)),
+  };
+  if (rotation) {
+    placement.rotation = rotation;
+  }
+  return placement;
+}
+
+function normalizeFunctionalPlacements(value = {}) {
+  if (!value || typeof value !== "object" || Array.isArray(value)) {
+    return {};
+  }
+
+  return Object.fromEntries(
+    Object.entries(value)
+      .map(([id, placement]) => [normalizeSlug(id, 96), normalizeFunctionalPlacement(placement)])
+      .filter(([id, placement]) => id && placement)
+      .slice(0, MAX_LAYOUT_ENTRIES),
+  );
+}
+
+function normalizeLayout(value = {}) {
+  const source = value && typeof value === "object" && !Array.isArray(value) ? value : {};
+  const themeId = normalizeSlug(source.themeId || source.theme || DEFAULT_AGENT_TOWN_THEME_ID, 48) || DEFAULT_AGENT_TOWN_THEME_ID;
+  const dogName = normalizeText(source.dogName || source.companionName || DEFAULT_AGENT_TOWN_DOG_NAME, 24) || DEFAULT_AGENT_TOWN_DOG_NAME;
+  return {
+    places: normalizeLayoutOffsetMap(source.places),
+    roads: normalizeLayoutOffsetMap(source.roads),
+    decorations: normalizeDecorations(source.decorations),
+    functional: normalizeFunctionalPlacements(source.functional),
+    pendingFunctional: normalizeStringArray(source.pendingFunctional, MAX_LAYOUT_ENTRIES),
+    themeId,
+    dogName,
+  };
+}
+
+function getLayoutSummary(layoutInput = {}) {
+  const layout = normalizeLayout(layoutInput);
+  const functionalIds = Object.keys(layout.functional).sort();
+  return {
+    cosmeticCount: layout.decorations.length,
+    functionalCount: functionalIds.length,
+    functionalIds,
+    pendingFunctionalIds: [...layout.pendingFunctional].sort(),
+    themeId: layout.themeId,
+  };
+}
+
+function layoutsEqual(left, right) {
+  return JSON.stringify(normalizeLayout(left)) === JSON.stringify(normalizeLayout(right));
+}
+
+function normalizeLayoutHistory(value = {}) {
+  const source = value && typeof value === "object" && !Array.isArray(value) ? value : {};
+  return {
+    past: Array.isArray(source.past) ? source.past.map(normalizeLayout).slice(-MAX_LAYOUT_HISTORY) : [],
+    future: Array.isArray(source.future) ? source.future.map(normalizeLayout).slice(0, MAX_LAYOUT_HISTORY) : [],
+  };
+}
+
+function normalizeLayoutSnapshot(value = {}) {
+  if (!value || typeof value !== "object" || Array.isArray(value)) {
+    return null;
+  }
+
+  const layout = normalizeLayout(value.layout || value);
+  const id = normalizeId(value.id || value.name, "snapshot");
+  const now = nowIso();
+  return {
+    id,
+    name: normalizeText(value.name || "Town snapshot", 80) || "Town snapshot",
+    layout,
+    createdAt: normalizeText(value.createdAt, 64) || now,
+    updatedAt: normalizeText(value.updatedAt, 64) || now,
+  };
+}
+
+function normalizeLayoutSnapshots(value = []) {
+  const seen = new Set();
+  const snapshots = [];
+  for (const snapshot of Array.isArray(value) ? value : []) {
+    const normalized = normalizeLayoutSnapshot(snapshot);
+    if (!normalized || seen.has(normalized.id)) {
+      continue;
+    }
+    seen.add(normalized.id);
+    snapshots.push(normalized);
+  }
+  return snapshots.slice(0, MAX_LAYOUT_SNAPSHOTS);
+}
+
+function validateLayout(layoutInput = {}) {
+  const issues = [];
+  const warnings = [];
+  const layout = normalizeLayout(layoutInput);
+  const decorationIds = new Set();
+
+  for (const [id, offset] of Object.entries(layout.places)) {
+    if (!Number.isFinite(offset.x) || !Number.isFinite(offset.y)) {
+      issues.push(`place ${id} has an invalid offset`);
+    }
+  }
+
+  for (const [id, offset] of Object.entries(layout.roads)) {
+    if (!Number.isFinite(offset.x) || !Number.isFinite(offset.y)) {
+      issues.push(`road ${id} has an invalid offset`);
+    }
+  }
+
+  for (const decoration of layout.decorations) {
+    if (decorationIds.has(decoration.id)) {
+      issues.push(`duplicate decoration id ${decoration.id}`);
+    }
+    decorationIds.add(decoration.id);
+    if (!decoration.itemId) {
+      issues.push(`decoration ${decoration.id} is missing an item id`);
+    }
+    if (decoration.x < 0 || decoration.y < 0) {
+      issues.push(`decoration ${decoration.id} is outside the town bounds`);
+    }
+  }
+
+  for (const [pluginId, placement] of Object.entries(layout.functional)) {
+    if (!pluginId) {
+      issues.push("functional building is missing an id");
+    }
+    if (placement.x < 0 || placement.y < 0) {
+      issues.push(`functional building ${pluginId} is outside the town bounds`);
+    }
+  }
+
+  const functionalIds = new Set(Object.keys(layout.functional));
+  for (const pendingId of layout.pendingFunctional) {
+    if (functionalIds.has(pendingId)) {
+      warnings.push(`${pendingId} is marked pending and placed`);
+    }
+  }
+
+  if (layout.decorations.length >= MAX_LAYOUT_DECORATIONS) {
+    warnings.push("town has reached the cosmetic placement limit");
+  }
+
+  return {
+    ok: issues.length === 0,
+    issues,
+    warnings,
+    layout,
+    summary: getLayoutSummary(layout),
   };
 }
 
@@ -292,6 +530,10 @@ function normalizeCanvases(value) {
 }
 
 function normalizeState(value = {}) {
+  const layout = normalizeLayout(value.layout);
+  const layoutSummary = value.layoutSummary
+    ? normalizeLayoutSummary(value.layoutSummary)
+    : getLayoutSummary(layout);
   const actionItems = Array.isArray(value.actionItems)
     ? value.actionItems.map((item) => normalizeActionItem(item)).slice(0, MAX_ACTION_ITEMS)
     : [];
@@ -302,7 +544,10 @@ function normalizeState(value = {}) {
   return {
     version: AGENT_TOWN_STATE_VERSION,
     updatedAt: normalizeText(value.updatedAt, 64) || nowIso(),
-    layoutSummary: normalizeLayoutSummary(value.layoutSummary),
+    layout,
+    layoutSummary: normalizeLayoutSummary({ ...getLayoutSummary(layout), ...layoutSummary }),
+    layoutHistory: normalizeLayoutHistory(value.layoutHistory || value.history),
+    layoutSnapshots: normalizeLayoutSnapshots(value.layoutSnapshots || value.snapshots),
     signals: normalizeSignals(value.signals),
     canvases: normalizeCanvases(value.canvases),
     actionItems,
@@ -321,6 +566,167 @@ function getPredicateCount(state, predicate) {
     return state.signals.libraryNoteSavedCount;
   }
   return 0;
+}
+
+const QUEST_DEFINITIONS = Object.freeze([
+  {
+    id: "place-first-building",
+    title: "Place your first building",
+    detail: "Put one cosmetic or functional building on the Agent Town map.",
+    href: "?view=swarm",
+    cta: "Open Agent Town",
+    predicate: "first_building_placed",
+    priority: "high",
+  },
+  {
+    id: "place-functional-building",
+    title: "Place a functional building",
+    detail: "Install or place one capability building so agents have a visible workstation.",
+    href: "?view=swarm",
+    cta: "Open builder",
+    predicate: "functional_building_placed",
+    priority: "normal",
+  },
+  {
+    id: "publish-agent-canvas",
+    title: "Publish an agent canvas",
+    detail: "Have an agent attach one visual artifact so the town shows current work.",
+    href: "?view=agent-inbox",
+    cta: "Open inbox",
+    signal: "canvas",
+    priority: "normal",
+  },
+  {
+    id: "save-library-note",
+    title: "Save one Library note",
+    detail: "Capture a durable note so future agents can pick up context.",
+    href: "?view=knowledge-base",
+    cta: "Open Library",
+    predicate: "library_note_saved",
+    priority: "normal",
+  },
+  {
+    id: "create-automation",
+    title: "Create one automation",
+    detail: "Add a recurring helper or scheduled task to keep the base alive.",
+    href: "?view=automations",
+    cta: "Open Automations",
+    predicate: "automation_created",
+    priority: "low",
+  },
+]);
+
+function getQuestCompleted(state, quest) {
+  if (quest.signal === "canvas") {
+    return state.canvases.length > 0;
+  }
+
+  if (quest.predicate === "first_building_placed" || quest.predicate === "building_placed") {
+    return state.layoutSummary.cosmeticCount + state.layoutSummary.functionalCount >= 1;
+  }
+
+  if (quest.predicate === "functional_building_placed") {
+    return state.layoutSummary.functionalCount >= 1;
+  }
+
+  if (quest.predicate === "library_note_saved") {
+    return state.signals.libraryNoteSavedCount >= 1;
+  }
+
+  if (quest.predicate === "automation_created") {
+    return state.signals.automationCreatedCount >= 1;
+  }
+
+  return false;
+}
+
+function getComputedQuests(state) {
+  let activeAssigned = false;
+  return QUEST_DEFINITIONS.map((quest) => {
+    const completed = getQuestCompleted(state, quest);
+    const status = completed
+      ? "completed"
+      : activeAssigned
+        ? "locked"
+        : "active";
+    if (status === "active") {
+      activeAssigned = true;
+    }
+    return {
+      ...quest,
+      status,
+    };
+  });
+}
+
+function getComputedAlerts(state) {
+  const alerts = [];
+  const openActionItems = state.actionItems.filter((item) => item.status === "open");
+  const urgentAction = openActionItems.find((item) => item.priority === "urgent" || item.priority === "high");
+  if (urgentAction) {
+    alerts.push({
+      id: `action-${urgentAction.id}`,
+      severity: urgentAction.priority === "urgent" ? "urgent" : "warning",
+      title: urgentAction.title,
+      detail: urgentAction.detail || "Agent Town is waiting on a human action.",
+      href: urgentAction.href || urgentAction.target?.href || "?view=agent-inbox",
+      target: urgentAction.target || { type: "task", id: urgentAction.id, label: urgentAction.title },
+      priority: urgentAction.priority,
+    });
+  }
+
+  if (state.layoutSummary.pendingFunctionalIds.length) {
+    const count = state.layoutSummary.pendingFunctionalIds.length;
+    alerts.push({
+      id: "pending-functional-buildings",
+      severity: "warning",
+      title: `${count} building${count === 1 ? "" : "s"} need placement`,
+      detail: "Installed buildings are waiting for a spot on the town map.",
+      href: "?view=swarm",
+      target: { type: "building", id: "buildinghub", label: "BuildingHub" },
+      priority: "high",
+    });
+  }
+
+  const hasCustomLayout =
+    state.layoutSummary.cosmeticCount > 0
+    || state.layoutSummary.functionalCount > 0
+    || Object.keys(state.layout.places || {}).length > 0
+    || Object.keys(state.layout.roads || {}).length > 0;
+  if (hasCustomLayout && !state.layoutSnapshots.length) {
+    alerts.push({
+      id: "no-layout-snapshot",
+      severity: "info",
+      title: "No town snapshot yet",
+      detail: "Save a snapshot before big edits so this base can roll back cleanly.",
+      href: "?view=swarm",
+      target: { type: "workspace", id: "agent-town", label: "Agent Town" },
+      priority: "normal",
+    });
+  }
+
+  const activeQuest = getComputedQuests(state).find((quest) => quest.status === "active");
+  if (activeQuest) {
+    alerts.push({
+      id: `quest-${activeQuest.id}`,
+      severity: "quest",
+      title: activeQuest.title,
+      detail: activeQuest.detail,
+      href: activeQuest.href,
+      target: { type: "task", id: activeQuest.id, label: activeQuest.title },
+      priority: activeQuest.priority,
+    });
+  }
+
+  const severityRank = {
+    urgent: 0,
+    warning: 1,
+    quest: 2,
+    info: 3,
+  };
+  return alerts
+    .sort((left, right) => (severityRank[left.severity] ?? 4) - (severityRank[right.severity] ?? 4))
+    .slice(0, MAX_ALERTS);
 }
 
 export class AgentTownStore {
@@ -348,7 +754,18 @@ export class AgentTownStore {
   }
 
   getState() {
-    return clone(this.state);
+    const state = clone(this.state);
+    state.quests = getComputedQuests(this.state);
+    state.alerts = getComputedAlerts(this.state);
+    state.layoutValidation = validateLayout(this.state.layout);
+    state.layoutHistory = {
+      pastCount: this.state.layoutHistory.past.length,
+      futureCount: this.state.layoutHistory.future.length,
+      canUndo: this.state.layoutHistory.past.length > 0,
+      canRedo: this.state.layoutHistory.future.length > 0,
+    };
+    state.snapshots = state.layoutSnapshots;
+    return state;
   }
 
   getCanvas(canvasId) {
@@ -395,11 +812,19 @@ export class AgentTownStore {
 
   async updateMirror(payload = {}) {
     const nextLayoutSummary = payload.layoutSummary || payload.agentTown?.layoutSummary;
+    const nextLayout = payload.layout || payload.agentTown?.layout;
     const nextSignals = payload.signals || payload.agentTown?.signals;
     const nextCanvases = payload.canvases || payload.agentTown?.canvases;
 
+    if (nextLayout && typeof nextLayout === "object" && !Array.isArray(nextLayout)) {
+      this.setLayout(nextLayout, { reason: payload.reason || payload.agentTown?.reason || "mirror" });
+    }
+
     if (nextLayoutSummary && typeof nextLayoutSummary === "object") {
-      this.state.layoutSummary = normalizeLayoutSummary(nextLayoutSummary);
+      this.state.layoutSummary = normalizeLayoutSummary({
+        ...getLayoutSummary(this.state.layout),
+        ...nextLayoutSummary,
+      });
     }
 
     if (nextSignals && typeof nextSignals === "object") {
@@ -415,6 +840,111 @@ export class AgentTownStore {
 
     await this.afterStateChange();
     return this.getState();
+  }
+
+  setLayout(layoutInput = {}, { reason = "layout-update", recordHistory = true } = {}) {
+    const nextLayout = normalizeLayout(layoutInput);
+    if (layoutsEqual(this.state.layout, nextLayout)) {
+      this.state.layoutSummary = getLayoutSummary(nextLayout);
+      return false;
+    }
+
+    if (recordHistory) {
+      this.state.layoutHistory.past = [
+        ...this.state.layoutHistory.past,
+        normalizeLayout(this.state.layout),
+      ].slice(-MAX_LAYOUT_HISTORY);
+      this.state.layoutHistory.future = [];
+    }
+
+    this.state.layout = nextLayout;
+    this.state.layoutSummary = getLayoutSummary(nextLayout);
+    this.state.events = [
+      normalizeEvent({
+        type: "layout_changed",
+        label: reason,
+        metadata: { summary: this.state.layoutSummary },
+      }),
+      ...this.state.events,
+    ].filter(Boolean).slice(0, MAX_EVENTS);
+    return true;
+  }
+
+  async validateLayout(input = {}) {
+    return validateLayout(input.layout || input);
+  }
+
+  async createLayoutSnapshot(input = {}) {
+    const snapshot = normalizeLayoutSnapshot({
+      id: input.id,
+      name: input.name || "Town snapshot",
+      layout: input.layout || this.state.layout,
+      createdAt: input.createdAt,
+      updatedAt: nowIso(),
+    });
+    const existingIndex = this.state.layoutSnapshots.findIndex((entry) => entry.id === snapshot.id);
+    if (existingIndex >= 0) {
+      this.state.layoutSnapshots.splice(existingIndex, 1);
+    }
+    this.state.layoutSnapshots = [snapshot, ...this.state.layoutSnapshots].slice(0, MAX_LAYOUT_SNAPSHOTS);
+    await this.afterStateChange();
+    return { snapshot, state: this.getState() };
+  }
+
+  async restoreLayoutSnapshot(snapshotId) {
+    const id = normalizeId(snapshotId, "snapshot");
+    const snapshot = this.state.layoutSnapshots.find((entry) => entry.id === id);
+    if (!snapshot) {
+      const error = new Error("Agent Town snapshot not found.");
+      error.statusCode = 404;
+      throw error;
+    }
+    this.setLayout(snapshot.layout, { reason: `restore snapshot ${snapshot.name}` });
+    await this.afterStateChange();
+    return { snapshot, state: this.getState() };
+  }
+
+  async importLayout(input = {}) {
+    const validation = validateLayout(input.layout || input);
+    if (!validation.ok) {
+      const error = new Error(`Invalid Agent Town layout: ${validation.issues.join("; ")}`);
+      error.statusCode = 400;
+      error.validation = validation;
+      throw error;
+    }
+    this.setLayout(validation.layout, { reason: input.reason || "import layout" });
+    await this.afterStateChange();
+    return { validation, state: this.getState() };
+  }
+
+  async undoLayout() {
+    const previous = this.state.layoutHistory.past.pop();
+    if (!previous) {
+      return { changed: false, state: this.getState() };
+    }
+    this.state.layoutHistory.future = [
+      normalizeLayout(this.state.layout),
+      ...this.state.layoutHistory.future,
+    ].slice(0, MAX_LAYOUT_HISTORY);
+    this.state.layout = normalizeLayout(previous);
+    this.state.layoutSummary = getLayoutSummary(this.state.layout);
+    await this.afterStateChange();
+    return { changed: true, state: this.getState() };
+  }
+
+  async redoLayout() {
+    const next = this.state.layoutHistory.future.shift();
+    if (!next) {
+      return { changed: false, state: this.getState() };
+    }
+    this.state.layoutHistory.past = [
+      ...this.state.layoutHistory.past,
+      normalizeLayout(this.state.layout),
+    ].slice(-MAX_LAYOUT_HISTORY);
+    this.state.layout = normalizeLayout(next);
+    this.state.layoutSummary = getLayoutSummary(this.state.layout);
+    await this.afterStateChange();
+    return { changed: true, state: this.getState() };
   }
 
   async recordEvent(input = {}) {
