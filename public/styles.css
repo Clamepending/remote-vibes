@@ -7313,6 +7313,8 @@ button.agent-town-builder-card {
 }
 
 .visual-building-status-panel,
+.visual-building-reward-panel,
+.visual-building-activity-panel,
 .visual-building-town-state,
 .visual-building-placement-panel,
 .visual-building-quest-chain {
@@ -7349,6 +7351,35 @@ button.agent-town-builder-card {
 .visual-building-status-panel.is-pending,
 .visual-building-status-panel.is-uninstalled {
   border-color: rgba(123, 195, 255, 0.28);
+}
+
+.visual-building-reward-panel {
+  border-color: rgba(241, 200, 111, 0.2);
+  background:
+    linear-gradient(180deg, rgba(241, 200, 111, 0.055), rgba(255, 255, 255, 0.014)),
+    rgba(255, 255, 255, 0.024);
+}
+
+.visual-building-activity-panel {
+  border-color: rgba(123, 195, 255, 0.16);
+}
+
+.visual-building-activity-panel.is-live {
+  border-color: rgba(104, 227, 199, 0.24);
+  background:
+    linear-gradient(180deg, rgba(104, 227, 199, 0.06), rgba(255, 255, 255, 0.014)),
+    rgba(255, 255, 255, 0.022);
+}
+
+.visual-building-activity-panel.is-attention {
+  border-color: rgba(255, 173, 106, 0.34);
+  background:
+    linear-gradient(180deg, rgba(255, 173, 106, 0.075), rgba(255, 255, 255, 0.014)),
+    rgba(255, 255, 255, 0.022);
+}
+
+.visual-building-activity-panel.is-ready {
+  border-color: rgba(123, 195, 255, 0.22);
 }
 
 .visual-building-status-copy {
@@ -7423,6 +7454,88 @@ button.agent-town-builder-card {
 .visual-building-section-head span {
   color: var(--text-subtle);
   font-size: 0.72rem;
+}
+
+.visual-building-reward-grid,
+.visual-building-signal-grid {
+  display: grid;
+  gap: 8px;
+  min-width: 0;
+}
+
+.visual-building-reward-card,
+.visual-building-signal-card {
+  display: grid;
+  align-content: start;
+  min-width: 0;
+  border: 1px solid rgba(255, 255, 255, 0.065);
+  border-radius: 8px;
+  background: rgba(0, 0, 0, 0.13);
+}
+
+.visual-building-reward-card {
+  gap: 5px;
+  padding: 9px;
+}
+
+.visual-building-reward-card strong {
+  min-width: 0;
+  overflow-wrap: anywhere;
+  color: rgba(244, 247, 251, 0.92);
+  font-size: 0.78rem;
+  line-height: 1.2;
+}
+
+.visual-building-reward-card p {
+  min-width: 0;
+  margin: 0;
+  color: rgba(232, 236, 240, 0.74);
+  font-size: 0.75rem;
+  line-height: 1.34;
+}
+
+.visual-building-signal-grid {
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+}
+
+.visual-building-signal-card {
+  gap: 4px;
+  padding: 8px;
+}
+
+.visual-building-signal-card span,
+.visual-building-signal-card strong {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.visual-building-signal-card span {
+  color: var(--text-subtle);
+  font-size: 0.67rem;
+  text-transform: uppercase;
+}
+
+.visual-building-signal-card strong {
+  color: rgba(244, 247, 251, 0.9);
+  font-size: 0.75rem;
+  line-height: 1.2;
+}
+
+.visual-building-signal-card.is-live {
+  border-color: rgba(104, 227, 199, 0.24);
+  background: rgba(104, 227, 199, 0.08);
+}
+
+.visual-building-signal-card.is-attention {
+  border-color: rgba(255, 173, 106, 0.28);
+  background: rgba(255, 173, 106, 0.08);
+}
+
+.visual-building-signal-card.is-ready {
+  border-color: rgba(123, 195, 255, 0.2);
+  background: rgba(123, 195, 255, 0.065);
 }
 
 .visual-building-town-state dl {

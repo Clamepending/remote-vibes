@@ -16200,6 +16200,7 @@ function getVisualGameBuildingMeta(buildingId, plugin) {
 
 function renderAutomationsBuildingPanel() {
   const automations = getAgentAutomations();
+  const plugin = getPluginById("automations");
   const enabledCount = automations.filter((automation) => automation.enabled !== false).length;
   const helperLabel = automations.length
     ? `${enabledCount}/${automations.length} enabled`
@@ -16211,6 +16212,8 @@ function renderAutomationsBuildingPanel() {
         <span class="main-search-kind">system app</span>
         <strong>${escapeHtml(helperLabel)}</strong>
       </section>
+      ${renderVisualGameBuildingRewardPanel(plugin)}
+      ${renderVisualGameBuildingActivityPanel(plugin)}
       <div class="visual-building-automation-grid">
         ${renderWikiBackupAutomationCard()}
         ${renderCreateAutomationCard()}
@@ -16222,6 +16225,7 @@ function renderAutomationsBuildingPanel() {
 
 function renderVisualGameLibraryBuildingPanel() {
   const noteCount = state.knowledgeBase.notes.length;
+  const plugin = getPluginById("knowledge-base");
   const noteLabel = noteCount === 1 ? "1 note" : `${noteCount} notes`;
   const selectedNoteMeta = getKnowledgeBaseSelectedNoteMeta();
   const selectedTitle = state.knowledgeBase.selectedNoteTitle || selectedNoteMeta?.title || "No note selected";
@@ -16231,7 +16235,6 @@ function renderVisualGameLibraryBuildingPanel() {
     : state.knowledgeBase.selectedNoteError
       ? state.knowledgeBase.selectedNoteError
       : getKnowledgeBasePreviewText(state.knowledgeBase.selectedNoteContent || selectedNoteMeta?.excerpt || "", 260);
-  const plugin = getPluginById("knowledge-base");
   const workspaceView = plugin?.ui?.workspaceView || "knowledge-base";
 
   return `
@@ -16251,6 +16254,8 @@ function renderVisualGameLibraryBuildingPanel() {
           </button>
         </div>
       </section>
+      ${renderVisualGameBuildingRewardPanel(plugin)}
+      ${renderVisualGameBuildingActivityPanel(plugin)}
       <section class="visual-building-library-browser" aria-label="Library notes">
         ${renderKnowledgeBaseSearchControls({ id: "knowledge-base-building-search" })}
         <div class="visual-building-library-note-list">
@@ -16293,6 +16298,7 @@ function getSystemBuildingStatusText(system = state.systemMetrics) {
 
 function renderSystemBuildingPanel() {
   const system = state.systemMetrics;
+  const plugin = getPluginById("system");
   const updatedAge = system?.checkedAt ? relativeTime(system.checkedAt) : "";
   const updated = updatedAge ? (updatedAge === "live" ? "updated just now" : `updated ${updatedAge} ago`) : "waiting for first sample";
 
@@ -16315,6 +16321,8 @@ function renderSystemBuildingPanel() {
         </div>
       </section>
       ${state.systemMetricsError ? `<div class="system-error-card">${escapeHtml(state.systemMetricsError)}</div>` : ""}
+      ${renderVisualGameBuildingRewardPanel(plugin)}
+      ${renderVisualGameBuildingActivityPanel(plugin)}
       ${renderSystemSummaryCards(system)}
       ${renderDeviceSection("GPUs", system?.gpus, "No GPU utilization source was found on this host.")}
       ${renderSystemWarnings(system)}
@@ -16323,6 +16331,7 @@ function renderSystemBuildingPanel() {
 }
 
 function renderToolshedBuildingPanel() {
+  const plugin = getPluginById("toolshed");
   const mapCards = [
     {
       label: "BuildingHub",
@@ -16390,6 +16399,8 @@ function renderToolshedBuildingPanel() {
           </button>
         </div>
       </section>
+      ${renderVisualGameBuildingRewardPanel(plugin)}
+      ${renderVisualGameBuildingActivityPanel(plugin)}
       <section class="visual-toolshed-map" aria-label="Vibe Research map">
         ${mapCards
           .map(
@@ -16448,12 +16459,15 @@ function renderAgentMallThemeCard(theme) {
 
 function renderAgentMallBuildingPanel() {
   const activeTheme = getAgentTownTheme();
+  const plugin = getPluginById("agentmall");
   return `
     <div class="visual-building-panel-scroll visual-building-agentmall-panel">
       <section class="visual-building-summary">
         <span class="main-search-kind">theme catalog</span>
         <strong>${escapeHtml(activeTheme.name)} is on the town map.</strong>
       </section>
+      ${renderVisualGameBuildingRewardPanel(plugin)}
+      ${renderVisualGameBuildingActivityPanel(plugin)}
       <section class="agentmall-theme-grid" aria-label="Agent Town themes">
         ${AGENT_TOWN_THEMES.map(renderAgentMallThemeCard).join("")}
       </section>
@@ -16483,6 +16497,8 @@ function renderDoghouseBuildingPanel(plugin) {
           `
           : ""
       }
+      ${renderVisualGameBuildingRewardPanel(plugin)}
+      ${renderVisualGameBuildingActivityPanel(plugin)}
       <section class="plugin-detail-settings visual-building-plugin-settings">
         <section class="visual-building-summary">
           <span class="main-search-kind">companion</span>
@@ -16535,6 +16551,8 @@ function renderVisualGamePluginBuildingPanel(plugin) {
         </div>
       </section>
       ${renderVisualGamePluginStatusPanel(plugin, issue)}
+      ${renderVisualGameBuildingRewardPanel(plugin)}
+      ${renderVisualGameBuildingActivityPanel(plugin, issue)}
       ${renderVisualGamePluginTownState(plugin, issue)}
       ${renderVisualGamePluginPlacementPanel(plugin)}
       ${renderVisualGamePluginQuestChain(plugin)}
@@ -16675,6 +16693,413 @@ function renderVisualGamePluginStatusPanel(plugin, issue = getPluginBuildingIssu
       </div>
       <div class="visual-building-status-actions">
         ${renderVisualGamePluginPrimaryAction(plugin, issue)}
+      </div>
+    </section>
+  `;
+}
+
+function formatVisualBuildingCount(count, singular, plural = `${singular}s`) {
+  const value = Math.max(0, Number(count) || 0);
+  return `${value} ${value === 1 ? singular : plural}`;
+}
+
+function getVisualGameDefaultRewardCards(plugin) {
+  const category = String(plugin?.category || "").toLowerCase();
+  if (category.includes("communication") || category.includes("social")) {
+    return [
+      { title: "Message bridge", detail: "Gives agents a named place for conversations instead of scattering replies across random sessions." },
+      { title: "Scoped channels", detail: "Keeps the account, channel, bot, or bridge requirements attached to the building." },
+      { title: "Review path", detail: "Makes message readiness and setup gaps visible before agents rely on the channel." },
+    ];
+  }
+  if (category.includes("knowledge")) {
+    return [
+      { title: "Knowledge source", detail: "Adds a durable source that agents can search, cite, or update during project work." },
+      { title: "Context anchor", detail: "Keeps the relevant workspace, account, or sync scope visible on the town map." },
+      { title: "Evidence trail", detail: "Turns loose notes and files into a named place agents can revisit." },
+    ];
+  }
+  if (category.includes("coding")) {
+    return [
+      { title: "Code workflow", detail: "Gives agents a clear place for repo triage, checks, fixes, and publishing tasks." },
+      { title: "Failure visibility", detail: "Setup and runtime issues appear in the drawer before an agent starts work." },
+      { title: "Handoff point", detail: "The building keeps the tool purpose and access model close to the active sessions." },
+    ];
+  }
+  return [
+    { title: "Agent capability", detail: plugin?.description || "Adds a named capability agents can discover from Agent Town." },
+    { title: "Setup memory", detail: "Keeps setup variables, access notes, and next steps attached to the building." },
+    { title: "Town payoff", detail: "Installed buildings become visible, movable parts of the working town." },
+  ];
+}
+
+function getVisualGameBuildingRewardCards(plugin) {
+  const pluginId = getPluginId(plugin);
+  const rewardsById = {
+    "agent-inbox": [
+      { title: "Attention queue", detail: "Collects working agents, unread results, exited sessions, and open action items in one place." },
+      { title: "Fast re-entry", detail: "Each row jumps back to the exact session or human action that needs attention." },
+      { title: "Town signals", detail: "Action items and review counts can become visible activity on the map." },
+    ],
+    agentmail: [
+      { title: "Email reaches agents", detail: "Routes inbox messages into one dedicated communications session." },
+      { title: "Reply helper", detail: "Gives terminal agents a safe local command for sending replies without exposing secrets." },
+      { title: "Single voice", detail: "Keeps mail handling centralized so threads do not scatter across ad hoc runs." },
+    ],
+    agentmall: [
+      { title: "Town identity", detail: "Changes the map skin so the workspace feels owned rather than generic." },
+      { title: "Persistent style", detail: "Keeps the selected theme saved for this browser." },
+      { title: "Readable palette", detail: "Lets visual changes happen without changing the underlying work state." },
+    ],
+    automations: [
+      { title: "Recurring helpers", detail: "Turns repeated checks, summaries, and maintenance tasks into scheduled agent work." },
+      { title: "Inbox handoff", detail: "Automation results can return as reviewable work instead of disappearing into the background." },
+      { title: "Habit loop", detail: "The tower gives the town a reason to be checked again later." },
+    ],
+    "browser-use": [
+      { title: "Browser worker", detail: "Lets an agent delegate long web tasks to a separate browser-fulfillment session." },
+      { title: "Profile reuse", detail: "Keeps worker folder, browser profile, and max-step settings attached to the building." },
+      { title: "Task visibility", detail: "Running browser tasks show up as activity instead of hidden subprocesses." },
+    ],
+    buildinghub: [
+      { title: "Building catalog", detail: "Loads manifest-only buildings that can be reviewed before they join the town." },
+      { title: "Safe expansion", detail: "Community entries add setup guides and visuals without running executable code in Vibe Research." },
+      { title: "Builder loop", detail: "Turns new integrations into placeable, inspectable town buildings." },
+    ],
+    "ci-repair-shop": [
+      { title: "Failure to fix", detail: "Transforms CI failures into focused repair sessions with logs and repro commands." },
+      { title: "PR confidence", detail: "Keeps check status, local verification, and publishing work in one mental bucket." },
+      { title: "Regression guard", detail: "Makes the next failing check an obvious next action for an agent." },
+    ],
+    discord: [
+      { title: "Channel bridge", detail: "Makes a Discord bot, webhook, or provider connector visible as a town capability." },
+      { title: "Conversation scope", detail: "Keeps channel permissions and DM scope explicit before agents monitor or reply." },
+      { title: "External handoff", detail: "Points agents to the provider-side connector instead of pretending credentials live here." },
+    ],
+    doghouse: [
+      { title: "Companion marker", detail: "Adds a small living landmark so the town feels less empty between work sessions." },
+      { title: "Local preference", detail: "Keeps the dog name browser-local and harmless." },
+      { title: "Map affordance", detail: "Gives the visual town a clickable decorative building with its own tiny state." },
+    ],
+    github: [
+      { title: "Repo command center", detail: "Supports issue triage, PR review, CI inspection, and release handoffs." },
+      { title: "Check visibility", detail: "Keeps GitHub access and local auth expectations visible before agents touch a repo." },
+      { title: "Publish path", detail: "Connects local fixes to pushed branches and pull requests." },
+    ],
+    "knowledge-base": [
+      { title: "Shared memory", detail: "Turns notes, decisions, sources, and handoffs into searchable context for future agents." },
+      { title: "Evidence wall", detail: "Keeps representative artifacts and markdown close to the active town." },
+      { title: "Backup rhythm", detail: "Git backup state makes durable knowledge feel like a maintained system." },
+    ],
+    "localhost-apps": [
+      { title: "App dock", detail: "Surfaces local development servers and previews without leaving the current session." },
+      { title: "Proxy path", detail: "Gives agents a stable way to inspect localhost work through Vibe Research." },
+      { title: "Tailnet option", detail: "Pairs with Tailscale when a local app should be shown on another device." },
+    ],
+    occupations: [
+      { title: "Agent roles", detail: "Shapes new sessions with shared researcher, engineer, or custom guidance." },
+      { title: "Prompt sync", detail: "Keeps AGENTS.md, CLAUDE.md, and GEMINI.md aligned with the selected occupation." },
+      { title: "Safer starts", detail: "Makes role intent explicit before creating a new agent." },
+    ],
+    ottoauth: [
+      { title: "Bounded commerce", detail: "Lets agents request human-linked checkout while keeping spend caps visible." },
+      { title: "Approval surface", detail: "Makes username, private-key status, callback, and charge bounds part of setup." },
+      { title: "Task tracking", detail: "Active purchase tasks show as building activity instead of silent background work." },
+    ],
+    system: [
+      { title: "Capacity readout", detail: "Shows CPU, memory, storage, GPU, accelerator, and agent usage before heavy work starts." },
+      { title: "Scheduling clue", detail: "Helps decide whether this host can safely run another agent or experiment." },
+      { title: "Local truth", detail: "Keeps machine state visible without sending host metrics to an external service." },
+    ],
+    tailscale: [
+      { title: "Private access", detail: "Shows tailnet URLs and safe remote access paths for Vibe Research and local apps." },
+      { title: "Port bridge", detail: "Pairs localhost-only ports with Tailscale Serve when the machine is connected." },
+      { title: "Device handoff", detail: "Makes phone and second-device access discoverable from the map." },
+    ],
+    telegram: [
+      { title: "Messages reach agents", detail: "Routes Telegram bot messages into one dedicated communications session." },
+      { title: "Bot scope", detail: "Keeps token status and optional chat allowlists visible before the listener replies." },
+      { title: "Reply helper", detail: "Gives agents a local reply path without exposing the bot token in prompts." },
+    ],
+    twilio: [
+      { title: "Verified SMS", detail: "Lets approved phone numbers wake a dedicated SMS agent session." },
+      { title: "Wallet-tracked replies", detail: "Reserves and captures the estimated SMS spend around each reply." },
+      { title: "Phone scope", detail: "Keeps sender number, Verify service, and verified contacts visible before messages flow." },
+    ],
+    toolshed: [
+      { title: "Building loop", detail: "Collects the docs and manifest flow for turning new capabilities into buildings." },
+      { title: "Review habit", detail: "Keeps credentials, setup variables, and publish safety in view while designing buildings." },
+      { title: "Catalog path", detail: "Connects local ideas to BuildingHub when a manifest is safe to share." },
+    ],
+    videomemory: [
+      { title: "Visual monitors", detail: "Lets agents create camera or browser monitors that wake their sessions later." },
+      { title: "Permission state", detail: "Makes camera setup and webhook readiness visible before monitor creation." },
+      { title: "Wake loop", detail: "Turns future visual changes into agent follow-up work." },
+    ],
+    wallet: [
+      { title: "Spend ledger", detail: "Shows available, held, and spent credits before paid building actions run." },
+      { title: "Cost guard", detail: "Gives paid services a shared place to reserve, capture, and release credits." },
+      { title: "Payment setup", detail: "Keeps Stripe and manual credit state visible without exposing secrets to agents." },
+    ],
+  };
+
+  return rewardsById[pluginId] || getVisualGameDefaultRewardCards(plugin);
+}
+
+function renderVisualGameBuildingRewardPanel(plugin) {
+  if (!plugin) {
+    return "";
+  }
+
+  const rewards = getVisualGameBuildingRewardCards(plugin).slice(0, 3);
+  if (!rewards.length) {
+    return "";
+  }
+
+  return `
+    <section class="visual-building-reward-panel" aria-label="${escapeHtml(`${plugin.name} unlocks`)}">
+      <div class="visual-building-section-head">
+        <strong>Unlocks</strong>
+        <span>${escapeHtml(plugin.category || "building")}</span>
+      </div>
+      <div class="visual-building-reward-grid">
+        ${rewards.map((reward) => `
+          <article class="visual-building-reward-card">
+            <strong>${escapeHtml(reward.title || "Unlock")}</strong>
+            <p>${escapeHtml(reward.detail || "")}</p>
+          </article>
+        `).join("")}
+      </div>
+    </section>
+  `;
+}
+
+function getVisualGameBuildingSetupSignal(plugin, issue = getPluginBuildingIssue(plugin)) {
+  const progress = getPluginOnboardingProgress(plugin);
+  if (progress.total > 0) {
+    return {
+      label: "setup",
+      tone: progress.complete >= progress.total && !issue ? "ready" : "attention",
+      value: `${progress.complete}/${progress.total} ready`,
+    };
+  }
+
+  if (issue) {
+    return { label: "setup", tone: "attention", value: "needs setup" };
+  }
+
+  return { label: "setup", tone: isPluginInstalled(plugin) ? "ready" : "idle", value: isPluginInstalled(plugin) ? "ready" : "not installed" };
+}
+
+function getVisualGameBuildingActivitySignals(plugin, issue = getPluginBuildingIssue(plugin)) {
+  const pluginId = getPluginId(plugin);
+  const installed = isPluginInstalled(plugin);
+  const defaultSignals = [
+    getVisualGameBuildingSetupSignal(plugin, issue),
+    {
+      label: "map",
+      tone: installed ? "ready" : "idle",
+      value: isAgentTownFunctionalPlugin(plugin)
+        ? getAgentTownFunctionalStatusLabel(getAgentTownFunctionalStatus(plugin))
+        : "system spot",
+    },
+    {
+      label: "access",
+      tone: issue ? "attention" : "idle",
+      value: plugin?.access?.label || plugin?.source || "local",
+    },
+  ];
+
+  if (pluginId === "agent-inbox") {
+    const summary = getAgentInboxSummary();
+    return [
+      { label: "actions", tone: summary.actions ? "attention" : "idle", value: formatVisualBuildingCount(summary.actions, "open item") },
+      { label: "working", tone: summary.working ? "live" : "idle", value: formatVisualBuildingCount(summary.working, "agent") },
+      { label: "review", tone: summary.unread ? "attention" : "ready", value: summary.unread ? formatVisualBuildingCount(summary.unread, "unread result") : "clear" },
+    ];
+  }
+
+  if (pluginId === "agentmail") {
+    const status = state.settings.agentMailStatus || {};
+    return [
+      getVisualGameBuildingSetupSignal(plugin, issue),
+      { label: "listener", tone: status.connected ? "live" : issue ? "attention" : "idle", value: getAgentMailStatusText() },
+      { label: "inbox", tone: state.settings.agentMailInboxId ? "ready" : "attention", value: state.settings.agentMailInboxId || "missing" },
+    ];
+  }
+
+  if (pluginId === "automations") {
+    const automations = getAgentAutomations();
+    const enabledCount = automations.filter((automation) => automation.enabled !== false).length;
+    const createdCount = Number(state.agentTown?.signals?.automationCreatedCount || 0);
+    return [
+      { label: "enabled", tone: enabledCount ? "live" : "idle", value: `${enabledCount}/${automations.length}` },
+      { label: "created", tone: createdCount ? "ready" : "idle", value: formatVisualBuildingCount(createdCount, "signal") },
+      { label: "backup", tone: state.settings.wikiGitBackupEnabled ? "ready" : "idle", value: getKnowledgeBaseSyncLabel() },
+    ];
+  }
+
+  if (pluginId === "browser-use") {
+    const status = state.settings.browserUseStatus || {};
+    const activeCount = Number(status.activeCount || 0);
+    return [
+      getVisualGameBuildingSetupSignal(plugin, issue),
+      { label: "worker", tone: activeCount ? "live" : status.workerAvailable ? "ready" : "attention", value: getBrowserUseStatusText() },
+      { label: "tasks", tone: activeCount ? "live" : "idle", value: formatVisualBuildingCount(activeCount, "running task") },
+    ];
+  }
+
+  if (pluginId === "buildinghub") {
+    const status = state.settings.buildingHubStatus || state.buildingHub.status || {};
+    const buildingCount = Number(status.buildingCount ?? state.buildingHub.buildings.length ?? 0);
+    return [
+      { label: "catalog", tone: state.settings.buildingHubEnabled ? "live" : "idle", value: getBuildingHubStatusText() },
+      { label: "community", tone: buildingCount ? "ready" : "idle", value: formatVisualBuildingCount(buildingCount, "building") },
+      { label: "source", tone: state.settings.buildingHubCatalogPath || state.settings.buildingHubCatalogUrl ? "ready" : "idle", value: state.settings.buildingHubEnabled ? "configured" : "off" },
+    ];
+  }
+
+  if (pluginId === "knowledge-base") {
+    const savedCount = Number(state.agentTown?.signals?.libraryNoteSavedCount || 0);
+    return [
+      { label: "notes", tone: state.knowledgeBase.notes.length ? "ready" : "idle", value: formatVisualBuildingCount(state.knowledgeBase.notes.length, "note") },
+      { label: "selected", tone: state.knowledgeBase.selectedNotePath ? "ready" : "idle", value: state.knowledgeBase.selectedNoteTitle || "none" },
+      { label: "saved", tone: savedCount ? "live" : "idle", value: formatVisualBuildingCount(savedCount, "signal") },
+    ];
+  }
+
+  if (pluginId === "localhost-apps") {
+    const ports = Array.isArray(state.ports) ? state.ports : [];
+    const portCount = ports.length;
+    const previewableCount = ports.filter((port) => port?.directUrl || port?.proxyUrl).length;
+    return [
+      { label: "ports", tone: portCount ? "live" : "idle", value: formatVisualBuildingCount(portCount, "port") },
+      { label: "preview", tone: previewableCount ? "ready" : "idle", value: formatVisualBuildingCount(previewableCount, "app") },
+      { label: "access", tone: isLocalhostAppsEnabled() ? "ready" : "idle", value: isLocalhostAppsEnabled() ? "enabled" : "off" },
+    ];
+  }
+
+  if (pluginId === "ottoauth") {
+    const status = state.settings.ottoAuthStatus || {};
+    const activeCount = Number(status.activeCount || 0);
+    return [
+      getVisualGameBuildingSetupSignal(plugin, issue),
+      { label: "service", tone: activeCount ? "live" : issue ? "attention" : "idle", value: getOttoAuthStatusText() },
+      { label: "tasks", tone: activeCount ? "live" : "idle", value: formatVisualBuildingCount(activeCount, "running task") },
+    ];
+  }
+
+  if (pluginId === "system") {
+    const system = state.systemMetrics;
+    const gpuCount = Array.isArray(system?.gpus) ? system.gpus.length : 0;
+    const cpuPercent = getFiniteMetricPercent(system?.cpu?.utilizationPercent);
+    const memoryPercent = getFiniteMetricPercent(system?.memory?.usedPercent);
+    return [
+      { label: "cpu", tone: cpuPercent !== null && cpuPercent > 80 ? "attention" : "idle", value: cpuPercent === null ? "unknown" : formatCompactPercent(cpuPercent) },
+      { label: "memory", tone: memoryPercent !== null && memoryPercent > 85 ? "attention" : "idle", value: memoryPercent === null ? "unknown" : formatCompactPercent(memoryPercent) },
+      { label: "gpu", tone: gpuCount ? "ready" : "idle", value: formatVisualBuildingCount(gpuCount, "GPU") },
+    ];
+  }
+
+  if (pluginId === "tailscale") {
+    const ports = Array.isArray(state.ports) ? state.ports : [];
+    const tailnetPorts = ports.filter((port) => port?.preferredAccess === "tailscale-serve" || port?.tailscaleUrl).length;
+    const exposablePorts = ports.filter((port) => port?.canExposeWithTailscale).length;
+    return [
+      { label: "portal", tone: tailnetPorts ? "live" : "idle", value: getTailscaleBuildingMeta() },
+      { label: "tailnet", tone: tailnetPorts ? "ready" : "idle", value: formatVisualBuildingCount(tailnetPorts, "port") },
+      { label: "expose", tone: exposablePorts ? "attention" : "idle", value: formatVisualBuildingCount(exposablePorts, "ready port") },
+    ];
+  }
+
+  if (pluginId === "telegram") {
+    const status = state.settings.telegramStatus || {};
+    return [
+      getVisualGameBuildingSetupSignal(plugin, issue),
+      { label: "listener", tone: status.connected ? "live" : issue ? "attention" : "idle", value: getTelegramStatusText() },
+      { label: "scope", tone: state.settings.telegramAllowedChatIds ? "ready" : "idle", value: state.settings.telegramAllowedChatIds ? "allowlist" : "all chats" },
+    ];
+  }
+
+  if (pluginId === "twilio") {
+    const status = state.settings.twilioStatus || {};
+    const verifiedCount = Number(status.verifiedContactCount || 0);
+    return [
+      getVisualGameBuildingSetupSignal(plugin, issue),
+      { label: "listener", tone: status.webhookUrl && !issue ? "ready" : issue ? "attention" : "idle", value: getTwilioStatusText() },
+      { label: "verified", tone: verifiedCount ? "live" : "idle", value: formatVisualBuildingCount(verifiedCount, "phone") },
+    ];
+  }
+
+  if (pluginId === "toolshed") {
+    const installedFunctionalCount = getAgentTownInstalledFunctionalPlugins().length;
+    return [
+      { label: "installed", tone: installedFunctionalCount ? "ready" : "idle", value: formatVisualBuildingCount(installedFunctionalCount, "building") },
+      { label: "catalog", tone: state.buildingHub.buildings.length ? "live" : "idle", value: getBuildingHubStatusText() },
+      { label: "queue", tone: getAgentTownUnplacedFunctionalPlugins().length ? "attention" : "ready", value: formatVisualBuildingCount(getAgentTownUnplacedFunctionalPlugins().length, "to place") },
+    ];
+  }
+
+  if (pluginId === "videomemory") {
+    const monitors = Array.isArray(state.videoMemoryMonitors) ? state.videoMemoryMonitors : [];
+    const activeCount = monitors.filter((monitor) => monitor?.status === "active" || monitor?.active).length;
+    return [
+      getVisualGameBuildingSetupSignal(plugin, issue),
+      { label: "monitor", tone: activeCount ? "live" : hasVideoMemoryCameraPermissionIssue() ? "attention" : "idle", value: getVideoMemoryStatusText() },
+      { label: "armed", tone: activeCount ? "live" : "idle", value: formatVisualBuildingCount(activeCount, "monitor") },
+    ];
+  }
+
+  if (pluginId === "wallet") {
+    const wallet = state.settings.walletStatus || {};
+    const eventCount = Array.isArray(wallet.events) ? wallet.events.length : 0;
+    return [
+      { label: "available", tone: Number(wallet.availableCents || 0) > 0 ? "ready" : "idle", value: formatCents(wallet.availableCents) },
+      { label: "held", tone: Number(wallet.heldCents || 0) > 0 ? "live" : "idle", value: formatCents(wallet.heldCents) },
+      { label: "ledger", tone: eventCount ? "ready" : "idle", value: formatVisualBuildingCount(eventCount, "event") },
+    ];
+  }
+
+  return defaultSignals;
+}
+
+function getVisualGameBuildingActivityTone(signals) {
+  if (signals.some((signal) => signal.tone === "attention")) {
+    return "attention";
+  }
+  if (signals.some((signal) => signal.tone === "live")) {
+    return "live";
+  }
+  if (signals.some((signal) => signal.tone === "ready")) {
+    return "ready";
+  }
+  return "idle";
+}
+
+function renderVisualGameBuildingActivityPanel(plugin, issue = getPluginBuildingIssue(plugin)) {
+  if (!plugin) {
+    return "";
+  }
+
+  const signals = getVisualGameBuildingActivitySignals(plugin, issue).filter(Boolean).slice(0, 3);
+  if (!signals.length) {
+    return "";
+  }
+
+  const tone = getVisualGameBuildingActivityTone(signals);
+  return `
+    <section class="visual-building-activity-panel is-${escapeHtml(tone)}" aria-label="${escapeHtml(`${plugin.name} activity`)}">
+      <div class="visual-building-section-head">
+        <strong>Activity</strong>
+        <span>${escapeHtml(tone === "live" ? "live now" : tone === "attention" ? "needs care" : tone === "ready" ? "ready" : "quiet")}</span>
+      </div>
+      <div class="visual-building-signal-grid">
+        ${signals.map((signal) => `
+          <article class="visual-building-signal-card is-${escapeHtml(signal.tone || "idle")}">
+            <span>${escapeHtml(signal.label || "signal")}</span>
+            <strong>${escapeHtml(signal.value || "quiet")}</strong>
+          </article>
+        `).join("")}
       </div>
     </section>
   `;
@@ -18874,6 +19299,40 @@ function getAgentTownDefaultBuildingRect(plugin, indexes) {
   return AGENT_TOWN_CUSTOM_BUILDING_RECTS[customIndex] || null;
 }
 
+function getAgentTownPluginBuildingMapMeta(plugin, issue = getPluginBuildingIssue(plugin)) {
+  const pluginId = getPluginId(plugin);
+  if (issue) {
+    return getPluginStatusBadgeLabel(plugin, issue);
+  }
+
+  switch (pluginId) {
+    case "agent-inbox":
+      return getAgentInboxNavMeta();
+    case "agentmail":
+      return getAgentMailStatusText();
+    case "browser-use":
+      return getBrowserUseStatusText();
+    case "buildinghub":
+      return getBuildingHubStatusText();
+    case "localhost-apps":
+      return isLocalhostAppsEnabled() ? `${state.ports.length} port${state.ports.length === 1 ? "" : "s"}` : "off";
+    case "ottoauth":
+      return getOttoAuthStatusText();
+    case "tailscale":
+      return getTailscaleBuildingMeta();
+    case "telegram":
+      return getTelegramStatusText();
+    case "twilio":
+      return getTwilioStatusText();
+    case "videomemory":
+      return getVideoMemoryStatusText();
+    case "wallet":
+      return getWalletStatusText();
+    default:
+      return getPluginStatusBadgeLabel(plugin, issue) || plugin.category || "building";
+  }
+}
+
 function getAgentTownPluginBuildingBlueprints() {
   const installedPlugins = PLUGIN_CATALOG
     .filter((plugin) => isPluginInstalled(plugin))
@@ -18896,7 +19355,7 @@ function getAgentTownPluginBuildingBlueprints() {
       issue,
       pluginId,
       label: plugin.name,
-      meta: pluginId === "tailscale" ? getTailscaleBuildingMeta() : getPluginStatusBadgeLabel(plugin, issue) || plugin.category || "building",
+      meta: getAgentTownPluginBuildingMapMeta(plugin, issue),
       shape,
       statusKind: getAgentTownBuildingMapStatus(plugin, issue),
       baseRect,

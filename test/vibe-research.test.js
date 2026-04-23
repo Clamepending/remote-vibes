@@ -1951,6 +1951,8 @@ test("Agent Town builder arranges enabled functional buildings and keeps them vi
     await clickCanvasPoint(page, arrangedDiscordPoint);
     await page.locator(".visual-building-status-panel").waitFor({ timeout: 10_000 });
     assert.match(await page.locator(".visual-building-status-panel").textContent(), /Ready/);
+    assert.match(await page.locator(".visual-building-reward-panel").textContent(), /Channel bridge/);
+    assert.match(await page.locator(".visual-building-activity-panel").textContent(), /External connector/);
     assert.match(await page.locator(".visual-building-town-state").textContent(), /manual spot/);
     await page.getByRole("button", { name: "Auto spot" }).click();
     await page.waitForFunction(() => {
@@ -1966,6 +1968,8 @@ test("Agent Town builder arranges enabled functional buildings and keeps them vi
     await clickCanvasPoint(page, telegramPoint);
     await page.locator(".visual-building-status-panel").waitFor({ timeout: 10_000 });
     assert.match(await page.locator(".visual-building-status-panel").textContent(), /Needs setup/);
+    assert.match(await page.locator(".visual-building-reward-panel").textContent(), /Messages reach agents/);
+    assert.match(await page.locator(".visual-building-activity-panel").textContent(), /not configured/);
     assert.match(await page.locator(".visual-building-quest-chain").textContent(), /Save Telegram variables/);
     await page.getByRole("button", { name: "Complete setup" }).click();
     await page.locator(".visual-building-plugin-settings.is-highlighted").waitFor({ timeout: 10_000 });
