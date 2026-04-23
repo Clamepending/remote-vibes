@@ -549,7 +549,7 @@ const AGENT_TOWN_FUNCTIONAL_BUILDING_SIZE = Object.freeze({
   height: AGENT_TOWN_BUILD_GRID_SIZE * 2,
 });
 const AGENT_TOWN_BUILDER_DEFAULT_TAB = "cosmetic";
-const AGENT_TOWN_BUILDER_TABS = new Set(["cosmetic", "functional"]);
+const AGENT_TOWN_BUILDER_TABS = new Set(["cosmetic", "functional", "layouts"]);
 const AGENT_TOWN_BUILDER_COSMETIC_ITEMS = Object.freeze([
   {
     id: "road-square",
@@ -595,6 +595,106 @@ const AGENT_TOWN_BUILDER_COSMETIC_ITEMS = Object.freeze([
     roof: "#80505e",
     body: "#6f5b3a",
     accent: "#f1c978",
+  },
+]);
+const AGENT_TOWN_LAYOUT_BLUEPRINTS = Object.freeze([
+  {
+    id: "starter-base",
+    name: "Starter Base",
+    meta: "first loop",
+    description: "Short road, one planter, one shed.",
+    tags: ["starter", "tutorial", "small", "road", "shed", "easy"],
+    decorations: [
+      { id: "road-1", itemId: "road-square", x: 328, y: 264 },
+      { id: "road-2", itemId: "road-square", x: 356, y: 264 },
+      { id: "road-3", itemId: "road-square", x: 384, y: 264 },
+      { id: "planter-1", itemId: "planter", x: 328, y: 292 },
+      { id: "shed-1", itemId: "shed", x: 384, y: 292 },
+    ],
+  },
+  {
+    id: "main-street",
+    name: "Main Street",
+    meta: "clear spine",
+    description: "A readable town road with side accents.",
+    tags: ["road", "street", "linear", "clear", "starter", "readable"],
+    decorations: [
+      { id: "road-1", itemId: "road-square", x: 272, y: 264 },
+      { id: "road-2", itemId: "road-square", x: 300, y: 264 },
+      { id: "road-3", itemId: "road-square", x: 328, y: 264 },
+      { id: "road-4", itemId: "road-square", x: 356, y: 264 },
+      { id: "road-5", itemId: "road-square", x: 384, y: 264 },
+      { id: "road-6", itemId: "road-square", x: 412, y: 264 },
+      { id: "road-7", itemId: "road-square", x: 440, y: 264 },
+      { id: "planter-1", itemId: "planter", x: 300, y: 292 },
+      { id: "planter-2", itemId: "planter", x: 412, y: 292 },
+      { id: "shed-1", itemId: "shed", x: 356, y: 292 },
+      { id: "fence-1", itemId: "fence-horizontal", x: 272, y: 236 },
+      { id: "fence-2", itemId: "fence-horizontal", x: 440, y: 236 },
+    ],
+  },
+  {
+    id: "factory-cells",
+    name: "Factory Cells",
+    meta: "grid modules",
+    description: "Repeated cells for bottleneck-friendly scanning.",
+    tags: ["factory", "grid", "cells", "factorio", "modules", "scannable"],
+    decorations: [
+      { id: "road-a1", itemId: "road-square", x: 300, y: 236 },
+      { id: "road-a2", itemId: "road-square", x: 328, y: 236 },
+      { id: "road-a3", itemId: "road-square", x: 356, y: 236 },
+      { id: "road-a4", itemId: "road-square", x: 384, y: 236 },
+      { id: "road-a5", itemId: "road-square", x: 412, y: 236 },
+      { id: "road-b1", itemId: "road-square", x: 356, y: 264 },
+      { id: "road-b2", itemId: "road-square", x: 356, y: 292 },
+      { id: "road-b3", itemId: "road-square", x: 356, y: 320 },
+      { id: "shed-1", itemId: "shed", x: 300, y: 264 },
+      { id: "shed-2", itemId: "shed", x: 384, y: 264 },
+      { id: "planter-1", itemId: "planter", x: 300, y: 320 },
+      { id: "planter-2", itemId: "planter", x: 412, y: 320 },
+    ],
+  },
+  {
+    id: "courtyard-hub",
+    name: "Courtyard Hub",
+    meta: "central loop",
+    description: "A loop around a compact town center.",
+    tags: ["hub", "loop", "courtyard", "center", "roundabout", "balanced"],
+    decorations: [
+      { id: "road-1", itemId: "road-square", x: 328, y: 236 },
+      { id: "road-2", itemId: "road-square", x: 356, y: 236 },
+      { id: "road-3", itemId: "road-square", x: 384, y: 236 },
+      { id: "road-4", itemId: "road-square", x: 328, y: 264 },
+      { id: "road-5", itemId: "road-square", x: 384, y: 264 },
+      { id: "road-6", itemId: "road-square", x: 328, y: 292 },
+      { id: "road-7", itemId: "road-square", x: 356, y: 292 },
+      { id: "road-8", itemId: "road-square", x: 384, y: 292 },
+      { id: "planter-1", itemId: "planter", x: 356, y: 264 },
+      { id: "fence-1", itemId: "fence-horizontal", x: 328, y: 320 },
+      { id: "fence-2", itemId: "fence-horizontal", x: 384, y: 320 },
+      { id: "shed-1", itemId: "shed", x: 424, y: 264 },
+    ],
+  },
+  {
+    id: "research-campus",
+    name: "Research Campus",
+    meta: "quiet clusters",
+    description: "Separated clusters for calm, readable zones.",
+    tags: ["research", "campus", "clusters", "quiet", "garden", "readable"],
+    decorations: [
+      { id: "road-1", itemId: "road-square", x: 292, y: 252 },
+      { id: "road-2", itemId: "road-square", x: 320, y: 252 },
+      { id: "road-3", itemId: "road-square", x: 348, y: 252 },
+      { id: "road-4", itemId: "road-square", x: 376, y: 280 },
+      { id: "road-5", itemId: "road-square", x: 404, y: 280 },
+      { id: "road-6", itemId: "road-square", x: 432, y: 280 },
+      { id: "shed-1", itemId: "shed", x: 292, y: 280 },
+      { id: "shed-2", itemId: "shed", x: 404, y: 308 },
+      { id: "planter-1", itemId: "planter", x: 348, y: 280 },
+      { id: "planter-2", itemId: "planter", x: 432, y: 252 },
+      { id: "fence-1", itemId: "fence-vertical", x: 460, y: 252 },
+      { id: "fence-2", itemId: "fence-vertical", x: 460, y: 280 },
+    ],
   },
 ]);
 const AGENT_TOWN_PLACE_COLLISION_GAP = 2;
@@ -1414,6 +1514,8 @@ const state = {
     serverLayoutLoaded: false,
     builderOpen: false,
     builderTab: AGENT_TOWN_BUILDER_DEFAULT_TAB,
+    builderFunctionalSearchQuery: "",
+    builderLayoutSearchQuery: "",
     builderPlacement: null,
     builderFeedback: null,
     builderPulse: null,
@@ -1431,6 +1533,7 @@ const state = {
   },
   buildingHub: {
     buildings: [],
+    layouts: [],
     loaded: false,
     loading: false,
     status: null,
@@ -5287,8 +5390,16 @@ function getBuildingHubStatusText() {
   }
 
   const buildingCount = Number(status.buildingCount ?? state.buildingHub.buildings.length ?? 0);
-  if (buildingCount > 0) {
-    return `${buildingCount} community building${buildingCount === 1 ? "" : "s"} loaded`;
+  const layoutCount = Number(status.layoutCount ?? state.buildingHub.layouts.length ?? 0);
+  if (buildingCount > 0 || layoutCount > 0) {
+    const parts = [];
+    if (buildingCount > 0) {
+      parts.push(`${buildingCount} building${buildingCount === 1 ? "" : "s"}`);
+    }
+    if (layoutCount > 0) {
+      parts.push(`${layoutCount} layout${layoutCount === 1 ? "" : "s"}`);
+    }
+    return `${parts.join(", ")} loaded`;
   }
 
   if (!state.settings.buildingHubCatalogPath && !state.settings.buildingHubCatalogUrl) {
@@ -11709,15 +11820,58 @@ function syncPluginCatalogFromBuildingHub(buildings = state.buildingHub.building
   );
 }
 
+function normalizeBuildingHubLayoutForClient(layout) {
+  if (!layout || typeof layout !== "object" || Array.isArray(layout)) {
+    return null;
+  }
+
+  const layoutId = normalizeBuildingId(layout.id || layout.name);
+  const name = String(layout.name || layoutId || "").trim();
+  const blueprint = layout.layout && typeof layout.layout === "object" && !Array.isArray(layout.layout)
+    ? normalizeAgentTownPersistedLayout(layout.layout)
+    : normalizeAgentTownPersistedLayout(layout);
+  if (!layoutId || !name || !blueprint.decorations.length) {
+    return null;
+  }
+
+  return {
+    id: layoutId,
+    name,
+    meta: String(layout.meta || layout.category || layout.source || "community").trim() || "community",
+    category: String(layout.category || "Layout").trim() || "Layout",
+    description: String(layout.description || "").trim(),
+    source: String(layout.source || "buildinghub").trim() || "buildinghub",
+    status: String(layout.status || "community").trim() || "community",
+    tags: Array.isArray(layout.tags) ? layout.tags.map((tag) => String(tag || "").trim()).filter(Boolean).slice(0, 20) : [],
+    version: String(layout.version || "0.1.0").trim() || "0.1.0",
+    requiredBuildings: Array.isArray(layout.requiredBuildings)
+      ? [...new Set(layout.requiredBuildings.map(normalizeBuildingId).filter(Boolean))].slice(0, 80)
+      : [],
+    previewUrl: String(layout.previewUrl || layout.imageUrl || "").trim(),
+    layout: blueprint,
+    buildingHub: layout.buildingHub && typeof layout.buildingHub === "object" && !Array.isArray(layout.buildingHub)
+      ? { ...layout.buildingHub }
+      : null,
+  };
+}
+
 function applyBuildingHubCatalog(payload = {}) {
   const buildings = Array.isArray(payload.buildings)
     ? payload.buildings
     : Array.isArray(payload.buildingHub?.buildings)
       ? payload.buildingHub.buildings
       : [];
+  const layouts = (
+    Array.isArray(payload.layouts)
+      ? payload.layouts
+      : Array.isArray(payload.buildingHub?.layouts)
+        ? payload.buildingHub.layouts
+        : []
+  ).map(normalizeBuildingHubLayoutForClient).filter(Boolean);
   const status = payload.buildingHub?.status || payload.buildingHub || payload.status || null;
   state.buildingHub = {
     buildings,
+    layouts,
     loaded: true,
     loading: false,
     status,
@@ -16685,12 +16839,241 @@ function renderAgentTownBuilderOps() {
   `;
 }
 
+function getAgentTownBuilderSearchQuery(kind) {
+  if (kind === "layouts") {
+    return String(state.visualGame.builderLayoutSearchQuery || "");
+  }
+  if (kind === "functional") {
+    return String(state.visualGame.builderFunctionalSearchQuery || "");
+  }
+  return "";
+}
+
+function setAgentTownBuilderSearchQuery(kind, value) {
+  const query = String(value || "");
+  if (kind === "layouts") {
+    state.visualGame.builderLayoutSearchQuery = query;
+  } else if (kind === "functional") {
+    state.visualGame.builderFunctionalSearchQuery = query;
+  } else {
+    return;
+  }
+
+  renderShell();
+  const input = document.querySelector(`[data-agent-town-builder-search="${kind}"]`);
+  if (input instanceof HTMLInputElement) {
+    input.focus();
+    input.setSelectionRange(query.length, query.length);
+  }
+}
+
+function renderAgentTownBuilderSearch(kind, { icon = Search, placeholder = "Search", count = 0 } = {}) {
+  const query = getAgentTownBuilderSearchQuery(kind);
+  return `
+    <div class="agent-town-builder-search main-search-shell">
+      <span class="main-search-icon" aria-hidden="true">${renderIcon(icon)}</span>
+      <input
+        class="main-search-input"
+        type="search"
+        value="${escapeHtml(query)}"
+        placeholder="${escapeHtml(placeholder)}"
+        data-agent-town-builder-search="${escapeHtml(kind)}"
+        aria-label="${escapeHtml(placeholder)}"
+        autocomplete="off"
+        autocorrect="off"
+        autocapitalize="none"
+        spellcheck="false"
+      />
+      <span class="main-search-count">${escapeHtml(`${count} shown`)}</span>
+    </div>
+  `;
+}
+
+function getFilteredAgentTownFunctionalPlugins() {
+  const query = getAgentTownBuilderSearchQuery("functional").trim().toLowerCase();
+  return getAgentTownFunctionalPlugins().filter((plugin) => {
+    const issue = getPluginBuildingIssue(plugin);
+    return searchMatches(
+      [plugin.name, plugin.category, plugin.description, getPluginStatusLabel(plugin), issue?.label, issue?.detail, plugin.source],
+      query,
+    );
+  });
+}
+
+function normalizeStaticAgentTownLayoutBlueprint(blueprint) {
+  if (!blueprint || typeof blueprint !== "object" || Array.isArray(blueprint)) {
+    return null;
+  }
+
+  const layout = blueprint.layout && typeof blueprint.layout === "object" && !Array.isArray(blueprint.layout)
+    ? normalizeAgentTownPersistedLayout(blueprint.layout)
+    : normalizeAgentTownPersistedLayout({ decorations: blueprint.decorations || [] });
+  const id = normalizeBuildingId(blueprint.id || blueprint.name);
+  const name = String(blueprint.name || id || "").trim();
+  if (!id || !name || !layout.decorations.length) {
+    return null;
+  }
+
+  return {
+    id,
+    name,
+    meta: String(blueprint.meta || blueprint.category || "starter").trim() || "starter",
+    category: String(blueprint.category || "Layout").trim() || "Layout",
+    description: String(blueprint.description || "").trim(),
+    source: String(blueprint.source || "built-in").trim() || "built-in",
+    status: String(blueprint.status || "starter").trim() || "starter",
+    tags: Array.isArray(blueprint.tags)
+      ? blueprint.tags.map((tag) => String(tag || "").trim()).filter(Boolean).slice(0, 20)
+      : [],
+    version: String(blueprint.version || "0.1.0").trim() || "0.1.0",
+    requiredBuildings: Array.isArray(blueprint.requiredBuildings)
+      ? [...new Set(blueprint.requiredBuildings.map(normalizeBuildingId).filter(Boolean))].slice(0, 80)
+      : [],
+    previewUrl: String(blueprint.previewUrl || "").trim(),
+    layout,
+  };
+}
+
+function getAgentTownLayoutBlueprints() {
+  const byId = new Map();
+  for (const blueprint of AGENT_TOWN_LAYOUT_BLUEPRINTS.map(normalizeStaticAgentTownLayoutBlueprint).filter(Boolean)) {
+    byId.set(blueprint.id, blueprint);
+  }
+
+  const communityLayouts = Array.isArray(state.buildingHub?.layouts) ? state.buildingHub.layouts : [];
+  for (const blueprint of communityLayouts.map(normalizeBuildingHubLayoutForClient).filter(Boolean)) {
+    byId.set(blueprint.id, blueprint);
+  }
+
+  return [...byId.values()];
+}
+
+function getAgentTownLayoutBlueprintById(blueprintId) {
+  const normalizedBlueprintId = normalizeBuildingId(blueprintId);
+  return getAgentTownLayoutBlueprints().find((blueprint) => blueprint.id === normalizedBlueprintId) || null;
+}
+
+function getFilteredAgentTownLayoutBlueprints() {
+  const query = getAgentTownBuilderSearchQuery("layouts").trim().toLowerCase();
+  return getAgentTownLayoutBlueprints().filter((blueprint) => {
+    const itemLabels = blueprint.layout.decorations
+      .map((decoration) => getAgentTownCosmeticItem(decoration.itemId)?.label || decoration.itemId)
+      .join(" ");
+    return searchMatches(
+      [
+        blueprint.name,
+        blueprint.meta,
+        blueprint.category,
+        blueprint.description,
+        blueprint.source,
+        itemLabels,
+        ...blueprint.requiredBuildings,
+        ...blueprint.tags,
+      ],
+      query,
+    );
+  });
+}
+
+function getAgentTownLayoutBlueprintDecorations(blueprint) {
+  const normalizedBlueprintId = normalizeBuildingId(blueprint?.id || "layout");
+  return normalizeAgentTownDecorations(
+    (Array.isArray(blueprint?.layout?.decorations) ? blueprint.layout.decorations : []).map((decoration, index) => ({
+      ...decoration,
+      id: `${normalizedBlueprintId}-${decoration.id || index + 1}`,
+    })),
+  );
+}
+
+function getAgentTownLayoutBlueprintPreviewBounds(decorations) {
+  if (!decorations.length) {
+    return { x: 0, y: 0, width: AGENT_TOWN_BUILD_GRID_SIZE * 4, height: AGENT_TOWN_BUILD_GRID_SIZE * 3 };
+  }
+
+  const rects = decorations.map((decoration) => {
+    const item = getAgentTownCosmeticItem(decoration.itemId);
+    const size = getAgentTownCosmeticItemSize(item || { width: AGENT_TOWN_BUILD_GRID_SIZE, height: AGENT_TOWN_BUILD_GRID_SIZE }, decoration.rotation);
+    return { x: decoration.x, y: decoration.y, width: size.width, height: size.height };
+  });
+  const minX = Math.min(...rects.map((rect) => rect.x));
+  const minY = Math.min(...rects.map((rect) => rect.y));
+  const maxX = Math.max(...rects.map((rect) => rect.x + rect.width));
+  const maxY = Math.max(...rects.map((rect) => rect.y + rect.height));
+  return {
+    x: minX,
+    y: minY,
+    width: Math.max(AGENT_TOWN_BUILD_GRID_SIZE, maxX - minX),
+    height: Math.max(AGENT_TOWN_BUILD_GRID_SIZE, maxY - minY),
+  };
+}
+
+function renderAgentTownLayoutBlueprintPreview(blueprint) {
+  const decorations = getAgentTownLayoutBlueprintDecorations(blueprint);
+  const bounds = getAgentTownLayoutBlueprintPreviewBounds(decorations);
+  const pad = AGENT_TOWN_BUILD_GRID_SIZE * 0.55;
+  const width = bounds.width + pad * 2;
+  const height = bounds.height + pad * 2;
+  const cells = decorations.map((decoration) => {
+    const item = getAgentTownCosmeticItem(decoration.itemId);
+    const size = getAgentTownCosmeticItemSize(item || { width: AGENT_TOWN_BUILD_GRID_SIZE, height: AGENT_TOWN_BUILD_GRID_SIZE }, decoration.rotation);
+    const left = ((decoration.x - bounds.x + pad) / width) * 100;
+    const top = ((decoration.y - bounds.y + pad) / height) * 100;
+    const cellWidth = (size.width / width) * 100;
+    const cellHeight = (size.height / height) * 100;
+    return `
+      <i
+        class="is-${escapeHtml(item?.kind || "decor")}"
+        style="left:${left.toFixed(2)}%;top:${top.toFixed(2)}%;width:${cellWidth.toFixed(2)}%;height:${cellHeight.toFixed(2)}%;"
+      ></i>
+    `;
+  }).join("");
+
+  return `<span class="agent-town-layout-preview" aria-hidden="true">${cells}</span>`;
+}
+
+function renderAgentTownLayoutBlueprintCard(blueprint) {
+  const decorationCount = getAgentTownLayoutBlueprintDecorations(blueprint).length;
+  const requiredCount = Array.isArray(blueprint.requiredBuildings) ? blueprint.requiredBuildings.length : 0;
+  return `
+    <article class="agent-town-builder-card agent-town-layout-card" role="listitem">
+      ${renderAgentTownLayoutBlueprintPreview(blueprint)}
+      <span class="agent-town-builder-card-copy">
+        <strong>${escapeHtml(blueprint.name)}</strong>
+        <em>${escapeHtml(`${blueprint.meta} · ${decorationCount} pieces${requiredCount ? ` · ${requiredCount} required` : ""}`)}</em>
+        <span>${escapeHtml(blueprint.description || "")}</span>
+      </span>
+      <button
+        class="primary-button agent-town-builder-card-action"
+        type="button"
+        data-agent-town-layout-blueprint="${escapeHtml(blueprint.id)}"
+      >Apply</button>
+    </article>
+  `;
+}
+
 function renderAgentTownBuilderFunctionalTab() {
-  const plugins = getAgentTownFunctionalPlugins();
+  const plugins = getFilteredAgentTownFunctionalPlugins();
   return `
     <div class="agent-town-builder-tab-panel">
+      ${renderAgentTownBuilderSearch("functional", { icon: Plug, placeholder: "Search buildings", count: plugins.length })}
       <div class="agent-town-builder-list" role="list">
-        ${plugins.map(renderAgentTownBuilderFunctionalCard).join("")}
+        ${plugins.length
+          ? plugins.map(renderAgentTownBuilderFunctionalCard).join("")
+          : `<div class="blank-state">no buildings match "${escapeHtml(getAgentTownBuilderSearchQuery("functional"))}"</div>`}
+      </div>
+    </div>
+  `;
+}
+
+function renderAgentTownBuilderLayoutsTab() {
+  const blueprints = getFilteredAgentTownLayoutBlueprints();
+  return `
+    <div class="agent-town-builder-tab-panel">
+      ${renderAgentTownBuilderSearch("layouts", { icon: Waypoints, placeholder: "Search layouts", count: blueprints.length })}
+      <div class="agent-town-builder-list" role="list">
+        ${blueprints.length
+          ? blueprints.map(renderAgentTownLayoutBlueprintCard).join("")
+          : `<div class="blank-state">no layouts match "${escapeHtml(getAgentTownBuilderSearchQuery("layouts"))}"</div>`}
       </div>
     </div>
   `;
@@ -16724,8 +17107,15 @@ function renderAgentTownBuilderDrawer() {
         <div class="agent-town-builder-tabs" role="tablist" aria-label="Builder categories">
           <button class="agent-town-builder-tab ${activeTab === "cosmetic" ? "is-active" : ""}" type="button" data-agent-town-builder-tab="cosmetic" role="tab" aria-selected="${activeTab === "cosmetic" ? "true" : "false"}">${renderIcon(Palette)}<span>Cosmetic</span></button>
           <button class="agent-town-builder-tab ${activeTab === "functional" ? "is-active" : ""} ${unplacedCount ? "has-alert" : ""}" type="button" data-agent-town-builder-tab="functional" role="tab" aria-selected="${activeTab === "functional" ? "true" : "false"}">${renderIcon(Plug)}<span>Functional</span>${unplacedCount ? `<b aria-hidden="true">!</b>` : ""}</button>
+          <button class="agent-town-builder-tab ${activeTab === "layouts" ? "is-active" : ""}" type="button" data-agent-town-builder-tab="layouts" role="tab" aria-selected="${activeTab === "layouts" ? "true" : "false"}">${renderIcon(Waypoints)}<span>Layouts</span></button>
         </div>
-        ${activeTab === "functional" ? renderAgentTownBuilderFunctionalTab() : renderAgentTownBuilderCosmeticTab()}
+        ${
+          activeTab === "functional"
+            ? renderAgentTownBuilderFunctionalTab()
+            : activeTab === "layouts"
+              ? renderAgentTownBuilderLayoutsTab()
+              : renderAgentTownBuilderCosmeticTab()
+        }
       </div>
     </aside>
   `;
@@ -17103,6 +17493,9 @@ function setAgentTownBuilderTab(tab) {
   state.visualGame.builderTab = normalizeAgentTownBuilderTab(tab);
   state.visualGame.builderOpen = true;
   renderShell();
+  if (state.visualGame.builderTab === "layouts" && state.settings.buildingHubEnabled && !state.buildingHub.loading) {
+    void loadBuildingHubCatalog({ renderOnComplete: true });
+  }
 }
 
 function getAgentTownBuilderPlacementRotation(placement) {
@@ -17495,6 +17888,29 @@ function getAgentTownStarterBlueprintLayout() {
   });
 }
 
+function getAgentTownLayoutBlueprintLayout(blueprintId) {
+  const blueprint = getAgentTownLayoutBlueprintById(blueprintId);
+  if (!blueprint) {
+    return null;
+  }
+
+  const current = getAgentTownCurrentLayout();
+  const blueprintLayout = normalizeAgentTownPersistedLayout(blueprint.layout || {});
+  const hasBlueprintTheme = Boolean(blueprint.layout?.themeId || blueprint.layout?.theme);
+  return normalizeAgentTownPersistedLayout({
+    ...current,
+    ...blueprintLayout,
+    themeId: hasBlueprintTheme ? blueprintLayout.themeId : current.themeId,
+    dogName: current.dogName,
+    decorations: getAgentTownLayoutBlueprintDecorations(blueprint),
+    functional: {
+      ...current.functional,
+      ...blueprintLayout.functional,
+    },
+    pendingFunctional: current.pendingFunctional,
+  });
+}
+
 async function saveAgentTownLayoutSnapshot() {
   const fallbackName = `Snapshot ${new Date().toLocaleDateString()}`;
   const name = window.prompt("Snapshot name", fallbackName);
@@ -17550,6 +17966,26 @@ async function applyAgentTownStarterBlueprint() {
       }),
     }),
     { successMessage: "Starter base applied", failureMessage: "Starter blueprint failed" },
+  );
+}
+
+async function applyAgentTownLayoutBlueprint(blueprintId) {
+  const blueprint = getAgentTownLayoutBlueprintById(blueprintId);
+  const layout = getAgentTownLayoutBlueprintLayout(blueprintId);
+  if (!blueprint || !layout) {
+    setAgentTownBuilderFeedback("Layout not found", "blocked", { render: true });
+    return null;
+  }
+
+  return applyAgentTownLayoutResponse(
+    fetchJson("/api/agent-town/layout", {
+      method: "PUT",
+      body: JSON.stringify({
+        reason: `layout blueprint ${blueprint.id}`,
+        layout,
+      }),
+    }),
+    { successMessage: `${blueprint.name} applied`, failureMessage: "Layout blueprint failed" },
   );
 }
 
@@ -29722,6 +30158,16 @@ function bindAgentTownBuilderEvents() {
     });
   });
 
+  document.querySelectorAll("[data-agent-town-builder-search]").forEach((input) => {
+    input.addEventListener("input", (event) => {
+      const target = event.currentTarget;
+      if (!(target instanceof HTMLInputElement)) {
+        return;
+      }
+      setAgentTownBuilderSearchQuery(target.getAttribute("data-agent-town-builder-search") || "", target.value);
+    });
+  });
+
   document.querySelectorAll("[data-agent-town-layout-undo]").forEach((button) => {
     button.addEventListener("click", (event) => {
       event.preventDefault();
@@ -29747,6 +30193,13 @@ function bindAgentTownBuilderEvents() {
     button.addEventListener("click", (event) => {
       event.preventDefault();
       void applyAgentTownStarterBlueprint();
+    });
+  });
+
+  document.querySelectorAll("[data-agent-town-layout-blueprint]").forEach((button) => {
+    button.addEventListener("click", (event) => {
+      event.preventDefault();
+      void applyAgentTownLayoutBlueprint(button.getAttribute("data-agent-town-layout-blueprint") || "");
     });
   });
 

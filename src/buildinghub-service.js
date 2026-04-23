@@ -5,6 +5,7 @@ import { defineBuilding, normalizeBuildingId } from "./client/building-sdk.js";
 const DEFAULT_REFRESH_INTERVAL_MS = 60_000;
 const DEFAULT_FETCH_TIMEOUT_MS = 8_000;
 const MAX_BUILDINGS_PER_SOURCE = 200;
+const MAX_LAYOUTS_PER_SOURCE = 200;
 const MAX_TEXT_LENGTH = 2_000;
 const CATALOG_FILENAMES = ["registry.json", "buildinghub.json", "catalog.json"];
 
@@ -329,6 +330,143 @@ function extractCatalogBuildings(payload) {
   return [];
 }
 
+function extractCatalogLayouts(payload) {
+  if (!isPlainObject(payload)) {
+    return [];
+  }
+
+  if (Array.isArray(payload.layouts)) {
+    return payload.layouts;
+  }
+
+  if (Array.isArray(payload.blueprints)) {
+    return payload.blueprints;
+  }
+
+  if (Array.isArray(payload.registry?.layouts)) {
+    return payload.registry.layouts;
+  }
+
+  return [];
+}
+
+function normalizeLayoutTags(value) {
+  return [...new Set(safeArray(value).map((entry) => normalizeText(entry, 60)).filter(Boolean))].slice(0, 20);
+}
+
+function normalizeLayoutRotation(value) {
+  const number = Number(value);
+  return Number.isFinite(number) && Math.abs(Math.round(number)) % 2 === 1 ? 1 : 0;
+}
+
+function normalizeLayoutCoordinate(value) {
+  const number = Number(value);
+  return Number.isFinite(number) ? Math.max(0, Math.min(2_000, Math.round(number))) : null;
+}
+
+function normalizeLayoutDecoration(decoration, index) {
+  if (!isPlainObject(decoration)) {
+    return null;
+  }
+
+  const itemId = normalizeBuildingId(decoration.itemId || decoration.kind || decoration.type);
+  const x = normalizeLayoutCoordinate(decoration.x);
+  const y = normalizeLayoutCoordinate(decoration.y);
+  if (!itemId || x === null || y === null) {
+    return null;
+  }
+
+  const normalized = {
+    id: normalizeText(decoration.id || `${itemId}-${index + 1}`, 120) || `${itemId}-${index + 1}`,
+    itemId,
+    x,
+    y,
+  };
+  const rotation = normalizeLayoutRotation(decoration.rotation ?? decoration.rotated);
+  if (rotation) {
+    normalized.rotation = rotation;
+  }
+  return normalized;
+}
+
+function normalizeLayoutFunctionalPlacements(value) {
+  if (!isPlainObject(value)) {
+    return {};
+  }
+
+  return Object.fromEntries(
+    Object.entries(value)
+      .map(([id, placement]) => {
+        const buildingId = normalizeBuildingId(id);
+        if (!buildingId || !isPlainObject(placement)) {
+          return null;
+        }
+        const x = normalizeLayoutCoordinate(placement.x);
+        const y = normalizeLayoutCoordinate(placement.y);
+        if (x === null || y === null) {
+          return null;
+        }
+        const normalized = { x, y };
+        const rotation = normalizeLayoutRotation(placement.rotation ?? placement.rotated);
+        if (rotation) {
+          normalized.rotation = rotation;
+        }
+        return [buildingId, normalized];
+      })
+      .filter(Boolean),
+  );
+}
+
+function normalizeBuildingHubLayout(layout, { sourceId = "buildinghub" } = {}) {
+  if (!isPlainObject(layout)) {
+    return null;
+  }
+
+  const id = normalizeBuildingId(layout.id || layout.name);
+  const name = normalizeText(layout.name || id, 120);
+  const blueprint = isPlainObject(layout.layout) ? layout.layout : isPlainObject(layout.blueprint) ? layout.blueprint : {};
+  const decorations = safeArray(blueprint.decorations)
+    .map(normalizeLayoutDecoration)
+    .filter(Boolean)
+    .slice(0, 200);
+  if (!id || !name || !decorations.length) {
+    return null;
+  }
+
+  const normalizedLayout = {
+    decorations,
+    functional: normalizeLayoutFunctionalPlacements(blueprint.functional),
+  };
+  const themeId = normalizeBuildingId(blueprint.themeId || layout.themeId || "");
+  if (themeId) {
+    normalizedLayout.themeId = themeId;
+  }
+
+  const requiredBuildings = [...new Set(safeArray(layout.requiredBuildings)
+    .map(normalizeBuildingId)
+    .filter(Boolean))].slice(0, 80);
+
+  return {
+    id,
+    name,
+    category: normalizeText(layout.category || "Layout", 80) || "Layout",
+    description: normalizeText(layout.description, 900),
+    source: "buildinghub",
+    status: normalizeText(layout.status || "community", 80) || "community",
+    tags: normalizeLayoutTags(layout.tags || layout.keywords),
+    version: normalizeText(layout.version || "0.1.0", 40) || "0.1.0",
+    requiredBuildings,
+    previewUrl: normalizeOptionalUrl(layout.previewUrl || layout.imageUrl || layout.screenshotUrl),
+    repositoryUrl: normalizeOptionalUrl(layout.repositoryUrl || layout.repoUrl || layout.repository),
+    layout: normalizedLayout,
+    buildingHub: {
+      sourceId,
+      layoutSha256: normalizeText(layout.layoutSha256 || layout.sha256, 120),
+      trust: normalizeText(layout.trust || "layout-blueprint", 80) || "layout-blueprint",
+    },
+  };
+}
+
 async function readJsonFile(filePath) {
   return JSON.parse(await readFile(filePath, "utf8"));
 }
@@ -356,6 +494,35 @@ async function listBuildingManifestFiles(rootPath) {
       }
     } catch {
       // Missing building.json files are ignored so drafts do not break the whole catalog.
+    }
+  }
+
+  return files.sort();
+}
+
+async function listLayoutManifestFiles(rootPath) {
+  const files = [];
+  const layoutsPath = path.join(rootPath, "layouts");
+  let entries = [];
+  try {
+    entries = await readdir(layoutsPath, { withFileTypes: true });
+  } catch {
+    return files;
+  }
+
+  for (const entry of entries) {
+    if (!entry.isDirectory()) {
+      continue;
+    }
+
+    const filePath = path.join(layoutsPath, entry.name, "layout.json");
+    try {
+      const stats = await stat(filePath);
+      if (stats.isFile()) {
+        files.push(filePath);
+      }
+    } catch {
+      // Missing layout.json files are ignored so drafts do not break the whole catalog.
     }
   }
 
@@ -391,6 +558,10 @@ async function readLocalCatalogPayloads(sourcePath) {
     payloads.push({ payload: await readJsonFile(filePath), path: filePath });
   }
 
+  for (const filePath of await listLayoutManifestFiles(resolvedPath)) {
+    payloads.push({ payload: await readJsonFile(filePath), path: filePath });
+  }
+
   if (!payloads.length) {
     throw new Error(`No BuildingHub catalog files found in ${resolvedPath}`);
   }
@@ -409,6 +580,17 @@ function dedupeBuildings(buildings) {
   return [...byId.values()].sort((left, right) => String(left.name).localeCompare(String(right.name)));
 }
 
+function dedupeLayouts(layouts) {
+  const byId = new Map();
+  for (const layout of layouts) {
+    if (!layout?.id || byId.has(layout.id)) {
+      continue;
+    }
+    byId.set(layout.id, layout);
+  }
+  return [...byId.values()].sort((left, right) => String(left.name).localeCompare(String(right.name)));
+}
+
 export class BuildingHubService {
   constructor({
     fetchImpl = globalThis.fetch,
@@ -417,6 +599,7 @@ export class BuildingHubService {
     settings = {},
   } = {}) {
     this.buildings = [];
+    this.layouts = [];
     this.fetchImpl = fetchImpl;
     this.fetchTimeoutMs = fetchTimeoutMs;
     this.lastRefreshAt = 0;
@@ -428,6 +611,7 @@ export class BuildingHubService {
 
   restart(settings = {}) {
     this.settings = settings || {};
+    this.lastRefreshAt = 0;
   }
 
   isEnabled() {
@@ -475,17 +659,31 @@ export class BuildingHubService {
       ? await this.fetchRemoteCatalog(source.url)
       : await readLocalCatalogPayloads(source.path);
     const buildings = [];
+    const layouts = [];
     for (const { payload } of payloads) {
       const candidates = extractCatalogBuildings(payload);
-      const manifestList = candidates.length ? candidates : [payload];
+      const manifestList = candidates.length ? candidates : payload?.layout && payload?.id ? [] : [payload];
       for (const manifest of manifestList.slice(0, MAX_BUILDINGS_PER_SOURCE)) {
         const building = normalizeBuildingHubManifest(manifest, { sourceId: source.id });
         if (building) {
           buildings.push(building);
         }
       }
+      const layoutCandidates = extractCatalogLayouts(payload);
+      const layoutList = layoutCandidates.length
+        ? layoutCandidates
+        : payload?.layout && payload?.id ? [payload] : [];
+      for (const layoutCandidate of layoutList.slice(0, MAX_LAYOUTS_PER_SOURCE)) {
+        const layout = normalizeBuildingHubLayout(layoutCandidate, { sourceId: source.id });
+        if (layout) {
+          layouts.push(layout);
+        }
+      }
     }
-    return dedupeBuildings(buildings);
+    return {
+      buildings: dedupeBuildings(buildings),
+      layouts: dedupeLayouts(layouts),
+    };
   }
 
   async refresh({ force = false } = {}) {
@@ -498,23 +696,27 @@ export class BuildingHubService {
     const configuredSources = this.getConfiguredSources();
     const nextSources = [];
     const nextBuildings = [];
+    const nextLayouts = [];
     const errors = [];
 
     for (const source of configuredSources) {
       try {
-        const buildings = await this.readSource(source);
+        const { buildings, layouts } = await this.readSource(source);
         nextSources.push({
           ...source,
           count: buildings.length,
+          layoutCount: layouts.length,
           status: "ok",
         });
         nextBuildings.push(...buildings);
+        nextLayouts.push(...layouts);
       } catch (error) {
         const message = error.message || "Could not load BuildingHub source.";
         errors.push(`${source.label}: ${message}`);
         nextSources.push({
           ...source,
           count: 0,
+          layoutCount: 0,
           error: message,
           status: "error",
         });
@@ -523,11 +725,29 @@ export class BuildingHubService {
 
     this.sources = nextSources;
     this.buildings = dedupeBuildings(nextBuildings);
+    this.layouts = dedupeLayouts(nextLayouts);
     this.lastRefreshError = errors.join(" ");
   }
 
   listBuildings() {
     return this.buildings.map((building) => ({ ...building }));
+  }
+
+  listLayouts() {
+    return this.layouts.map((layout) => ({
+      ...layout,
+      layout: {
+        ...layout.layout,
+        decorations: safeArray(layout.layout?.decorations).map((decoration) => ({ ...decoration })),
+        functional: Object.fromEntries(
+          Object.entries(isPlainObject(layout.layout?.functional) ? layout.layout.functional : {})
+            .map(([id, placement]) => [id, { ...placement }]),
+        ),
+      },
+      tags: [...layout.tags],
+      requiredBuildings: [...layout.requiredBuildings],
+      buildingHub: { ...layout.buildingHub },
+    }));
   }
 
   getStatus() {
@@ -536,6 +756,7 @@ export class BuildingHubService {
       enabled: this.isEnabled(),
       lastRefreshAt: this.lastRefreshAt ? new Date(this.lastRefreshAt).toISOString() : null,
       lastRefreshError: this.lastRefreshError,
+      layoutCount: this.layouts.length,
       sources: this.sources.map((source) => ({ ...source })),
     };
   }
@@ -543,5 +764,7 @@ export class BuildingHubService {
 
 export const testInternals = {
   extractCatalogBuildings,
+  extractCatalogLayouts,
+  normalizeBuildingHubLayout,
   normalizeBuildingHubManifest,
 };

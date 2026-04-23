@@ -8,7 +8,9 @@ import { BuildingHubService, testInternals } from "../src/buildinghub-service.js
 async function createCatalogDir() {
   const catalogDir = await mkdtemp(path.join(os.tmpdir(), "vr-buildinghub-"));
   const buildingDir = path.join(catalogDir, "buildings", "community-linear");
+  const layoutDir = path.join(catalogDir, "layouts", "community-main-street");
   await mkdir(buildingDir, { recursive: true });
+  await mkdir(layoutDir, { recursive: true });
   await writeFile(
     path.join(buildingDir, "building.json"),
     JSON.stringify(
@@ -99,6 +101,32 @@ async function createCatalogDir() {
       2,
     ),
   );
+  await writeFile(
+    path.join(layoutDir, "layout.json"),
+    JSON.stringify(
+      {
+        id: "Community Main Street",
+        name: "Community Main Street",
+        category: "Starter Layout",
+        description: "A simple shared road spine for new towns.",
+        tags: ["street", "starter", "layout"],
+        requiredBuildings: ["community-linear", "BuildingHub"],
+        layout: {
+          themeId: "green-field",
+          decorations: [
+            { id: "road-1", itemId: "road-square", x: 280, y: 252 },
+            { id: "road-2", itemId: "road-square", x: 308, y: 252 },
+            { id: "planter-1", itemId: "planter", x: 308, y: 280 },
+          ],
+          functional: {
+            "community-linear": { x: 336, y: 224 },
+          },
+        },
+      },
+      null,
+      2,
+    ),
+  );
 
   await writeFile(
     path.join(catalogDir, "registry.json"),
@@ -109,6 +137,19 @@ async function createCatalogDir() {
             id: "community-supabase",
             name: "Community Supabase",
             description: "Read and write project database notes through a reviewed helper.",
+          },
+        ],
+        layouts: [
+          {
+            id: "community-grid",
+            name: "Community Grid",
+            description: "A registry-exported modular grid layout.",
+            layout: {
+              decorations: [
+                { id: "road-a", itemId: "road-square", x: 252, y: 224 },
+                { id: "road-b", itemId: "road-square", x: 280, y: 224 },
+              ],
+            },
           },
         ],
       },
@@ -135,6 +176,8 @@ test("BuildingHubService loads local manifest catalogs as safe community buildin
 
     const buildings = service.listBuildings();
     assert.equal(buildings.length, 2);
+    const layouts = service.listLayouts();
+    assert.equal(layouts.length, 2);
 
     const linear = buildings.find((building) => building.id === "community-linear");
     assert.ok(linear);
@@ -177,12 +220,36 @@ test("BuildingHubService loads local manifest catalogs as safe community buildin
     });
     assert.equal(linear.buildingHub.repositoryUrl, "https://github.com/example/buildinghub-linear");
 
+    const mainStreet = layouts.find((layout) => layout.id === "community-main-street");
+    assert.ok(mainStreet);
+    assert.equal(mainStreet.source, "buildinghub");
+    assert.equal(mainStreet.category, "Starter Layout");
+    assert.deepEqual(mainStreet.requiredBuildings, ["community-linear", "buildinghub"]);
+    assert.equal(mainStreet.layout.themeId, "green-field");
+    assert.deepEqual(mainStreet.layout.decorations[0], {
+      id: "road-1",
+      itemId: "road-square",
+      x: 280,
+      y: 252,
+    });
+    assert.deepEqual(mainStreet.layout.functional["community-linear"], {
+      x: 336,
+      y: 224,
+    });
+    assert.equal(mainStreet.buildingHub.trust, "layout-blueprint");
+
+    const registryGrid = layouts.find((layout) => layout.id === "community-grid");
+    assert.ok(registryGrid);
+    assert.equal(registryGrid.layout.decorations.length, 2);
+
     const status = service.getStatus();
     assert.equal(status.enabled, true);
     assert.equal(status.buildingCount, 2);
+    assert.equal(status.layoutCount, 2);
     assert.equal(status.sources.length, 1);
     assert.equal(status.sources[0].status, "ok");
     assert.equal(status.sources[0].count, 2);
+    assert.equal(status.sources[0].layoutCount, 2);
     assert.equal(status.lastRefreshError, "");
   } finally {
     await rm(catalogDir, { recursive: true, force: true });
@@ -202,8 +269,38 @@ test("BuildingHubService stays inert when disabled", async () => {
   try {
     await service.refresh({ force: true });
     assert.deepEqual(service.listBuildings(), []);
+    assert.deepEqual(service.listLayouts(), []);
     assert.equal(service.getStatus().buildingCount, 0);
+    assert.equal(service.getStatus().layoutCount, 0);
     assert.equal(service.getStatus().sources.length, 0);
+  } finally {
+    await rm(catalogDir, { recursive: true, force: true });
+  }
+});
+
+test("BuildingHubService restart invalidates cached disabled refreshes", async () => {
+  const catalogDir = await createCatalogDir();
+  const service = new BuildingHubService({
+    refreshIntervalMs: 60_000,
+    settings: {
+      buildingHubCatalogPath: catalogDir,
+      buildingHubEnabled: false,
+    },
+  });
+
+  try {
+    await service.refresh({ force: true });
+    assert.equal(service.getStatus().buildingCount, 0);
+    assert.equal(service.getStatus().layoutCount, 0);
+
+    service.restart({
+      buildingHubCatalogPath: catalogDir,
+      buildingHubEnabled: true,
+    });
+    await service.refresh();
+
+    assert.equal(service.getStatus().buildingCount, 2);
+    assert.equal(service.getStatus().layoutCount, 2);
   } finally {
     await rm(catalogDir, { recursive: true, force: true });
   }
@@ -230,4 +327,42 @@ test("BuildingHub manifest normalization rejects invalid and trims unsupported c
   assert.equal(manifest.ui.mode, "panel");
   assert.equal(manifest.ui.entryView, "");
   assert.equal(manifest.ui.workspaceView, "");
+});
+
+test("BuildingHub layout normalization rejects unsafe layouts and trims payloads", () => {
+  assert.equal(testInternals.normalizeBuildingHubLayout(null), null);
+  assert.equal(testInternals.normalizeBuildingHubLayout({ id: "empty", layout: { decorations: [] } }), null);
+
+  const layout = testInternals.normalizeBuildingHubLayout({
+    id: "Factory Loop!",
+    name: "Factory Loop",
+    category: "Factory",
+    description: "A reusable production-style base loop.",
+    tags: ["factory", "factory", "loop"],
+    requiredBuildings: ["GitHub", "Unknown Tool", ""],
+    layout: {
+      themeId: "neon-night",
+      decorations: [
+        { id: "road", itemId: "road-square", x: 15.4, y: 22.7 },
+        { id: "bad", itemId: "", x: 10, y: 20 },
+        { id: "rotated", itemId: "fence-vertical", x: 2_400, y: -12, rotation: 3 },
+      ],
+      functional: {
+        GitHub: { x: 88.9, y: 91.2, rotation: 1 },
+        "": { x: 1, y: 2 },
+      },
+    },
+  }, { sourceId: "test-source" });
+
+  assert.equal(layout.id, "factory-loop");
+  assert.equal(layout.category, "Factory");
+  assert.deepEqual(layout.tags, ["factory", "loop"]);
+  assert.deepEqual(layout.requiredBuildings, ["github", "unknown-tool"]);
+  assert.equal(layout.layout.themeId, "neon-night");
+  assert.deepEqual(layout.layout.decorations, [
+    { id: "road", itemId: "road-square", x: 15, y: 23 },
+    { id: "rotated", itemId: "fence-vertical", x: 2000, y: 0, rotation: 1 },
+  ]);
+  assert.deepEqual(layout.layout.functional.github, { x: 89, y: 91, rotation: 1 });
+  assert.equal(layout.buildingHub.sourceId, "test-source");
 });

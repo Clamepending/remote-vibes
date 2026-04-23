@@ -1461,6 +1461,7 @@ export async function createVibeResearchApp({
       agentTown: agentTownStore.getState(),
       buildingHub: {
         buildings: buildingHubService.listBuildings(),
+        layouts: buildingHubService.listLayouts(),
         status: buildingHubService.getStatus(),
       },
       cwd,
@@ -1482,6 +1483,7 @@ export async function createVibeResearchApp({
       await syncBuildingAgentGuides();
       response.json({
         buildings: buildingHubService.listBuildings(),
+        layouts: buildingHubService.listLayouts(),
         buildingHub: buildingHubService.getStatus(),
       });
     } catch (error) {

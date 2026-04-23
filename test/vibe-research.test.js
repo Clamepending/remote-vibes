@@ -2277,7 +2277,7 @@ test("fresh Agent Town browser does not erase mirrored layout state", async (t) 
   }
 });
 
-test("Agent Town builder applies starter blueprint and rolls layout backward and forward", async (t) => {
+test("Agent Town builder searches buildings and layouts, then rolls a layout backward and forward", async (t) => {
   const executablePath = await resolveBrowserExecutablePath({ env: process.env });
   if (!executablePath) {
     t.skip("No local Chromium/Chrome executable is available for the Agent Town builder smoke.");
@@ -2286,9 +2286,38 @@ test("Agent Town builder applies starter blueprint and rolls layout backward and
 
   const workspaceDir = await createTempWorkspace("vibe-research-agent-town-builder-blueprint-");
   const stateDir = await createTempWorkspace("vibe-research-agent-town-builder-state-");
+  const catalogDir = await createTempWorkspace("vibe-research-agent-town-builder-buildinghub-");
   const wikiDir = getWorkspaceLibraryDir(workspaceDir);
+  const layoutDir = path.join(catalogDir, "layouts", "community-grid");
   await mkdir(wikiDir, { recursive: true });
+  await mkdir(layoutDir, { recursive: true });
   await writeFile(path.join(wikiDir, "index.md"), "# Agent Town Builder Library\n", "utf8");
+  await writeFile(
+    path.join(layoutDir, "layout.json"),
+    JSON.stringify(
+      {
+        id: "community-grid",
+        name: "Community Grid",
+        description: "A shared BuildingHub layout for modular town planning.",
+        tags: ["remote", "community", "grid"],
+        requiredBuildings: ["github"],
+        layout: {
+          decorations: [
+            { id: "road-1", itemId: "road-square", x: 280, y: 252 },
+            { id: "road-2", itemId: "road-square", x: 308, y: 252 },
+            { id: "road-3", itemId: "road-square", x: 336, y: 252 },
+            { id: "planter-1", itemId: "planter", x: 308, y: 280 },
+          ],
+          functional: {
+            github: { x: 364, y: 224 },
+          },
+        },
+      },
+      null,
+      2,
+    ),
+    "utf8",
+  );
   const { app, baseUrl } = await startApp({ cwd: workspaceDir, stateDir });
   let browser = null;
 
@@ -2298,6 +2327,8 @@ test("Agent Town builder applies starter blueprint and rolls layout backward and
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({
         preventSleepEnabled: false,
+        buildingHubCatalogPath: catalogDir,
+        buildingHubEnabled: true,
         wikiGitRemoteEnabled: false,
         wikiPath: wikiDir,
         workspaceRootPath: workspaceDir,
@@ -2321,11 +2352,16 @@ test("Agent Town builder applies starter blueprint and rolls layout backward and
     await page.waitForSelector(".agent-town-builder-ops", { timeout: 10_000 });
     await page.getByRole("tab", { name: /Functional/ }).click();
     await page.waitForSelector(".agent-town-building-health", { timeout: 10_000 });
-    await page.locator("[data-agent-town-layout-starter]").click();
+    await page.getByRole("searchbox", { name: "Search buildings" }).fill("github");
+    await page.getByText("GitHub").waitFor({ timeout: 10_000 });
+    await page.getByRole("tab", { name: /Layouts/ }).click();
+    await page.getByRole("searchbox", { name: "Search layouts" }).fill("factory");
+    await page.getByText("Factory Cells").waitFor({ timeout: 10_000 });
+    await page.locator("[data-agent-town-layout-blueprint='factory-cells']").click();
     await page.waitForFunction(async () => {
       const response = await fetch("/api/agent-town/state");
       const payload = await response.json();
-      return (payload.agentTown.layout?.decorations || []).length >= 5;
+      return (payload.agentTown.layout?.decorations || []).length >= 12;
     }, null, { timeout: 10_000 });
 
     let stateResponse = await fetch(`${baseUrl}/api/agent-town/state`);
@@ -2345,17 +2381,36 @@ test("Agent Town builder applies starter blueprint and rolls layout backward and
     await page.waitForFunction(async () => {
       const response = await fetch("/api/agent-town/state");
       const payload = await response.json();
-      return (payload.agentTown.layout?.decorations || []).length >= 5;
+      return (payload.agentTown.layout?.decorations || []).length >= 12;
     }, null, { timeout: 10_000 });
 
     stateResponse = await fetch(`${baseUrl}/api/agent-town/state`);
     statePayload = await stateResponse.json();
-    assert.equal(statePayload.agentTown.layout.decorations.length, 5);
+    assert.equal(statePayload.agentTown.layout.decorations.length, 12);
+
+    await page.getByRole("tab", { name: /Layouts/ }).click();
+    await page.getByRole("searchbox", { name: "Search layouts" }).fill("community grid");
+    const communityGridLayoutButton = page.locator("[data-agent-town-layout-blueprint='community-grid']");
+    await communityGridLayoutButton.waitFor({ timeout: 10_000 });
+    await communityGridLayoutButton.click();
+    await page.waitForFunction(async () => {
+      const response = await fetch("/api/agent-town/state");
+      const payload = await response.json();
+      return (payload.agentTown.layout?.decorations || []).length === 4
+        && payload.agentTown.layout?.functional?.github?.x === 364;
+    }, null, { timeout: 10_000 });
+
+    stateResponse = await fetch(`${baseUrl}/api/agent-town/state`);
+    statePayload = await stateResponse.json();
+    assert.equal(statePayload.agentTown.layoutValidation.ok, true);
+    assert.equal(statePayload.agentTown.layout.decorations.length, 4);
+    assert.deepEqual(statePayload.agentTown.layout.functional.github, { x: 364, y: 224 });
   } finally {
     await browser?.close().catch(() => {});
     await app.close();
     await removeTempWorkspace(workspaceDir);
     await removeTempWorkspace(stateDir);
+    await removeTempWorkspace(catalogDir);
   }
 });
 

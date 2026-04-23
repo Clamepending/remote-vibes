@@ -7052,7 +7052,7 @@ button.agent-town-alert-strip {
 
 .agent-town-builder-tabs {
   display: grid;
-  grid-template-columns: repeat(2, minmax(0, 1fr));
+  grid-template-columns: repeat(3, minmax(0, 1fr));
   gap: 8px;
   padding: 12px 12px 8px;
 }
@@ -7078,6 +7078,13 @@ button.agent-town-alert-strip {
   color: #e7f7ff;
 }
 
+.agent-town-builder-tab span {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
 .agent-town-builder-tab b {
   display: inline-grid;
   place-items: center;
@@ -7096,6 +7103,12 @@ button.agent-town-alert-strip {
   min-width: 0;
   overflow: auto;
   padding: 4px 12px 14px;
+}
+
+.agent-town-builder-search {
+  width: auto;
+  min-width: 0;
+  margin: 2px 12px 8px;
 }
 
 .agent-town-builder-quick-actions {
@@ -7156,7 +7169,8 @@ button.agent-town-builder-card {
 }
 
 .agent-town-builder-card-copy strong,
-.agent-town-builder-card-copy em {
+.agent-town-builder-card-copy em,
+.agent-town-builder-card-copy > span {
   min-width: 0;
   overflow: hidden;
   text-overflow: ellipsis;
@@ -7173,10 +7187,57 @@ button.agent-town-builder-card {
   font-style: normal;
 }
 
+.agent-town-builder-card-copy > span {
+  color: var(--text-subtle);
+  font-size: 0.72rem;
+}
+
 .agent-town-builder-card-action {
   min-width: 72px;
   justify-content: center;
   white-space: nowrap;
+}
+
+.agent-town-layout-card {
+  grid-template-columns: 76px minmax(0, 1fr) auto;
+}
+
+.agent-town-layout-preview {
+  position: relative;
+  display: block;
+  width: 72px;
+  height: 50px;
+  overflow: hidden;
+  border: 1px solid rgba(255, 255, 255, 0.09);
+  border-radius: 7px;
+  background:
+    linear-gradient(90deg, rgba(255, 255, 255, 0.035) 1px, transparent 1px),
+    linear-gradient(180deg, rgba(255, 255, 255, 0.035) 1px, transparent 1px),
+    rgba(18, 28, 24, 0.72);
+  background-size: 12px 12px;
+}
+
+.agent-town-layout-preview i {
+  position: absolute;
+  border-radius: 3px;
+  background: rgba(196, 162, 92, 0.9);
+}
+
+.agent-town-layout-preview i.is-road {
+  background: #b99657;
+}
+
+.agent-town-layout-preview i.is-planter {
+  border-radius: 999px;
+  background: #82bf73;
+}
+
+.agent-town-layout-preview i.is-fence {
+  background: #d8c189;
+}
+
+.agent-town-layout-preview i.is-structure {
+  background: #80616b;
 }
 
 .agent-town-building-health {
