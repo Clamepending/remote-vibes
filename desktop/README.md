@@ -28,4 +28,4 @@ macOS artifacts are written to `desktop/dist/`. Local builds use ad-hoc signing 
 - `APPLE_APP_SPECIFIC_PASSWORD` — app-specific password for notarization.
 - `APPLE_TEAM_ID` — Apple Developer team id.
 
-Tag builds publish the DMG, ZIP, blockmaps, and `latest-mac.yml` through `electron-builder` so `electron-updater` can update installed desktop apps from GitHub Releases.
+Tag builds create a signed app bundle, notarize and staple it with `notarytool`, then publish the DMG, ZIP, blockmaps, and `latest-mac.yml` through `electron-builder` so `electron-updater` can update installed desktop apps from GitHub Releases.

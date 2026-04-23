@@ -1,6 +1,6 @@
 {
   "name": "vibe-research-desktop",
-  "version": "0.2.27",
+  "version": "0.2.30",
   "description": "Desktop launcher and first-run installer for Vibe Research.",
   "private": true,
   "main": "src/main.cjs",
@@ -9,6 +9,8 @@
     "dev": "electron .",
     "pack": "npm run icons && electron-builder --dir",
     "dist": "npm run icons && electron-builder",
+    "dist:mac:app": "npm run icons && electron-builder --mac dir --universal --publish never -c.mac.notarize=false",
+    "dist:mac:assets": "electron-builder --mac dmg zip --universal --prepackaged dist/mac-universal -c.mac.notarize=false",
     "test": "node --test test/*.test.cjs"
   },
   "devDependencies": {

@@ -16,7 +16,7 @@ concurrency:
 jobs:
   mac:
     name: Build macOS Desktop App
-    runs-on: macos-latest
+    runs-on: macos-15-intel
 
     steps:
       - name: Check out repository
@@ -53,8 +53,27 @@ jobs:
           APPLE_APP_SPECIFIC_PASSWORD: ${{ secrets.APPLE_APP_SPECIFIC_PASSWORD }}
           APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
 
-      - name: Build desktop app
-        timeout-minutes: 170
+      - name: Build signed desktop app
+        timeout-minutes: 30
+        run: |
+          set -euo pipefail
+
+          npm --prefix desktop run dist:mac:app
+        env:
+          CSC_LINK: ${{ secrets.MACOS_CSC_LINK }}
+          CSC_KEY_PASSWORD: ${{ secrets.MACOS_CSC_KEY_PASSWORD }}
+
+      - name: Notarize signed desktop app
+        if: startsWith(github.ref, 'refs/tags/v')
+        timeout-minutes: 100
+        run: node desktop/scripts/notarize-macos-app.mjs
+        env:
+          APPLE_ID: ${{ secrets.APPLE_ID }}
+          APPLE_APP_SPECIFIC_PASSWORD: ${{ secrets.APPLE_APP_SPECIFIC_PASSWORD }}
+          APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
+
+      - name: Build and publish desktop artifacts
+        timeout-minutes: 30
         run: |
           set -euo pipefail
 
@@ -63,70 +82,11 @@ jobs:
             publish=always
           fi
 
-          max_attempts=3
-          attempt_timeout_seconds=3000
-
-          for attempt in $(seq 1 "$max_attempts"); do
-            echo "::group::electron-builder attempt ${attempt}/${max_attempts}"
-            set +e
-            PUBLISH_MODE="$publish" ATTEMPT_TIMEOUT_SECONDS="$attempt_timeout_seconds" python3 <<'PY'
-          import os
-          import signal
-          import subprocess
-          import sys
-
-          timeout = int(os.environ["ATTEMPT_TIMEOUT_SECONDS"])
-          cmd = [
-              "npm",
-              "--prefix",
-              "desktop",
-              "run",
-              "dist",
-              "--",
-              "--mac",
-              "dmg",
-              "zip",
-              "--universal",
-              "--publish",
-              os.environ["PUBLISH_MODE"],
-          ]
-
-          process = subprocess.Popen(cmd, preexec_fn=os.setsid)
-          try:
-              raise SystemExit(process.wait(timeout=timeout))
-          except subprocess.TimeoutExpired:
-              print(f"electron-builder timed out after {timeout} seconds", file=sys.stderr)
-              os.killpg(process.pid, signal.SIGTERM)
-              try:
-                  process.wait(timeout=30)
-              except subprocess.TimeoutExpired:
-                  os.killpg(process.pid, signal.SIGKILL)
-                  process.wait()
-              raise SystemExit(124)
-          PY
-            status=$?
-            set -e
-            echo "::endgroup::"
-
-            if [ "$status" -eq 0 ]; then
-              exit 0
-            fi
-
-            if [ "$attempt" -eq "$max_attempts" ]; then
-              exit "$status"
-            fi
-
-            echo "Desktop build failed with exit code ${status}; retrying after a short cooldown."
-            rm -rf desktop/dist
-            sleep 90
-          done
+          npm --prefix desktop run dist:mac:assets -- --publish "$publish"
         env:
           GH_TOKEN: ${{ github.token }}
           CSC_LINK: ${{ secrets.MACOS_CSC_LINK }}
           CSC_KEY_PASSWORD: ${{ secrets.MACOS_CSC_KEY_PASSWORD }}
-          APPLE_ID: ${{ secrets.APPLE_ID }}
-          APPLE_APP_SPECIFIC_PASSWORD: ${{ secrets.APPLE_APP_SPECIFIC_PASSWORD }}
-          APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
 
       - name: Upload desktop artifacts
         uses: actions/upload-artifact@v4
