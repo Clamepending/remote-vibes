@@ -15917,10 +15917,255 @@ function renderVisualGamePluginBuildingPanel(plugin) {
           ${issue?.detail ? `<div class="settings-status is-warning">${escapeHtml(issue.detail)}</div>` : ""}
         </div>
       </section>
+      ${renderVisualGamePluginStatusPanel(plugin, issue)}
+      ${renderVisualGamePluginTownState(plugin, issue)}
+      ${renderVisualGamePluginPlacementPanel(plugin)}
+      ${renderVisualGamePluginQuestChain(plugin)}
       <section class="plugin-detail-settings visual-building-plugin-settings">
         ${renderPluginDetailSettings(plugin)}
       </section>
     </div>
+  `;
+}
+
+function getVisualGamePluginBuildingState(plugin, issue = getPluginBuildingIssue(plugin)) {
+  const pendingAction = getPluginPendingAction(plugin);
+  if (pendingAction === "installing") {
+    return {
+      kind: "pending",
+      label: "Installing",
+      detail: "The building is being added to Agent Town.",
+    };
+  }
+  if (pendingAction === "uninstalling") {
+    return {
+      kind: "pending",
+      label: "Removing",
+      detail: "The building is being removed from Agent Town.",
+    };
+  }
+  if (!isPluginInstalled(plugin)) {
+    return {
+      kind: "uninstalled",
+      label: "Not installed",
+      detail: "Install this building before it appears in the active town layout.",
+    };
+  }
+  if (issue?.label === "needs attention") {
+    return {
+      kind: "attention",
+      label: "Needs attention",
+      detail: issue.detail || "Check the latest runtime status before agents use this building.",
+    };
+  }
+  if (issue) {
+    return {
+      kind: "setup",
+      label: "Needs setup",
+      detail: issue.detail || "Complete setup before agents can rely on this building.",
+    };
+  }
+
+  const workspaceView = normalizeWorkspaceView(plugin?.ui?.workspaceView || "");
+  return {
+    kind: "ready",
+    label: "Ready",
+    detail: workspaceView
+      ? `${plugin.name} is active and has a workspace view.`
+      : `${plugin.name} is active in Agent Town.`,
+  };
+}
+
+function getVisualGamePluginNextStep(plugin) {
+  const steps = Array.isArray(plugin?.onboarding?.steps) ? plugin.onboarding.steps : [];
+  return (
+    steps.find((step) => step?.completeWhen && !isPluginOnboardingStepComplete(plugin, step)) ||
+    steps.find((step) => !step?.completeWhen) ||
+    null
+  );
+}
+
+function renderVisualGamePluginPrimaryAction(plugin, issue = getPluginBuildingIssue(plugin)) {
+  const pluginId = getPluginId(plugin);
+  const stateSummary = getVisualGamePluginBuildingState(plugin, issue);
+  const pendingAction = getPluginPendingAction(plugin);
+  const workspaceView = normalizeWorkspaceView(plugin?.ui?.workspaceView || "");
+  const nextStep = getVisualGamePluginNextStep(plugin);
+
+  if (pendingAction) {
+    return `
+      <button class="ghost-button toolbar-control" type="button" disabled>
+        ${renderIcon(RefreshCw)}
+        <span>${escapeHtml(pendingAction === "installing" ? "Installing" : "Removing")}</span>
+      </button>
+    `;
+  }
+
+  if (!isPluginInstalled(plugin)) {
+    return renderPluginInstallButton(plugin);
+  }
+
+  if (stateSummary.kind === "setup" || stateSummary.kind === "attention") {
+    return `
+      <button class="primary-button toolbar-control" type="button" data-visual-building-focus-setup="${escapeHtml(pluginId)}">
+        ${renderIcon(Wrench)}
+        <span>${escapeHtml(stateSummary.kind === "attention" ? "Review setup" : "Complete setup")}</span>
+      </button>
+    `;
+  }
+
+  if (workspaceView) {
+    return `
+      <button
+        class="primary-button toolbar-control"
+        type="button"
+        data-open-building-workspace="${escapeHtml(pluginId)}"
+        data-building-workspace-view="${escapeHtml(workspaceView)}"
+      >
+        ${renderIcon(plugin.icon || Plug)}
+        <span>Open ${escapeHtml(plugin.name)}</span>
+      </button>
+    `;
+  }
+
+  if (nextStep) {
+    return `
+      <button class="primary-button toolbar-control" type="button" data-visual-building-focus-setup="${escapeHtml(pluginId)}">
+        ${renderIcon(Wrench)}
+        <span>View next step</span>
+      </button>
+    `;
+  }
+
+  return `
+    <button class="primary-button toolbar-control" type="button" data-agent-town-builder-place-functional="${escapeHtml(pluginId)}">
+      ${renderIcon(Waypoints)}
+      <span>Move building</span>
+    </button>
+  `;
+}
+
+function renderVisualGamePluginStatusPanel(plugin, issue = getPluginBuildingIssue(plugin)) {
+  const stateSummary = getVisualGamePluginBuildingState(plugin, issue);
+  const nextStep = getVisualGamePluginNextStep(plugin);
+  return `
+    <section class="visual-building-status-panel is-${escapeHtml(stateSummary.kind)}" aria-label="${escapeHtml(`${plugin.name} status`)}">
+      <div class="visual-building-status-copy">
+        <span class="main-search-kind">${escapeHtml(plugin.source || plugin.category || "building")}</span>
+        <strong>${escapeHtml(stateSummary.label)}</strong>
+        <p>${escapeHtml(stateSummary.detail)}</p>
+        ${nextStep ? `<em>${escapeHtml(`Next: ${nextStep.title || "setup step"}`)}</em>` : ""}
+      </div>
+      <div class="visual-building-status-actions">
+        ${renderVisualGamePluginPrimaryAction(plugin, issue)}
+      </div>
+    </section>
+  `;
+}
+
+function renderVisualGamePluginTownState(plugin, issue = getPluginBuildingIssue(plugin)) {
+  const stateSummary = getVisualGamePluginBuildingState(plugin, issue);
+  const access = getPluginAccess(plugin);
+  const placementStatus = isAgentTownFunctionalPlugin(plugin)
+    ? getAgentTownFunctionalStatusLabel(getAgentTownFunctionalStatus(plugin))
+    : "system spot";
+  const nextStep = getVisualGamePluginNextStep(plugin);
+  const rows = [
+    ["status", stateSummary.label],
+    ["placement", placementStatus],
+    ["access", access?.label || plugin.source || "local"],
+    ["next", nextStep?.title || (issue ? "Review setup" : "Ready")],
+  ];
+
+  return `
+    <section class="visual-building-town-state" aria-label="${escapeHtml(`${plugin.name} town state`)}">
+      <div class="visual-building-section-head">
+        <strong>Town state</strong>
+        <span>${escapeHtml(plugin.category || "building")}</span>
+      </div>
+      <dl>
+        ${rows.map(([label, value]) => `
+          <div>
+            <dt>${escapeHtml(label)}</dt>
+            <dd>${escapeHtml(value)}</dd>
+          </div>
+        `).join("")}
+      </dl>
+    </section>
+  `;
+}
+
+function renderVisualGamePluginPlacementPanel(plugin) {
+  if (!isAgentTownFunctionalPlugin(plugin) || !isPluginInstalled(plugin)) {
+    return "";
+  }
+
+  const pluginId = getPluginId(plugin);
+  const status = getAgentTownFunctionalStatus(plugin);
+  const manual = status === "placed";
+  const description = manual
+    ? "Manual spot saved in this browser."
+    : status === "unplaced"
+      ? "Ready to place on the map."
+      : "Using its automatic town spot.";
+
+  return `
+    <section class="visual-building-placement-panel" aria-label="${escapeHtml(`${plugin.name} placement controls`)}">
+      <div class="visual-building-section-head">
+        <strong>Placement</strong>
+        <span>${escapeHtml(getAgentTownFunctionalStatusLabel(status))}</span>
+      </div>
+      <p>${escapeHtml(description)}</p>
+      <div class="visual-building-library-actions">
+        <button class="ghost-button toolbar-control" type="button" data-agent-town-builder-place-functional="${escapeHtml(pluginId)}">
+          ${renderIcon(Waypoints)}
+          <span>${escapeHtml(manual ? "Move" : "Place")}</span>
+        </button>
+        <button class="ghost-button toolbar-control" type="button" data-agent-town-functional-reset-placement="${escapeHtml(pluginId)}" ${manual || status === "unplaced" ? "" : "disabled"}>
+          ${renderIcon(RotateCcw)}
+          <span>Auto spot</span>
+        </button>
+        <button class="ghost-button toolbar-control" type="button" data-plugin-open="${escapeHtml(pluginId)}">
+          ${renderIcon(Plug)}
+          <span>BuildingHub</span>
+        </button>
+      </div>
+    </section>
+  `;
+}
+
+function renderVisualGamePluginQuestChain(plugin) {
+  const steps = Array.isArray(plugin?.onboarding?.steps) ? plugin.onboarding.steps : [];
+  if (!steps.length) {
+    return "";
+  }
+
+  const progress = getPluginOnboardingProgress(plugin);
+  let activeAssigned = false;
+  return `
+    <section class="visual-building-quest-chain" aria-label="${escapeHtml(`${plugin.name} next steps`)}">
+      <div class="visual-building-section-head">
+        <strong>Next steps</strong>
+        <span>${escapeHtml(progress.total ? `${progress.complete}/${progress.total} ready` : "guide")}</span>
+      </div>
+      <ol>
+        ${steps.map((step, index) => {
+          const done = Boolean(step?.completeWhen && isPluginOnboardingStepComplete(plugin, step));
+          const active = !done && !activeAssigned;
+          if (active) {
+            activeAssigned = true;
+          }
+          const status = done ? "done" : active ? "next" : "later";
+          return `
+            <li class="is-${escapeHtml(status)}">
+              <span>${escapeHtml(String(index + 1))}</span>
+              <strong>${escapeHtml(step.title || `Step ${index + 1}`)}</strong>
+              <em>${escapeHtml(step.detail || "")}</em>
+            </li>
+          `;
+        }).join("")}
+      </ol>
+    </section>
   `;
 }
 
@@ -16341,6 +16586,31 @@ function clearAgentTownFunctionalLayout({ render = true } = {}) {
   state.visualGame.builderPlacement = null;
   saveAgentTownLayoutPreferences();
   setAgentTownBuilderFeedback(hadLayout ? "Functional buildings returned to auto spots" : "Functional buildings already use auto spots", hadLayout ? "success" : "info");
+  if (render) {
+    renderShell();
+  }
+  return hadLayout;
+}
+
+function resetAgentTownFunctionalPlacement(pluginId, { render = true } = {}) {
+  const normalizedPluginId = normalizeBuildingId(pluginId);
+  if (!normalizedPluginId) {
+    return false;
+  }
+
+  const plugin = getPluginById(normalizedPluginId);
+  const hadLayout = Boolean(getAgentTownFunctionalPlacement(normalizedPluginId) || isAgentTownFunctionalPending(normalizedPluginId));
+  removeAgentTownFunctionalPlacement(normalizedPluginId);
+  if (state.visualGame.builderPlacement?.kind === "functional" && state.visualGame.builderPlacement.pluginId === normalizedPluginId) {
+    state.visualGame.builderPlacement = null;
+  }
+  saveAgentTownLayoutPreferences();
+  setAgentTownBuilderFeedback(
+    hadLayout
+      ? `${plugin?.name || "Building"} returned to its auto spot`
+      : `${plugin?.name || "Building"} already uses its auto spot`,
+    hadLayout ? "success" : "info",
+  );
   if (render) {
     renderShell();
   }
@@ -29062,6 +29332,21 @@ function bindAgentTownBuilderEvents() {
   });
 }
 
+function focusVisualBuildingSetupPanel() {
+  const panel = document.querySelector(".visual-building-plugin-settings");
+  if (!(panel instanceof HTMLElement)) {
+    return;
+  }
+
+  panel.classList.add("is-highlighted");
+  panel.scrollIntoView({ block: "nearest", behavior: "smooth" });
+  const focusTarget = panel.querySelector("input, select, textarea, button");
+  if (focusTarget instanceof HTMLElement) {
+    window.setTimeout(() => focusTarget.focus({ preventScroll: true }), 180);
+  }
+  window.setTimeout(() => panel.classList.remove("is-highlighted"), 1400);
+}
+
 function bindShellEvents() {
   bindLineNumberEditors();
   ensureSessionProviderPickerGlobalListeners();
@@ -29090,6 +29375,20 @@ function bindShellEvents() {
     button.addEventListener("click", (event) => {
       event.preventDefault();
       openVisualGameBuildingPanel(button.getAttribute("data-visual-building-open") || "");
+    });
+  });
+
+  document.querySelectorAll("[data-visual-building-focus-setup]").forEach((button) => {
+    button.addEventListener("click", (event) => {
+      event.preventDefault();
+      focusVisualBuildingSetupPanel();
+    });
+  });
+
+  document.querySelectorAll("[data-agent-town-functional-reset-placement]").forEach((button) => {
+    button.addEventListener("click", (event) => {
+      event.preventDefault();
+      resetAgentTownFunctionalPlacement(button.getAttribute("data-agent-town-functional-reset-placement") || "");
     });
   });
 

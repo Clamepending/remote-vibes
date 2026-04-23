@@ -7227,6 +7227,235 @@ button.agent-town-builder-card {
   height: 15px;
 }
 
+.visual-building-status-panel,
+.visual-building-town-state,
+.visual-building-placement-panel,
+.visual-building-quest-chain {
+  display: grid;
+  align-content: start;
+  gap: 10px;
+  min-width: 0;
+  padding: 12px;
+  border: 1px solid rgba(255, 255, 255, 0.075);
+  border-radius: 8px;
+  background: rgba(255, 255, 255, 0.032);
+}
+
+.visual-building-status-panel {
+  grid-template-columns: minmax(0, 1fr);
+  border-color: rgba(123, 195, 255, 0.18);
+}
+
+.visual-building-status-panel.is-ready {
+  border-color: rgba(104, 227, 199, 0.22);
+  background:
+    linear-gradient(180deg, rgba(104, 227, 199, 0.065), rgba(255, 255, 255, 0.018)),
+    rgba(255, 255, 255, 0.024);
+}
+
+.visual-building-status-panel.is-setup,
+.visual-building-status-panel.is-attention {
+  border-color: rgba(255, 173, 106, 0.36);
+  background:
+    linear-gradient(180deg, rgba(255, 173, 106, 0.09), rgba(255, 255, 255, 0.018)),
+    rgba(255, 255, 255, 0.024);
+}
+
+.visual-building-status-panel.is-pending,
+.visual-building-status-panel.is-uninstalled {
+  border-color: rgba(123, 195, 255, 0.28);
+}
+
+.visual-building-status-copy {
+  display: grid;
+  min-width: 0;
+  gap: 6px;
+}
+
+.visual-building-status-copy strong {
+  color: var(--text);
+  font-size: 1rem;
+  line-height: 1.15;
+}
+
+.visual-building-status-copy p,
+.visual-building-placement-panel p {
+  margin: 0;
+  color: rgba(232, 236, 240, 0.76);
+  font-size: 0.82rem;
+  line-height: 1.42;
+}
+
+.visual-building-status-copy em {
+  min-width: 0;
+  overflow: hidden;
+  color: #f0d18a;
+  font-size: 0.76rem;
+  font-style: normal;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.visual-building-status-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  min-width: 0;
+}
+
+.visual-building-status-actions .toolbar-control,
+.visual-building-placement-panel .toolbar-control {
+  gap: 7px;
+}
+
+.visual-building-status-actions .vr-icon,
+.visual-building-placement-panel .vr-icon {
+  width: 15px;
+  height: 15px;
+}
+
+.visual-building-section-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  min-width: 0;
+}
+
+.visual-building-section-head strong,
+.visual-building-section-head span {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.visual-building-section-head strong {
+  color: var(--text);
+  font-size: 0.86rem;
+}
+
+.visual-building-section-head span {
+  color: var(--text-subtle);
+  font-size: 0.72rem;
+}
+
+.visual-building-town-state dl {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 8px;
+  margin: 0;
+}
+
+.visual-building-town-state dl div {
+  display: grid;
+  min-width: 0;
+  gap: 2px;
+  padding: 8px;
+  border: 1px solid rgba(255, 255, 255, 0.065);
+  border-radius: 8px;
+  background: rgba(0, 0, 0, 0.14);
+}
+
+.visual-building-town-state dt,
+.visual-building-town-state dd {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.visual-building-town-state dt {
+  color: var(--text-subtle);
+  font-size: 0.68rem;
+  text-transform: uppercase;
+}
+
+.visual-building-town-state dd {
+  margin: 0;
+  color: rgba(244, 247, 251, 0.9);
+  font-size: 0.78rem;
+}
+
+.visual-building-quest-chain ol {
+  display: grid;
+  gap: 7px;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.visual-building-quest-chain li {
+  display: grid;
+  grid-template-columns: 24px minmax(0, 1fr);
+  grid-template-areas:
+    "index title"
+    "index detail";
+  gap: 2px 8px;
+  min-width: 0;
+  padding: 8px;
+  border: 1px solid rgba(255, 255, 255, 0.065);
+  border-radius: 8px;
+  background: rgba(0, 0, 0, 0.12);
+}
+
+.visual-building-quest-chain li span {
+  grid-area: index;
+  display: inline-grid;
+  place-items: center;
+  width: 22px;
+  height: 22px;
+  border-radius: 999px;
+  background: rgba(255, 255, 255, 0.08);
+  color: rgba(244, 247, 251, 0.82);
+  font-size: 0.7rem;
+  font-weight: 760;
+}
+
+.visual-building-quest-chain li strong,
+.visual-building-quest-chain li em {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.visual-building-quest-chain li strong {
+  grid-area: title;
+  color: rgba(244, 247, 251, 0.92);
+  font-size: 0.78rem;
+}
+
+.visual-building-quest-chain li em {
+  grid-area: detail;
+  color: var(--text-subtle);
+  font-size: 0.72rem;
+  font-style: normal;
+}
+
+.visual-building-quest-chain li.is-done span {
+  background: rgba(104, 227, 199, 0.18);
+  color: #c8f7ee;
+}
+
+.visual-building-quest-chain li.is-next {
+  border-color: rgba(255, 207, 87, 0.28);
+}
+
+.visual-building-quest-chain li.is-next span {
+  background: rgba(255, 207, 87, 0.2);
+  color: #ffe6a6;
+}
+
+.visual-building-plugin-settings {
+  transition: border-color 160ms ease, box-shadow 160ms ease;
+}
+
+.visual-building-plugin-settings.is-highlighted {
+  border-color: rgba(255, 207, 87, 0.48);
+  box-shadow: 0 0 0 2px rgba(255, 207, 87, 0.14);
+}
+
 .visual-building-library-browser,
 .visual-building-library-preview {
   display: grid;

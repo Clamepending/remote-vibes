@@ -1839,6 +1839,11 @@ test("Agent Town builder arranges enabled functional buildings and keeps them vi
 
     return null;
   };
+  const clickCanvasPoint = async (page, point) => {
+    const box = await page.locator("#visual-game-canvas").boundingBox();
+    assert.ok(box, "visual game canvas should be visible");
+    await page.mouse.click(box.x + point.x, box.y + point.y);
+  };
   const gotoSwarmView = async (page) => {
     let lastError = null;
     for (let attempt = 0; attempt < 3; attempt += 1) {
@@ -1858,7 +1863,7 @@ test("Agent Town builder arranges enabled functional buildings and keeps them vi
       method: "PATCH",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({
-        installedPluginIds: ["discord"],
+        installedPluginIds: ["discord", "telegram"],
         preventSleepEnabled: false,
         wikiGitRemoteEnabled: false,
         wikiPath: wikiDir,
@@ -1898,6 +1903,37 @@ test("Agent Town builder arranges enabled functional buildings and keeps them vi
     assert.ok(arrangedLayout.functional.discord, "district arrange should persist an enabled connector");
     assert.ok(arrangedLayout.functional.github, "district arrange should include default active functional buildings");
 
+    await page.getByRole("button", { name: "Close builder" }).click();
+    await page.waitForFunction(() => !document.querySelector(".agent-town-builder-panel"));
+    await page.waitForTimeout(200);
+    const arrangedDiscordPoint = await findCanvasHoverPoint(page, "Discord");
+    assert.ok(arrangedDiscordPoint, "arranged Discord building should be clickable");
+    await clickCanvasPoint(page, arrangedDiscordPoint);
+    await page.locator(".visual-building-status-panel").waitFor({ timeout: 10_000 });
+    assert.match(await page.locator(".visual-building-status-panel").textContent(), /Ready/);
+    assert.match(await page.locator(".visual-building-town-state").textContent(), /manual spot/);
+    await page.getByRole("button", { name: "Auto spot" }).click();
+    await page.waitForFunction(() => {
+      const layout = JSON.parse(window.localStorage.getItem("vibe-research-agent-town-layout-v1") || "{}");
+      return !layout.functional?.discord;
+    });
+
+    await page.getByRole("button", { name: "Close building" }).click();
+    await page.waitForFunction(() => !document.querySelector(".visual-game-building-panel"));
+    await page.waitForTimeout(200);
+    const telegramPoint = await findCanvasHoverPoint(page, "Telegram");
+    assert.ok(telegramPoint, "enabled Telegram building should appear in the town");
+    await clickCanvasPoint(page, telegramPoint);
+    await page.locator(".visual-building-status-panel").waitFor({ timeout: 10_000 });
+    assert.match(await page.locator(".visual-building-status-panel").textContent(), /Needs setup/);
+    assert.match(await page.locator(".visual-building-quest-chain").textContent(), /Save Telegram variables/);
+    await page.getByRole("button", { name: "Complete setup" }).click();
+    await page.locator(".visual-building-plugin-settings.is-highlighted").waitFor({ timeout: 10_000 });
+
+    await page.getByRole("button", { name: "Close building" }).click();
+    await page.waitForFunction(() => !document.querySelector(".visual-game-building-panel"));
+    await page.locator("[data-agent-town-builder-toggle]").click();
+    await page.getByRole("tab", { name: /Functional/ }).click();
     await page.getByRole("button", { name: "Return to auto spots" }).click();
     await page.waitForFunction(() => {
       const layout = JSON.parse(window.localStorage.getItem("vibe-research-agent-town-layout-v1") || "{}");
