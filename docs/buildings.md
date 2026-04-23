@@ -164,3 +164,9 @@ When the runtime can identify an active eval from commands, paths, or session na
 Use separate provider buildings for cloud compute systems such as Modal and RunPod. These buildings should make agents' access path explicit: required CLI or SDK, runtime credential environment variables, account or project scope, read-only smoke checks, and approval boundaries before creating resources that can spend money.
 
 Cloud compute credentials stay in the agent runtime or provider tooling. The building catalog should describe `MODAL_TOKEN_ID`, `MODAL_TOKEN_SECRET`, `RUNPOD_API_KEY`, endpoint IDs, pod IDs, and similar variables without collecting or rendering their values in the browser. Prefer `visual.shape: "lab"` when the provider is primarily used for sandboxes, GPU jobs, or remote worker environments.
+
+## Physical Robotics Buildings
+
+Use dedicated provider buildings for physical robotics workflows such as LeRobot + SO-101. These buildings should encode the full operational chain agents need to respect: procurement state, assembly readiness, hardware connectivity, teleoperation/data capture, and policy training/evaluation.
+
+Robot-control actions should be treated like other sensitive capabilities: require human approval before purchases, initiating physical motion, and launching expensive cloud or GPU training jobs. Keep credentials, ports, and machine-local hardware details in the agent runtime or local notes, not in browser settings manifests.

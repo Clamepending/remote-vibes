@@ -19212,6 +19212,12 @@ function getAgentTownPluginBuildingPalette(pluginId) {
       fixture: "#25343c",
       screen: "#b8f4f2",
     },
+    lerobot: {
+      body: "#575246",
+      trim: "#2f2d23",
+      fixture: "#2f5f67",
+      screen: "#f4e9b8",
+    },
     "google-drive": {
       body: "#506d58",
       trim: "#264536",
@@ -23438,6 +23444,10 @@ function getVisualGameAgentReferenceText(agent) {
 function getVisualGameSemanticPluginDestination(agent) {
   const text = getVisualGameAgentReferenceText(agent);
   const candidates = [
+    {
+      pluginId: "lerobot",
+      pattern: /\b(lerobot|so-?101|teleop|lerobot-record|lerobot-train|act policy|robot arm)\b/,
+    },
     {
       pluginId: "github",
       pattern: /\b(github|pull request|pr #|gh\s|git push|git commit|review thread|issue #)\b/,
