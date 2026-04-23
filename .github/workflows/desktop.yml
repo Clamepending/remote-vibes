@@ -70,40 +70,40 @@ jobs:
             echo "::group::electron-builder attempt ${attempt}/${max_attempts}"
             set +e
             PUBLISH_MODE="$publish" ATTEMPT_TIMEOUT_SECONDS="$attempt_timeout_seconds" python3 <<'PY'
-import os
-import signal
-import subprocess
-import sys
+          import os
+          import signal
+          import subprocess
+          import sys
 
-timeout = int(os.environ["ATTEMPT_TIMEOUT_SECONDS"])
-cmd = [
-    "npm",
-    "--prefix",
-    "desktop",
-    "run",
-    "dist",
-    "--",
-    "--mac",
-    "dmg",
-    "zip",
-    "--universal",
-    "--publish",
-    os.environ["PUBLISH_MODE"],
-]
+          timeout = int(os.environ["ATTEMPT_TIMEOUT_SECONDS"])
+          cmd = [
+              "npm",
+              "--prefix",
+              "desktop",
+              "run",
+              "dist",
+              "--",
+              "--mac",
+              "dmg",
+              "zip",
+              "--universal",
+              "--publish",
+              os.environ["PUBLISH_MODE"],
+          ]
 
-process = subprocess.Popen(cmd, preexec_fn=os.setsid)
-try:
-    raise SystemExit(process.wait(timeout=timeout))
-except subprocess.TimeoutExpired:
-    print(f"electron-builder timed out after {timeout} seconds", file=sys.stderr)
-    os.killpg(process.pid, signal.SIGTERM)
-    try:
-        process.wait(timeout=30)
-    except subprocess.TimeoutExpired:
-        os.killpg(process.pid, signal.SIGKILL)
-        process.wait()
-    raise SystemExit(124)
-PY
+          process = subprocess.Popen(cmd, preexec_fn=os.setsid)
+          try:
+              raise SystemExit(process.wait(timeout=timeout))
+          except subprocess.TimeoutExpired:
+              print(f"electron-builder timed out after {timeout} seconds", file=sys.stderr)
+              os.killpg(process.pid, signal.SIGTERM)
+              try:
+                  process.wait(timeout=30)
+              except subprocess.TimeoutExpired:
+                  os.killpg(process.pid, signal.SIGKILL)
+                  process.wait()
+              raise SystemExit(124)
+          PY
             status=$?
             set -e
             echo "::endgroup::"
