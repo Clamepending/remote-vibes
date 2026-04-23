@@ -89,6 +89,7 @@ function isMasterplanHost(request) {
 }
 
 const ATTACHMENTS_SUBDIR = "attachments";
+const TOWN_SHARES_SUBDIR = "agent-town/town-shares";
 const MAX_ATTACHMENT_IMAGE_BYTES = 15 * 1024 * 1024;
 const ATTACHMENT_IMAGE_EXTENSIONS_BY_MIME_TYPE = new Map([
   ["image/apng", ".apng"],
@@ -291,6 +292,215 @@ async function resolveAgentCanvasImage({ canvas, session, fallbackCwd }) {
   }
 
   return { targetPath, mimeType };
+}
+
+function normalizeTownShareId(value) {
+  const id = String(value || "")
+    .trim()
+    .toLowerCase()
+    .replace(/[^a-z0-9_-]+/g, "-")
+    .replace(/^-+|-+$/g, "")
+    .slice(0, 96);
+  return id || `town-${randomUUID().replace(/-/g, "").slice(0, 12)}`;
+}
+
+function getRequestOrigin(request) {
+  const forwardedProto = String(request.get("x-forwarded-proto") || "").split(",")[0].trim();
+  const protocol = forwardedProto || request.protocol || "http";
+  const host = String(request.get("x-forwarded-host") || request.get("host") || "").split(",")[0].trim();
+  if (host) {
+    return `${protocol}://${host}`;
+  }
+
+  return "";
+}
+
+function withTownShareUrls(townShare, request) {
+  if (!townShare) {
+    return null;
+  }
+
+  const origin = getRequestOrigin(request);
+  const encodedId = encodeURIComponent(townShare.id);
+  const sharePath = `/buildinghub/towns/${encodedId}`;
+  const imagePath = `/api/agent-town/town-shares/${encodedId}/image`;
+  return {
+    ...townShare,
+    sharePath,
+    shareUrl: origin ? `${origin}${sharePath}` : sharePath,
+    imageUrl: townShare.imagePath ? `${origin}${imagePath}` : "",
+  };
+}
+
+async function saveTownShareImage({ stateDir, shareId, dataUrl, mimeType }) {
+  const { buffer, extension, mimeType: decodedMimeType } = decodeAttachmentDataUrl(dataUrl, mimeType);
+  const updatedAt = new Date().toISOString();
+  const directoryPath = path.join(stateDir, TOWN_SHARES_SUBDIR, shareId);
+  const fileName = `snapshot${extension}`;
+  const absolutePath = path.join(directoryPath, fileName);
+
+  await mkdir(directoryPath, { recursive: true });
+  await writeFile(absolutePath, buffer);
+
+  return {
+    imagePath: path.relative(stateDir, absolutePath),
+    imageMimeType: decodedMimeType,
+    imageByteLength: buffer.byteLength,
+    imageUpdatedAt: updatedAt,
+  };
+}
+
+async function resolveTownShareImage({ townShare, stateDir }) {
+  const rawImagePath = String(townShare?.imagePath || "").trim();
+  if (!rawImagePath) {
+    throw buildHttpError("Agent Town share image path is not set.", 404);
+  }
+
+  const targetPath = path.resolve(stateDir, rawImagePath);
+  const relativePath = path.relative(stateDir, targetPath);
+  if (relativePath.startsWith("..") || path.isAbsolute(relativePath)) {
+    throw buildHttpError("Agent Town share image path is outside the state directory.", 400);
+  }
+
+  const storedMimeType = ATTACHMENT_IMAGE_EXTENSIONS_BY_MIME_TYPE.has(townShare.imageMimeType)
+    ? townShare.imageMimeType
+    : "";
+  const mimeType = storedMimeType || getAgentCanvasImageMimeType(targetPath);
+  if (!mimeType) {
+    throw buildHttpError("Agent Town share image type is not supported.", 415);
+  }
+
+  const stats = await stat(targetPath).catch((error) => {
+    if (error?.code === "ENOENT") {
+      throw buildHttpError("Agent Town share image not found.", 404);
+    }
+
+    throw error;
+  });
+
+  if (!stats.isFile()) {
+    throw buildHttpError("Agent Town share image path is not a file.", 400);
+  }
+
+  return { targetPath, mimeType };
+}
+
+function escapeHtml(value) {
+  return String(value ?? "")
+    .replace(/&/g, "&amp;")
+    .replace(/</g, "&lt;")
+    .replace(/>/g, "&gt;")
+    .replace(/"/g, "&quot;")
+    .replace(/'/g, "&#39;");
+}
+
+function renderTownSharePage(townShare, request) {
+  const share = withTownShareUrls(townShare, request);
+  const title = `${share.name} · BuildingHub`;
+  const description = share.description || "A shared Agent Town base layout.";
+  const imageMeta = share.imageUrl
+    ? `
+    <meta property="og:image" content="${escapeHtml(share.imageUrl)}" />
+    <meta name="twitter:image" content="${escapeHtml(share.imageUrl)}" />`
+    : "";
+  const image = share.imageUrl
+    ? `<img class="town-image" src="${escapeHtml(share.imageUrl)}" alt="${escapeHtml(`${share.name} snapshot`)}" />`
+    : `<div class="town-image town-image-empty">No snapshot yet</div>`;
+  const summary = share.layoutSummary || {};
+  const theme = summary.themeId || share.layout?.themeId || "default";
+  const cosmetics = Number(summary.cosmeticCount) || 0;
+  const functional = Number(summary.functionalCount) || 0;
+
+  return `<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>${escapeHtml(title)}</title>
+  <meta name="description" content="${escapeHtml(description)}" />
+  <meta property="og:type" content="website" />
+  <meta property="og:title" content="${escapeHtml(title)}" />
+  <meta property="og:description" content="${escapeHtml(description)}" />${imageMeta}
+  <meta name="twitter:card" content="summary_large_image" />
+  <meta name="twitter:title" content="${escapeHtml(title)}" />
+  <meta name="twitter:description" content="${escapeHtml(description)}" />
+  <style>
+    :root { color-scheme: dark; font-family: Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif; }
+    body { margin: 0; min-height: 100vh; background: #111316; color: #f4f0e8; }
+    main { display: grid; gap: 18px; width: min(960px, calc(100% - 32px)); margin: 0 auto; padding: 32px 0 40px; }
+    .town-image { width: 100%; aspect-ratio: 16 / 9; object-fit: cover; border: 1px solid rgba(255,255,255,.12); border-radius: 8px; background: #1d2326; }
+    .town-image-empty { display: grid; place-items: center; color: #a6aaa3; }
+    h1 { margin: 0; font-size: clamp(2rem, 6vw, 4rem); line-height: .95; letter-spacing: 0; }
+    p { margin: 0; max-width: 68ch; color: #c8ccc5; font-size: 1rem; line-height: 1.55; }
+    .meta { display: flex; flex-wrap: wrap; gap: 8px; color: #d8ddcd; font-size: .82rem; }
+    .meta span { padding: 7px 9px; border: 1px solid rgba(255,255,255,.12); border-radius: 999px; background: rgba(255,255,255,.05); }
+    .actions { display: flex; flex-wrap: wrap; gap: 10px; }
+    button, a.button { appearance: none; display: inline-flex; align-items: center; justify-content: center; min-height: 40px; padding: 0 14px; border: 1px solid rgba(255,255,255,.16); border-radius: 8px; background: #d7f36b; color: #12140f; font-weight: 750; text-decoration: none; cursor: pointer; }
+    a.button.secondary { background: transparent; color: #f4f0e8; }
+    .status { min-height: 20px; color: #c8ccc5; font-size: .86rem; }
+  </style>
+</head>
+<body>
+  <main>
+    ${image}
+    <div class="meta">
+      <span>${escapeHtml(`${cosmetics} cosmetic`)}</span>
+      <span>${escapeHtml(`${functional} functional`)}</span>
+      <span>${escapeHtml(`theme ${theme}`)}</span>
+    </div>
+    <h1>${escapeHtml(share.name)}</h1>
+    <p>${escapeHtml(description)}</p>
+    <div class="actions">
+      <button type="button" data-import-town>Import town</button>
+      <a class="button secondary" href="/">Open Vibe Research</a>
+    </div>
+    <div class="status" data-import-status></div>
+  </main>
+  <script>
+    const shareId = ${JSON.stringify(share.id)};
+    const button = document.querySelector("[data-import-town]");
+    const status = document.querySelector("[data-import-status]");
+    button?.addEventListener("click", async () => {
+      button.disabled = true;
+      status.textContent = "Importing town...";
+      try {
+        const response = await fetch("/api/agent-town/town-shares/" + encodeURIComponent(shareId) + "/import", {
+          method: "POST",
+          headers: { "Content-Type": "application/json", "X-Vibe-Research-API": "1" },
+          body: "{}"
+        });
+        const payload = await response.json().catch(() => ({}));
+        if (!response.ok) {
+          throw new Error(payload.error || "Import failed.");
+        }
+        const layout = payload.townShare?.layout || payload.agentTown?.layout || null;
+        if (layout && typeof layout === "object") {
+          const localLayout = {
+            places: layout.places || {},
+            roads: layout.roads || {},
+            decorations: Array.isArray(layout.decorations) ? layout.decorations : [],
+            functional: layout.functional || {},
+            pendingFunctional: Array.isArray(layout.pendingFunctional) ? layout.pendingFunctional : []
+          };
+          window.localStorage.setItem("vibe-research-agent-town-layout-v1", JSON.stringify(localLayout));
+          if (layout.themeId) {
+            window.localStorage.setItem("vibe-research-agent-town-theme-v1", String(layout.themeId));
+          }
+          if (layout.dogName && layout.dogName !== "Dog") {
+            window.localStorage.setItem("vibe-research-agent-town-dog-name-v1", String(layout.dogName));
+          } else {
+            window.localStorage.removeItem("vibe-research-agent-town-dog-name-v1");
+          }
+        }
+        window.location.href = "/?view=swarm";
+      } catch (error) {
+        status.textContent = error.message || "Import failed.";
+        button.disabled = false;
+      }
+    });
+  </script>
+</body>
+</html>`;
 }
 
 function normalizePort(value) {
@@ -1486,6 +1696,114 @@ export async function createVibeResearchApp({
     } catch (error) {
       response.status(error.statusCode || 400).json({ error: error.message || "Could not restore Agent Town snapshot." });
     }
+  });
+
+  app.get("/api/agent-town/town-shares", (request, response) => {
+    const state = agentTownStore.getState();
+    response.json({
+      townShares: state.townShares.map((townShare) => withTownShareUrls(townShare, request)),
+    });
+  });
+
+  app.post("/api/agent-town/town-shares", async (request, response) => {
+    try {
+      const body = request.body || {};
+      const shareId = normalizeTownShareId(body.id);
+      const image = body.imageDataUrl
+        ? await saveTownShareImage({
+            stateDir,
+            shareId,
+            dataUrl: body.imageDataUrl,
+            mimeType: body.imageMimeType,
+          })
+        : {};
+      const payload = await agentTownStore.publishTownShare({
+        ...body,
+        id: shareId,
+        imagePath: image.imagePath,
+        imageMimeType: image.imageMimeType,
+        imageByteLength: image.imageByteLength,
+        imageUpdatedAt: image.imageUpdatedAt,
+      });
+      response.status(201).json({
+        townShare: withTownShareUrls(payload.townShare, request),
+        validation: payload.validation,
+        agentTown: payload.state,
+      });
+    } catch (error) {
+      response.status(error.statusCode || 400).json({
+        error: error.message || "Could not publish Agent Town share.",
+        validation: error.validation,
+      });
+    }
+  });
+
+  app.get("/api/agent-town/town-shares/:shareId", (request, response) => {
+    const townShare = agentTownStore.getTownShare(request.params.shareId);
+    if (!townShare) {
+      response.status(404).json({ error: "Agent Town share not found." });
+      return;
+    }
+
+    response.json({
+      townShare: withTownShareUrls(townShare, request),
+    });
+  });
+
+  app.get("/api/agent-town/town-shares/:shareId/image", async (request, response) => {
+    try {
+      const townShare = agentTownStore.getTownShare(request.params.shareId);
+      if (!townShare) {
+        response.status(404).json({ error: "Agent Town share not found." });
+        return;
+      }
+
+      const image = await resolveTownShareImage({ townShare, stateDir });
+      response.setHeader("Cache-Control", "public, max-age=300");
+      response.setHeader("Content-Type", image.mimeType);
+      response.setHeader("X-Content-Type-Options", "nosniff");
+      response.sendFile(image.targetPath, { dotfiles: "allow" }, (error) => {
+        if (!error) {
+          return;
+        }
+
+        if (response.headersSent) {
+          response.destroy(error);
+          return;
+        }
+
+        response.status(error.statusCode || 500).json({ error: error.message });
+      });
+    } catch (error) {
+      response.status(error.statusCode || 400).json({ error: error.message || "Could not read Agent Town share image." });
+    }
+  });
+
+  app.post("/api/agent-town/town-shares/:shareId/import", async (request, response) => {
+    try {
+      const payload = await agentTownStore.importTownShare(request.params.shareId);
+      response.json({
+        townShare: withTownShareUrls(payload.townShare, request),
+        validation: payload.validation,
+        agentTown: payload.state,
+      });
+    } catch (error) {
+      response.status(error.statusCode || 400).json({
+        error: error.message || "Could not import Agent Town share.",
+        validation: error.validation,
+      });
+    }
+  });
+
+  app.get("/buildinghub/towns/:shareId", (request, response) => {
+    const townShare = agentTownStore.getTownShare(request.params.shareId);
+    if (!townShare) {
+      response.status(404).send("Agent Town share not found.");
+      return;
+    }
+
+    response.setHeader("Cache-Control", "no-store");
+    response.type("html").send(renderTownSharePage(townShare, request));
   });
 
   app.post("/api/agent-town/layout/undo", async (_request, response) => {

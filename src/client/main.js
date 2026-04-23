@@ -136,6 +136,7 @@ const AGENT_TOWN_SHARE_TEXT = "I set up my vibe-research.net town!";
 const AGENT_TOWN_SHARE_URL = "https://vibe-research.net";
 const AGENT_TOWN_SHARE_INTENT_URL = "https://twitter.com/intent/tweet";
 const AGENT_TOWN_SHARE_CLIPBOARD_TIMEOUT_MS = 1500;
+const AGENT_TOWN_SHARE_CAPTURE_TIMEOUT_MS = 2500;
 const SESSION_WORKING_SPINNER_MS = 900;
 const FILE_IMAGE_MIN_ZOOM = 1;
 const FILE_IMAGE_MAX_ZOOM = 8;
@@ -1186,6 +1187,10 @@ function normalizeAgentTownPersistedLayout(value) {
   };
 }
 
+function normalizeAgentTownPortableLayout(value) {
+  return normalizeAgentTownPersistedLayout(value);
+}
+
 function getAgentTownCurrentLayout() {
   return normalizeAgentTownPersistedLayout({
     ...state.visualGame.customLayout,
@@ -1249,6 +1254,18 @@ function applyAgentTownPersistedLayout(layoutInput, { persistLocal = true } = {}
     saveAgentTownLayoutFallback(layout);
   }
   return layout;
+}
+
+function getAgentTownLayoutSummaryFromLayout(layoutInput = {}) {
+  const layout = normalizeAgentTownLayout(layoutInput);
+  const functionalIds = Object.keys(layout.functional || {}).filter(Boolean).sort();
+  return {
+    cosmeticCount: Array.isArray(layout.decorations) ? layout.decorations.length : 0,
+    functionalCount: functionalIds.length,
+    functionalIds,
+    pendingFunctionalIds: normalizeAgentTownPendingFunctional(layout.pendingFunctional).sort(),
+    themeId: normalizeAgentTownThemeId(layoutInput?.themeId || layoutInput?.theme),
+  };
 }
 
 function loadAgentSetupCompletePreference() {
@@ -1365,6 +1382,7 @@ const state = {
       automationCreatedCount: 0,
       libraryNoteSavedCount: 0,
     },
+    townShares: [],
   },
   agentProfile: {
     sessionId: "",
@@ -10954,6 +10972,18 @@ function refreshAgentTownShareButtonUi() {
       meta.textContent = getAgentTownShareNavMeta();
     }
   });
+
+  document.querySelectorAll("#visual-game-share-town, [data-town-share-publish]").forEach((button) => {
+    if (button instanceof HTMLButtonElement) {
+      button.disabled = Boolean(state.agentTownShare.inProgress);
+      if (button.hasAttribute("data-town-share-publish")) {
+        const label = button.querySelector("span");
+        if (label instanceof HTMLElement) {
+          label.textContent = state.agentTownShare.inProgress ? "saving..." : "save current base";
+        }
+      }
+    }
+  });
 }
 
 function setAgentTownShareInProgress(inProgress) {
@@ -10977,10 +11007,10 @@ function setAgentTownShareToast({ type = "info", title, message } = {}) {
   refreshSystemToastsUi({ force: true });
 }
 
-function getAgentTownShareIntentUrl() {
+function getAgentTownShareIntentUrl(shareUrl = AGENT_TOWN_SHARE_URL) {
   const url = new URL(AGENT_TOWN_SHARE_INTENT_URL);
   url.searchParams.set("text", AGENT_TOWN_SHARE_TEXT);
-  url.searchParams.set("url", AGENT_TOWN_SHARE_URL);
+  url.searchParams.set("url", shareUrl || AGENT_TOWN_SHARE_URL);
   return url.toString();
 }
 
@@ -11064,6 +11094,33 @@ async function captureAgentTownScreenshotBlob() {
   return getCanvasPngBlob(canvas);
 }
 
+async function captureAgentTownScreenshotBlobWithTimeout() {
+  const timedOut = Symbol("agent-town-capture-timeout");
+  const result = await Promise.race([
+    captureAgentTownScreenshotBlob().catch((error) => {
+      console.warn("[vibe-research] Agent Town screenshot capture failed", error);
+      return null;
+    }),
+    delay(AGENT_TOWN_SHARE_CAPTURE_TIMEOUT_MS, timedOut),
+  ]);
+  return result === timedOut ? null : result;
+}
+
+function blobToDataUrl(blob) {
+  if (!(blob instanceof Blob)) {
+    return Promise.resolve("");
+  }
+
+  return new Promise((resolve) => {
+    const reader = new FileReader();
+    reader.addEventListener("load", () => {
+      resolve(typeof reader.result === "string" ? reader.result : "");
+    });
+    reader.addEventListener("error", () => resolve(""));
+    reader.readAsDataURL(blob);
+  });
+}
+
 async function copyAgentTownScreenshotToClipboard(blob) {
   if (
     !(blob instanceof Blob) ||
@@ -11138,8 +11195,8 @@ function openAgentTownSharePlaceholderWindow() {
   }
 }
 
-function openAgentTownTwitterIntent(targetWindow = null) {
-  const intentUrl = getAgentTownShareIntentUrl();
+function openAgentTownTwitterIntent(targetWindow = null, shareUrl = AGENT_TOWN_SHARE_URL) {
+  const intentUrl = getAgentTownShareIntentUrl(shareUrl);
   try {
     if (targetWindow && !targetWindow.closed) {
       targetWindow.location.href = intentUrl;
@@ -11166,6 +11223,24 @@ function openAgentTownTwitterIntent(targetWindow = null) {
   return Boolean(opened);
 }
 
+async function publishAgentTownShare({ name = "Agent Town", description = "" } = {}) {
+  const screenshotBlob = await captureAgentTownScreenshotBlobWithTimeout();
+  const imageDataUrl = await blobToDataUrl(screenshotBlob);
+  const payload = await fetchJson("/api/agent-town/town-shares", {
+    method: "POST",
+    body: JSON.stringify({
+      name,
+      description: description || "A shared Agent Town base layout.",
+      layout: getCurrentAgentTownLayoutForShare(),
+      imageDataUrl,
+      imageMimeType: screenshotBlob?.type || "image/png",
+      visibility: "listed",
+    }),
+  });
+  applyAgentTownState(payload.agentTown);
+  return payload.townShare || null;
+}
+
 function getAgentTownShareToastMessage({ screenshotCopied = false, screenshotTimedOut = false } = {}) {
   if (screenshotCopied) {
     return "Twitter opened with the share text. Paste the copied screenshot into the post if it is not attached automatically.";
@@ -11188,22 +11263,25 @@ async function shareAgentTownToTwitter({ targetWindow = null } = {}) {
   let screenshotTimedOut = false;
 
   try {
+    const townShare = await publishAgentTownShare();
+    const shareUrl = getAgentTownShareUrl(townShare);
+    openAgentTownTwitterIntent(targetWindow, shareUrl);
+    setAgentTownShareToast({
+      type: "success",
+      title: "Agent Town link ready",
+      message: "Twitter opened with a BuildingHub link that includes your latest town snapshot.",
+    });
+    renderShell();
+  } catch (publishError) {
+    console.error(publishError);
     const screenshotResult = await copyAgentTownScreenshotToClipboardWithTimeout();
     screenshotCopied = screenshotResult.copied;
     screenshotTimedOut = screenshotResult.timedOut;
     openAgentTownTwitterIntent(targetWindow);
     setAgentTownShareToast({
-      type: "info",
-      title: screenshotCopied ? "Agent Town screenshot copied" : "Twitter is ready",
+      type: screenshotCopied ? "info" : "error",
+      title: screenshotCopied ? "Agent Town screenshot copied" : "Agent Town share fallback",
       message: getAgentTownShareToastMessage({ screenshotCopied, screenshotTimedOut }),
-    });
-  } catch (error) {
-    console.error(error);
-    openAgentTownTwitterIntent(targetWindow);
-    setAgentTownShareToast({
-      type: "error",
-      title: "Agent Town share fallback",
-      message: "Twitter opened with the share text, but the Agent Town screenshot could not be captured.",
     });
   } finally {
     setAgentTownShareInProgress(false);
@@ -11214,6 +11292,79 @@ function handleAgentTownShareClick() {
   closeMobileSidebar();
   const targetWindow = openAgentTownSharePlaceholderWindow();
   void shareAgentTownToTwitter({ targetWindow });
+}
+
+async function publishCurrentAgentTownShareFromUi() {
+  if (state.agentTownShare.inProgress) {
+    return;
+  }
+
+  setAgentTownShareInProgress(true);
+  try {
+    await publishAgentTownShare();
+    setAgentTownShareToast({
+      type: "success",
+      title: "Agent Town saved",
+      message: "The latest town layout and snapshot are saved in BuildingHub.",
+    });
+    renderShell();
+  } catch (error) {
+    console.error(error);
+    setAgentTownShareToast({
+      type: "error",
+      title: "Could not save town",
+      message: error.message || "The Agent Town share could not be created.",
+    });
+  } finally {
+    setAgentTownShareInProgress(false);
+  }
+}
+
+function shareSavedAgentTownToTwitter(shareId) {
+  const townShare = state.agentTown.townShares.find((candidate) => candidate.id === shareId);
+  const shareUrl = getAgentTownShareUrl(townShare);
+  if (!shareUrl) {
+    setAgentTownShareToast({
+      type: "error",
+      title: "Town link missing",
+      message: "That BuildingHub town share does not have a link yet.",
+    });
+    return;
+  }
+
+  openAgentTownTwitterIntent(null, shareUrl);
+}
+
+async function importSavedAgentTownShare(shareId) {
+  const id = String(shareId || "").trim();
+  if (!id) {
+    return;
+  }
+
+  try {
+    const payload = await fetchJson(`/api/agent-town/town-shares/${encodeURIComponent(id)}/import`, {
+      method: "POST",
+      body: JSON.stringify({}),
+    });
+    applyAgentTownState(payload.agentTown);
+    applyAgentTownLayoutToVisualGame(payload.townShare?.layout || payload.agentTown?.layout, {
+      mirror: false,
+      render: false,
+    });
+    setAgentTownShareToast({
+      type: "success",
+      title: "Town imported",
+      message: `${payload.townShare?.name || "Agent Town"} is now your active town layout.`,
+    });
+    await openMainView("swarm");
+  } catch (error) {
+    console.error(error);
+    setAgentTownShareToast({
+      type: "error",
+      title: "Import failed",
+      message: error.message || "The town layout could not be imported.",
+    });
+  }
 }
 
 function renderPortCards() {
@@ -12524,6 +12675,69 @@ function renderBuildingHubCatalogControls() {
   `;
 }
 
+function getTownShareSummaryText(townShare) {
+  const summary = townShare?.layoutSummary || {};
+  const parts = [
+    `${Number(summary.cosmeticCount) || 0} cosmetic`,
+    `${Number(summary.functionalCount) || 0} functional`,
+    `theme ${summary.themeId || townShare?.layout?.themeId || AGENT_TOWN_DEFAULT_THEME_ID}`,
+  ];
+  return parts.join(" · ");
+}
+
+function renderBuildingHubTownShareCard(townShare) {
+  const shareUrl = getAgentTownShareUrl(townShare);
+  const sharePath = townShare.sharePath || getAgentTownSharePath(townShare.id);
+  const updated = townShare.updatedAt ? relativeTime(townShare.updatedAt) : "saved";
+  const image = townShare.imageUrl
+    ? `<img src="${escapeHtml(townShare.imageUrl)}" alt="${escapeHtml(`${townShare.name} town snapshot`)}" loading="lazy" />`
+    : `<div class="buildinghub-town-card-empty">${renderIcon(ImageIcon)}<span>no snapshot</span></div>`;
+  return `
+    <article class="buildinghub-town-card">
+      <a class="buildinghub-town-card-image" href="${escapeHtml(sharePath)}" target="_blank" rel="noreferrer" aria-label="${escapeHtml(`Open ${townShare.name}`)}">
+        ${image}
+      </a>
+      <div class="buildinghub-town-card-body">
+        <div class="buildinghub-town-card-title">
+          <strong>${escapeHtml(townShare.name)}</strong>
+          <span>${escapeHtml(updated)}</span>
+        </div>
+        <p>${escapeHtml(getTownShareSummaryText(townShare))}</p>
+        <div class="buildinghub-town-card-actions">
+          <a class="icon-button toolbar-control" href="${escapeHtml(sharePath)}" target="_blank" rel="noreferrer" aria-label="Open town link" ${tooltipAttributes("Open town link")}>${renderIcon(Waypoints)}</a>
+          <button class="icon-button toolbar-control" type="button" data-town-share-twitter="${escapeHtml(townShare.id)}" aria-label="Share town to X" ${tooltipAttributes("Share to X")} ${shareUrl ? "" : "disabled"}>${renderIcon(Share2)}</button>
+          <button class="ghost-button toolbar-control" type="button" data-town-share-import="${escapeHtml(townShare.id)}">import</button>
+        </div>
+      </div>
+    </article>
+  `;
+}
+
+function renderBuildingHubTownGallery() {
+  const townShares = state.agentTown.townShares || [];
+  const publishDisabled = state.agentTownShare.inProgress ? "disabled" : "";
+
+  return `
+    <section class="buildinghub-town-gallery" aria-label="Saved Agent Town bases">
+      <div class="buildinghub-town-gallery-head">
+        <div class="dashboard-copy">
+          <strong>Agent Town bases</strong>
+          <div class="terminal-meta">${escapeHtml(townShares.length ? `${townShares.length} saved` : "no saved bases yet")}</div>
+        </div>
+        <button class="primary-button buildinghub-town-publish-button" type="button" data-town-share-publish ${publishDisabled}>
+          ${renderIcon(Camera)}
+          <span>${escapeHtml(state.agentTownShare.inProgress ? "saving..." : "save current base")}</span>
+        </button>
+      </div>
+      ${
+        townShares.length
+          ? `<div class="buildinghub-town-grid">${townShares.map(renderBuildingHubTownShareCard).join("")}</div>`
+          : `<div class="buildinghub-town-empty">no bases saved</div>`
+      }
+    </section>
+  `;
+}
+
 function renderBuildingHubPluginPanel({ install = false } = {}) {
   const actionLabel = install ? "save community catalogs" : "save BuildingHub";
 
@@ -12966,6 +13180,7 @@ function renderPluginsView() {
         </div>
         ${renderBuildingHubCatalogControls()}
       </div>
+      ${renderBuildingHubTownGallery()}
       <div class="plugins-layout">
         <section class="plugin-grid plugin-store-grid" id="plugin-results" data-plugin-results>${renderPluginCards()}</section>
       </div>
@@ -15598,6 +15813,7 @@ function renderVisualPixelGame(graph, { controls = true } = {}) {
                 <button class="icon-button toolbar-control" type="button" id="visual-game-zoom-out" aria-label="Zoom out map" ${tooltipAttributes("Zoom out map")}>${renderIcon(ZoomOut)}</button>
                 <button class="icon-button toolbar-control" type="button" id="visual-game-reset-camera" aria-label="Reset map view" ${tooltipAttributes("Reset map view")}>${renderIcon(RefreshCw)}</button>
                 <button class="icon-button toolbar-control" type="button" id="visual-game-zoom-in" aria-label="Zoom in map" ${tooltipAttributes("Zoom in map")}>${renderIcon(ZoomIn)}</button>
+                <button class="icon-button toolbar-control" type="button" id="visual-game-share-town" aria-label="Share Agent Town" ${tooltipAttributes("Share Agent Town")} ${state.agentTownShare.inProgress ? "disabled" : ""}>${renderIcon(Share2)}</button>
                 <button class="icon-button toolbar-control" type="button" id="swarm-back-to-session" aria-label="Back to terminal" ${tooltipAttributes("Back to terminal")}>${renderIcon(Bot)}</button>
                 <button class="icon-button toolbar-control refresh-icon-button ${state.swarmGraph.loading ? "is-loading" : ""}" type="button" id="refresh-swarm-graph" aria-label="${escapeHtml(refreshLabel)}" ${tooltipAttributes(refreshLabel)} ${state.swarmGraph.loading || !canRefreshSwarm ? "disabled" : ""}>${renderIcon(RefreshCw)}</button>
               </div>
@@ -17164,6 +17380,14 @@ function isAgentTownLayoutCustomized(layoutInput = getAgentTownCurrentLayout()) 
   return hasAgentTownLayoutCustomizations(layoutInput);
 }
 
+function isAgentTownPortableLayoutCustomized(layoutInput = {}) {
+  return hasAgentTownLayoutCustomizations(layoutInput);
+}
+
+function getCurrentAgentTownLayoutForShare() {
+  return getAgentTownCurrentLayout();
+}
+
 function saveAgentTownLayoutPreferences({ reason = "layout-update" } = {}) {
   saveAgentTownLayoutFallback();
   void mirrorAgentTownState({ refreshUi: false, reason });
@@ -17490,6 +17714,21 @@ function resetAgentTownLayout({ render = true } = {}) {
   if (render) {
     renderShell();
   }
+}
+
+function applyAgentTownLayoutToVisualGame(layoutInput = {}, { mirror = true, render = true } = {}) {
+  const layout = applyAgentTownPersistedLayout(layoutInput);
+  state.visualGame.builderPlacement = null;
+  state.visualGame.builderFeedback = null;
+  state.visualGame.builderPulse = null;
+  state.visualGame.builderConstruction = null;
+  if (mirror) {
+    void mirrorAgentTownState({ refreshUi: false, reason: "import town share" });
+  }
+  if (render) {
+    renderShell();
+  }
+  return layout;
 }
 
 function toggleAgentTownEditMode() {
@@ -28483,6 +28722,42 @@ function normalizeAgentTownLayoutSnapshot(value) {
   };
 }
 
+function getAgentTownSharePath(shareId) {
+  const id = encodeURIComponent(String(shareId || "").trim());
+  return id ? `/buildinghub/towns/${id}` : "";
+}
+
+function getAgentTownShareUrl(share) {
+  const explicitUrl = String(share?.shareUrl || "").trim();
+  if (explicitUrl) {
+    return explicitUrl;
+  }
+
+  const sharePath = String(share?.sharePath || getAgentTownSharePath(share?.id)).trim();
+  if (!sharePath) {
+    return "";
+  }
+
+  try {
+    return new URL(sharePath, window.location.origin).toString();
+  } catch {
+    return sharePath;
+  }
+}
+
+function getAgentTownShareImageUrl(share) {
+  const explicitUrl = String(share?.imageUrl || "").trim();
+  if (explicitUrl) {
+    return explicitUrl;
+  }
+
+  if (!share?.imagePath || !share?.id) {
+    return "";
+  }
+
+  return `/api/agent-town/town-shares/${encodeURIComponent(String(share.id))}/image`;
+}
+
 function normalizeAgentTownLayoutSnapshots(value) {
   return Array.isArray(value)
     ? value.map(normalizeAgentTownLayoutSnapshot).filter(Boolean).slice(0, 30)
@@ -28542,6 +28817,43 @@ function normalizeAgentTownAlerts(value) {
   return Array.isArray(value) ? value.map(normalizeAgentTownAlert).filter(Boolean).slice(0, 12) : [];
 }
 
+function normalizeAgentTownTownShares(value) {
+  return Array.isArray(value)
+    ? value
+        .filter((share) => share && typeof share === "object" && share.id)
+        .map((share) => {
+          const layout = normalizeAgentTownPortableLayout(share.layout || {});
+          const summary = {
+            ...getAgentTownLayoutSummaryFromLayout(layout),
+            ...(share.layoutSummary || share.summary || {}),
+          };
+          const normalized = {
+            id: String(share.id || ""),
+            name: String(share.name || share.title || "Agent Town"),
+            description: String(share.description || share.caption || "A shared Agent Town base layout."),
+            layout,
+            layoutSummary: {
+              cosmeticCount: Number(summary.cosmeticCount) || 0,
+              functionalCount: Number(summary.functionalCount) || 0,
+              functionalIds: Array.isArray(summary.functionalIds) ? summary.functionalIds : [],
+              pendingFunctionalIds: Array.isArray(summary.pendingFunctionalIds) ? summary.pendingFunctionalIds : [],
+              themeId: normalizeAgentTownThemeId(summary.themeId || layout.themeId),
+            },
+            visibility: share.visibility === "unlisted" ? "unlisted" : "listed",
+            imagePath: String(share.imagePath || ""),
+            imageUrl: "",
+            sharePath: String(share.sharePath || getAgentTownSharePath(share.id)),
+            shareUrl: "",
+            createdAt: String(share.createdAt || ""),
+            updatedAt: String(share.updatedAt || share.createdAt || ""),
+          };
+          normalized.imageUrl = getAgentTownShareImageUrl({ ...share, id: normalized.id, imagePath: normalized.imagePath });
+          normalized.shareUrl = getAgentTownShareUrl({ ...share, id: normalized.id, sharePath: normalized.sharePath });
+          return normalized;
+        })
+    : [];
+}
+
 function applyAgentTownState(payload) {
   const agentTown = payload?.agentTown || payload || {};
   const layoutSummary = agentTown.layoutSummary || {};
@@ -28575,6 +28887,7 @@ function applyAgentTownState(payload) {
       automationCreatedCount: Number(agentTown.signals?.automationCreatedCount) || 0,
       libraryNoteSavedCount: Number(agentTown.signals?.libraryNoteSavedCount) || 0,
     },
+    townShares: normalizeAgentTownTownShares(agentTown.townShares || agentTown.shares),
   };
 
   if (!serverLayout) {
@@ -29555,6 +29868,32 @@ function bindShellEvents() {
     button.addEventListener("click", (event) => {
       event.preventDefault();
       handleAgentTownShareClick();
+    });
+  });
+
+  document.querySelector("#visual-game-share-town")?.addEventListener("click", (event) => {
+    event.preventDefault();
+    handleAgentTownShareClick();
+  });
+
+  document.querySelectorAll("[data-town-share-publish]").forEach((button) => {
+    button.addEventListener("click", (event) => {
+      event.preventDefault();
+      void publishCurrentAgentTownShareFromUi();
+    });
+  });
+
+  document.querySelectorAll("[data-town-share-twitter]").forEach((button) => {
+    button.addEventListener("click", (event) => {
+      event.preventDefault();
+      shareSavedAgentTownToTwitter(button.getAttribute("data-town-share-twitter") || "");
+    });
+  });
+
+  document.querySelectorAll("[data-town-share-import]").forEach((button) => {
+    button.addEventListener("click", (event) => {
+      event.preventDefault();
+      void importSavedAgentTownShare(button.getAttribute("data-town-share-import") || "");
     });
   });
 

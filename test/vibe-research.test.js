@@ -832,6 +832,72 @@ test("agent canvas API stores session image paths and serves the image", async (
   }
 });
 
+test("Agent Town share API publishes thumbnails, pages, and imports layouts", async () => {
+  const workspaceDir = await createTempWorkspace("vibe-research-agent-town-share-api-");
+  const stateDir = await createTempWorkspace("vibe-research-agent-town-share-api-state-");
+  const { app, baseUrl } = await startApp({ cwd: workspaceDir, stateDir });
+
+  try {
+    const imageDataUrl = `data:image/png;base64,${PNG_FIXTURE.toString("base64")}`;
+    const publishResponse = await fetch(`${baseUrl}/api/agent-town/town-shares`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        id: "launch-base",
+        name: "Launch base",
+        description: "A small shareable test base.",
+        layout: {
+          decorations: [{ id: "decor-1", itemId: "planter", x: 4, y: 5 }],
+          functional: { buildinghub: { x: 10, y: 12 } },
+          themeId: "snowy",
+          dogName: "Scout",
+        },
+        imageDataUrl,
+        imageMimeType: "image/png",
+      }),
+    });
+    assert.equal(publishResponse.status, 201);
+    const publishPayload = await publishResponse.json();
+    assert.equal(publishPayload.townShare.id, "launch-base");
+    assert.match(publishPayload.townShare.shareUrl, /\/buildinghub\/towns\/launch-base$/);
+    assert.match(publishPayload.townShare.imageUrl, /\/api\/agent-town\/town-shares\/launch-base\/image$/);
+    assert.equal(publishPayload.townShare.layoutSummary.cosmeticCount, 1);
+
+    const imageResponse = await fetch(publishPayload.townShare.imageUrl);
+    assert.equal(imageResponse.status, 200);
+    assert.match(imageResponse.headers.get("content-type") || "", /image\/png/);
+    assert.deepEqual(Buffer.from(await imageResponse.arrayBuffer()), PNG_FIXTURE);
+
+    const pageResponse = await fetch(publishPayload.townShare.shareUrl);
+    assert.equal(pageResponse.status, 200);
+    const pageText = await pageResponse.text();
+    assert.match(pageText, /<meta property="og:title" content="Launch base · BuildingHub"/);
+    assert.match(pageText, /twitter:card" content="summary_large_image"/);
+    assert.match(pageText, /\/api\/agent-town\/town-shares\/launch-base\/image/);
+
+    const importResponse = await fetch(`${baseUrl}/api/agent-town/town-shares/launch-base/import`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: "{}",
+    });
+    assert.equal(importResponse.status, 200);
+    const importPayload = await importResponse.json();
+    assert.equal(importPayload.agentTown.layout.themeId, "snowy");
+    assert.equal(importPayload.agentTown.layout.dogName, "Scout");
+    assert.equal(importPayload.agentTown.layoutSummary.functionalIds[0], "buildinghub");
+
+    const listResponse = await fetch(`${baseUrl}/api/agent-town/town-shares`);
+    assert.equal(listResponse.status, 200);
+    const listPayload = await listResponse.json();
+    assert.equal(listPayload.townShares.length, 1);
+    assert.equal(listPayload.townShares[0].sharePath, "/buildinghub/towns/launch-base");
+  } finally {
+    await app.close();
+    await removeTempWorkspace(workspaceDir);
+    await removeTempWorkspace(stateDir);
+  }
+});
+
 test("agent canvas appears below the terminal profile when a session is opened", async (t) => {
   const executablePath = await resolveBrowserExecutablePath({ env: process.env });
   if (!executablePath) {
@@ -1593,7 +1659,7 @@ test("BuildingHub is the catalog entry point instead of an installable detail", 
   }
 });
 
-test("Agent Town share opens Twitter intent with screenshot copied", async (t) => {
+test("Agent Town share opens Twitter intent with a BuildingHub town link", async (t) => {
   const executablePath = await resolveBrowserExecutablePath({ env: process.env });
   if (!executablePath) {
     t.skip("No local Chromium/Chrome executable is available for the Agent Town share smoke.");
@@ -1631,7 +1697,6 @@ test("Agent Town share opens Twitter intent with screenshot copied", async (t) =
     const page = await browser.newPage();
     await page.addInitScript(() => {
       window.__agentTownShareOpenCalls = [];
-      window.__agentTownClipboardTypes = [];
       window.open = (url) => {
         window.__agentTownShareOpenCalls.push(String(url || ""));
         return {
@@ -1654,19 +1719,6 @@ test("Agent Town share opens Twitter intent with screenshot copied", async (t) =
           opener: window,
         };
       };
-      window.ClipboardItem = class TestClipboardItem {
-        constructor(items) {
-          window.__agentTownClipboardTypes = Object.keys(items || {});
-        }
-      };
-      Object.defineProperty(navigator, "clipboard", {
-        configurable: true,
-        value: {
-          write: async () => {
-            window.__agentTownClipboardWriteCount = (window.__agentTownClipboardWriteCount || 0) + 1;
-          },
-        },
-      });
     });
 
     await page.setViewportSize({ width: 1280, height: 720 });
@@ -1680,18 +1732,25 @@ test("Agent Town share opens Twitter intent with screenshot copied", async (t) =
     );
 
     const shareState = await page.evaluate(() => ({
-      clipboardTypes: window.__agentTownClipboardTypes,
-      clipboardWriteCount: window.__agentTownClipboardWriteCount || 0,
       openedUrl: window.__agentTownShareOpenCalls.find((url) => url.includes("twitter.com/intent/tweet")) || "",
       toastText: document.querySelector("#system-toasts")?.textContent || "",
     }));
 
-    assert.deepEqual(shareState.clipboardTypes, ["image/png"]);
-    assert.equal(shareState.clipboardWriteCount, 1);
     assert.match(shareState.openedUrl, /twitter\.com\/intent\/tweet/);
     assert.equal(new URL(shareState.openedUrl).searchParams.get("text"), "I set up my vibe-research.net town!");
-    assert.equal(new URL(shareState.openedUrl).searchParams.get("url"), "https://vibe-research.net");
-    assert.match(shareState.toastText, /Agent Town screenshot copied/);
+    assert.match(new URL(shareState.openedUrl).searchParams.get("url") || "", /\/buildinghub\/towns\/town-[a-f0-9]+$/);
+    assert.match(shareState.toastText, /Agent Town link ready/);
+
+    const townSharesResponse = await fetch(`${baseUrl}/api/agent-town/town-shares`);
+    assert.equal(townSharesResponse.status, 200);
+    const townSharesPayload = await townSharesResponse.json();
+    assert.equal(townSharesPayload.townShares.length, 1);
+    assert.match(townSharesPayload.townShares[0].imageUrl, /\/api\/agent-town\/town-shares\/town-[a-f0-9]+\/image$/);
+
+    await page.goto(`${baseUrl}/?view=plugins`, { waitUntil: "domcontentloaded" });
+    await page.locator(".buildinghub-town-card").waitFor({ timeout: 10_000 });
+    assert.equal(await page.locator(".buildinghub-town-card").count(), 1);
+    await page.locator("[data-town-share-import]").first().waitFor({ timeout: 10_000 });
   } finally {
     await browser?.close().catch(() => {});
     await app.close();
@@ -1700,7 +1759,7 @@ test("Agent Town share opens Twitter intent with screenshot copied", async (t) =
   }
 });
 
-test("Agent Town share opens Twitter intent when screenshot clipboard write stalls", async (t) => {
+test("Agent Town share falls back to Twitter intent when publishing fails", async (t) => {
   const executablePath = await resolveBrowserExecutablePath({ env: process.env });
   if (!executablePath) {
     t.skip("No local Chromium/Chrome executable is available for the Agent Town share timeout smoke.");
@@ -1736,10 +1795,21 @@ test("Agent Town share opens Twitter intent when screenshot clipboard write stal
 
     browser = await chromium.launch({ executablePath, headless: true });
     const page = await browser.newPage();
+    await page.route("**/api/agent-town/town-shares", (route) => {
+      if (route.request().method() === "POST") {
+        route.fulfill({
+          status: 500,
+          contentType: "application/json",
+          body: JSON.stringify({ error: "share publish failed" }),
+        });
+        return;
+      }
+      route.continue();
+    });
     await page.addInitScript(() => {
       window.__agentTownShareOpenCalls = [];
       window.__agentTownClipboardWriteCount = 0;
-      window.__agentTownShareClipboardTimeoutMs = 750;
+      window.__agentTownShareClipboardTimeoutMs = 50;
       window.open = (url) => {
         window.__agentTownShareOpenCalls.push(String(url || ""));
         return {

@@ -286,3 +286,50 @@ test("AgentTownStore upserts and persists per-session canvases", async () => {
     await removeTempStateDir(stateDir);
   }
 });
+
+test("AgentTownStore publishes and imports shareable town layouts", async () => {
+  const stateDir = await createTempStateDir();
+
+  try {
+    const firstStore = new AgentTownStore({ stateDir });
+    await firstStore.initialize();
+    const layout = {
+      decorations: [{ id: "decor-1", itemId: "planter", x: 4, y: 5 }],
+      functional: { buildinghub: { x: 10, y: 12 } },
+      pendingFunctional: ["github"],
+      themeId: "snowy",
+      dogName: "Scout",
+    };
+    const { townShare } = await firstStore.publishTownShare({
+      id: "My Shared Town",
+      name: "Snowy base",
+      description: "A compact test base.",
+      layout,
+      imagePath: "agent-town/town-shares/my-shared-town/snapshot.png",
+      imageMimeType: "image/png",
+      imageByteLength: 68,
+    });
+
+    assert.equal(townShare.id, "my-shared-town");
+    assert.equal(townShare.name, "Snowy base");
+    assert.equal(townShare.layout.themeId, "snowy");
+    assert.equal(townShare.layout.dogName, "Scout");
+    assert.equal(townShare.layoutSummary.cosmeticCount, 1);
+    assert.equal(townShare.layoutSummary.functionalCount, 1);
+    assert.equal(townShare.imageByteLength, 68);
+
+    const reloadedStore = new AgentTownStore({ stateDir });
+    await reloadedStore.initialize();
+    assert.equal(reloadedStore.getState().townShares.length, 1);
+
+    await reloadedStore.importTownShare("my-shared-town");
+    const state = reloadedStore.getState();
+    assert.equal(state.layout.themeId, "snowy");
+    assert.equal(state.layout.dogName, "Scout");
+    assert.equal(state.layoutSummary.cosmeticCount, 1);
+    assert.equal(state.layoutSummary.functionalIds[0], "buildinghub");
+    assert.equal(state.events[0].type, "town_share_imported");
+  } finally {
+    await removeTempStateDir(stateDir);
+  }
+});

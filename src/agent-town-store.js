@@ -3,12 +3,13 @@ import { mkdir, readFile, rename, writeFile } from "node:fs/promises";
 import path from "node:path";
 
 const AGENT_TOWN_STATE_FILENAME = "agent-town-state.json";
-const AGENT_TOWN_STATE_VERSION = 4;
+const AGENT_TOWN_STATE_VERSION = 5;
 const MAX_ACTION_ITEMS = 100;
 const MAX_EVENTS = 200;
 const MAX_CANVASES = 100;
 const MAX_LAYOUT_HISTORY = 60;
 const MAX_LAYOUT_SNAPSHOTS = 30;
+const MAX_TOWN_SHARES = 60;
 const MAX_LAYOUT_DECORATIONS = 180;
 const MAX_LAYOUT_ENTRIES = 120;
 const MAX_ALERTS = 12;
@@ -280,6 +281,53 @@ function normalizeLayoutSnapshots(value = []) {
   return snapshots.slice(0, MAX_LAYOUT_SNAPSHOTS);
 }
 
+function normalizeTownShareVisibility(value) {
+  return normalizeSlug(value, 32) === "unlisted" ? "unlisted" : "listed";
+}
+
+function normalizeTownShare(value = {}) {
+  if (!value || typeof value !== "object" || Array.isArray(value)) {
+    return null;
+  }
+
+  const layout = normalizeLayout(value.layout || value);
+  const summary = normalizeLayoutSummary({
+    ...getLayoutSummary(layout),
+    ...(value.layoutSummary || value.summary || {}),
+  });
+  const id = normalizeId(value.id || value.shareId, "town");
+  const now = nowIso();
+  const imageByteLength = Math.max(0, Math.floor(Number(value.imageByteLength) || 0));
+  return {
+    id,
+    name: normalizeText(value.name || value.title || "Agent Town", 80) || "Agent Town",
+    description: normalizeText(value.description || value.caption || "A shared Agent Town base layout.", 280),
+    layout,
+    layoutSummary: summary,
+    visibility: normalizeTownShareVisibility(value.visibility),
+    imagePath: normalizeText(value.imagePath || value.thumbnailPath, 1_000),
+    imageMimeType: normalizeText(value.imageMimeType || value.thumbnailMimeType, 96),
+    imageByteLength,
+    imageUpdatedAt: normalizeText(value.imageUpdatedAt || value.thumbnailUpdatedAt, 64),
+    createdAt: normalizeText(value.createdAt, 64) || now,
+    updatedAt: normalizeText(value.updatedAt, 64) || now,
+  };
+}
+
+function normalizeTownShares(value = []) {
+  const seen = new Set();
+  const shares = [];
+  for (const share of Array.isArray(value) ? value : []) {
+    const normalized = normalizeTownShare(share);
+    if (!normalized || seen.has(normalized.id)) {
+      continue;
+    }
+    seen.add(normalized.id);
+    shares.push(normalized);
+  }
+  return shares.slice(0, MAX_TOWN_SHARES);
+}
+
 function validateLayout(layoutInput = {}) {
   const issues = [];
   const warnings = [];
@@ -548,6 +596,7 @@ function normalizeState(value = {}) {
     layoutSummary: normalizeLayoutSummary({ ...getLayoutSummary(layout), ...layoutSummary }),
     layoutHistory: normalizeLayoutHistory(value.layoutHistory || value.history),
     layoutSnapshots: normalizeLayoutSnapshots(value.layoutSnapshots || value.snapshots),
+    townShares: normalizeTownShares(value.townShares || value.shares),
     signals: normalizeSignals(value.signals),
     canvases: normalizeCanvases(value.canvases),
     actionItems,
@@ -774,6 +823,16 @@ export class AgentTownStore {
     return canvas ? clone(canvas) : null;
   }
 
+  getTownShare(shareId) {
+    const id = normalizeSlug(shareId, 96);
+    if (!id) {
+      return null;
+    }
+
+    const townShare = this.state.townShares.find((entry) => entry.id === id);
+    return townShare ? clone(townShare) : null;
+  }
+
   evaluatePredicate(predicateInput, paramsInput = {}) {
     const predicate = normalizePredicate(predicateInput);
     const params = normalizePredicateParams(paramsInput);
@@ -902,6 +961,94 @@ export class AgentTownStore {
     this.setLayout(snapshot.layout, { reason: `restore snapshot ${snapshot.name}` });
     await this.afterStateChange();
     return { snapshot, state: this.getState() };
+  }
+
+  async publishTownShare(input = {}) {
+    const validation = validateLayout(input.layout || input);
+    if (!validation.ok) {
+      const error = new Error(`Invalid Agent Town layout: ${validation.issues.join("; ")}`);
+      error.statusCode = 400;
+      error.validation = validation;
+      throw error;
+    }
+
+    const requestedShare = normalizeTownShare({
+      ...input,
+      layout: validation.layout,
+      layoutSummary: validation.summary,
+    });
+    const existingIndex = this.state.townShares.findIndex((entry) => entry.id === requestedShare.id);
+    const existing = existingIndex >= 0 ? this.state.townShares[existingIndex] : null;
+    const townShare = normalizeTownShare({
+      ...existing,
+      ...input,
+      id: requestedShare.id,
+      name: input.name || existing?.name || requestedShare.name,
+      description: input.description ?? existing?.description ?? requestedShare.description,
+      layout: validation.layout,
+      layoutSummary: validation.summary,
+      visibility: input.visibility || existing?.visibility || requestedShare.visibility,
+      imagePath: input.imagePath === undefined ? existing?.imagePath : input.imagePath,
+      imageMimeType: input.imageMimeType === undefined ? existing?.imageMimeType : input.imageMimeType,
+      imageByteLength: input.imageByteLength === undefined ? existing?.imageByteLength : input.imageByteLength,
+      imageUpdatedAt: input.imageUpdatedAt === undefined ? existing?.imageUpdatedAt : input.imageUpdatedAt,
+      createdAt: existing?.createdAt || input.createdAt || requestedShare.createdAt,
+      updatedAt: nowIso(),
+    });
+
+    if (existingIndex >= 0) {
+      this.state.townShares.splice(existingIndex, 1);
+    }
+    this.state.townShares = [townShare, ...this.state.townShares].slice(0, MAX_TOWN_SHARES);
+    this.state.events = [
+      normalizeEvent({
+        type: "town_share_published",
+        label: townShare.name,
+        metadata: { shareId: townShare.id, summary: townShare.layoutSummary },
+      }),
+      ...this.state.events,
+    ].filter(Boolean).slice(0, MAX_EVENTS);
+    await this.afterStateChange();
+    return {
+      townShare: this.getTownShare(townShare.id),
+      validation,
+      state: this.getState(),
+    };
+  }
+
+  async importTownShare(shareId) {
+    const townShare = this.getTownShare(shareId);
+    if (!townShare) {
+      const error = new Error("Agent Town share not found.");
+      error.statusCode = 404;
+      throw error;
+    }
+
+    const validation = validateLayout(townShare.layout);
+    if (!validation.ok) {
+      const error = new Error(`Invalid Agent Town share layout: ${validation.issues.join("; ")}`);
+      error.statusCode = 400;
+      error.validation = validation;
+      throw error;
+    }
+
+    this.setLayout(validation.layout, {
+      reason: `import town share ${townShare.name}`,
+    });
+    this.state.events = [
+      normalizeEvent({
+        type: "town_share_imported",
+        label: townShare.name,
+        metadata: { shareId: townShare.id, summary: townShare.layoutSummary },
+      }),
+      ...this.state.events,
+    ].filter(Boolean).slice(0, MAX_EVENTS);
+    await this.afterStateChange();
+    return {
+      townShare,
+      validation,
+      state: this.getState(),
+    };
   }
 
   async importLayout(input = {}) {
