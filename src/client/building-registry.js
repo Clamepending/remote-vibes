@@ -629,7 +629,7 @@ const CORE_BUILDING_MANIFESTS = [
       ],
       commands: [
         { label: "Check LeRobot install", command: "lerobot-info", detail: "Confirms the LeRobot CLI is available in the current runtime." },
-        { label: "Inspect AGENT_GUIDE in upstream", command: "git ls-remote --heads https://github.com/huggingface/lerobot.git", detail: "Confirms upstream repo reachability before following AGENT_GUIDE workflows." },
+        { label: "Open LeRobot docs index", command: "open https://huggingface.co/docs/lerobot/en/index", detail: "Jump straight to Hugging Face-hosted setup and policy docs." },
         { label: "Find robot ports", command: "lerobot-find-port", detail: "Identify serial ports for SO-101 leader and follower buses." },
         { label: "Record teleop dataset", command: "lerobot-record --robot.type=so101_follower --robot.port=/dev/ttyACM0 --dataset.repo_id=${HF_USER}/so101_task_dataset --dataset.single_task=\"<task>\" --dataset.num_episodes=50", detail: "Collect demonstrations with clear task labeling and consistent camera setup." },
         { label: "Train ACT", command: "lerobot-train --dataset.repo_id=${HF_USER}/so101_task_dataset --policy.type=act --policy.device=cuda --output_dir=outputs/train/act_so101 --job_name=act_so101 --policy.repo_id=${HF_USER}/act_so101_policy", detail: "Baseline ACT recipe for single-GPU imitation learning." },
