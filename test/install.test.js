@@ -103,6 +103,18 @@ function installTestEnv(overrides = {}) {
   };
 }
 
+test("package lock uses prebuilt node-pty packages on Linux", async () => {
+  const lock = JSON.parse(await readFile(path.join(rootDir, "package-lock.json"), "utf8"));
+  const nodePty = lock.packages["node_modules/node-pty"];
+
+  assert.equal(nodePty.name, "@lydell/node-pty");
+  assert.equal(nodePty.hasInstallScript, undefined);
+  assert.equal(
+    lock.packages["node_modules/@lydell/node-pty-linux-x64"]?.resolved,
+    "https://registry.npmjs.org/@lydell/node-pty-linux-x64/-/node-pty-linux-x64-1.2.0-beta.12.tgz",
+  );
+});
+
 async function createLinuxNodeInstallFakes({
   fakeBin,
   realNode = "",
@@ -2031,7 +2043,7 @@ esac
     assert.ok(npmCiCommands.every((command) => command.includes("--fetch-retry-maxtimeout 120000")));
     assert.ok(npmCiCommands.every((command) => command.includes("--fetch-timeout 300000")));
     assert.ok(npmCommands.some((command) => /cache add .*node-pty.*\.tgz/.test(command)));
-    assert.match(await readFile(curlLog, "utf8"), /https:\/\/registry\.npmjs\.org\/node-pty\/-\/node-pty-1\.1\.0\.tgz/);
+    assert.match(await readFile(curlLog, "utf8"), /https:\/\/registry\.npmjs\.org\/@lydell\/node-pty\/-\/node-pty-1\.2\.0-beta\.12\.tgz/);
 
     const response = await fetch(`http://127.0.0.1:${port}/api/state`);
     assert.equal(response.status, 200);
