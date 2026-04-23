@@ -10,8 +10,8 @@ permissions:
   contents: write
 
 concurrency:
-  group: desktop-${{ github.ref }}
-  cancel-in-progress: false
+  group: ${{ startsWith(github.ref, 'refs/tags/v') && 'desktop-release' || format('desktop-{0}', github.ref) }}
+  cancel-in-progress: true
 
 jobs:
   mac:
@@ -54,12 +54,72 @@ jobs:
           APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
 
       - name: Build desktop app
+        timeout-minutes: 170
         run: |
+          set -euo pipefail
+
+          publish=never
           if [[ "$GITHUB_REF" == refs/tags/v* ]]; then
-            npm --prefix desktop run dist -- --mac dmg zip --universal --publish always
-          else
-            npm --prefix desktop run dist -- --mac dmg zip --universal --publish never
+            publish=always
           fi
+
+          max_attempts=3
+          attempt_timeout_seconds=3000
+
+          for attempt in $(seq 1 "$max_attempts"); do
+            echo "::group::electron-builder attempt ${attempt}/${max_attempts}"
+            set +e
+            PUBLISH_MODE="$publish" ATTEMPT_TIMEOUT_SECONDS="$attempt_timeout_seconds" python3 <<'PY'
+import os
+import signal
+import subprocess
+import sys
+
+timeout = int(os.environ["ATTEMPT_TIMEOUT_SECONDS"])
+cmd = [
+    "npm",
+    "--prefix",
+    "desktop",
+    "run",
+    "dist",
+    "--",
+    "--mac",
+    "dmg",
+    "zip",
+    "--universal",
+    "--publish",
+    os.environ["PUBLISH_MODE"],
+]
+
+process = subprocess.Popen(cmd, preexec_fn=os.setsid)
+try:
+    raise SystemExit(process.wait(timeout=timeout))
+except subprocess.TimeoutExpired:
+    print(f"electron-builder timed out after {timeout} seconds", file=sys.stderr)
+    os.killpg(process.pid, signal.SIGTERM)
+    try:
+        process.wait(timeout=30)
+    except subprocess.TimeoutExpired:
+        os.killpg(process.pid, signal.SIGKILL)
+        process.wait()
+    raise SystemExit(124)
+PY
+            status=$?
+            set -e
+            echo "::endgroup::"
+
+            if [ "$status" -eq 0 ]; then
+              exit 0
+            fi
+
+            if [ "$attempt" -eq "$max_attempts" ]; then
+              exit "$status"
+            fi
+
+            echo "Desktop build failed with exit code ${status}; retrying after a short cooldown."
+            rm -rf desktop/dist
+            sleep 90
+          done
         env:
           GH_TOKEN: ${{ github.token }}
           CSC_LINK: ${{ secrets.MACOS_CSC_LINK }}
