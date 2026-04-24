@@ -31,6 +31,7 @@ import {
   loadProviderBackedNarrative,
 } from "./session-native-narrative.js";
 import { ClaudeStreamSession } from "./claude-stream-session.js";
+import { CodexStreamSession } from "./codex-stream-session.js";
 import { SessionStore } from "./session-store.js";
 import { getLegacyWorkspaceStateDir, getVibeResearchStateDir, getVibeResearchSystemDir } from "./state-paths.js";
 
@@ -154,6 +155,21 @@ function isClaudeStreamModeEnabled(env = process.env) {
   const value = String(
     env?.VIBE_RESEARCH_CLAUDE_STREAM_MODE
       ?? env?.REMOTE_VIBES_CLAUDE_STREAM_MODE
+      ?? "",
+  ).trim();
+  if (!value) {
+    return true;
+  }
+  return !/^(?:0|false|off|no)$/i.test(value);
+}
+
+function isCodexStreamModeEnabled(env = process.env) {
+  // Same opt-out semantics as Claude: stream mode (codex exec --json) is
+  // the default for new Codex sessions. Set VIBE_RESEARCH_CODEX_STREAM_MODE=0
+  // to fall back to the legacy PTY+TUI surface.
+  const value = String(
+    env?.VIBE_RESEARCH_CODEX_STREAM_MODE
+      ?? env?.REMOTE_VIBES_CODEX_STREAM_MODE
       ?? "",
   ).trim();
   if (!value) {
@@ -3270,7 +3286,13 @@ export class SessionManager {
       autoRenameEnabled: shouldAutoRenameFromPrompt(provider, normalizedName || provider.defaultName, !normalizedName),
     });
 
-    session.streamMode = isClaudeStreamModeEnabled(this.env) && isClaudeProviderId(provider.id);
+    if (isClaudeProviderId(provider.id)) {
+      session.streamMode = isClaudeStreamModeEnabled(this.env);
+    } else if (provider.id === "codex") {
+      session.streamMode = isCodexStreamModeEnabled(this.env);
+    } else {
+      session.streamMode = false;
+    }
 
     this.sessions.set(session.id, session);
     this.pushNativeNarrativeEntry(session, {
@@ -4272,7 +4294,13 @@ export class SessionManager {
       session.pendingProviderCapture = null;
       session.providerCapturePromise = null;
     }
-    if (normalizedState?.sessionId && normalizedState.sessionId !== previousSessionId) {
+    if (
+      normalizedState?.sessionId
+      && normalizedState.sessionId !== previousSessionId
+      && !session.streamMode
+    ) {
+      // Stream-mode sessions don't need this status — they're driven by the
+      // structured event protocol, so "transcript connected" adds no signal.
       this.pushNativeNarrativeEntry(session, {
         kind: "status",
         label: "Connected",
@@ -4778,8 +4806,16 @@ export class SessionManager {
 
   startSession(session, provider, { restored = false } = {}) {
     if (session.streamMode) {
-      this.startClaudeStreamSession(session, provider, { restored });
-      return;
+      if (isClaudeProviderId(provider.id)) {
+        this.startClaudeStreamSession(session, provider, { restored });
+        return;
+      }
+      if (provider.id === "codex") {
+        this.startCodexStreamSession(session, provider, { restored });
+        return;
+      }
+      // Unknown stream-mode provider — fall back to PTY.
+      session.streamMode = false;
     }
 
     const sessionCwd = resolveCwd(session.cwd, this.cwd);
@@ -5077,6 +5113,135 @@ export class SessionManager {
         kind: "status",
         label: "Error",
         text: `Claude stream error: ${error.message}`,
+        timestamp: new Date().toISOString(),
+        meta: "stream-mode",
+      });
+      this.scheduleSessionMetaBroadcast(session, { immediate: true });
+    });
+
+    streamSession.on("exit", ({ code, signal }) => {
+      session.status = "exited";
+      session.exitCode = code;
+      session.exitSignal = signal;
+      session.streamSession = null;
+      this.pushNativeNarrativeEntry(session, {
+        kind: "status",
+        label: "Exited",
+        text: `Stream session exited (code=${code ?? "n/a"}, signal=${signal || "n/a"}).`,
+        timestamp: new Date().toISOString(),
+        meta: "stream-mode",
+      });
+      this.scheduleSessionMetaBroadcast(session, { immediate: true });
+      this.schedulePersist({ immediate: true });
+    });
+
+    streamSession.start();
+  }
+
+  startCodexStreamSession(session, provider, { restored = false } = {}) {
+    const sessionCwd = resolveCwd(session.cwd, this.cwd);
+    session.cwd = sessionCwd;
+    const sessionEnv = this.buildSessionEnvironment(session, provider.id);
+    writeProviderCredentialEnvFile(sessionEnv);
+
+    if (restored) {
+      // Per-turn child processes don't survive across restarts, but we DO
+      // remember the codex thread id from the persisted providerState so the
+      // first new turn can resume the same Codex thread automatically.
+      session.status = "running";
+      session.exitCode = null;
+      session.exitSignal = null;
+      session.restoreOnStartup = true;
+    }
+
+    const codexBin = getManagedProviderLaunchCommand(provider) || provider.launchCommand;
+    if (!codexBin) {
+      session.status = "exited";
+      this.pushNativeNarrativeEntry(session, {
+        kind: "status",
+        label: "Error",
+        text: `Cannot find Codex launch binary for stream mode (${provider.label}).`,
+        timestamp: new Date().toISOString(),
+        meta: "stream-mode",
+      });
+      return;
+    }
+
+    const streamSession = new CodexStreamSession({
+      sessionId: session.id,
+      cwd: sessionCwd,
+      env: sessionEnv,
+      codexBin,
+      allocateSeq: () => {
+        if (typeof session.entrySeqCounter !== "number") {
+          session.entrySeqCounter = 0;
+        }
+        session.entrySeqCounter += 1;
+        return session.entrySeqCounter;
+      },
+    });
+
+    // Pre-seed the threadId from previously persisted providerState so the
+    // first turn after a restart resumes the prior Codex conversation.
+    const persistedThreadId = String(session.providerState?.sessionId || "").trim();
+    if (persistedThreadId) {
+      streamSession.threadId = persistedThreadId;
+    }
+
+    session.streamSession = streamSession;
+    session.streamInputBuffer = "";
+    session.streamEntries = [];
+    session.status = "running";
+    session.exitCode = null;
+    session.exitSignal = null;
+    session.restoreOnStartup = true;
+    session.activityInputBuffer = "";
+    session.nativeNarrativeInputBuffer = "";
+    session.providerReadyNotified = true;
+    session.updatedAt = new Date().toISOString();
+    session.lastOutputAt = session.updatedAt;
+
+    this.pushNativeNarrativeEntry(session, {
+      kind: "status",
+      label: "Stream",
+      text: restored
+        ? `Stream mode active for ${provider.label} (resuming prior thread).`
+        : `Stream mode active for ${provider.label}. Each turn runs codex exec --json.`,
+      timestamp: session.updatedAt,
+      meta: "stream-mode",
+    });
+
+    streamSession.on("event", () => {
+      session.lastOutputAt = new Date().toISOString();
+      session.updatedAt = session.lastOutputAt;
+    });
+
+    streamSession.on("entries", (entries) => {
+      session.streamEntries = Array.isArray(entries) ? entries : [];
+      this.scheduleSessionMetaBroadcast(session, { immediate: true });
+    });
+
+    streamSession.on("turn-complete", () => {
+      // Persist the codex thread id so reloads can resume in the same thread.
+      if (streamSession.threadId) {
+        this.updateProviderState(session, { sessionId: streamSession.threadId });
+      }
+      this.scheduleSessionMetaBroadcast(session, { immediate: true });
+      this.schedulePersist();
+    });
+
+    streamSession.on("stderr", (chunk) => {
+      const text = String(chunk || "").trim();
+      if (text) {
+        console.warn(`[vibe-research] codex stream stderr (${session.id}):`, text);
+      }
+    });
+
+    streamSession.on("error", (error) => {
+      this.pushNativeNarrativeEntry(session, {
+        kind: "status",
+        label: "Error",
+        text: `Codex stream error: ${error.message}`,
         timestamp: new Date().toISOString(),
         meta: "stream-mode",
       });
