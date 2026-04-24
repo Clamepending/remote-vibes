@@ -379,6 +379,12 @@ export class SettingsStore {
           this.env.STRIPE_WEBHOOK_SECRET ||
           "",
       ).trim(),
+      videoMemoryAnthropicApiKey: String(
+        this.env.VIDEOMEMORY_ANTHROPIC_API_KEY ||
+          this.env.ANTHROPIC_API_KEY ||
+          this.env.CLAUDE_API_KEY ||
+          "",
+      ).trim(),
       videoMemoryBaseUrl: String(
         this.env.VIDEOMEMORY_BASE_URL ||
           this.env.VIDEOMEMORY_BASE ||
@@ -596,6 +602,10 @@ export class SettingsStore {
         payload.walletStripeWebhookSecret === undefined
           ? defaults.walletStripeWebhookSecret
           : String(payload.walletStripeWebhookSecret || "").trim(),
+      videoMemoryAnthropicApiKey:
+        payload.videoMemoryAnthropicApiKey === undefined
+          ? defaults.videoMemoryAnthropicApiKey
+          : String(payload.videoMemoryAnthropicApiKey || "").trim(),
       videoMemoryBaseUrl: String(payload.videoMemoryBaseUrl || defaults.videoMemoryBaseUrl || "").trim(),
       videoMemoryEnabled: normalizeBoolean(payload.videoMemoryEnabled, defaults.videoMemoryEnabled),
       videoMemoryProviderId: normalizeAgentProviderId(payload.videoMemoryProviderId || defaults.videoMemoryProviderId),
@@ -851,6 +861,8 @@ export class SettingsStore {
       walletStripeWebhookSecret: "",
       walletStripeWebhookSecretConfigured: Boolean(this.settings.walletStripeWebhookSecret),
       walletStatus,
+      videoMemoryAnthropicApiKey: "",
+      videoMemoryAnthropicApiKeyConfigured: Boolean(this.settings.videoMemoryAnthropicApiKey),
       videoMemoryStatus,
       wikiRelativePath: formatRelativePath(this.cwd, this.settings.wikiPath),
       wikiRelativeRoot: formatRelativePath(this.cwd, this.settings.wikiPath),

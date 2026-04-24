@@ -1169,6 +1169,16 @@ const CORE_BUILDING_MANIFESTS = [
     onboarding: {
       setupSelector: ".videomemory-plugin-card",
       variables: [
+        {
+          label: "Anthropic API key",
+          setting: "videoMemoryAnthropicApiKey",
+          configuredSetting: "videoMemoryAnthropicApiKeyConfigured",
+          secret: true,
+          required: true,
+          setupUrl: "https://console.anthropic.com/settings/keys",
+          setupLabel: "Open Anthropic Console",
+          setupHint: "VideoMemory uses this key to summarize frames with Claude's vision model.",
+        },
         { label: "VideoMemory URL", setting: "videoMemoryBaseUrl", required: true },
         { label: "Wake provider", setting: "videoMemoryProviderId", required: true },
         {
@@ -1183,8 +1193,14 @@ const CORE_BUILDING_MANIFESTS = [
         { title: "Enable the building", detail: "Turn on camera monitors.", completeWhen: { type: "installed" } },
         {
           title: "Save monitor variables",
-          detail: "Set the service URL and provider agents should wake.",
-          completeWhen: { allConfigured: ["videoMemoryBaseUrl", "videoMemoryProviderId"] },
+          detail: "Set the API key, service URL, and provider agents should wake.",
+          completeWhen: {
+            allConfigured: [
+              "videoMemoryAnthropicApiKeyConfigured",
+              "videoMemoryBaseUrl",
+              "videoMemoryProviderId",
+            ],
+          },
         },
         { title: "Grant camera access", detail: "Start a monitor and allow camera access when the browser asks." },
       ],

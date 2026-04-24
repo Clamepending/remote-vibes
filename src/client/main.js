@@ -1907,6 +1907,7 @@ const state = {
     telegramEnabled: false,
     telegramProviderId: "claude",
     telegramStatus: null,
+    videoMemoryAnthropicApiKeyConfigured: false,
     videoMemoryBaseUrl: "http://127.0.0.1:5050",
     videoMemoryEnabled: false,
     videoMemoryProviderId: "claude",
@@ -15095,9 +15096,13 @@ function renderTelegramInstallForm() {
 
 function getVideoMemoryInstallStep() {
   const stored = getPluginInstallStepRaw("videomemory");
-  if (stored !== null) return Math.min(1, stored);
-  if (hasGuidedTutorialEvent(GUIDED_TUTORIAL_EVENT_TYPES.videoMemoryPermissionRequested)
-      || state.settings.videoMemoryStatus?.devicesKnown) {
+  if (stored !== null) return Math.min(2, stored);
+  const cameraGranted = hasGuidedTutorialEvent(GUIDED_TUTORIAL_EVENT_TYPES.videoMemoryPermissionRequested)
+    || state.settings.videoMemoryStatus?.devicesKnown;
+  if (state.settings.videoMemoryAnthropicApiKeyConfigured) {
+    return 2;
+  }
+  if (cameraGranted) {
     return 1;
   }
   return 0;
@@ -15109,7 +15114,7 @@ function renderVideoMemoryInstallForm() {
   const draft = getPluginInstallDraft(pluginId);
   const status = state.settings.videoMemoryStatus || {};
   const actionLabel = isPluginIdInstalled("videomemory") ? "save VideoMemory" : "save and install";
-  const totalSteps = 2;
+  const totalSteps = 3;
 
   if (step === 0) {
     return `
@@ -15137,6 +15142,28 @@ function renderVideoMemoryInstallForm() {
     `;
   }
 
+  if (step === 1) {
+    const apiKeyValue = typeof draft.videoMemoryAnthropicApiKey === "string" ? draft.videoMemoryAnthropicApiKey : "";
+    return `
+      <form class="settings-form plugin-install-form videomemory-form plugin-install-progressive" data-plugin-install-step-root="videomemory">
+        <input type="hidden" name="videoMemoryEnabled" value="on" />
+        ${renderPluginStepProgress(1, totalSteps)}
+        <div class="plugin-install-step-body">
+          <h3 class="plugin-install-step-title">Paste an Anthropic API key</h3>
+          <p class="plugin-install-step-hint">VideoMemory summarizes frames with a vision model. Paste a Claude API key so it can make VLM calls on your behalf — we encrypt it on save.</p>
+          <label class="field-label" for="install-videomemory-api-key">Anthropic API key</label>
+          <input class="file-root-input" id="install-videomemory-api-key" name="videoMemoryAnthropicApiKey" type="password" value="${escapeHtml(apiKeyValue)}" placeholder="${escapeHtml(state.settings.videoMemoryAnthropicApiKeyConfigured ? "saved; leave blank to keep" : "sk-ant-...")}" autocomplete="off" autocorrect="off" autocapitalize="none" spellcheck="false" ${state.settings.videoMemoryAnthropicApiKeyConfigured ? "" : "required"} />
+          <div class="plugin-onboarding-actions">
+            <a class="ghost-button plugin-install-step-link" href="https://console.anthropic.com/settings/keys" target="_blank" rel="noreferrer">Open Anthropic Console</a>
+            <button class="primary-button plugin-install-step-next" type="button" data-plugin-install-capture-advance="videomemory" data-plugin-install-next-step="2" data-plugin-install-require="videoMemoryAnthropicApiKey">Continue</button>
+            <button class="ghost-button plugin-install-step-back" type="button" data-plugin-install-advance="videomemory" data-plugin-install-next-step="0">back</button>
+          </div>
+        </div>
+      </form>
+    `;
+  }
+
+  const apiKeyDraft = typeof draft.videoMemoryAnthropicApiKey === "string" ? draft.videoMemoryAnthropicApiKey : "";
   const baseUrlValue = typeof draft.videoMemoryBaseUrl === "string"
     ? draft.videoMemoryBaseUrl
     : (state.settings.videoMemoryBaseUrl || status.baseUrl || "http://127.0.0.1:5050");
@@ -15146,10 +15173,11 @@ function renderVideoMemoryInstallForm() {
   return `
     <form class="settings-form plugin-install-form videomemory-form plugin-install-progressive" data-plugin-install-step-root="videomemory">
       <input type="hidden" name="videoMemoryEnabled" value="on" />
-      ${renderPluginStepProgress(1, totalSteps)}
+      ${apiKeyDraft ? `<input type="hidden" name="videoMemoryAnthropicApiKey" value="${escapeHtml(apiKeyDraft)}" />` : ""}
+      ${renderPluginStepProgress(2, totalSteps)}
       <div class="plugin-install-step-body">
         <h3 class="plugin-install-step-title">Pick the agent that remembers</h3>
-        <p class="plugin-install-step-hint">Choose which agent summarizes what the camera sees. You can change this later.</p>
+        <p class="plugin-install-step-hint">Choose which agent the camera wakes when it sees something worth remembering. You can change this later.</p>
         <label class="field-label" for="install-videomemory-provider">default agent</label>
         <select class="file-root-input" id="install-videomemory-provider" name="videoMemoryProviderId">${renderProviderOptions(providerValue)}</select>
         <details class="plugin-install-step-advanced" ${advancedOpen ? "open" : ""}>
@@ -15159,7 +15187,7 @@ function renderVideoMemoryInstallForm() {
         </details>
         <div class="plugin-onboarding-actions">
           <button class="primary-button plugin-install-finish-button" type="submit" data-videomemory-action="setup">${escapeHtml(actionLabel)}</button>
-          <button class="ghost-button plugin-install-step-back" type="button" data-plugin-install-advance="videomemory" data-plugin-install-next-step="0">back</button>
+          <button class="ghost-button plugin-install-step-back" type="button" data-plugin-install-advance="videomemory" data-plugin-install-next-step="1">back</button>
         </div>
         <div class="settings-status">${escapeHtml(getVideoMemoryStatusText())}</div>
       </div>
@@ -35223,6 +35251,10 @@ function applySettingsState(payload) {
     telegramProviderId:
       settings.telegramProviderId || state.settings.telegramProviderId || "claude",
     telegramStatus: telegramStatus || null,
+    videoMemoryAnthropicApiKeyConfigured:
+      settings.videoMemoryAnthropicApiKeyConfigured === undefined
+        ? state.settings.videoMemoryAnthropicApiKeyConfigured
+        : Boolean(settings.videoMemoryAnthropicApiKeyConfigured),
     videoMemoryBaseUrl:
       settings.videoMemoryBaseUrl === undefined
         ? state.settings.videoMemoryBaseUrl || "http://127.0.0.1:5050"
@@ -38399,9 +38431,11 @@ async function setupCommunicationsFromForm(form) {
 async function setupVideoMemoryFromForm(form) {
   const formData = new FormData(form);
   const enabled = formData.get("videoMemoryEnabled") === "on";
+  const apiKey = String(formData.get("videoMemoryAnthropicApiKey") || "").trim();
   const payload = await fetchJson("/api/videomemory/setup", {
     method: "POST",
     body: JSON.stringify({
+      anthropicApiKey: apiKey || undefined,
       baseUrl: String(formData.get("videoMemoryBaseUrl") || ""),
       enabled,
       installedPluginIds: getUpdatedInstalledPluginIds("videomemory", enabled),

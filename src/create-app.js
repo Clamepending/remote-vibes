@@ -4105,8 +4105,12 @@ export async function createVibeResearchApp({
 
   app.post("/api/videomemory/setup", async (request, response) => {
     try {
+      const rawApiKey =
+        request.body?.anthropicApiKey ?? request.body?.videoMemoryAnthropicApiKey;
+      const trimmedApiKey = typeof rawApiKey === "string" ? rawApiKey.trim() : rawApiKey;
       await settingsStore.update({
         installedPluginIds: request.body?.installedPluginIds,
+        videoMemoryAnthropicApiKey: trimmedApiKey === undefined || trimmedApiKey === "" ? undefined : trimmedApiKey,
         videoMemoryBaseUrl: request.body?.baseUrl ?? request.body?.videoMemoryBaseUrl,
         videoMemoryEnabled: request.body?.enabled ?? request.body?.videoMemoryEnabled,
         videoMemoryProviderId: request.body?.providerId ?? request.body?.videoMemoryProviderId,

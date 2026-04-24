@@ -725,6 +725,10 @@ export class VideoMemoryService {
     return Boolean(token && token === this.webhookToken);
   }
 
+  getAnthropicApiKey() {
+    return String(this.settings?.videoMemoryAnthropicApiKey || "").trim();
+  }
+
   async fetchVideoMemoryJson(pathname, options = {}) {
     if (typeof this.fetchImpl !== "function") {
       throw new Error("fetch is not available in this Node.js runtime.");
@@ -735,7 +739,19 @@ export class VideoMemoryService {
       throw new Error("VideoMemory base URL is not configured.");
     }
 
-    const response = await this.fetchImpl(`${baseUrl}${pathname}`, options);
+    const apiKey = this.getAnthropicApiKey();
+    const mergedOptions = apiKey
+      ? {
+          ...options,
+          headers: {
+            ...(options?.headers || {}),
+            Authorization: `Bearer ${apiKey}`,
+            "X-Anthropic-Api-Key": apiKey,
+          },
+        }
+      : options;
+
+    const response = await this.fetchImpl(`${baseUrl}${pathname}`, mergedOptions);
     const payload = await response.json().catch(async () => {
       const text = typeof response.text === "function" ? await response.text().catch(() => "") : "";
       return text ? { text } : {};
@@ -749,13 +765,19 @@ export class VideoMemoryService {
   }
 
   buildCreateTaskBody(monitor) {
-    return {
+    const apiKey = this.getAnthropicApiKey();
+    const body = {
       io_id: monitor.ioId,
       task_description: monitor.trigger,
       bot_id: "vibe-research",
       save_note_frames: monitor.includeFrame,
       save_note_videos: monitor.includeVideo,
     };
+    if (apiKey) {
+      body.anthropic_api_key = apiKey;
+      body.api_key = apiKey;
+    }
+    return body;
   }
 
   async createRemoteTask(monitor) {
