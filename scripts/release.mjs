@@ -237,14 +237,31 @@ function pushBranchWithRebase(maxAttempts = 5) {
       }
       log(`Push attempt ${attempt} failed; fetching and rebasing.`);
       run("git", ["fetch", pushRemote, currentBranch]);
+      // Release.mjs intentionally tolerates dirty managed-prompt files
+      // (AGENTS.md / CLAUDE.md / GEMINI.md), but git rebase refuses to run
+      // with unstaged changes. Stash any churn before the rebase and pop it
+      // back after so the working tree stays consistent.
+      const stashLabel = `vibe-research-release-${Date.now()}`;
+      const stashOutput = run(
+        "git",
+        ["stash", "push", "--include-untracked", "--message", stashLabel],
+        { capture: true, allowFailure: true },
+      );
+      const didStash = stashOutput.includes(stashLabel) || stashOutput.includes("Saved working directory");
       try {
         run("git", ["rebase", `${pushRemote}/${currentBranch}`]);
       } catch (rebaseError) {
         // Rebase failed — most likely a conflict on release-channel.json or
         // package.json. Abort cleanly so we don't leave the worktree in a
-        // half-merged state, then surface the error.
+        // half-merged state, pop the stash, then surface the error.
         run("git", ["rebase", "--abort"], { allowFailure: true });
+        if (didStash) {
+          run("git", ["stash", "pop"], { allowFailure: true });
+        }
         throw rebaseError;
+      }
+      if (didStash) {
+        run("git", ["stash", "pop"], { allowFailure: true });
       }
     }
   }
