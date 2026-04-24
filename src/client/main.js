@@ -724,6 +724,173 @@ const GUIDED_TUTORIALS = Object.freeze({
     ]),
   }),
 });
+const GUIDED_QUEST_TUTORIALS = Object.freeze({
+  "quest-place-first-building": Object.freeze({
+    title: "Place your first building",
+    steps: Object.freeze([
+      {
+        id: "quest-first-building-welcome",
+        title: "Place your first building",
+        body: "This quest will point at the builder and then at the map spot for your first placement.",
+        note: "A cosmetic building is the fastest way to finish this one.",
+        manualAdvance: true,
+        manualLabel: "Start quest",
+      },
+      {
+        id: "quest-open-builder",
+        title: "Step 1",
+        body: "Open BuildingHub from the wrench button on the map.",
+        ensureView: "visual-interface",
+      },
+      {
+        id: "quest-pick-cosmetic",
+        title: "Step 2",
+        body: "Choose a cosmetic building to place.",
+        ensureView: "visual-interface",
+        requireBuilderOpen: true,
+        requireBuilderTab: "cosmetic",
+        autoOpenBuilder: true,
+      },
+      {
+        id: "quest-place-first-building",
+        title: "Step 3",
+        body: "Click the highlighted spot on the map to place it.",
+        ensureView: "visual-interface",
+      },
+      {
+        id: "quest-first-building-done",
+        title: "Done",
+        body: "Your first building is on the map.",
+        manualAdvance: true,
+        manualLabel: "Finish quest",
+      },
+    ]),
+  }),
+  "quest-place-functional-building": Object.freeze({
+    title: "Place a functional building",
+    steps: Object.freeze([
+      {
+        id: "quest-functional-welcome",
+        title: "Place a functional building",
+        body: "This quest will guide you through installing a capability building and dropping it onto the map.",
+        manualAdvance: true,
+        manualLabel: "Start quest",
+      },
+      {
+        id: "quest-open-functional-builder",
+        title: "Step 1",
+        body: "Open BuildingHub to the functional building list.",
+        ensureView: "visual-interface",
+        requireBuilderOpen: true,
+        requireBuilderTab: "functional",
+        autoOpenBuilder: true,
+      },
+      {
+        id: "quest-install-functional",
+        title: "Step 2",
+        body: "Click Install on a functional building.",
+        note: "Pick any available capability building.",
+        ensureView: "visual-interface",
+        requireBuilderOpen: true,
+        requireBuilderTab: "functional",
+        autoOpenBuilder: true,
+      },
+      {
+        id: "quest-place-functional-building",
+        title: "Step 3",
+        body: "Click the highlighted spot on the map to place it.",
+        ensureView: "visual-interface",
+      },
+      {
+        id: "quest-functional-done",
+        title: "Done",
+        body: "Your town now has a functional building.",
+        manualAdvance: true,
+        manualLabel: "Finish quest",
+      },
+    ]),
+  }),
+  "quest-publish-agent-canvas": Object.freeze({
+    title: "Publish an agent canvas",
+    steps: Object.freeze([
+      {
+        id: "quest-canvas-welcome",
+        title: "Publish an agent canvas",
+        body: "This quest points you at an agent and then at the canvas button.",
+        manualAdvance: true,
+        manualLabel: "Start quest",
+      },
+      {
+        id: "quest-canvas-open-agent",
+        title: "Step 1",
+        body: "Open an agent from Agent Town.",
+        note: "If no agent is visible yet, use the New Agent button first.",
+        ensureView: "visual-interface",
+      },
+      {
+        id: "quest-canvas-button",
+        title: "Step 2",
+        body: "Click the canvas button in the chat toolbar.",
+        note: "Agents publish images there when they have something visual to show.",
+        ensureView: "visual-interface",
+      },
+      {
+        id: "quest-canvas-done",
+        title: "Done",
+        body: "Once an agent publishes a canvas, this quest completes automatically.",
+        manualAdvance: true,
+        manualLabel: "Finish quest",
+      },
+    ]),
+  }),
+  "quest-save-library-note": Object.freeze({
+    title: "Save one Library note",
+    steps: Object.freeze([
+      {
+        id: "quest-library-welcome",
+        title: "Save one Library note",
+        body: "This quest takes you to the Library so you can capture durable context.",
+        manualAdvance: true,
+        manualLabel: "Start quest",
+      },
+      {
+        id: "quest-open-library",
+        title: "Step 1",
+        body: "Click Library in the sidebar.",
+      },
+      {
+        id: "quest-library-save-note",
+        title: "Step 2",
+        body: "Create or update a note in the Library.",
+        note: "The town will mark this quest complete when the Library changes.",
+        ensureView: "knowledge-base",
+      },
+    ]),
+  }),
+  "quest-create-automation": Object.freeze({
+    title: "Create one automation",
+    steps: Object.freeze([
+      {
+        id: "quest-automation-welcome",
+        title: "Create one automation",
+        body: "This quest takes you to Automations so you can schedule a helper.",
+        manualAdvance: true,
+        manualLabel: "Start quest",
+      },
+      {
+        id: "quest-open-automations",
+        title: "Step 1",
+        body: "Click Automations in the sidebar.",
+      },
+      {
+        id: "quest-create-automation-form",
+        title: "Step 2",
+        body: "Create an automation here and Agent Town will move to the next quest.",
+        ensureView: "automations",
+      },
+    ]),
+  }),
+});
 const SIDEBAR_DEFAULT_WIDTH = 276;
 const SIDEBAR_MIN_WIDTH = 220;
 const SIDEBAR_MAX_WIDTH = 520;
@@ -798,6 +965,97 @@ const AGENT_TOWN_FUNCTIONAL_BUILDING_SIZE = Object.freeze({
   width: AGENT_TOWN_BUILD_GRID_SIZE * 3,
   height: AGENT_TOWN_BUILD_GRID_SIZE * 2,
 });
+const AGENT_TOWN_FLOORPLAN_ART = Object.freeze({
+  "agent-inbox": {
+    src: "/images/agent-town/floorplans/agent-inbox.png",
+    extraX: 18,
+    extraTop: 26,
+    extraBottom: 6,
+    sign: {
+      offsetY: 18,
+      widthPadding: 24,
+    },
+  },
+  buildinghub: {
+    src: "/images/agent-town/floorplans/buildinghub.png",
+    extraX: 24,
+    extraTop: 28,
+    extraBottom: 8,
+    sign: {
+      offsetY: 18,
+      widthPadding: 28,
+    },
+  },
+  "ci-repair-shop": {
+    src: "/images/agent-town/floorplans/ci-repair-shop.png",
+    extraX: 20,
+    extraTop: 26,
+    extraBottom: 6,
+    sign: {
+      offsetY: 18,
+      widthPadding: 24,
+    },
+  },
+  workshop: {
+    src: "/images/agent-town/floorplans/computer-lab.png",
+    extraX: 8,
+    extraTop: 12,
+    extraBottom: 6,
+    sign: {
+      offsetY: 14,
+      widthPadding: 26,
+    },
+  },
+  doghouse: {
+    src: "/images/agent-town/floorplans/doghouse.png",
+    extraX: 10,
+    extraTop: 10,
+    extraBottom: 4,
+    sign: {
+      offsetY: 10,
+      widthPadding: 18,
+    },
+  },
+  tailscale: {
+    src: "/images/agent-town/floorplans/tailscale.png",
+    extraX: 26,
+    extraTop: 24,
+    extraBottom: 6,
+    sign: {
+      offsetY: 18,
+      widthPadding: 28,
+    },
+  },
+  telegram: {
+    src: "/images/agent-town/floorplans/telegram.png",
+    extraX: 18,
+    extraTop: 22,
+    extraBottom: 6,
+    sign: {
+      offsetY: 16,
+      widthPadding: 24,
+    },
+  },
+  "provider-dorm-claude": {
+    src: "/images/agent-town/floorplans/claude-dorm.png",
+    extraX: 10,
+    extraTop: 10,
+    extraBottom: 4,
+    sign: {
+      hidden: true,
+    },
+  },
+  "provider-dorm-codex": {
+    src: "/images/agent-town/floorplans/codex-dorm.png",
+    extraX: 10,
+    extraTop: 10,
+    extraBottom: 4,
+    sign: {
+      hidden: true,
+    },
+  },
+});
+const AGENT_TOWN_FLOORPLAN_IMAGE_CACHE = new Map();
 const AGENT_TOWN_BUILDER_DEFAULT_TAB = "cosmetic";
 const AGENT_TOWN_BUILDER_TABS = new Set(["cosmetic", "themes", "functional", "layouts"]);
 const AGENT_INBOX_FALLBACK_TAB = "notifications";
@@ -16879,30 +17137,6 @@ function renderAutomationsView() {
   `;
 }
 
-function renderAgentInboxSummaryCards() {
-  const summary = getAgentInboxSummary();
-  const cards = [
-    ["alerts", summary.alerts, "ranked bottlenecks from Agent Town"],
-    ["actions", summary.actions, "tutorial and agent-requested next steps"],
-    ["to review", summary.unread, "finished sessions you have not opened yet"],
-    ["working", summary.working, "sessions with active work, monitors, or subagents"],
-    ["exited", summary.exited, "closed terminals still in the session list"],
-    ["total", summary.total, "all local sessions"],
-  ];
-
-  return cards
-    .map(
-      ([label, value, detail]) => `
-        <article class="agent-inbox-summary-card">
-          <span class="main-search-kind">${escapeHtml(label)}</span>
-          <strong>${escapeHtml(String(value))}</strong>
-          <p>${escapeHtml(detail)}</p>
-        </article>
-      `,
-    )
-    .join("");
-}
-
 function renderAgentInboxSessionMeta(session) {
   const subagents = Array.isArray(session?.subagents) ? session.subagents : [];
   const workingSubagents = subagents.filter((subagent) => subagent?.status === "working").length;
@@ -16956,7 +17190,7 @@ function renderAgentTownActionItemCard(item) {
   const priorityClass = item.priority && item.priority !== "normal" ? ` is-priority-${escapeHtml(item.priority)}` : "";
   const tutorialAttr = tutorialId ? ` data-tutorial-id="${escapeHtml(tutorialId)}"` : "";
   const primaryButton = tutorialId
-    ? `<button class="primary-button toolbar-control" type="button" data-tutorial-open="${escapeHtml(tutorialId)}" data-tutorial-action-item="${escapeHtml(item.id)}">View tutorial</button>`
+    ? `<button class="primary-button toolbar-control" type="button" data-tutorial-open="${escapeHtml(tutorialId)}" data-tutorial-action-item="${escapeHtml(item.id)}">${escapeHtml(getGuidedTutorialConfig(tutorialId) ? "Start walkthrough" : "View tutorial")}</button>`
     : href
       ? `<button class="primary-button toolbar-control" type="button" data-agent-town-action-open="${escapeHtml(item.id)}">${escapeHtml(item.cta || "Open")}</button>`
       : "";
@@ -16984,6 +17218,14 @@ const QUEST_ALERT_HINTS = new Map([
   ["quest-save-library-note", { anchor: "knowledge-base", label: "Open or create a note, then save it to finish this quest" }],
   ["quest-create-automation", { anchor: "automation-create", label: "Fill in the form, then create your first automation" }],
   ["quest-publish-agent-canvas", { anchor: "sidebar-session", label: "Open an agent (or start one) — they publish canvases from inside their chat" }],
+]);
+const ACTION_PREDICATE_GUIDED_TUTORIALS = new Map([
+  ["first_building_placed", "quest-place-first-building"],
+  ["building_placed", "quest-place-first-building"],
+  ["cosmetic_building_placed", "quest-place-first-building"],
+  ["functional_building_placed", "quest-place-functional-building"],
+  ["library_note_saved", "quest-save-library-note"],
+  ["automation_created", "quest-create-automation"],
 ]);
 
 function renderAgentTownAlertCard(alert) {
@@ -17016,6 +17258,10 @@ async function openAgentTownAlertHref(alertId) {
   const alert = getAgentTownRankedAlerts().find((candidate) => candidate.id === id);
   const href = String(alert?.href || "").trim();
   const questHint = QUEST_ALERT_HINTS.get(id) || null;
+
+  if (startGuidedTutorial(id)) {
+    return;
+  }
 
   if (href) {
     if (href.startsWith("?")) {
@@ -17192,15 +17438,6 @@ function renderAgentInboxCards() {
 function renderAgentInboxView() {
   const summary = getAgentInboxSummary();
   const activeTab = normalizeAgentInboxTab(state.agentInboxTab);
-  const attentionLabel = summary.alerts > 0
-    ? `${summary.alerts} town alert${summary.alerts === 1 ? "" : "s"}`
-    : summary.actions > 0
-      ? `${summary.actions} action${summary.actions === 1 ? "" : "s"} ready`
-      : summary.unread > 0
-        ? `${summary.unread} waiting for review`
-        : summary.working > 0
-          ? `${summary.working} still working`
-          : "all caught up";
 
   return `
     <section class="dashboard-panel main-view agent-inbox-view" ${renderMainViewAttributes("agent-inbox", `agent-inbox:${summary.total}:${summary.unread}:${summary.working}:${summary.actions}:${summary.alerts}:${activeTab}`)}>
@@ -17214,13 +17451,6 @@ function renderAgentInboxView() {
           <button class="icon-button" type="button" id="refresh-sessions" aria-label="Refresh sessions" ${tooltipAttributes("Refresh sessions")}>${renderIcon(RefreshCw)}</button>
         </div>
       </div>
-      <div class="dashboard-range">
-        <span class="dashboard-range-label">attention</span>
-        <span>${escapeHtml(attentionLabel)}</span>
-        <span class="dashboard-updated">${escapeHtml(`${summary.total} sessions`)}</span>
-      </div>
-      ${renderQuestHintBubble("agent-inbox", { className: "is-block" })}
-      <div class="agent-inbox-summary" id="agent-inbox-summary">${renderAgentInboxSummaryCards()}</div>
       ${renderAgentInboxTabs(activeTab)}
       <div class="main-results-grid agent-inbox-grid" id="agent-inbox-list" data-agent-inbox-active-tab="${escapeHtml(activeTab)}">${renderAgentInboxCards()}</div>
     </section>
@@ -21628,6 +21858,11 @@ const ACTION_PREDICATE_HINTS = new Map([
 async function openAgentTownActionHref(actionItemId) {
   const item = state.agentTown.actionItems.find((candidate) => candidate.id === actionItemId);
   const href = String(item?.href || item?.target?.href || "").trim();
+  const tutorialId = ACTION_PREDICATE_GUIDED_TUTORIALS.get(String(item?.predicate || "").trim()) || "";
+  if (tutorialId && startGuidedTutorial(tutorialId, { actionItemId })) {
+    return;
+  }
+
   if (!href) {
     return;
   }
@@ -24623,10 +24858,144 @@ function drawVisualGameComputerStation(context, desk, occupied, time, index, scr
   context.fillRect(desk.x - 2, desk.y - 12, 8, 2);
 }
 
+function getAgentTownFloorplanArt(buildingId) {
+  return AGENT_TOWN_FLOORPLAN_ART[normalizeBuildingId(buildingId)] || null;
+}
+
+function getAgentTownFloorplanImage(buildingId) {
+  const art = getAgentTownFloorplanArt(buildingId);
+  if (!art?.src) {
+    return null;
+  }
+
+  let entry = AGENT_TOWN_FLOORPLAN_IMAGE_CACHE.get(art.src);
+  if (!entry) {
+    const image = new Image();
+    entry = {
+      image,
+      loaded: false,
+      failed: false,
+    };
+    image.decoding = "async";
+    image.addEventListener("load", () => {
+      entry.loaded = true;
+    }, { once: true });
+    image.addEventListener("error", () => {
+      entry.failed = true;
+    }, { once: true });
+    image.src = art.src;
+    AGENT_TOWN_FLOORPLAN_IMAGE_CACHE.set(art.src, entry);
+  }
+
+  if (entry.failed || !entry.loaded) {
+    return null;
+  }
+  return entry.image;
+}
+
+function getContainedDrawRect(width, height, frame, { alignX = 0.5, alignY = 1 } = {}) {
+  const safeWidth = Math.max(1, Number(width || 1));
+  const safeHeight = Math.max(1, Number(height || 1));
+  const scale = Math.min(frame.width / safeWidth, frame.height / safeHeight);
+  const targetWidth = safeWidth * scale;
+  const targetHeight = safeHeight * scale;
+  return {
+    x: frame.x + (frame.width - targetWidth) * alignX,
+    y: frame.y + (frame.height - targetHeight) * alignY,
+    width: targetWidth,
+    height: targetHeight,
+  };
+}
+
+function drawAgentTownFloorplan(context, buildingId, rect) {
+  const art = getAgentTownFloorplanArt(buildingId);
+  const image = getAgentTownFloorplanImage(buildingId);
+  if (!art || !image) {
+    return null;
+  }
+
+  const extraX = Number(art.extraX || 0);
+  const extraTop = Number(art.extraTop || 0);
+  const extraBottom = Number(art.extraBottom || 0);
+  const frame = {
+    x: rect.x - extraX / 2,
+    y: rect.y - extraTop,
+    width: rect.width + extraX,
+    height: rect.height + extraTop + extraBottom,
+  };
+  const target = getContainedDrawRect(
+    image.naturalWidth || image.width || 1,
+    image.naturalHeight || image.height || 1,
+    frame,
+    { alignX: 0.5, alignY: 1 },
+  );
+
+  context.save();
+  const previousImageSmoothing = context.imageSmoothingEnabled;
+  context.imageSmoothingEnabled = false;
+  context.drawImage(
+    image,
+    Math.round(target.x),
+    Math.round(target.y),
+    Math.round(target.width),
+    Math.round(target.height),
+  );
+  context.imageSmoothingEnabled = previousImageSmoothing;
+  context.restore();
+  return target;
+}
+
+function drawVisualGameFloorplanSign(context, floorplanRect, buildingId, label, meta) {
+  if (!label && !meta) {
+    return;
+  }
+
+  const art = getAgentTownFloorplanArt(buildingId);
+  const signOptions = art?.sign || {};
+  if (signOptions.hidden) {
+    return;
+  }
+  const signWidth = Math.min(
+    Math.max(Math.round(floorplanRect.width + Number(signOptions.widthPadding || 20)), 56),
+    126,
+  );
+  const signHeight = Math.max(18, Math.round(Number(signOptions.height || 20)));
+  const signX = Math.round(floorplanRect.x + floorplanRect.width / 2 - signWidth / 2);
+  const signY = Math.round(floorplanRect.y - Number(signOptions.offsetY || 16));
+  drawVisualGameBuildingSign(context, signX, signY, signWidth, signHeight, label, meta);
+}
+
+function drawVisualGameFloorplanBuilding(context, hitAreas, building, floorplanId) {
+  const rect = building.rect || building;
+  const art = getAgentTownFloorplanArt(floorplanId);
+  const image = getAgentTownFloorplanImage(floorplanId);
+  if (!rect || !art || !image) {
+    return false;
+  }
+
+  const shadowInset = Math.max(8, Math.round(rect.width * 0.12));
+  drawVisualGameShadow(context, rect.x + shadowInset / 2, rect.y + rect.height - 1, rect.width - shadowInset, 7);
+
+  const floorplanRect = drawAgentTownFloorplan(context, floorplanId, rect);
+  if (!floorplanRect) {
+    return false;
+  }
+
+  drawVisualGameFloorplanSign(context, floorplanRect, floorplanId, building.label, building.meta);
+  if (building.issue) {
+    drawVisualGameBuildingIssueBadge(context, rect);
+  }
+  pushAgentTownPlaceHit(hitAreas, { ...building, rect, baseRect: building.baseRect || rect }, building.action);
+  return true;
+}
+
 function drawVisualGameBuilding(context, hitAreas, building) {
   const rect = building.rect || building;
   const { x, y, width, height } = rect;
   const { label, meta, body, trim, fixture, screen, action, issue } = building;
+  if (drawVisualGameFloorplanBuilding(context, hitAreas, building, building.pluginId)) {
+    return;
+  }
   drawVisualGameRoomFloor(context, x, y, width, height, {
     floor: body,
     trim: trim || "#4b2f22",
@@ -24702,6 +25071,9 @@ function drawVisualGamePortalBuilding(context, hitAreas, building, time = 0) {
   const rect = building.rect || building;
   const { x, y, width, height } = rect;
   const { label, meta, body, trim, fixture, screen, action, issue } = building;
+  if (drawVisualGameFloorplanBuilding(context, hitAreas, building, building.pluginId)) {
+    return;
+  }
   const portalTrim = trim || "#14243a";
   const portalScreen = screen || "#9ceaff";
   const glow = 0.34 + Math.sin(time / 260) * 0.08;
@@ -24786,6 +25158,9 @@ function drawVisualGameLabBuilding(context, hitAreas, building, time = 0, labAge
   const rect = building.rect || building;
   const { x, y, width, height } = rect;
   const { label, meta, body, trim, fixture, screen, action, issue } = building;
+  if (drawVisualGameFloorplanBuilding(context, hitAreas, building, building.pluginId)) {
+    return;
+  }
   const labTrim = trim || "#163b3f";
   const labScreen = screen || "#b8f4f2";
   const activeCount = Array.isArray(labAgents) ? labAgents.length : 0;
@@ -24891,6 +25266,17 @@ function drawVisualGameSleepingQuarters(context, hitAreas, time, sleepingAgents)
     const restingCount = sleepingAgents.filter((agent) => (
       dorm.providerId ? agent.providerId === dorm.providerId : true
     )).length;
+    const meta = restingCount ? `${restingCount} resting` : dorm.meta || "quiet beds";
+    const action = { kind: "main-view", view: "visual-interface", label: dorm.label };
+    const dormArtId = dorm.providerId ? `provider-dorm-${normalizeBuildingId(dorm.providerId)}` : "";
+    if (dormArtId && drawVisualGameFloorplanBuilding(context, hitAreas, {
+      ...dorm,
+      label: dorm.label,
+      meta,
+      action,
+    }, dormArtId)) {
+      continue;
+    }
     const { x, y, width, height } = dorm.rect;
     drawVisualGameSleepRoom(context, {
       x,
@@ -24898,12 +25284,12 @@ function drawVisualGameSleepingQuarters(context, hitAreas, time, sleepingAgents)
       width,
       height,
       label: dorm.label,
-      meta: restingCount ? `${restingCount} resting` : dorm.meta || "quiet beds",
+      meta,
       beds: getVisualGameDormBeds(dorm),
       entrance: getVisualGameRenderedEntrance(dorm),
       palette: getAgentTownProviderDormPalette(dorm.providerId),
     });
-    pushAgentTownPlaceHit(hitAreas, dorm, { kind: "main-view", view: "visual-interface", label: dorm.label });
+    pushAgentTownPlaceHit(hitAreas, dorm, action);
   }
 }
 
@@ -25047,6 +25433,14 @@ function drawVisualGameLibrary(context, hitAreas, model, time, libraryAgents) {
 function drawVisualGameWorkshop(context, hitAreas, time, workingAgents) {
   const place = getVisualGameTownPlace("workshop");
   const { x, y, width, height } = place.rect;
+  if (drawVisualGameFloorplanBuilding(context, hitAreas, {
+    ...place,
+    label: place.label,
+    meta: `${workingAgents.length} at desks`,
+    action: { kind: "main-view", view: "visual-interface", label: place.label },
+  }, "workshop")) {
+    return;
+  }
 
   drawVisualGameRoomFloor(context, x, y, width, height, {
     floor: "#262d2d",
@@ -25252,6 +25646,18 @@ function drawVisualGameDoghouse(context, hitAreas, time) {
 
   const { x, y, width, height } = place.rect;
   const dogName = getAgentTownDogName();
+  if (drawVisualGameFloorplanBuilding(context, hitAreas, {
+    ...place,
+    label: dogName,
+    meta: "roam",
+    action: {
+      kind: "building",
+      buildingId: VISUAL_GAME_DOGHOUSE_BUILDING_ID,
+      label: `${dogName}'s ${place.label} building`,
+    },
+  }, VISUAL_GAME_DOGHOUSE_BUILDING_ID)) {
+    return;
+  }
   const signWidth = Math.min(82, Math.max(44, dogName.length * 7 + 18));
   const wagGlow = 0.14 + Math.sin(time / 280) * 0.04;
   drawVisualGameShadow(context, x + 4, y + height - 1, width - 8, 6);
@@ -30212,7 +30618,8 @@ function syncGuidedOnboarding() {
 }
 
 function getGuidedTutorialConfig(tutorialId = state.guidedTutorial.tutorialId) {
-  return GUIDED_TUTORIALS[String(tutorialId || "").trim()] || null;
+  const id = String(tutorialId || "").trim();
+  return GUIDED_TUTORIALS[id] || GUIDED_QUEST_TUTORIALS[id] || null;
 }
 
 function getGuidedTutorialSteps(tutorialId = state.guidedTutorial.tutorialId) {
@@ -30303,6 +30710,19 @@ function isGuidedTutorialRouteSatisfied(step) {
     }
   }
 
+  if (step?.requireBuilderOpen) {
+    if (!isVisualInterfaceView() || !isAgentTownBuilderOpen()) {
+      return false;
+    }
+
+    if (
+      step.requireBuilderTab &&
+      normalizeAgentTownBuilderTab(state.visualGame.builderTab) !== normalizeAgentTownBuilderTab(step.requireBuilderTab)
+    ) {
+      return false;
+    }
+  }
+
   return true;
 }
 
@@ -30318,7 +30738,14 @@ function requestGuidedTutorialRoute(step) {
   state.guidedTutorial.lastRouteRequestAt = now;
 
   if (step.ensureView === "visual-interface") {
-    void openMainView("visual-interface");
+    void openMainView("visual-interface").then(() => {
+      if (step.autoOpenBuilder && step.requireBuilderOpen) {
+        openAgentTownBuilder({
+          tab: step.requireBuilderTab ? normalizeAgentTownBuilderTab(step.requireBuilderTab) : state.visualGame.builderTab,
+          render: true,
+        });
+      }
+    });
     return;
   }
 
@@ -30410,6 +30837,36 @@ function isGuidedTutorialStepComplete(step) {
       return Boolean(state.settings.videoMemoryEnabled && isVideoMemoryPluginInstalled());
     case "open-camera-room":
       return state.visualGame.selectedBuildingId === "videomemory";
+    case "quest-open-builder":
+      return isVisualInterfaceView() && isAgentTownBuilderOpen();
+    case "quest-pick-cosmetic":
+      return Boolean(state.visualGame.builderPlacement?.kind === "cosmetic");
+    case "quest-place-first-building":
+      return Boolean((state.agentTown?.layoutSummary?.cosmeticCount || 0) + (state.agentTown?.layoutSummary?.functionalCount || 0) >= 1);
+    case "quest-open-functional-builder":
+      return isVisualInterfaceView()
+        && isAgentTownBuilderOpen()
+        && normalizeAgentTownBuilderTab(state.visualGame.builderTab) === "functional";
+    case "quest-install-functional":
+      return Boolean(
+        state.pluginInstallPlacementPendingIds?.size > 0
+        || state.visualGame.builderPlacement?.kind === "functional"
+        || (state.agentTown?.layoutSummary?.pendingFunctionalIds || []).length > 0
+      );
+    case "quest-place-functional-building":
+      return Boolean(state.agentTown?.layoutSummary?.functionalCount >= 1);
+    case "quest-canvas-open-agent":
+      return Boolean(state.activeSessionId || state.visualGame.selectedSessionId);
+    case "quest-canvas-button":
+      return Boolean(state.agentCanvas.open || state.agentCanvas.helpOpen || (state.agentTown?.canvases || []).length > 0);
+    case "quest-open-library":
+      return state.currentView === "knowledge-base";
+    case "quest-library-save-note":
+      return Boolean(state.agentTown?.signals?.libraryNoteSavedCount >= 1);
+    case "quest-open-automations":
+      return state.currentView === "automations";
+    case "quest-create-automation-form":
+      return Boolean(state.agentTown?.signals?.automationCreatedCount >= 1);
     default:
       return false;
   }
@@ -30439,6 +30896,30 @@ function getGuidedTutorialPointerTarget(step) {
       return "selector:[data-videomemory-action]";
     case "open-camera-room":
       return "building:videomemory";
+    case "quest-open-builder":
+      return "selector:[data-agent-town-builder-toggle]";
+    case "quest-pick-cosmetic":
+      return "selector:[data-agent-town-builder-place-cosmetic]";
+    case "quest-place-first-building":
+      return state.visualGame.builderPlacement?.cursorRect ? "placement-preview" : "selector:#visual-game-canvas";
+    case "quest-open-functional-builder":
+      return "selector:[data-agent-town-builder-toggle]";
+    case "quest-install-functional":
+      return "selector:[data-agent-town-builder-install-functional]";
+    case "quest-place-functional-building":
+      return state.visualGame.builderPlacement?.cursorRect ? "placement-preview" : "selector:#visual-game-canvas";
+    case "quest-canvas-open-agent":
+      return getGuidedOnboardingSessionPointerTarget();
+    case "quest-canvas-button":
+      return "selector-fallback:#view-agent-canvas||[data-start-new-agent=\"town\"]||[data-start-new-agent]";
+    case "quest-open-library":
+      return "selector:[data-open-main-view=\"knowledge-base\"]";
+    case "quest-library-save-note":
+      return "selector-fallback:[data-knowledge-base-new-note]||#knowledge-base-search||[data-main-view=\"knowledge-base\"]";
+    case "quest-open-automations":
+      return "selector:[data-open-main-view=\"automations\"]";
+    case "quest-create-automation-form":
+      return "selector-fallback:#automation-prompt||[data-main-view=\"automations\"]";
     default:
       return "";
   }
@@ -30460,6 +30941,8 @@ function getGuidedTutorialFocusRect(step) {
 
   switch (step.id) {
     case "place-telegram":
+    case "quest-place-first-building":
+    case "quest-place-functional-building":
       return state.visualGame.builderPlacement?.cursorRect || null;
     case "open-telegram-room":
       return getGuidedTutorialBuildingFocusRect("telegram");
@@ -31141,6 +31624,14 @@ function bindSessionEvents() {
     });
   });
 
+  document.querySelectorAll("[data-agent-town-alert-open]").forEach((button) => {
+    button.addEventListener("click", (event) => {
+      event.preventDefault();
+      event.stopPropagation();
+      openAgentTownAlertHref(button.getAttribute("data-agent-town-alert-open") || "");
+    });
+  });
+
   document.querySelectorAll("[data-session-id]").forEach((element) => {
     element.addEventListener("click", (event) => {
       if (event.target.closest("[data-delete-session]")) {
@@ -31287,8 +31778,7 @@ function refreshSessionsList({ force = false, bindEvents = true } = {}) {
 
 function refreshAgentInboxUi({ force = false, bindEvents = true } = {}) {
   const inboxList = document.querySelector("#agent-inbox-list");
-  const inboxSummary = document.querySelector("#agent-inbox-summary");
-  if (!inboxList && !inboxSummary) {
+  if (!inboxList) {
     return;
   }
 
@@ -31297,12 +31787,7 @@ function refreshAgentInboxUi({ force = false, bindEvents = true } = {}) {
     return;
   }
 
-  if (inboxSummary) {
-    inboxSummary.innerHTML = renderAgentInboxSummaryCards();
-  }
-  if (inboxList) {
-    inboxList.innerHTML = renderAgentInboxCards();
-  }
+  inboxList.innerHTML = renderAgentInboxCards();
   if (bindEvents) {
     bindSessionEvents();
   }
@@ -36249,13 +36734,6 @@ function bindAgentTownBuilderEvents() {
     button.addEventListener("click", (event) => {
       event.preventDefault();
       void restoreAgentTownLayoutSnapshot(button.getAttribute("data-agent-town-layout-restore") || "");
-    });
-  });
-
-  document.querySelectorAll("[data-agent-town-alert-open]").forEach((button) => {
-    button.addEventListener("click", (event) => {
-      event.preventDefault();
-      openAgentTownAlertHref(button.getAttribute("data-agent-town-alert-open") || "");
     });
   });
 

@@ -4201,19 +4201,32 @@ test("Agent Inbox action items guide first building placement in Agent Town", as
     );
     const actionCard = page.locator('[data-agent-town-action-item="onboarding-first-building"]');
     await actionCard.waitFor({ timeout: 10_000 });
-    assert.match(
-      await page.locator("#agent-inbox-summary").textContent(),
-      new RegExp(`actions\\s*${openActionCount}\\b`, "i"),
-    );
+    assert.equal(await page.locator("#agent-inbox-summary").count(), 0);
+    assert.ok(openActionCount >= 1);
     assert.match(await actionCard.textContent(), /high/i);
     assert.match(await actionCard.textContent(), /BuildingHub/i);
 
     await actionCard.getByRole("button", { name: "Open Agent Town" }).click();
+    await page.waitForSelector("[data-guided-tutorial-overlay]", { timeout: 10_000 });
+    assert.match(await page.locator("[data-guided-tutorial-overlay]").textContent(), /Place your first building/i);
+    await page.getByRole("button", { name: "Start quest" }).click();
     await page.waitForFunction(() => new URL(window.location.href).searchParams.get("view") === "visual-interface");
     await page.waitForSelector("#visual-game-canvas", { timeout: 10_000 });
+    await page.waitForFunction(() => {
+      const overlay = document.querySelector("[data-guided-tutorial-overlay]");
+      return overlay?.textContent?.includes("Open BuildingHub");
+    }, null, { timeout: 10_000 });
 
     await page.locator("[data-agent-town-builder-toggle]").click();
+    await page.waitForFunction(() => {
+      const overlay = document.querySelector("[data-guided-tutorial-overlay]");
+      return overlay?.textContent?.includes("Choose a cosmetic building");
+    }, null, { timeout: 10_000 });
     await page.locator('[data-agent-town-builder-place-cosmetic="planter"]').first().click();
+    await page.waitForFunction(() => {
+      const overlay = document.querySelector("[data-guided-tutorial-overlay]");
+      return overlay?.textContent?.includes("Click the highlighted spot");
+    }, null, { timeout: 10_000 });
     await page.waitForFunction(() => document.querySelector(".visual-game-hover")?.textContent?.includes("Planter"));
     const canvasBox = await page.locator("#visual-game-canvas").boundingBox();
     assert.ok(canvasBox, "visual game canvas should be visible");
