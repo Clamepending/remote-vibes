@@ -16874,11 +16874,47 @@ function renderVideoMemoryMonitorRows() {
   `;
 }
 
+function resolveVideoMemoryOpenUrl() {
+  const status = state.settings.videoMemoryStatus || {};
+  const configured = String(state.settings.videoMemoryBaseUrl || status.baseUrl || "").trim();
+  if (!configured) return "";
+  if (typeof window === "undefined" || !window.location) return configured;
+
+  let parsed;
+  try {
+    parsed = new URL(configured);
+  } catch {
+    return configured;
+  }
+
+  const configuredIsLocal = parsed.hostname === "127.0.0.1"
+    || parsed.hostname === "localhost"
+    || parsed.hostname === "::1"
+    || parsed.hostname === "0.0.0.0";
+  const pageHost = window.location.hostname || "";
+  const pageIsLocal = pageHost === "127.0.0.1"
+    || pageHost === "localhost"
+    || pageHost === "::1";
+
+  // The configured URL says "the service is on the same box as the server".
+  // When we're browsing from a different machine (Tailscale, LAN IP, a remote
+  // workspace, etc.), literal 127.0.0.1 resolves to *our* machine, not the
+  // server's — so the link reliably 404s. Swap the host to whatever host we're
+  // currently talking to Vibe Research on, keeping the configured port +
+  // protocol.
+  if (configuredIsLocal && !pageIsLocal && pageHost) {
+    parsed.hostname = pageHost;
+    return parsed.toString();
+  }
+
+  return parsed.toString();
+}
+
 function renderVideoMemoryPluginPanel() {
   const status = state.settings.videoMemoryStatus || {};
   const webhookUrl = status.webhookUrl || "";
   const webhookToken = status.webhookToken || "";
-  const standaloneUrl = String(state.settings.videoMemoryBaseUrl || status.baseUrl || "").trim();
+  const standaloneUrl = resolveVideoMemoryOpenUrl();
 
   return `
     <aside class="mcp-import-card videomemory-plugin-card">
