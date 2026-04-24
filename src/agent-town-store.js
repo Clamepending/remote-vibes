@@ -318,6 +318,8 @@ function normalizeTownShareBuildingHub(value = {}) {
     return null;
   }
 
+  const publisher = normalizeTownShareBuildingHubPublisher(value.publisher);
+
   return {
     layoutId,
     layoutUrl,
@@ -326,9 +328,36 @@ function normalizeTownShareBuildingHub(value = {}) {
     commit,
     commitUrl: normalizeText(value.commitUrl, 2_000),
     branch: normalizeText(value.branch, 160),
+    ...(publisher ? { publisher } : {}),
     pushed: Boolean(value.pushed),
     publishedAt: normalizeText(value.publishedAt, 64) || nowIso(),
     status: normalizeText(value.status || "published", 48) || "published",
+  };
+}
+
+function normalizeTownShareBuildingHubPublisher(value = {}) {
+  if (!value || typeof value !== "object" || Array.isArray(value)) {
+    return null;
+  }
+
+  const provider = normalizeText(value.provider, 40).toLowerCase();
+  const id = normalizeText(value.id, 120);
+  const login = normalizeText(value.login || value.username, 120);
+  const name = normalizeText(value.name || value.displayName, 160);
+  const profileUrl = normalizeText(value.profileUrl || value.url || value.htmlUrl, 2_000);
+  const avatarUrl = normalizeText(value.avatarUrl || value.avatar_url, 2_000);
+
+  if (!provider && !id && !login && !name && !profileUrl) {
+    return null;
+  }
+
+  return {
+    provider,
+    id,
+    login,
+    name,
+    profileUrl,
+    avatarUrl,
   };
 }
 
@@ -612,6 +641,7 @@ function normalizeActionItem(value = {}, fallback = {}) {
     sourceSessionId: normalizeText(value.sourceSessionId || value.sessionId || fallback.sourceSessionId || fallback.sessionId, 96),
     target: normalizeActionTarget(value.target, fallback.target),
     capabilityIds: normalizeCapabilityIds(value.capabilityIds || value.capabilities || fallback.capabilityIds || fallback.capabilities),
+    tutorialId: normalizeSlug(value.tutorialId || fallback.tutorialId, 96),
     predicate: normalizePredicate(value.predicate || fallback.predicate),
     predicateParams: normalizePredicateParams(value.predicateParams || fallback.predicateParams),
     status,
@@ -717,6 +747,7 @@ function normalizeState(value = {}) {
     events,
     highlight: normalizeHighlight(value.highlight),
     lastSessionId: normalizeText(value.lastSessionId, 96),
+    seededTutorialIds: normalizeStringArray(value.seededTutorialIds, 50),
   };
 }
 
@@ -1319,6 +1350,39 @@ export class AgentTownStore {
     this.state.events = [event, ...this.state.events].slice(0, MAX_EVENTS);
     await this.afterStateChange();
     return { event, state: this.getState() };
+  }
+
+  hasSeededTutorial(tutorialId) {
+    const id = normalizeSlug(tutorialId, 96);
+    if (!id) {
+      return false;
+    }
+    return this.state.seededTutorialIds.includes(id);
+  }
+
+  async seedTutorialActionItem(input = {}) {
+    const tutorialId = normalizeSlug(input.tutorialId, 96);
+    if (!tutorialId) {
+      const error = new Error("seedTutorialActionItem requires a tutorialId.");
+      error.statusCode = 400;
+      throw error;
+    }
+
+    if (this.state.seededTutorialIds.includes(tutorialId)) {
+      const existing = this.state.actionItems.find((entry) => entry.tutorialId === tutorialId) || null;
+      return { actionItem: existing ? clone(existing) : null, seeded: false, state: this.getState() };
+    }
+
+    const item = normalizeActionItem({ ...input, tutorialId }, {});
+    const existingIndex = this.state.actionItems.findIndex((entry) => entry.id === item.id);
+    if (existingIndex >= 0) {
+      this.state.actionItems.splice(existingIndex, 1);
+    }
+    this.state.actionItems = [item, ...this.state.actionItems].slice(0, MAX_ACTION_ITEMS);
+    this.state.seededTutorialIds = Array.from(new Set([...this.state.seededTutorialIds, tutorialId])).slice(0, 50);
+    await this.afterStateChange();
+    const stored = this.state.actionItems.find((entry) => entry.id === item.id) || item;
+    return { actionItem: clone(stored), seeded: true, state: this.getState() };
   }
 
   async createActionItem(input = {}) {

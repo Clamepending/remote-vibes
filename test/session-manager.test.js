@@ -119,6 +119,14 @@ function shellQuote(value) {
 const claudeWrapperCommand = shellQuote(path.join(process.cwd(), "bin", "claude"));
 const codexWrapperCommand = shellQuote(path.join(process.cwd(), "bin", "codex"));
 
+function buildCodexTrustConfigArg(cwd) {
+  return `projects."${path.resolve(cwd)}".trust_level="trusted"`;
+}
+
+function buildCodexExpectedCommand(cwd, args = []) {
+  return [codexWrapperCommand, shellQuote("-c"), shellQuote(buildCodexTrustConfigArg(cwd)), ...args.map(shellQuote)].join(" ");
+}
+
 async function appendCodexSessionIndex(homeDir, entries) {
   const codexDir = path.join(homeDir, ".codex");
   await mkdir(codexDir, { recursive: true });
@@ -1439,7 +1447,7 @@ test("Claude and Codex provider launches use the managed wrapper command when a 
     );
 
     const codexLaunch = await manager.prepareProviderLaunch(codexSession, codexProvider, { restored: false });
-    assert.equal(codexLaunch.commandString, codexWrapperCommand);
+    assert.equal(codexLaunch.commandString, buildCodexExpectedCommand(workspaceDir));
   } finally {
     await cleanupManager(manager, workspaceDir, userHomeDir);
   }
@@ -1482,7 +1490,10 @@ test("forked provider launches resume the source provider session when available
       manager.getProvider("codex"),
       { restored: false },
     );
-    assert.equal(codexLaunch.commandString, `${codexWrapperCommand} 'resume' 'source-codex-thread' || ${codexWrapperCommand}`);
+    assert.equal(
+      codexLaunch.commandString,
+      `${buildCodexExpectedCommand(workspaceDir, ["resume", "source-codex-thread"])} || ${buildCodexExpectedCommand(workspaceDir)}`,
+    );
 
     const geminiLaunch = await manager.prepareProviderLaunch(
       manager.buildSessionRecord({
@@ -1745,7 +1756,7 @@ test("Codex sessions capture the created Codex thread id and resume it after res
     ]);
 
     const firstLaunch = await manager.prepareProviderLaunch(session, provider, { restored: false });
-    assert.equal(firstLaunch.commandString, codexWrapperCommand);
+    assert.equal(firstLaunch.commandString, buildCodexExpectedCommand(workspaceDir));
 
     const newSessionId = "019d92d2-75bb-74f2-bb76-ff8c56cf5626";
     const newUpdatedAt = "2026-04-15T21:00:00.000Z";
@@ -1771,7 +1782,7 @@ test("Codex sessions capture the created Codex thread id and resume it after res
     const restoredLaunch = await manager.prepareProviderLaunch(session, provider, { restored: true });
     assert.equal(
       restoredLaunch.commandString,
-      `${codexWrapperCommand} 'resume' '019d92d2-75bb-74f2-bb76-ff8c56cf5626' || ${codexWrapperCommand} 'resume' '--last' || ${codexWrapperCommand}`,
+      `${buildCodexExpectedCommand(workspaceDir, ["resume", "019d92d2-75bb-74f2-bb76-ff8c56cf5626"])} || ${buildCodexExpectedCommand(workspaceDir, ["resume", "--last"])} || ${buildCodexExpectedCommand(workspaceDir)}`,
     );
   } finally {
     await cleanupManager(manager, workspaceDir, userHomeDir);
@@ -1795,7 +1806,7 @@ test("Codex sessions capture the created Codex thread id from prompt history and
     session.pty = fakePty;
 
     const firstLaunch = await manager.prepareProviderLaunch(session, provider, { restored: false });
-    assert.equal(firstLaunch.commandString, codexWrapperCommand);
+    assert.equal(firstLaunch.commandString, buildCodexExpectedCommand(workspaceDir));
 
     const codexSessionId = "019d9376-d3dd-73f0-9a04-29dee0a2662f";
     const updatedAt = "2026-04-15T23:25:48.000Z";
@@ -1903,6 +1914,7 @@ test("Codex session capture retries after the first submitted prompt when startu
       timestamp: delayedUpdatedAt,
     });
 
+    session.buffer = "gpt-5.4 xhigh · ~/repo\n› ";
     manager.write(session.id, "hello\r");
 
     for (let attempt = 0; attempt < 20; attempt += 1) {
@@ -2201,5 +2213,256 @@ printf '%s\n' '[]'
     );
   } finally {
     await cleanupManager(manager, workspaceDir, userHomeDir);
+  }
+});
+
+test("Codex native narrative falls back to owned session events before transcript files exist", async () => {
+  const harness = await createManager();
+  const { manager, workspaceDir } = harness;
+
+  try {
+    const session = manager.buildSessionRecord({
+      providerId: "codex",
+      providerLabel: "Codex",
+      name: "Codex Native",
+      cwd: workspaceDir,
+      status: "running",
+      buffer: "gpt-5.4 xhigh · ~/repo\n› ",
+    });
+    session.pty = {
+      write() {},
+      kill() {},
+    };
+    manager.sessions.set(session.id, session);
+
+    manager.pushNativeNarrativeEntry(session, {
+      kind: "status",
+      label: "Starting",
+      text: `Starting Codex in ${workspaceDir}.`,
+      timestamp: "2026-04-24T04:10:00.000Z",
+    });
+
+    manager.write(session.id, "hello from native mode\r");
+
+    const narrative = await manager.getSessionNarrative(session.id);
+
+    assert.equal(narrative.providerBacked, false);
+    assert.equal(narrative.sourceLabel, "Vibe Research native session events");
+    assert.deepEqual(
+      narrative.entries.map((entry) => ({ kind: entry.kind, label: entry.label, text: entry.text })),
+      [
+        { kind: "status", label: "Starting", text: `Starting Codex in ${workspaceDir}.` },
+        { kind: "user", label: "You", text: "hello from native mode" },
+      ],
+    );
+  } finally {
+    await cleanupManager(manager, workspaceDir, harness.userHomeDir);
+  }
+});
+
+test("Codex queues the first prompt until the provider is ready", async () => {
+  const harness = await createManager();
+  const { manager, workspaceDir } = harness;
+
+  try {
+    const writes = [];
+    const session = manager.buildSessionRecord({
+      providerId: "codex",
+      providerLabel: "Codex",
+      name: "Codex Booting",
+      cwd: workspaceDir,
+      status: "running",
+      createdAt: "2026-04-24T04:18:00.000Z",
+      updatedAt: "2026-04-24T04:18:01.000Z",
+      buffer: "Starting MCP servers (0/2): codex_apps, computer-use",
+    });
+    session.pty = {
+      write(chunk) {
+        writes.push(chunk);
+      },
+      kill() {},
+    };
+    manager.sessions.set(session.id, session);
+
+    assert.equal(manager.write(session.id, "say hello in one sentence\r"), true);
+    assert.deepEqual(writes, []);
+    assert.equal(session.pendingProviderInputs.length, 1);
+    assert.equal(session.lastPromptAt, null);
+
+    session.buffer = `${session.buffer}\n\ngpt-5.4 xhigh · ~/repo\n› `;
+    assert.equal(manager.flushDeferredProviderInputsIfReady(session), true);
+    assert.deepEqual(writes, ["say hello in one sentence\r"]);
+    assert.equal(session.pendingProviderInputs.length, 0);
+    assert.ok(session.lastPromptAt);
+
+    const narrative = await manager.getSessionNarrative(session.id);
+    assert.deepEqual(
+      narrative.entries.map((entry) => ({ kind: entry.kind, label: entry.label, text: entry.text })),
+      [
+        { kind: "user", label: "You", text: "say hello in one sentence" },
+        { kind: "status", label: "Waiting", text: "Holding your message until Codex finishes booting." },
+      ],
+    );
+  } finally {
+    await cleanupManager(manager, workspaceDir, harness.userHomeDir);
+  }
+});
+
+test("Codex native narrative overlays live CLI output while waiting for provider transcript files", async () => {
+  const harness = await createManager();
+  const { manager, workspaceDir } = harness;
+
+  try {
+    const session = manager.buildSessionRecord({
+      providerId: "codex",
+      providerLabel: "Codex",
+      name: "Codex Streaming",
+      cwd: workspaceDir,
+      status: "running",
+      createdAt: "2026-04-24T04:12:00.000Z",
+      updatedAt: "2026-04-24T04:12:09.000Z",
+      lastPromptAt: "2026-04-24T04:12:05.000Z",
+      lastOutputAt: "2026-04-24T04:12:09.000Z",
+      buffer: "hello codex\n\nworking on it now\n\nI am responding from the live terminal stream.",
+    });
+    session.pty = {
+      write() {},
+      kill() {},
+    };
+    manager.sessions.set(session.id, session);
+
+    manager.pushNativeNarrativeEntry(session, {
+      kind: "user",
+      label: "You",
+      text: "hello codex",
+      timestamp: "2026-04-24T04:12:05.000Z",
+    });
+
+    const narrative = await manager.getSessionNarrative(session.id);
+
+    assert.equal(narrative.providerBacked, false);
+    assert.equal(narrative.sourceLabel, "Vibe Research native events + live CLI overlay");
+    assert.deepEqual(
+      narrative.entries.map((entry) => ({ kind: entry.kind, label: entry.label, text: entry.text })),
+      [
+        { kind: "user", label: "You", text: "hello codex" },
+        { kind: "status", label: "Activity", text: "working on it now" },
+        { kind: "assistant", label: "Codex", text: "I am responding from the live terminal stream." },
+      ],
+    );
+  } finally {
+    await cleanupManager(manager, workspaceDir, harness.userHomeDir);
+  }
+});
+
+test("Claude native narrative overlays live CLI output while the provider transcript is stale", async () => {
+  const harness = await createManager();
+  const { manager, workspaceDir, userHomeDir } = harness;
+
+  try {
+    const sessionId = "claude-streaming-session";
+    await writeClaudeTranscript(userHomeDir, workspaceDir, sessionId, [
+      {
+        type: "user",
+        timestamp: "2026-04-24T04:15:05.000Z",
+        message: {
+          role: "user",
+          content: "hello claude",
+        },
+      },
+      {
+        type: "assistant",
+        timestamp: "2026-04-24T04:15:06.000Z",
+        message: {
+          role: "assistant",
+          content: [{ type: "text", text: "Let me check that." }],
+        },
+      },
+    ]);
+
+    const session = manager.buildSessionRecord({
+      id: sessionId,
+      providerId: "claude",
+      providerLabel: "Claude Code",
+      name: "Claude Streaming",
+      cwd: workspaceDir,
+      status: "running",
+      createdAt: "2026-04-24T04:15:00.000Z",
+      updatedAt: "2026-04-24T04:15:12.000Z",
+      lastPromptAt: "2026-04-24T04:15:05.000Z",
+      lastOutputAt: "2026-04-24T04:15:12.000Z",
+      buffer: "Bash(echo checking)\n\nI am still streaming the response.",
+    });
+    session.pty = {
+      write() {},
+      kill() {},
+    };
+    manager.sessions.set(session.id, session);
+
+    const narrative = await manager.getSessionNarrative(session.id);
+
+    assert.equal(narrative.providerBacked, true);
+    assert.equal(narrative.sourceLabel, "Claude project transcript + live CLI overlay");
+    assert.deepEqual(
+      narrative.entries.map((entry) => ({ kind: entry.kind, label: entry.label, text: entry.text })),
+      [
+        { kind: "user", label: "You", text: "hello claude" },
+        { kind: "assistant", label: "Claude Code", text: "Let me check that." },
+        { kind: "tool", label: "Bash", text: "Bash(echo checking)" },
+        { kind: "assistant", label: "Claude Code", text: "I am still streaming the response." },
+      ],
+    );
+  } finally {
+    await cleanupManager(manager, workspaceDir, userHomeDir);
+  }
+});
+
+test("Claude live overlay drops collapsed assistant fragments with no spaces", async () => {
+  const harness = await createManager();
+  const { manager, workspaceDir, userHomeDir } = harness;
+
+  try {
+    const sessionId = "claude-collapsed-overlay";
+    await writeClaudeTranscript(userHomeDir, workspaceDir, sessionId, [
+      {
+        type: "assistant",
+        timestamp: "2026-04-24T04:15:06.000Z",
+        message: {
+          role: "assistant",
+          content: [{ type: "text", text: "Let me peek at the town real quick to see where we are." }],
+        },
+      },
+    ]);
+
+    const session = manager.buildSessionRecord({
+      id: sessionId,
+      providerId: "claude",
+      providerLabel: "Claude Code",
+      name: "Claude Overlay Filter",
+      cwd: workspaceDir,
+      status: "running",
+      createdAt: "2026-04-24T04:15:00.000Z",
+      updatedAt: "2026-04-24T04:15:12.000Z",
+      lastPromptAt: "2026-04-24T04:15:10.000Z",
+      lastOutputAt: "2026-04-24T04:15:12.000Z",
+      buffer: "Letmepeekatthetownrealquicktoseewhereweare.",
+      providerState: {
+        sessionId,
+      },
+    });
+    session.pty = {
+      write() {},
+      kill() {},
+    };
+    manager.sessions.set(session.id, session);
+
+    const narrative = await manager.getSessionNarrative(session.id);
+    assert.equal(narrative.providerBacked, true);
+    assert.deepEqual(
+      narrative.entries.map((entry) => entry.text),
+      ["Let me peek at the town real quick to see where we are."],
+    );
+  } finally {
+    await cleanupManager(manager, workspaceDir, harness.userHomeDir);
   }
 });

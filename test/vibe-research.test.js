@@ -57,7 +57,7 @@ async function createTempWorkspace(prefix) {
   return mkdtemp(path.join(os.tmpdir(), prefix));
 }
 
-async function unlockBuildingHub(baseUrl, provider = "google") {
+async function unlockBuildingHub(baseUrl, provider = "github") {
   const response = await fetch(`${baseUrl}/api/settings`, {
     method: "PATCH",
     headers: { "Content-Type": "application/json" },
@@ -68,6 +68,395 @@ async function unlockBuildingHub(baseUrl, provider = "google") {
   });
   assert.equal(response.status, 200);
   return response.json();
+}
+
+function createGitHubFetchImpl(profile = {}) {
+  const calls = [];
+  const fetchImpl = async (url, options = {}) => {
+    calls.push({ url: String(url), options });
+    if (String(url) === "https://github.com/login/oauth/access_token") {
+      return new Response(JSON.stringify({
+        access_token: "github-access-token-test",
+        scope: "read:user",
+        token_type: "bearer",
+      }), {
+        status: 200,
+        headers: { "Content-Type": "application/json" },
+      });
+    }
+
+    if (String(url) === "https://api.github.com/user") {
+      return new Response(JSON.stringify({
+        id: 7,
+        login: "octotest",
+        name: "Octo Test",
+        html_url: "https://github.com/octotest",
+        avatar_url: "https://avatars.githubusercontent.com/u/7?v=4",
+        ...profile,
+      }), {
+        status: 200,
+        headers: { "Content-Type": "application/json" },
+      });
+    }
+
+    return new Response(JSON.stringify({ message: `Unexpected GitHub fetch URL: ${url}` }), {
+      status: 500,
+      headers: { "Content-Type": "application/json" },
+    });
+  };
+
+  fetchImpl.calls = calls;
+  return fetchImpl;
+}
+
+async function connectBuildingHubGitHub(baseUrl, { clientId = "test-github-client-id", profile = {} } = {}) {
+  const settingsResponse = await fetch(`${baseUrl}/api/settings`, {
+    method: "PATCH",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({
+      githubOAuthClientId: clientId,
+      githubOAuthClientSecret: "test-github-client-secret",
+    }),
+  });
+  assert.equal(settingsResponse.status, 200);
+
+  const oauthStartResponse = await fetch(`${baseUrl}/buildinghub/auth/github/start`, { redirect: "manual" });
+  assert.equal(oauthStartResponse.status, 302);
+  const location = oauthStartResponse.headers.get("location") || "";
+  assert.ok(location.startsWith("https://github.com/login/oauth/authorize?"));
+
+  const githubUrl = new URL(location);
+  assert.equal(githubUrl.searchParams.get("client_id"), clientId);
+  assert.equal(githubUrl.searchParams.get("redirect_uri"), `${baseUrl}/buildinghub/auth/github/callback`);
+  assert.equal(githubUrl.searchParams.get("scope"), "read:user");
+  const stateToken = githubUrl.searchParams.get("state");
+  assert.ok(stateToken);
+
+  const callbackResponse = await fetch(
+    `${baseUrl}/buildinghub/auth/github/callback?state=${encodeURIComponent(stateToken)}&code=test-auth-code`,
+  );
+  assert.equal(callbackResponse.status, 200);
+  assert.match(await callbackResponse.text(), /GitHub account/i);
+
+  const updatedSettingsResponse = await fetch(`${baseUrl}/api/settings`);
+  assert.equal(updatedSettingsResponse.status, 200);
+  const updatedSettings = await updatedSettingsResponse.json();
+  assert.equal(updatedSettings.settings?.buildingHubAuthProvider, "github");
+  assert.equal(
+    updatedSettings.settings?.buildingHubProfileUrl,
+    profile.html_url || "https://github.com/octotest",
+  );
+  assert.ok(updatedSettings.settings?.githubOAuthStatus?.configured);
+  assert.equal(updatedSettings.settings?.githubOAuthStatus?.user?.login, profile.login || "octotest");
+  return { location, settings: updatedSettings.settings };
+}
+
+async function startFakeHostedBuildingHub(profile = {}) {
+  const publications = [];
+  const grants = new Map();
+  const revokedTokens = new Set();
+  const layouts = new Map();
+  const recipes = new Map();
+  const defaultAccount = {
+    provider: "buildinghub",
+    id: "bhusr_test_1",
+    login: "hosted-builder",
+    name: "Hosted Builder",
+    avatarUrl: "https://buildinghub.example.test/avatar.png",
+    githubLogin: "hosted-github",
+    githubProfileUrl: "https://github.com/hosted-github",
+    ...profile,
+  };
+  let nextGrantId = 1;
+  let baseUrl = "";
+
+  async function readRequestJson(request) {
+    return JSON.parse(await new Promise((resolve, reject) => {
+      let raw = "";
+      request.setEncoding("utf8");
+      request.on("data", (chunk) => {
+        raw += chunk;
+      });
+      request.on("end", () => resolve(raw || "{}"));
+      request.on("error", reject);
+    }));
+  }
+
+  const server = http.createServer(async (request, response) => {
+    const url = new URL(request.url || "/", "http://127.0.0.1");
+    const account = {
+      ...defaultAccount,
+      profileUrl: `${baseUrl}/u/${defaultAccount.login}`,
+    };
+
+    if (request.method === "GET" && url.pathname === "/auth/github/start") {
+      const returnTo = String(url.searchParams.get("return_to") || "").trim();
+      const grant = `bhg_test_${nextGrantId++}`;
+      grants.set(grant, returnTo);
+      const redirectUrl = new URL(returnTo);
+      redirectUrl.searchParams.set("buildinghub_grant", grant);
+      response.statusCode = 302;
+      response.setHeader("Location", redirectUrl.toString());
+      response.end();
+      return;
+    }
+
+    if (request.method === "POST" && url.pathname === "/api/auth/exchange") {
+      const body = await readRequestJson(request);
+      const grant = String(body.grant || "").trim();
+      const redirectUri = String(body.redirectUri || "").trim();
+      if (!grant || grants.get(grant) !== redirectUri) {
+        response.statusCode = 400;
+        response.setHeader("Content-Type", "application/json");
+        response.end(JSON.stringify({ error: "Invalid BuildingHub grant." }));
+        return;
+      }
+      grants.delete(grant);
+      response.statusCode = 200;
+      response.setHeader("Content-Type", "application/json");
+      response.end(JSON.stringify({
+        ok: true,
+        accessToken: "bhp_test_token",
+        account,
+      }));
+      return;
+    }
+
+    if (request.method === "POST" && url.pathname === "/api/publications") {
+      const authorization = String(request.headers.authorization || "").trim();
+      if (authorization !== "Bearer bhp_test_token") {
+        response.statusCode = 401;
+        response.setHeader("Content-Type", "application/json");
+        response.end(JSON.stringify({ error: "Unauthorized" }));
+        return;
+      }
+      const body = await readRequestJson(request);
+      publications.push(body);
+      response.statusCode = 201;
+      response.setHeader("Content-Type", "application/json");
+      response.end(JSON.stringify({ ok: true, publication: body }));
+      return;
+    }
+
+    if (request.method === "POST" && url.pathname === "/api/layouts") {
+      const authorization = String(request.headers.authorization || "").trim();
+      if (authorization !== "Bearer bhp_test_token") {
+        response.statusCode = 401;
+        response.setHeader("Content-Type", "application/json");
+        response.end(JSON.stringify({ error: "Unauthorized" }));
+        return;
+      }
+      const body = await readRequestJson(request);
+      const manifest = {
+        ...(body.layout || {}),
+        homepageUrl: `${baseUrl}/layouts/${body.layout?.id || "layout"}/`,
+        previewUrl: body.previewDataUrl
+          ? `${baseUrl}/assets/layouts/${body.layout?.id || "layout"}.png`
+          : `${baseUrl}/assets/layouts/${body.layout?.id || "layout"}.svg`,
+        publisher: account,
+      };
+      layouts.set(manifest.id, {
+        manifest,
+        previewDataUrl: body.previewDataUrl || "",
+      });
+      publications.push({
+        kind: "layout",
+        id: manifest.id,
+        name: manifest.name,
+        url: manifest.homepageUrl,
+        sourceUrl: manifest.repositoryUrl || "",
+      });
+      response.statusCode = 201;
+      response.setHeader("Content-Type", "application/json");
+      response.end(JSON.stringify({
+        ok: true,
+        layoutId: manifest.id,
+        layoutUrl: manifest.homepageUrl,
+        previewUrl: manifest.previewUrl,
+        repositoryUrl: manifest.repositoryUrl || "",
+        publisher: account,
+        publishedVia: "api",
+        recordedByBuildingHub: true,
+        sourceId: "hosted",
+        status: "published",
+      }));
+      return;
+    }
+
+    if (request.method === "POST" && url.pathname === "/api/recipes") {
+      const authorization = String(request.headers.authorization || "").trim();
+      if (authorization !== "Bearer bhp_test_token") {
+        response.statusCode = 401;
+        response.setHeader("Content-Type", "application/json");
+        response.end(JSON.stringify({ error: "Unauthorized" }));
+        return;
+      }
+      const body = await readRequestJson(request);
+      const manifest = {
+        ...(body.recipe || {}),
+        source: {
+          ...((body.recipe && body.recipe.source) || {}),
+          recipeUrl: `${baseUrl}/recipes/${body.recipe?.id || "recipe"}/`,
+          publisher: account,
+        },
+      };
+      recipes.set(manifest.id, { manifest });
+      publications.push({
+        kind: "recipe",
+        id: manifest.id,
+        name: manifest.name,
+        url: manifest.source.recipeUrl,
+        sourceUrl: manifest.source.repositoryUrl || "",
+      });
+      response.statusCode = 201;
+      response.setHeader("Content-Type", "application/json");
+      response.end(JSON.stringify({
+        ok: true,
+        recipeId: manifest.id,
+        recipeUrl: manifest.source.recipeUrl,
+        repositoryUrl: manifest.source.repositoryUrl || "",
+        publisher: account,
+        publishedVia: "api",
+        recordedByBuildingHub: true,
+        sourceId: "hosted",
+        status: "published",
+      }));
+      return;
+    }
+
+    if (request.method === "GET" && url.pathname === "/registry.json") {
+      response.statusCode = 200;
+      response.setHeader("Content-Type", "application/json");
+      response.end(JSON.stringify({
+        layouts: [...layouts.values()].map((entry) => entry.manifest),
+        recipes: [...recipes.values()].map((entry) => entry.manifest),
+      }));
+      return;
+    }
+
+    if (request.method === "GET" && url.pathname.startsWith("/layouts/") && url.pathname.endsWith("/layout.json")) {
+      const layoutId = url.pathname.split("/")[2];
+      const entry = layouts.get(layoutId);
+      if (!entry) {
+        response.statusCode = 404;
+        response.end("Not found");
+        return;
+      }
+      response.statusCode = 200;
+      response.setHeader("Content-Type", "application/json");
+      response.end(JSON.stringify(entry.manifest));
+      return;
+    }
+
+    if (request.method === "GET" && url.pathname.startsWith("/recipes/") && url.pathname.endsWith("/recipe.json")) {
+      const recipeId = url.pathname.split("/")[2];
+      const entry = recipes.get(recipeId);
+      if (!entry) {
+        response.statusCode = 404;
+        response.end("Not found");
+        return;
+      }
+      response.statusCode = 200;
+      response.setHeader("Content-Type", "application/json");
+      response.end(JSON.stringify(entry.manifest));
+      return;
+    }
+
+    if (request.method === "GET" && url.pathname.startsWith("/layouts/") && url.pathname.endsWith("/")) {
+      const layoutId = url.pathname.split("/")[2];
+      const entry = layouts.get(layoutId);
+      if (!entry) {
+        response.statusCode = 404;
+        response.end("Not found");
+        return;
+      }
+      response.statusCode = 200;
+      response.setHeader("Content-Type", "text/html; charset=utf-8");
+      response.end(`<html><body><h1>${entry.manifest.name}</h1></body></html>`);
+      return;
+    }
+
+    if (request.method === "GET" && url.pathname.startsWith("/recipes/") && url.pathname.endsWith("/")) {
+      const recipeId = url.pathname.split("/")[2];
+      const entry = recipes.get(recipeId);
+      if (!entry) {
+        response.statusCode = 404;
+        response.end("Not found");
+        return;
+      }
+      response.statusCode = 200;
+      response.setHeader("Content-Type", "text/html; charset=utf-8");
+      response.end(`<html><body><h1>${entry.manifest.name}</h1></body></html>`);
+      return;
+    }
+
+    if (request.method === "POST" && url.pathname === "/api/tokens/revoke") {
+      const authorization = String(request.headers.authorization || "").trim();
+      revokedTokens.add(authorization);
+      response.statusCode = 200;
+      response.setHeader("Content-Type", "application/json");
+      response.end(JSON.stringify({ ok: true }));
+      return;
+    }
+
+    response.statusCode = 404;
+    response.end("Not found");
+  });
+
+  await new Promise((resolve, reject) => {
+    server.listen(0, "127.0.0.1", (error) => (error ? reject(error) : resolve()));
+  });
+  const address = server.address();
+  baseUrl = `http://127.0.0.1:${address.port}`;
+
+  return {
+    account: {
+      ...defaultAccount,
+      profileUrl: `${baseUrl}/u/${defaultAccount.login}`,
+    },
+    baseUrl,
+    close: () => new Promise((resolve, reject) => server.close((error) => (error ? reject(error) : resolve()))),
+    layouts,
+    publications,
+    recipes,
+    revokedTokens,
+  };
+}
+
+async function connectHostedBuildingHubAccount(baseUrl, hostedBuildingHubBaseUrl) {
+  const settingsResponse = await fetch(`${baseUrl}/api/settings`, {
+    method: "PATCH",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({
+      buildingHubAppUrl: hostedBuildingHubBaseUrl,
+      buildingHubCatalogUrl: `${hostedBuildingHubBaseUrl}/registry.json`,
+    }),
+  });
+  assert.equal(settingsResponse.status, 200);
+
+  const oauthStartResponse = await fetch(`${baseUrl}/buildinghub/auth/github/start`, { redirect: "manual" });
+  assert.equal(oauthStartResponse.status, 302);
+  const hostedStartUrl = new URL(oauthStartResponse.headers.get("location") || "");
+  assert.equal(hostedStartUrl.origin, hostedBuildingHubBaseUrl);
+  const returnTo = hostedStartUrl.searchParams.get("return_to");
+  assert.ok(returnTo);
+
+  const hostedCallbackResponse = await fetch(hostedStartUrl.toString(), { redirect: "manual" });
+  assert.equal(hostedCallbackResponse.status, 302);
+  const localCompleteUrl = new URL(hostedCallbackResponse.headers.get("location") || "");
+  assert.equal(localCompleteUrl.origin, new URL(baseUrl).origin);
+  assert.ok(localCompleteUrl.searchParams.get("buildinghub_grant"));
+
+  const completionResponse = await fetch(localCompleteUrl.toString());
+  assert.equal(completionResponse.status, 200);
+  assert.match(await completionResponse.text(), /BuildingHub account/i);
+
+  const updatedSettingsResponse = await fetch(`${baseUrl}/api/settings`);
+  assert.equal(updatedSettingsResponse.status, 200);
+  const updatedSettings = await updatedSettingsResponse.json();
+  assert.equal(updatedSettings.settings?.buildingHubAuthProvider, "github");
+  assert.ok(updatedSettings.settings?.buildingHubAccountStatus?.configured);
+  return updatedSettings.settings;
 }
 
 function getWorkspaceLibraryDir(workspaceDir) {
@@ -298,7 +687,11 @@ test("state is available without authentication", async () => {
     assert.equal(state.agentPrompt.wikiRoot, "vibe-research/buildings/library");
     assert.ok(Array.isArray(state.agentPrompt.targets));
     assert.equal(state.agentTown.layoutSummary.cosmeticCount, 0);
-    assert.deepEqual(state.agentTown.actionItems, []);
+    const tutorialIds = state.agentTown.actionItems
+      .map((entry) => entry.tutorialId)
+      .filter(Boolean)
+      .sort();
+    assert.deepEqual(tutorialIds, ["connect-cameras", "connect-stripe", "connect-telegram"]);
     assert.equal(state.settings.preventSleepEnabled, true);
     assert.equal(state.settings.sleepPrevention.enabled, true);
     assert.equal(state.settings.sleepPrevention.lastStatus, "unsupported");
@@ -1107,7 +1500,13 @@ test("Agent Town share API publishes thumbnails, BuildingHub pages, and imports 
   const workspaceDir = await createTempWorkspace("vibe-research-agent-town-share-api-");
   const stateDir = await createTempWorkspace("vibe-research-agent-town-share-api-state-");
   const buildingHub = await createBuildingHubRepoFixture();
-  const { app, baseUrl } = await startApp({ cwd: workspaceDir, stateDir });
+  const githubFetchImpl = createGitHubFetchImpl({
+    id: 31,
+    login: "launch-owner",
+    name: "Launch Owner",
+    html_url: "https://github.com/launch-owner",
+  });
+  const { app, baseUrl } = await startApp({ cwd: workspaceDir, stateDir, githubFetchImpl });
 
   try {
     const settingsResponse = await fetch(`${baseUrl}/api/settings`, {
@@ -1120,6 +1519,13 @@ test("Agent Town share API publishes thumbnails, BuildingHub pages, and imports 
       }),
     });
     assert.equal(settingsResponse.status, 200);
+    await connectBuildingHubGitHub(baseUrl, {
+      clientId: "test-github-client-id",
+      profile: {
+        login: "launch-owner",
+        html_url: "https://github.com/launch-owner",
+      },
+    });
 
     const imageDataUrl = `data:image/png;base64,${PNG_FIXTURE.toString("base64")}`;
     const publishResponse = await fetch(`${baseUrl}/api/agent-town/town-shares`, {
@@ -1145,6 +1551,7 @@ test("Agent Town share API publishes thumbnails, BuildingHub pages, and imports 
     assert.equal(publishPayload.townShare.shareUrl, `${buildingHub.publicBaseUrl}layouts/launch-base/`);
     assert.equal(publishPayload.townShare.buildingHub.layoutId, "launch-base");
     assert.equal(publishPayload.townShare.buildingHub.pushed, true);
+    assert.equal(publishPayload.townShare.buildingHub.publisher.login, "launch-owner");
     assert.match(publishPayload.townShare.imageUrl, /\/api\/agent-town\/town-shares\/launch-base\/image$/);
     assert.equal(publishPayload.townShare.layoutSummary.cosmeticCount, 1);
 
@@ -1154,6 +1561,8 @@ test("Agent Town share API publishes thumbnails, BuildingHub pages, and imports 
     assert.equal(layoutManifest.previewUrl, `${buildingHub.publicBaseUrl}assets/layouts/launch-base.png`);
     assert.equal(layoutManifest.layout.themeId, "snowy");
     assert.equal(layoutManifest.layout.dogName, "Scout");
+    assert.equal(layoutManifest.publisher.login, "launch-owner");
+    assert.equal(layoutManifest.publisher.profileUrl, "https://github.com/launch-owner");
     assert.deepEqual(layoutManifest.requiredBuildings, ["buildinghub"]);
     assert.deepEqual(
       Buffer.from(await readFile(path.join(buildingHub.repoDir, "site", "assets", "layouts", "launch-base.png"))),
@@ -1163,6 +1572,8 @@ test("Agent Town share API publishes thumbnails, BuildingHub pages, and imports 
     const staticPageText = await readFile(path.join(buildingHub.repoDir, "site", "layouts", "launch-base", "index.html"), "utf8");
     assert.match(staticPageText, /<meta property="og:title" content="Launch base - BuildingHub"/);
     assert.match(staticPageText, /https:\/\/buildinghub\.example\.test\/catalog\/assets\/layouts\/launch-base\.png/);
+    assert.match(staticPageText, /Published by/);
+    assert.match(staticPageText, /launch-owner/);
 
     const commitSubject = await execFileAsync("git", ["-C", buildingHub.repoDir, "log", "-1", "--format=%s"]);
     assert.equal(commitSubject.stdout.trim(), "Publish Agent Town layout launch-base");
@@ -1180,6 +1591,8 @@ test("Agent Town share API publishes thumbnails, BuildingHub pages, and imports 
     assert.match(pageText, /<meta property="og:title" content="Launch base · BuildingHub"/);
     assert.match(pageText, /twitter:card" content="summary_large_image"/);
     assert.match(pageText, /\/api\/agent-town\/town-shares\/launch-base\/image/);
+    assert.match(pageText, /Published by/);
+    assert.match(pageText, /launch-owner/);
 
     const importResponse = await fetch(`${baseUrl}/api/agent-town/town-shares/launch-base/import`, {
       method: "POST",
@@ -1256,6 +1669,9 @@ test("agent canvas appears below the terminal profile when a session is opened",
     browser = await chromium.launch({ executablePath, headless: true });
     const page = await browser.newPage();
     await page.setViewportSize({ width: 1180, height: 740 });
+    await page.addInitScript(() => {
+      window.localStorage.setItem("vibe-research-guided-onboarding-v2", "1");
+    });
     await page.goto(baseUrl, { waitUntil: "domcontentloaded" });
     await page.waitForSelector(`.session-card[data-session-id="${session.id}"] .session-profile-avatar`, { timeout: 10_000 });
     await page.waitForSelector(`.session-card[data-session-id="${session.id}"] .session-canvas-pill`, { timeout: 10_000 });
@@ -2066,6 +2482,142 @@ test("Google OAuth callback confirms access only after consent redirect", async 
   }
 });
 
+test("GitHub OAuth callback connects BuildingHub to a GitHub account", async () => {
+  const workspaceDir = await createTempWorkspace("vibe-research-buildinghub-github-oauth-workspace-");
+  const stateDir = await createTempWorkspace("vibe-research-buildinghub-github-oauth-state-");
+  const githubFetchImpl = createGitHubFetchImpl({
+    id: 17,
+    login: "builder-octo",
+    name: "Builder Octo",
+    html_url: "https://github.com/builder-octo",
+    avatar_url: "https://avatars.githubusercontent.com/u/17?v=4",
+  });
+  const { app, baseUrl } = await startApp({
+    cwd: workspaceDir,
+    stateDir,
+    githubFetchImpl,
+  });
+
+  try {
+    const { location, settings } = await connectBuildingHubGitHub(baseUrl, {
+      clientId: "test-github-client-id",
+      profile: {
+        login: "builder-octo",
+        html_url: "https://github.com/builder-octo",
+      },
+    });
+
+    const githubUrl = new URL(location);
+    assert.equal(githubUrl.searchParams.get("client_id"), "test-github-client-id");
+    assert.equal(githubUrl.searchParams.get("redirect_uri"), `${baseUrl}/buildinghub/auth/github/callback`);
+    assert.equal(githubUrl.searchParams.get("scope"), "read:user");
+    assert.ok(settings.buildingAccessConfirmedIds.includes("buildinghub"));
+    assert.equal(settings.githubOAuthStatus?.user?.login, "builder-octo");
+    assert.equal(settings.buildingHubProfileUrl, "https://github.com/builder-octo");
+
+    assert.equal(githubFetchImpl.calls.length, 2);
+    assert.equal(githubFetchImpl.calls[0].url, "https://github.com/login/oauth/access_token");
+    const exchangeBody = new URLSearchParams(githubFetchImpl.calls[0].options.body);
+    assert.equal(exchangeBody.get("code"), "test-auth-code");
+    assert.equal(exchangeBody.get("client_id"), "test-github-client-id");
+    assert.equal(exchangeBody.get("client_secret"), "test-github-client-secret");
+    assert.equal(
+      exchangeBody.get("redirect_uri"),
+      `${baseUrl}/buildinghub/auth/github/callback`,
+    );
+    assert.equal(githubFetchImpl.calls[1].url, "https://api.github.com/user");
+
+    const disconnectResponse = await fetch(`${baseUrl}/buildinghub/auth/github/disconnect`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: "{}",
+    });
+    assert.equal(disconnectResponse.status, 200);
+    const disconnectPayload = await disconnectResponse.json();
+    assert.equal(disconnectPayload.settings.buildingHubAuthProvider, "");
+    assert.equal(disconnectPayload.settings.buildingHubProfileUrl, "");
+    assert.equal(disconnectPayload.settings.githubOAuthStatus?.configured, false);
+  } finally {
+    await app.close();
+    await removeTempWorkspace(workspaceDir);
+    await removeTempWorkspace(stateDir);
+  }
+});
+
+test("Hosted BuildingHub auth exchanges a BuildingHub grant and publishes layouts through the hosted API", async () => {
+  const workspaceDir = await createTempWorkspace("vibe-research-buildinghub-hosted-auth-workspace-");
+  const stateDir = await createTempWorkspace("vibe-research-buildinghub-hosted-auth-state-");
+  const hostedBuildingHub = await startFakeHostedBuildingHub();
+  const { app, baseUrl } = await startApp({
+    cwd: workspaceDir,
+    stateDir,
+  });
+
+  try {
+    const settingsResponse = await fetch(`${baseUrl}/api/settings`, {
+      method: "PATCH",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        buildingHubCatalogUrl: `${hostedBuildingHub.baseUrl}/registry.json`,
+        buildingHubEnabled: true,
+      }),
+    });
+    assert.equal(settingsResponse.status, 200);
+
+    const settings = await connectHostedBuildingHubAccount(baseUrl, hostedBuildingHub.baseUrl);
+    assert.equal(settings.buildingHubAccountStatus?.account?.login, hostedBuildingHub.account.login);
+    assert.equal(settings.buildingHubProfileUrl, hostedBuildingHub.account.profileUrl);
+
+    const publishResponse = await fetch(`${baseUrl}/api/agent-town/town-shares`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        id: "hosted-builder-base",
+        name: "Hosted builder base",
+        description: "Published through the hosted BuildingHub account flow.",
+        layout: {
+          decorations: [{ id: "decor-1", itemId: "planter", x: 8, y: 9 }],
+          functional: { buildinghub: { x: 11, y: 14 } },
+          themeId: "snowy",
+          dogName: "Scout",
+        },
+        imageDataUrl: `data:image/png;base64,${PNG_FIXTURE.toString("base64")}`,
+        imageMimeType: "image/png",
+      }),
+    });
+    assert.equal(publishResponse.status, 201);
+    const publishPayload = await publishResponse.json();
+    assert.equal(publishPayload.townShare.shareUrl, `${hostedBuildingHub.baseUrl}/layouts/hosted-builder-base/`);
+    assert.equal(publishPayload.buildingHub.publishedVia, "api");
+    assert.equal(publishPayload.townShare.buildingHub.publisher.login, hostedBuildingHub.account.login);
+    assert.equal(publishPayload.townShare.buildingHub.publisher.profileUrl, hostedBuildingHub.account.profileUrl);
+    const hostedLayout = hostedBuildingHub.layouts.get("hosted-builder-base")?.manifest;
+    assert.ok(hostedLayout);
+    assert.equal(hostedLayout.publisher.provider, "buildinghub");
+    assert.equal(hostedLayout.publisher.login, hostedBuildingHub.account.login);
+    assert.equal(hostedLayout.publisher.profileUrl, hostedBuildingHub.account.profileUrl);
+    assert.equal(hostedLayout.homepageUrl, `${hostedBuildingHub.baseUrl}/layouts/hosted-builder-base/`);
+
+    assert.equal(hostedBuildingHub.publications.length, 1);
+    assert.equal(hostedBuildingHub.publications[0].kind, "layout");
+    assert.equal(hostedBuildingHub.publications[0].id, "hosted-builder-base");
+    assert.equal(hostedBuildingHub.publications[0].name, "Hosted builder base");
+
+    const disconnectResponse = await fetch(`${baseUrl}/buildinghub/auth/github/disconnect`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: "{}",
+    });
+    assert.equal(disconnectResponse.status, 200);
+    assert.ok(hostedBuildingHub.revokedTokens.has("Bearer bhp_test_token"));
+  } finally {
+    await app.close();
+    await hostedBuildingHub.close();
+    await removeTempWorkspace(workspaceDir);
+    await removeTempWorkspace(stateDir);
+  }
+});
+
 test("BuildingHub is the catalog entry point instead of an installable detail", async (t) => {
   const executablePath = await resolveBrowserExecutablePath({ env: process.env });
   if (!executablePath) {
@@ -2126,7 +2678,7 @@ test("BuildingHub is the catalog entry point instead of an installable detail", 
     const page = await browser.newPage();
     await page.goto(`${baseUrl}/?view=plugins`, { waitUntil: "domcontentloaded" });
     await page.locator(".dashboard-copy strong").getByText("BuildingHub", { exact: true }).waitFor({ timeout: 10_000 });
-    const loginButton = page.locator("[data-buildinghub-login='google']");
+    const loginButton = page.locator("[data-buildinghub-login='github']");
     if (await loginButton.count()) {
       assert.equal(await page.locator("#plugin-results").count(), 0);
       await loginButton.click();
@@ -2345,7 +2897,10 @@ test("Agent Town share reports BuildingHub export failure when publishing fails"
       method: "PATCH",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({
+        buildingAccessConfirmedIds: ["browser-use"],
         preventSleepEnabled: false,
+        telegramBotToken: "123:cosmetic-building-test",
+        walletStripeSecretKey: "sk_test_cosmetic_building",
         wikiGitRemoteEnabled: false,
         wikiPath: wikiDir,
       }),
@@ -2564,23 +3119,30 @@ test("placed cosmetic buildings open an Agent Town drawer", async (t) => {
     });
     assert.equal(createResponse.status, 201);
 
+    const layoutResponse = await fetch(`${baseUrl}/api/agent-town/layout`, {
+      method: "PUT",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        reason: "cosmetic building smoke",
+        layout: {
+          decorations: [{ id: "decor-test-shed", itemId: "shed", x: 330, y: 300 }],
+        },
+      }),
+    });
+    assert.equal(layoutResponse.status, 200);
+
     browser = await chromium.launch({ executablePath, headless: true });
     const page = await browser.newPage();
     await page.setViewportSize({ width: 1280, height: 720 });
     await page.addInitScript(() => {
-      window.localStorage.setItem(
-        "vibe-research-agent-town-layout-v1",
-        JSON.stringify({
-          decorations: [{ id: "decor-test-shed", itemId: "shed", x: 330, y: 300 }],
-          functional: {},
-          pendingFunctional: [],
-          places: {},
-          roads: {},
-        }),
-      );
+      window.localStorage.setItem("vibe-research-guided-onboarding-v2", "1");
     });
     await page.goto(`${baseUrl}/?view=swarm`, { waitUntil: "domcontentloaded" });
     await page.waitForSelector("#visual-game-canvas", { timeout: 10_000 });
+    await page.waitForFunction(() => {
+      const layout = JSON.parse(window.localStorage.getItem("vibe-research-agent-town-layout-v1") || "{}");
+      return Array.isArray(layout.decorations) && layout.decorations.some((decoration) => decoration.id === "decor-test-shed");
+    }, null, { timeout: 10_000 });
     await page.waitForTimeout(800);
 
     const shedPoint = await findCanvasHoverPoint(page, "Tiny Shed");
@@ -2643,7 +3205,10 @@ test("Agent Inbox action items guide first building placement in Agent Town", as
       method: "PATCH",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({
+        buildingAccessConfirmedIds: ["browser-use"],
         preventSleepEnabled: false,
+        telegramBotToken: "123:onboarding-test",
+        walletStripeSecretKey: "sk_test_onboarding",
         wikiGitRemoteEnabled: false,
         wikiPath: wikiDir,
         workspaceRootPath: workspaceDir,
@@ -2681,6 +3246,12 @@ test("Agent Inbox action items guide first building placement in Agent Town", as
       }),
     });
     assert.equal(createActionResponse.status, 201);
+    const actionItemsResponse = await fetch(`${baseUrl}/api/agent-town/action-items`);
+    assert.equal(actionItemsResponse.status, 200);
+    const actionItemsPayload = await actionItemsResponse.json();
+    const openActionCount = Array.isArray(actionItemsPayload.actionItems)
+      ? actionItemsPayload.actionItems.filter((item) => item.status !== "completed" && item.status !== "dismissed").length
+      : 0;
 
     browser = await chromium.launch({ executablePath, headless: true });
     const page = await browser.newPage();
@@ -2688,7 +3259,10 @@ test("Agent Inbox action items guide first building placement in Agent Town", as
     await page.goto(`${baseUrl}/?view=agent-inbox`, { waitUntil: "domcontentloaded" });
     const actionCard = page.locator('[data-agent-town-action-item="onboarding-first-building"]');
     await actionCard.waitFor({ timeout: 10_000 });
-    assert.match(await page.locator("#agent-inbox-summary").textContent(), /actions\s*1/i);
+    assert.match(
+      await page.locator("#agent-inbox-summary").textContent(),
+      new RegExp(`actions\\s*${openActionCount}\\b`, "i"),
+    );
     assert.match(await actionCard.textContent(), /high/i);
     assert.match(await actionCard.textContent(), /BuildingHub/i);
 
@@ -2709,8 +3283,11 @@ test("Agent Inbox action items guide first building placement in Agent Town", as
         headers: { "X-Vibe-Research-API": "1" },
       });
       const payload = await response.json();
+      const actionItem = Array.isArray(payload.agentTown?.actionItems)
+        ? payload.agentTown.actionItems.find((entry) => entry.id === "onboarding-first-building")
+        : null;
       return payload.agentTown?.layoutSummary?.cosmeticCount === 1 &&
-        payload.agentTown?.actionItems?.[0]?.status === "completed";
+        actionItem?.status === "completed";
     }, null, { timeout: 10_000 });
 
     await page.goto(`${baseUrl}/?view=agent-inbox`, { waitUntil: "domcontentloaded" });
@@ -4621,6 +5198,138 @@ test("fresh browser starts on workspace folder setup until a folder is chosen", 
     await browser?.close().catch(() => {});
     await app.close();
     await removeTempWorkspace(workspaceDir);
+  }
+});
+
+test("fresh browser can enter the deterministic guided onboarding tutorial", async (t) => {
+  const executablePath = await resolveBrowserExecutablePath({ env: process.env });
+  if (!executablePath) {
+    t.skip("No local Chromium/Chrome executable is available for the guided onboarding smoke.");
+    return;
+  }
+
+  const workspaceDir = await createTempWorkspace("vibe-research-guided-onboarding-");
+  const stateDir = await createTempWorkspace("vibe-research-guided-onboarding-state-");
+  const selectedWorkspaceDir = path.join(workspaceDir, "workspace-root");
+  await mkdir(selectedWorkspaceDir, { recursive: true });
+  const wikiDir = getWorkspaceLibraryDir(selectedWorkspaceDir);
+  await mkdir(wikiDir, { recursive: true });
+  await writeFile(path.join(wikiDir, "index.md"), "# Guided Onboarding Library\n", "utf8");
+  const { app, baseUrl } = await startApp({
+    cwd: workspaceDir,
+    stateDir,
+    providers: [
+      {
+        id: "test-agent",
+        label: "Test Agent",
+        defaultName: "Test Agent",
+        available: true,
+        command: "/bin/sh",
+        launchCommand: "/bin/sh",
+      },
+      {
+        id: "shell",
+        label: "Vanilla Shell",
+        defaultName: "Shell",
+        available: true,
+        command: null,
+        launchCommand: null,
+      },
+    ],
+  });
+  let browser = null;
+
+  try {
+    const settingsResponse = await fetch(`${baseUrl}/api/settings`, {
+      method: "PATCH",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        preventSleepEnabled: false,
+        wikiGitRemoteEnabled: false,
+        wikiPath: wikiDir,
+        workspaceRootPath: selectedWorkspaceDir,
+        wikiPathConfigured: true,
+      }),
+    });
+    assert.equal(settingsResponse.status, 200);
+
+    browser = await chromium.launch({ executablePath, headless: true });
+    const page = await browser.newPage();
+    await page.addInitScript(() => {
+      window.localStorage.setItem("vibeResearch.agentSetupComplete.v1", "1");
+      window.localStorage.removeItem("vibe-research-guided-onboarding-v2");
+    });
+
+    await page.goto(`${baseUrl}/?tutorial=1`, { waitUntil: "domcontentloaded" });
+    await page.waitForSelector("[data-guided-onboarding-overlay]", { timeout: 10_000 });
+    await page.getByRole("button", { name: "Start tutorial" }).waitFor({ timeout: 10_000 });
+    await page.getByText("Welcome to our agent village!", { exact: true }).waitFor({ timeout: 10_000 });
+
+    await page.getByRole("button", { name: "Start tutorial" }).click();
+
+    await page.waitForFunction(() => new URL(window.location.href).searchParams.get("view") === "visual-interface", null, {
+      timeout: 10_000,
+    });
+    await page.waitForFunction(() => {
+      const title = document.querySelector("[data-guided-onboarding-overlay] strong");
+      return title?.textContent?.trim() === "Step 1";
+    }, null, { timeout: 10_000 });
+    await page.waitForSelector('[data-start-new-agent="town"]', { timeout: 10_000 });
+    await page.waitForFunction(() => {
+      const overlay = document.querySelector(".agent-pointer-overlay");
+      return overlay?.classList.contains("is-visible") && !overlay.classList.contains("is-waiting");
+    }, null, { timeout: 10_000 });
+
+    const stepOnePointer = await page.evaluate(() => {
+      const pointer = document.querySelector(".agent-pointer");
+      const button = document.querySelector('[data-start-new-agent="town"]');
+      const pointerRect = pointer?.getBoundingClientRect();
+      const buttonRect = button?.getBoundingClientRect();
+      return {
+        pointerCenterX: pointerRect ? pointerRect.left + pointerRect.width / 2 : null,
+        pointerBottom: pointerRect?.bottom ?? null,
+        buttonCenterX: buttonRect ? buttonRect.left + buttonRect.width / 2 : null,
+        buttonTop: buttonRect?.top ?? null,
+      };
+    });
+    assert.ok(stepOnePointer.pointerCenterX !== null, "expected guided onboarding pointer to render");
+    assert.ok(stepOnePointer.buttonCenterX !== null, "expected town new-agent button to render");
+    assert.ok(
+      Math.abs(stepOnePointer.pointerCenterX - stepOnePointer.buttonCenterX) <= 12,
+      `expected pointer to center over the Agent Town new-agent button, saw pointer x=${stepOnePointer.pointerCenterX} vs button x=${stepOnePointer.buttonCenterX}`,
+    );
+    assert.ok(
+      stepOnePointer.pointerBottom < stepOnePointer.buttonTop,
+      `expected pointer to sit above the Agent Town new-agent button, saw pointer bottom=${stepOnePointer.pointerBottom} vs button top=${stepOnePointer.buttonTop}`,
+    );
+
+    await page.getByRole("button", { name: /start selected agent/i }).click();
+    await page.waitForFunction(() => {
+      const pointer = document.querySelector(".agent-pointer");
+      const canvas = document.querySelector("#visual-game-canvas");
+      if (!(pointer instanceof HTMLElement) || !(canvas instanceof HTMLCanvasElement)) {
+        return false;
+      }
+
+      const pointerRect = pointer.getBoundingClientRect();
+      const canvasRect = canvas.getBoundingClientRect();
+      const pointerCenterX = pointerRect.left + pointerRect.width / 2;
+      const pointerCenterY = pointerRect.top + pointerRect.height / 2;
+
+      return (
+        pointerCenterX >= canvasRect.left &&
+        pointerCenterX <= canvasRect.right &&
+        pointerCenterY >= canvasRect.top &&
+        pointerCenterY <= canvasRect.bottom
+      );
+    }, null, { timeout: 10_000 });
+
+    assert.equal(await page.locator(".agent-pointer-overlay.is-visible").count(), 1);
+  } finally {
+    await browser?.close().catch(() => {});
+    await app.close();
+    await removeTempWorkspace(workspaceDir);
+    await removeTempWorkspace(stateDir);
   }
 });
 
@@ -7275,5 +7984,111 @@ test("workspace file api serves content from hidden install roots", async () => 
   } finally {
     await app.close();
     await removeTempWorkspace(parentDir);
+  }
+});
+
+test("tutorials API lists curated tutorials and serves their markdown bodies", async () => {
+  const workspaceDir = await createTempWorkspace("vibe-research-tutorials-api-");
+  const stateDir = await createTempWorkspace("vibe-research-tutorials-api-state-");
+  const { app, baseUrl } = await startApp({ cwd: workspaceDir, stateDir });
+
+  try {
+    const listResponse = await fetch(`${baseUrl}/api/tutorials`);
+    assert.equal(listResponse.status, 200);
+    const listPayload = await listResponse.json();
+    const ids = listPayload.tutorials.map((entry) => entry.id);
+    assert.ok(ids.includes("connect-telegram"));
+    assert.ok(ids.includes("connect-cameras"));
+    assert.ok(ids.includes("connect-stripe"));
+    const telegram = listPayload.tutorials.find((entry) => entry.id === "connect-telegram");
+    assert.equal(telegram.buildingId, "telegram");
+    assert.ok(!("body" in telegram));
+
+    const detailResponse = await fetch(`${baseUrl}/api/tutorials/connect-telegram`);
+    assert.equal(detailResponse.status, 200);
+    const detailPayload = await detailResponse.json();
+    assert.equal(detailPayload.tutorial.id, "connect-telegram");
+    assert.match(detailPayload.tutorial.body, /BotFather/);
+
+    const missingResponse = await fetch(`${baseUrl}/api/tutorials/does-not-exist`);
+    assert.equal(missingResponse.status, 404);
+  } finally {
+    await app.close();
+    await removeTempWorkspace(workspaceDir);
+    await removeTempWorkspace(stateDir);
+  }
+});
+
+test("first run seeds tutorial action items and skips ones whose building is configured", async () => {
+  const envKeysToClear = [
+    "TELEGRAM_BOT_TOKEN",
+    "STRIPE_SECRET_KEY",
+    "VIBE_RESEARCH_WALLET_STRIPE_SECRET_KEY",
+  ];
+  const previousEnv = {};
+  for (const key of envKeysToClear) {
+    previousEnv[key] = process.env[key];
+    delete process.env[key];
+  }
+
+  try {
+    const workspaceDirA = await createTempWorkspace("vibe-research-tutorial-seed-a-");
+    const stateDirA = await createTempWorkspace("vibe-research-tutorial-seed-a-state-");
+    const { app: appA, baseUrl: baseUrlA } = await startApp({ cwd: workspaceDirA, stateDir: stateDirA });
+
+    try {
+      const stateResponse = await fetch(`${baseUrlA}/api/agent-town/state`);
+      assert.equal(stateResponse.status, 200);
+      const statePayload = await stateResponse.json();
+      const tutorialIds = statePayload.agentTown.actionItems
+        .map((entry) => entry.tutorialId)
+        .filter(Boolean)
+        .sort();
+      assert.deepEqual(tutorialIds, ["connect-cameras", "connect-stripe", "connect-telegram"]);
+
+      const seeded = statePayload.agentTown.actionItems.find((entry) => entry.tutorialId === "connect-telegram");
+      assert.equal(seeded.kind, "setup");
+      assert.equal(seeded.source, "tutorials");
+      assert.deepEqual(seeded.capabilityIds, ["ui-guidance"]);
+    } finally {
+      await appA.close();
+      await removeTempWorkspace(workspaceDirA);
+      await removeTempWorkspace(stateDirA);
+    }
+
+    const workspaceDirB = await createTempWorkspace("vibe-research-tutorial-seed-b-");
+    const stateDirB = await createTempWorkspace("vibe-research-tutorial-seed-b-state-");
+    try {
+      await writeFile(
+        path.join(stateDirB, "settings.json"),
+        JSON.stringify({ telegramBotToken: "123:token-present" }),
+        "utf8",
+      );
+      const { app: appB, baseUrl: baseUrlB } = await startApp({ cwd: workspaceDirB, stateDir: stateDirB });
+      try {
+        const stateResponse = await fetch(`${baseUrlB}/api/agent-town/state`);
+        const statePayload = await stateResponse.json();
+        const seededIds = statePayload.agentTown.actionItems
+          .map((entry) => entry.tutorialId)
+          .filter(Boolean)
+          .sort();
+        assert.ok(!seededIds.includes("connect-telegram"), "Telegram tutorial should be skipped when token is set");
+        assert.ok(seededIds.includes("connect-cameras"));
+        assert.ok(seededIds.includes("connect-stripe"));
+      } finally {
+        await appB.close();
+      }
+    } finally {
+      await removeTempWorkspace(workspaceDirB);
+      await removeTempWorkspace(stateDirB);
+    }
+  } finally {
+    for (const key of envKeysToClear) {
+      if (previousEnv[key] === undefined) {
+        delete process.env[key];
+      } else {
+        process.env[key] = previousEnv[key];
+      }
+    }
   }
 });

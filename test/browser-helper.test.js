@@ -514,12 +514,17 @@ test("shell sessions can invoke vr-browser against localhost apps", async () => 
     await new Promise((resolve, reject) => {
       let combined = "";
       let settled = false;
+      let openGraceTimer = null;
       const finish = () => {
         if (settled) {
           return;
         }
         settled = true;
         clearTimeout(timeout);
+        if (openGraceTimer) {
+          clearTimeout(openGraceTimer);
+          openGraceTimer = null;
+        }
         websocket.off("open", finish);
         websocket.off("message", handleMessage);
         websocket.off("error", handleError);
@@ -531,6 +536,10 @@ test("shell sessions can invoke vr-browser against localhost apps", async () => 
         }
         settled = true;
         clearTimeout(timeout);
+        if (openGraceTimer) {
+          clearTimeout(openGraceTimer);
+          openGraceTimer = null;
+        }
         websocket.off("open", finish);
         websocket.off("message", handleMessage);
         reject(error);
@@ -540,18 +549,32 @@ test("shell sessions can invoke vr-browser against localhost apps", async () => 
         combined += payload.data || "";
         finish();
       };
+      const handleOpen = () => {
+        if (settled) {
+          return;
+        }
+
+        openGraceTimer = setTimeout(() => {
+          openGraceTimer = null;
+          finish();
+        }, 500);
+      };
       const timeout = setTimeout(() => {
         if (settled) {
           return;
         }
         settled = true;
-        websocket.off("open", finish);
+        if (openGraceTimer) {
+          clearTimeout(openGraceTimer);
+          openGraceTimer = null;
+        }
+        websocket.off("open", handleOpen);
         websocket.off("message", handleMessage);
         websocket.off("error", handleError);
         reject(new Error(`Timed out waiting for the shell websocket.\n${combined}`));
       }, 60_000);
 
-      websocket.once("open", finish);
+      websocket.once("open", handleOpen);
       websocket.on("message", handleMessage);
       websocket.once("error", handleError);
     });

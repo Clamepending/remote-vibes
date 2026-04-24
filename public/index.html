@@ -7,6 +7,139 @@
       content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover, interactive-widget=resizes-content"
     />
     <title>Vibe Research</title>
+    <style>
+      :root {
+        color-scheme: dark;
+        font-family: "Manrope", system-ui, sans-serif;
+        background: #17161d;
+      }
+
+      html, body {
+        margin: 0;
+        min-height: 100%;
+        background:
+          radial-gradient(circle at top, rgba(255, 142, 102, 0.18), transparent 38%),
+          linear-gradient(180deg, #23212a 0%, #17161d 58%, #111016 100%);
+        color: #f4efe8;
+      }
+
+      body {
+        min-height: 100vh;
+      }
+
+      #app {
+        min-height: 100vh;
+      }
+
+      .boot-fallback {
+        box-sizing: border-box;
+        min-height: 100vh;
+        display: grid;
+        place-items: center;
+        padding: 32px;
+      }
+
+      .boot-fallback-card {
+        width: min(100%, 520px);
+        padding: 28px;
+        border-radius: 24px;
+        border: 1px solid rgba(255, 255, 255, 0.1);
+        background: rgba(19, 19, 24, 0.82);
+        box-shadow: 0 24px 64px rgba(0, 0, 0, 0.32);
+      }
+
+      .boot-fallback-kicker {
+        display: inline-flex;
+        align-items: center;
+        gap: 10px;
+        margin-bottom: 14px;
+        font-size: 12px;
+        font-weight: 700;
+        letter-spacing: 0.12em;
+        text-transform: uppercase;
+        color: #ffb28f;
+      }
+
+      .boot-fallback-dot {
+        width: 10px;
+        height: 10px;
+        border-radius: 999px;
+        background: #ff8b5f;
+        box-shadow: 0 0 0 6px rgba(255, 139, 95, 0.16);
+      }
+
+      .boot-fallback h1 {
+        margin: 0 0 10px;
+        font-size: clamp(28px, 5vw, 38px);
+        line-height: 1.05;
+      }
+
+      .boot-fallback p {
+        margin: 0;
+        font-size: 15px;
+        line-height: 1.6;
+        color: rgba(244, 239, 232, 0.82);
+      }
+
+      .boot-fallback-status {
+        display: inline-flex;
+        align-items: center;
+        gap: 12px;
+        margin-top: 20px;
+        color: rgba(244, 239, 232, 0.74);
+        font: 500 13px/1.4 "IBM Plex Mono", monospace;
+      }
+
+      .boot-fallback-spinner {
+        width: 16px;
+        height: 16px;
+        border-radius: 999px;
+        border: 2px solid rgba(255, 255, 255, 0.18);
+        border-top-color: #ff8b5f;
+        animation: boot-fallback-spin 0.9s linear infinite;
+      }
+
+      .boot-fallback-actions {
+        display: none;
+        gap: 12px;
+        margin-top: 24px;
+      }
+
+      .boot-fallback[data-state="error"] .boot-fallback-actions {
+        display: flex;
+      }
+
+      .boot-fallback[data-state="error"] .boot-fallback-status {
+        display: none;
+      }
+
+      .boot-fallback button,
+      .boot-fallback a {
+        appearance: none;
+        border: 0;
+        border-radius: 999px;
+        padding: 12px 18px;
+        font: 700 14px/1 "Manrope", system-ui, sans-serif;
+        text-decoration: none;
+        cursor: pointer;
+      }
+
+      .boot-fallback button {
+        background: #ff8b5f;
+        color: #20130f;
+      }
+
+      .boot-fallback a {
+        background: rgba(255, 255, 255, 0.08);
+        color: #f4efe8;
+      }
+
+      @keyframes boot-fallback-spin {
+        to {
+          transform: rotate(360deg);
+        }
+      }
+    </style>
     <link rel="preconnect" href="https://fonts.googleapis.com" />
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
     <link
@@ -17,7 +150,75 @@
     <link rel="stylesheet" href="/styles.css" />
   </head>
   <body>
-    <div id="app"></div>
+    <div id="app">
+      <div class="boot-fallback" data-app-boot-status data-state="loading">
+        <div class="boot-fallback-card">
+          <div class="boot-fallback-kicker">
+            <span class="boot-fallback-dot" aria-hidden="true"></span>
+            <span>Vibe Research</span>
+          </div>
+          <h1>Loading your workspace</h1>
+          <p>
+            The client is starting up. If it does not appear in a few seconds, this screen will switch to a recovery message instead of staying blank.
+          </p>
+          <div class="boot-fallback-status">
+            <span class="boot-fallback-spinner" aria-hidden="true"></span>
+            <span>Starting UI runtime…</span>
+          </div>
+          <div class="boot-fallback-actions">
+            <button type="button" data-boot-reload>Reload page</button>
+            <a href="/">Open root</a>
+          </div>
+        </div>
+      </div>
+    </div>
+    <script>
+      (() => {
+        const root = document.getElementById("app");
+        const fallback = root?.querySelector("[data-app-boot-status]");
+        let resolved = false;
+
+        function setError(message) {
+          if (!fallback || resolved) {
+            return;
+          }
+          fallback.setAttribute("data-state", "error");
+          const title = fallback.querySelector("h1");
+          const copy = fallback.querySelector("p");
+          if (title) {
+            title.textContent = "The interface did not finish loading";
+          }
+          if (copy) {
+            copy.textContent = message || "Reload the page once to pull the latest client bundle.";
+          }
+        }
+
+        function markReady() {
+          resolved = true;
+        }
+
+        function handleFailure(event) {
+          const detail = event?.detail;
+          const message = detail && typeof detail.message === "string" ? detail.message : "";
+          setError(message ? `Reload the page once to recover. Latest error: ${message}` : "");
+        }
+
+        window.__vibeResearchBootReady = markReady;
+        window.__vibeResearchBootFailed = (message) => setError(message ? `Reload the page once to recover. Latest error: ${message}` : "");
+        window.addEventListener("vibe-research:booted", markReady, { once: true });
+        window.addEventListener("vibe-research:boot-error", handleFailure);
+        window.setTimeout(() => {
+          const stillShowingFallback = root && fallback && root.contains(fallback);
+          if (!resolved && stillShowingFallback) {
+            setError("");
+          }
+        }, 4000);
+
+        fallback?.querySelector("[data-boot-reload]")?.addEventListener("click", () => {
+          window.location.reload();
+        });
+      })();
+    </script>
     <script type="module" src="/app.js"></script>
   </body>
 </html>

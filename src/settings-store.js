@@ -299,11 +299,26 @@ export class SettingsStore {
       browserUseModel: "",
       browserUseProfileDir: getDefaultBrowserUseProfileDir(this.homeDir),
       browserUseWorkerPath: getDefaultBrowserUseWorkerPath(this.homeDir),
+      buildingHubAppUrl: normalizeBuildingHubUrl(
+        this.env.VIBE_RESEARCH_BUILDINGHUB_APP_URL || this.env.REMOTE_VIBES_BUILDINGHUB_APP_URL || "",
+      ),
       buildingHubAuthProvider: normalizeBuildingHubAuthProvider(this.env.VIBE_RESEARCH_BUILDINGHUB_AUTH_PROVIDER || ""),
       buildingHubCatalogPath: String(this.env.VIBE_RESEARCH_BUILDINGHUB_PATH || "").trim(),
       buildingHubCatalogUrl: normalizeBuildingHubUrl(this.env.VIBE_RESEARCH_BUILDINGHUB_URL),
       buildingHubEnabled: false,
       buildingHubProfileUrl: normalizeBuildingHubUrl(this.env.VIBE_RESEARCH_BUILDINGHUB_PROFILE_URL || ""),
+      githubOAuthClientId: String(
+        this.env.VIBE_RESEARCH_GITHUB_OAUTH_CLIENT_ID ||
+          this.env.REMOTE_VIBES_GITHUB_OAUTH_CLIENT_ID ||
+          this.env.GITHUB_OAUTH_CLIENT_ID ||
+          "",
+      ).trim(),
+      githubOAuthClientSecret: String(
+        this.env.VIBE_RESEARCH_GITHUB_OAUTH_CLIENT_SECRET ||
+          this.env.REMOTE_VIBES_GITHUB_OAUTH_CLIENT_SECRET ||
+          this.env.GITHUB_OAUTH_CLIENT_SECRET ||
+          "",
+      ).trim(),
       googleOAuthClientId: String(
         this.env.VIBE_RESEARCH_GOOGLE_OAUTH_CLIENT_ID ||
           this.env.REMOTE_VIBES_GOOGLE_OAUTH_CLIENT_ID ||
@@ -492,6 +507,9 @@ export class SettingsStore {
         payload.buildingHubAuthProvider === undefined
           ? defaults.buildingHubAuthProvider
           : normalizeBuildingHubAuthProvider(payload.buildingHubAuthProvider),
+      buildingHubAppUrl: normalizeBuildingHubUrl(
+        payload.buildingHubAppUrl === undefined ? defaults.buildingHubAppUrl : payload.buildingHubAppUrl,
+      ),
       buildingHubCatalogPath: normalizeOptionalPath(
         payload.buildingHubCatalogPath || defaults.buildingHubCatalogPath,
         this.homeDir,
@@ -502,6 +520,11 @@ export class SettingsStore {
         payload.buildingHubProfileUrl === undefined
           ? defaults.buildingHubProfileUrl
           : normalizeBuildingHubUrl(payload.buildingHubProfileUrl),
+      githubOAuthClientId: String(payload.githubOAuthClientId || defaults.githubOAuthClientId || "").trim(),
+      githubOAuthClientSecret:
+        payload.githubOAuthClientSecret === undefined
+          ? defaults.githubOAuthClientSecret
+          : String(payload.githubOAuthClientSecret || "").trim(),
       googleOAuthClientId: String(payload.googleOAuthClientId || defaults.googleOAuthClientId || "").trim(),
       googleOAuthClientSecret:
         payload.googleOAuthClientSecret === undefined
@@ -751,7 +774,9 @@ export class SettingsStore {
     agentMailStatus = null,
     backupStatus = null,
     browserUseStatus = null,
+    buildingHubAccountStatus = null,
     buildingHubStatus = null,
+    githubOAuthStatus = null,
     googleOAuthStatus = null,
     ottoAuthStatus = null,
     sleepStatus = null,
@@ -778,7 +803,12 @@ export class SettingsStore {
       browserUseAnthropicApiKey: "",
       browserUseAnthropicApiKeyConfigured: Boolean(this.settings.browserUseAnthropicApiKey),
       browserUseStatus,
+      buildingHubAccountStatus,
       buildingHubStatus,
+      githubOAuthClientId: this.settings.githubOAuthClientId,
+      githubOAuthClientSecret: "",
+      githubOAuthClientSecretConfigured: Boolean(this.settings.githubOAuthClientSecret),
+      githubOAuthStatus,
       googleOAuthClientSecret: "",
       googleOAuthClientSecretConfigured: Boolean(this.settings.googleOAuthClientSecret),
       googleOAuthStatus,

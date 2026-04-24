@@ -26,6 +26,229 @@ async function createTempWorkspace(prefix) {
   return mkdtemp(path.join(os.tmpdir(), `${prefix}-`));
 }
 
+async function removeTempWorkspace(workspacePath) {
+  await rm(workspacePath, {
+    recursive: true,
+    force: true,
+    maxRetries: 20,
+    retryDelay: 50,
+  });
+}
+
+function createGitHubFetchImpl(profile = {}) {
+  const calls = [];
+  const fetchImpl = async (url, options = {}) => {
+    calls.push({ url: String(url), options });
+    if (String(url) === "https://github.com/login/oauth/access_token") {
+      return new Response(JSON.stringify({
+        access_token: "github-access-token-test",
+        scope: "read:user",
+        token_type: "bearer",
+      }), {
+        status: 200,
+        headers: { "Content-Type": "application/json" },
+      });
+    }
+
+    if (String(url) === "https://api.github.com/user") {
+      return new Response(JSON.stringify({
+        id: 5,
+        login: "meta-builder",
+        name: "Meta Builder",
+        html_url: "https://github.com/meta-builder",
+        avatar_url: "https://avatars.githubusercontent.com/u/5?v=4",
+        ...profile,
+      }), {
+        status: 200,
+        headers: { "Content-Type": "application/json" },
+      });
+    }
+
+    return new Response(JSON.stringify({ message: `Unexpected GitHub fetch URL: ${url}` }), {
+      status: 500,
+      headers: { "Content-Type": "application/json" },
+    });
+  };
+
+  fetchImpl.calls = calls;
+  return fetchImpl;
+}
+
+async function connectBuildingHubGitHub(baseUrl, clientId = "test-github-client-id") {
+  const settingsResponse = await fetch(`${baseUrl}/api/settings`, {
+    method: "PATCH",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({
+      githubOAuthClientId: clientId,
+      githubOAuthClientSecret: "test-github-client-secret",
+    }),
+  });
+  assert.equal(settingsResponse.status, 200);
+
+  const oauthStartResponse = await fetch(`${baseUrl}/buildinghub/auth/github/start`, { redirect: "manual" });
+  assert.equal(oauthStartResponse.status, 302);
+  const location = oauthStartResponse.headers.get("location") || "";
+  const githubUrl = new URL(location);
+  const stateToken = githubUrl.searchParams.get("state");
+  assert.ok(stateToken);
+
+  const callbackResponse = await fetch(
+    `${baseUrl}/buildinghub/auth/github/callback?state=${encodeURIComponent(stateToken)}&code=test-auth-code`,
+  );
+  assert.equal(callbackResponse.status, 200);
+}
+
+async function startFakeHostedBuildingHub() {
+  const grants = new Map();
+  const publications = [];
+  const recipes = new Map();
+  let nextGrantId = 1;
+  let baseUrl = "";
+  const account = {
+    provider: "buildinghub",
+    id: "bhusr_recipe_1",
+    login: "recipe-builder",
+    name: "Recipe Builder",
+  };
+
+  async function readRequestJson(request) {
+    return JSON.parse(await new Promise((resolve, reject) => {
+      let raw = "";
+      request.setEncoding("utf8");
+      request.on("data", (chunk) => {
+        raw += chunk;
+      });
+      request.on("end", () => resolve(raw || "{}"));
+      request.on("error", reject);
+    }));
+  }
+
+  const server = (await import("node:http")).createServer(async (request, response) => {
+    const url = new URL(request.url || "/", "http://127.0.0.1");
+    const hostedAccount = {
+      ...account,
+      profileUrl: `${baseUrl}/u/${account.login}`,
+    };
+
+    if (request.method === "GET" && url.pathname === "/auth/github/start") {
+      const returnTo = String(url.searchParams.get("return_to") || "").trim();
+      const grant = `bhg_recipe_${nextGrantId++}`;
+      grants.set(grant, returnTo);
+      const redirectUrl = new URL(returnTo);
+      redirectUrl.searchParams.set("buildinghub_grant", grant);
+      response.statusCode = 302;
+      response.setHeader("Location", redirectUrl.toString());
+      response.end();
+      return;
+    }
+
+    if (request.method === "POST" && url.pathname === "/api/auth/exchange") {
+      const body = await readRequestJson(request);
+      if (!body.grant || grants.get(body.grant) !== body.redirectUri) {
+        response.statusCode = 400;
+        response.setHeader("Content-Type", "application/json");
+        response.end(JSON.stringify({ error: "Invalid BuildingHub grant." }));
+        return;
+      }
+      grants.delete(body.grant);
+      response.statusCode = 200;
+      response.setHeader("Content-Type", "application/json");
+      response.end(JSON.stringify({
+        ok: true,
+        accessToken: "bhp_recipe_token",
+        account: hostedAccount,
+      }));
+      return;
+    }
+
+    if (request.method === "POST" && url.pathname === "/api/recipes") {
+      if (String(request.headers.authorization || "").trim() !== "Bearer bhp_recipe_token") {
+        response.statusCode = 401;
+        response.setHeader("Content-Type", "application/json");
+        response.end(JSON.stringify({ error: "Unauthorized" }));
+        return;
+      }
+      const body = await readRequestJson(request);
+      const recipe = {
+        ...(body.recipe || {}),
+        source: {
+          ...((body.recipe && body.recipe.source) || {}),
+          recipeUrl: `${baseUrl}/recipes/${body.recipe?.id || "recipe"}/`,
+          publisher: hostedAccount,
+        },
+      };
+      recipes.set(recipe.id, recipe);
+      publications.push({
+        kind: "recipe",
+        id: recipe.id,
+        name: recipe.name,
+        url: recipe.source.recipeUrl,
+      });
+      response.statusCode = 201;
+      response.setHeader("Content-Type", "application/json");
+      response.end(JSON.stringify({
+        ok: true,
+        recipeId: recipe.id,
+        recipeUrl: recipe.source.recipeUrl,
+        repositoryUrl: recipe.source.repositoryUrl || "",
+        publisher: hostedAccount,
+        publishedVia: "api",
+        recordedByBuildingHub: true,
+        sourceId: "hosted",
+        status: "published",
+      }));
+      return;
+    }
+
+    if (request.method === "GET" && url.pathname === "/registry.json") {
+      response.statusCode = 200;
+      response.setHeader("Content-Type", "application/json");
+      response.end(JSON.stringify({ recipes: [...recipes.values()] }));
+      return;
+    }
+
+    response.statusCode = 404;
+    response.end("Not found");
+  });
+
+  await new Promise((resolve, reject) => {
+    server.listen(0, "127.0.0.1", (error) => (error ? reject(error) : resolve()));
+  });
+  const address = server.address();
+  baseUrl = `http://127.0.0.1:${address.port}`;
+
+  return {
+    account: {
+      ...account,
+      profileUrl: `${baseUrl}/u/${account.login}`,
+    },
+    baseUrl,
+    close: () => new Promise((resolve, reject) => server.close((error) => (error ? reject(error) : resolve()))),
+    publications,
+    recipes,
+  };
+}
+
+async function connectHostedBuildingHubAccount(baseUrl, hostedBuildingHubBaseUrl) {
+  const settingsResponse = await fetch(`${baseUrl}/api/settings`, {
+    method: "PATCH",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({
+      buildingHubAppUrl: hostedBuildingHubBaseUrl,
+      buildingHubCatalogUrl: `${hostedBuildingHubBaseUrl}/registry.json`,
+    }),
+  });
+  assert.equal(settingsResponse.status, 200);
+
+  const oauthStartResponse = await fetch(`${baseUrl}/buildinghub/auth/github/start`, { redirect: "manual" });
+  assert.equal(oauthStartResponse.status, 302);
+  const hostedStartUrl = new URL(oauthStartResponse.headers.get("location") || "");
+  const hostedCallbackResponse = await fetch(hostedStartUrl.toString(), { redirect: "manual" });
+  assert.equal(hostedCallbackResponse.status, 302);
+  const completionResponse = await fetch(hostedCallbackResponse.headers.get("location") || "");
+  assert.equal(completionResponse.status, 200);
+}
+
 async function createBuildingHubRepoFixture(prefix = "vr-scaffold-buildinghub-") {
   const repoDir = await createTempWorkspace(prefix);
   const remoteDir = `${repoDir}-remote.git`;
@@ -103,7 +326,13 @@ test("scaffold recipe API exports, saves, previews, applies, publishes, and supp
   const stateDir = await createTempWorkspace("vr-scaffold-api-state");
   const applyWorkspaceDir = await createTempWorkspace("vr-scaffold-api-apply");
   const buildingHub = await createBuildingHubRepoFixture();
-  const { app, baseUrl } = await startApp({ cwd: workspaceDir, stateDir });
+  const githubFetchImpl = createGitHubFetchImpl({
+    id: 41,
+    login: "meta-builder",
+    name: "Meta Builder",
+    html_url: "https://github.com/meta-builder",
+  });
+  const { app, baseUrl } = await startApp({ cwd: workspaceDir, stateDir, githubFetchImpl });
 
   try {
     const settingsResponse = await fetch(`${baseUrl}/api/settings`, {
@@ -126,6 +355,7 @@ test("scaffold recipe API exports, saves, previews, applies, publishes, and supp
       }),
     });
     assert.equal(settingsResponse.status, 200);
+    await connectBuildingHubGitHub(baseUrl);
 
     const layoutResponse = await fetch(`${baseUrl}/api/agent-town/layout`, {
       method: "PUT",
@@ -259,21 +489,27 @@ test("scaffold recipe API exports, saves, previews, applies, publishes, and supp
     assert.equal(publishPayload.buildingHub.recipeId, "meta-bench");
     assert.equal(publishPayload.buildingHub.recipeUrl, `${buildingHub.publicBaseUrl}recipes/meta-bench/`);
     assert.equal(publishPayload.buildingHub.pushed, true);
+    assert.equal(publishPayload.buildingHub.publisher.login, "meta-builder");
     assert.equal(publishPayload.buildingHubStatus.recipeCount, 1);
 
     const recipeManifest = JSON.parse(await readFile(path.join(buildingHub.repoDir, "recipes", "meta-bench", "recipe.json"), "utf8"));
     assert.equal(recipeManifest.id, "meta-bench");
     assert.equal(recipeManifest.source.recipeUrl, `${buildingHub.publicBaseUrl}recipes/meta-bench/`);
+    assert.equal(recipeManifest.source.publisher.login, "meta-builder");
+    assert.equal(recipeManifest.source.publisher.profileUrl, "https://github.com/meta-builder");
     assert.equal(recipeManifest.settings.portable.agentOpenAiApiKey, undefined);
     assert.doesNotMatch(JSON.stringify(recipeManifest), /sk-test-secret|sk-next/);
 
     const readme = await readFile(path.join(buildingHub.repoDir, "recipes", "meta-bench", "README.md"), "utf8");
     assert.match(readme, /# Meta Bench/);
     assert.match(readme, /DM policy:/);
+    assert.match(readme, /meta-builder/);
 
     const staticPage = await readFile(path.join(buildingHub.repoDir, "site", "recipes", "meta-bench", "index.html"), "utf8");
     assert.match(staticPage, /Meta Bench - BuildingHub/);
     assert.match(staticPage, /local bindings to supply/);
+    assert.match(staticPage, /Published by/);
+    assert.match(staticPage, /meta-builder/);
 
     const remoteHead = await execFileAsync("git", ["--git-dir", buildingHub.remoteDir, "log", "--oneline", "-1", "main"]);
     assert.match(remoteHead.stdout, /Publish Vibe Research scaffold recipe meta-bench/);
@@ -284,10 +520,70 @@ test("scaffold recipe API exports, saves, previews, applies, publishes, and supp
     assert.equal(catalogPayload.recipes[0].id, "meta-bench");
   } finally {
     await app.close();
-    await rm(workspaceDir, { recursive: true, force: true });
-    await rm(stateDir, { recursive: true, force: true });
-    await rm(applyWorkspaceDir, { recursive: true, force: true });
-    await rm(buildingHub.repoDir, { recursive: true, force: true });
-    await rm(buildingHub.remoteDir, { recursive: true, force: true });
+    await removeTempWorkspace(workspaceDir);
+    await removeTempWorkspace(stateDir);
+    await removeTempWorkspace(applyWorkspaceDir);
+    await removeTempWorkspace(buildingHub.repoDir);
+    await removeTempWorkspace(buildingHub.remoteDir);
+  }
+});
+
+test("scaffold recipe publish uses hosted BuildingHub API when a hosted account is connected", async () => {
+  const workspaceDir = await createTempWorkspace("vr-scaffold-hosted-api-workspace");
+  const stateDir = await createTempWorkspace("vr-scaffold-hosted-api-state");
+  const hostedBuildingHub = await startFakeHostedBuildingHub();
+  const { app, baseUrl } = await startApp({ cwd: workspaceDir, stateDir });
+
+  try {
+    const settingsResponse = await fetch(`${baseUrl}/api/settings`, {
+      method: "PATCH",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        buildingHubCatalogUrl: `${hostedBuildingHub.baseUrl}/registry.json`,
+        buildingHubEnabled: true,
+        workspaceRootPath: workspaceDir,
+      }),
+    });
+    assert.equal(settingsResponse.status, 200);
+    await connectHostedBuildingHubAccount(baseUrl, hostedBuildingHub.baseUrl);
+
+    const saveResponse = await fetch(`${baseUrl}/api/scaffold-recipes/current`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        id: "hosted-meta-bench",
+        name: "Hosted Meta Bench",
+        description: "A hosted BuildingHub recipe publish.",
+        tags: ["benchmark"],
+      }),
+    });
+    assert.equal(saveResponse.status, 201);
+
+    const publishResponse = await fetch(`${baseUrl}/api/scaffold-recipes/hosted-meta-bench/publish`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        name: "Hosted Meta Bench",
+        description: "Published through hosted BuildingHub.",
+      }),
+    });
+    assert.equal(publishResponse.status, 201);
+    const publishPayload = await publishResponse.json();
+    assert.equal(publishPayload.buildingHub.publishedVia, "api");
+    assert.equal(publishPayload.buildingHub.recipeUrl, `${hostedBuildingHub.baseUrl}/recipes/hosted-meta-bench/`);
+    assert.equal(publishPayload.buildingHub.publisher.login, hostedBuildingHub.account.login);
+    assert.equal(publishPayload.buildingHubStatus.recipeCount, 1);
+
+    const hostedRecipe = hostedBuildingHub.recipes.get("hosted-meta-bench");
+    assert.ok(hostedRecipe);
+    assert.equal(hostedRecipe.source.publisher.login, hostedBuildingHub.account.login);
+    assert.equal(hostedRecipe.source.recipeUrl, `${hostedBuildingHub.baseUrl}/recipes/hosted-meta-bench/`);
+    assert.equal(hostedBuildingHub.publications.length, 1);
+    assert.equal(hostedBuildingHub.publications[0].kind, "recipe");
+  } finally {
+    await app.close();
+    await hostedBuildingHub.close();
+    await removeTempWorkspace(workspaceDir);
+    await removeTempWorkspace(stateDir);
   }
 });

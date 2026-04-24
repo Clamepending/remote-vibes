@@ -185,6 +185,32 @@ function normalizeAccess(access) {
   return label || detail ? { label, detail } : null;
 }
 
+function normalizePublisher(publisher) {
+  if (!isPlainObject(publisher)) {
+    return null;
+  }
+
+  const provider = normalizeText(publisher.provider, 40).toLowerCase();
+  const id = normalizeText(publisher.id, 120);
+  const login = normalizeText(publisher.login || publisher.username, 120);
+  const name = normalizeText(publisher.name || publisher.displayName, 160);
+  const profileUrl = normalizeOptionalUrl(publisher.profileUrl || publisher.url || publisher.htmlUrl);
+  const avatarUrl = normalizeOptionalUrl(publisher.avatarUrl || publisher.avatar_url);
+
+  if (!provider && !id && !login && !name && !profileUrl) {
+    return null;
+  }
+
+  return {
+    provider,
+    id,
+    login,
+    name,
+    profileUrl,
+    avatarUrl,
+  };
+}
+
 function normalizeAgentGuideCommand(command) {
   if (typeof command === "string") {
     const commandText = normalizeText(command, 220);
@@ -540,6 +566,7 @@ function normalizeBuildingHubLayout(layout, { sourceId = "buildinghub" } = {}) {
   const requiredBuildings = [...new Set(safeArray(layout.requiredBuildings)
     .map(normalizeBuildingId)
     .filter(Boolean))].slice(0, 80);
+  const publisher = normalizePublisher(layout.publisher || layout.author);
 
   return {
     id,
@@ -553,6 +580,7 @@ function normalizeBuildingHubLayout(layout, { sourceId = "buildinghub" } = {}) {
     requiredBuildings,
     previewUrl: normalizeOptionalUrl(layout.previewUrl || layout.imageUrl || layout.screenshotUrl),
     repositoryUrl: normalizeOptionalUrl(layout.repositoryUrl || layout.repoUrl || layout.repository),
+    ...(publisher ? { publisher } : {}),
     layout: normalizedLayout,
     buildingHub: {
       sourceId,
@@ -586,6 +614,7 @@ function normalizeBuildingHubRecipe(recipe, { sourceId = "buildinghub" } = {}) {
       commit: recipe.commit || recipe.source?.commit,
       commitUrl: recipe.commitUrl || recipe.source?.commitUrl,
       publishedAt: recipe.publishedAt || recipe.source?.publishedAt,
+      publisher: recipe.source?.publisher || recipe.publisher,
     },
   });
 

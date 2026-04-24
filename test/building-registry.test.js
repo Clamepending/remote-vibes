@@ -54,6 +54,12 @@ test("building registry exposes core building manifests", () => {
   assert.equal(googleCalendar.source, "google");
   assert.equal(googleCalendar.onboarding.steps[0].title, "Enable Calendar access");
   assert.equal(googleCalendar.onboarding.steps[0].completeWhen?.buildingAccessConfirmed, true);
+  assert.match(googleCalendar.agentGuide.summary, /create a calendar event|availability/i);
+  assert.ok(googleCalendar.agentGuide.commands.some((command) => command.command.includes("/api/google/calendar/events?calendarId=primary")));
+  assert.ok(googleCalendar.agentGuide.commands.some((command) => command.command.includes("/api/google/calendar/freebusy")));
+  assert.ok(googleCalendar.agentGuide.commands.some((command) => command.command.includes("/api/google/calendar/events\" -H 'Content-Type: application/json'")));
+  assert.ok(googleCalendar.agentGuide.env.some((envVar) => envVar.name === "VIBE_RESEARCH_URL"));
+  assert.ok(googleCalendar.agentGuide.docs.some((doc) => doc.url.includes("developers.google.com/workspace/calendar/api/v3/reference/events")));
 
   const gmail = BUILDING_CATALOG.find((building) => building.id === "gmail");
   assert.equal(gmail.install.system, true);

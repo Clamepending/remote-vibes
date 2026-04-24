@@ -25,6 +25,11 @@ import {
   getBuildingAgentGuidesDir,
 } from "./building-agent-guides.js";
 import { AgentRunTracker } from "./agent-run-tracker.js";
+import {
+  buildProjectedNarrative,
+  classifyPromptEntry,
+  loadProviderBackedNarrative,
+} from "./session-native-narrative.js";
 import { SessionStore } from "./session-store.js";
 import { getLegacyWorkspaceStateDir, getVibeResearchStateDir, getVibeResearchSystemDir } from "./state-paths.js";
 
@@ -61,6 +66,8 @@ const PROVIDER_SESSION_CAPTURE_RETRY_INTERVAL_MS = 5_000;
 const PROVIDER_SESSION_CAPTURE_RETRY_WINDOW_MS = 90_000;
 const CODEX_SESSION_INDEX_LIMIT = 100;
 const CODEX_SESSION_META_READ_LIMIT = 8192;
+const NATIVE_NARRATIVE_EVENT_LIMIT = 128;
+const NATIVE_NARRATIVE_TEXT_LIMIT = 4_000;
 const CLAUDE_SUBAGENT_TRANSCRIPT_READ_LIMIT = 1_000_000;
 const CLAUDE_BACKGROUND_TASK_TAIL_BYTES = 900_000;
 const CLAUDE_BACKGROUND_TASK_STALE_MS = 24 * 60 * 60 * 1000;
@@ -478,6 +485,196 @@ function parseSessionTimestamp(value, fallback) {
   return Number.isFinite(parsed) ? parsed : fallback;
 }
 
+function normalizeNarrativeEventText(value, maxLength = NATIVE_NARRATIVE_TEXT_LIMIT) {
+  const normalized = String(value ?? "")
+    .replace(/\r\n/g, "\n")
+    .replace(/\u0000/g, "")
+    .trim();
+
+  if (!normalized) {
+    return "";
+  }
+
+  if (normalized.length <= maxLength) {
+    return normalized;
+  }
+
+  return `${normalized.slice(0, Math.max(1, maxLength - 1)).trimEnd()}…`;
+}
+
+function buildNarrativeEntryDedupKey(entry) {
+  if (!entry || typeof entry !== "object") {
+    return "";
+  }
+
+  return [
+    entry.kind || "",
+    entry.label || "",
+    normalizeNarrativeEventText(entry.text || "", 1_200),
+    entry.status || "",
+    entry.meta || "",
+  ].join("::");
+}
+
+function shouldPreferNativeBootstrapNarrative(providerId) {
+  return new Set(["codex", "claude", CLAUDE_OLLAMA_PROVIDER_ID, "gemini"]).has(
+    String(providerId || "").trim().toLowerCase(),
+  );
+}
+
+function mergeNarrativeEntries(localEntries = [], providerEntries = [], maxEntries = NATIVE_NARRATIVE_EVENT_LIMIT) {
+  const providerKeys = new Set(
+    providerEntries
+      .filter((entry) => entry?.kind === "user" || entry?.label === "Kickoff")
+      .map((entry) => buildNarrativeEntryDedupKey(entry))
+      .filter(Boolean),
+  );
+
+  const combined = [
+    ...localEntries
+      .filter((entry) => {
+        if (!entry || typeof entry !== "object") {
+          return false;
+        }
+
+        const key = buildNarrativeEntryDedupKey(entry);
+        return !(providerKeys.has(key) && (entry.kind === "user" || entry.label === "Kickoff"));
+      })
+      .map((entry, index) => ({ ...entry, __origin: "local", __index: index })),
+    ...providerEntries.map((entry, index) => ({ ...entry, __origin: "provider", __index: index })),
+  ]
+    .sort((left, right) => {
+      const leftTime = parseSessionTimestamp(left.timestamp, 0);
+      const rightTime = parseSessionTimestamp(right.timestamp, 0);
+
+      if (leftTime !== rightTime) {
+        return leftTime - rightTime;
+      }
+
+      if (left.__origin !== right.__origin) {
+        return left.__origin === "local" ? -1 : 1;
+      }
+
+      return left.__index - right.__index;
+    });
+
+  const deduped = [];
+  let previousKey = "";
+
+  for (const entry of combined) {
+    const { __origin: _origin, __index: _index, ...cleanEntry } = entry;
+    const key = buildNarrativeEntryDedupKey(cleanEntry);
+    if (!cleanEntry.text || !key || key === previousKey) {
+      continue;
+    }
+
+    deduped.push(cleanEntry);
+    previousKey = key;
+  }
+
+  return deduped.slice(Math.max(0, deduped.length - Math.max(1, Number(maxEntries) || NATIVE_NARRATIVE_EVENT_LIMIT)));
+}
+
+function shouldRetainNativeEntryWithProviderNarrative(entry) {
+  if (!entry || typeof entry !== "object") {
+    return false;
+  }
+
+  if (entry.kind === "user") {
+    return true;
+  }
+
+  if (entry.status === "error") {
+    return true;
+  }
+
+  return new Set(["process-exit", "restore-failure", "signal"]).has(String(entry.meta || "").trim().toLowerCase());
+}
+
+function shouldProjectLiveNarrativeOverlay(session, providerNarrative = null) {
+  if (!session || session.status !== "running") {
+    return false;
+  }
+
+  const lastPromptAt = parseSessionTimestamp(session.lastPromptAt, 0);
+  const lastOutputAt = parseSessionTimestamp(session.lastOutputAt || session.updatedAt || session.createdAt, 0);
+
+  if (!lastPromptAt || !lastOutputAt || lastOutputAt < lastPromptAt) {
+    return false;
+  }
+
+  if (!providerNarrative) {
+    return true;
+  }
+
+  const providerUpdatedAt = parseSessionTimestamp(providerNarrative.updatedAt, 0);
+  return lastOutputAt > providerUpdatedAt + 250;
+}
+
+function filterProjectedOverlayEntries(entries = []) {
+  return entries.filter((entry) => {
+    if (!entry?.text || entry.kind === "user") {
+      return false;
+    }
+
+    const normalizedText = String(entry.text || "").replace(/\s+/g, " ").trim();
+    if (!normalizedText) {
+      return false;
+    }
+
+    if (
+      /bypass\s*permissions\s*on|bypasspermissionson|press\s*enter\s*to\s*continue|do\s*you\s*trust\s*the\s*contents\s*of\s*this\s*directory/iu.test(normalizedText)
+      || /use\s*\/skills\s*to\s*list\s*available\s*skills|starting\s*mcp\s*servers|tip:\s*try\s*the\s*codex\s*app/iu.test(normalizedText)
+      || /[─│┃┌┐└┘]{20,}/u.test(entry.text)
+    ) {
+      return false;
+    }
+
+    if (entry.kind === "assistant") {
+      if (normalizedText.length > 700) {
+        return false;
+      }
+
+      const whitespaceCount = (normalizedText.match(/\s/g) || []).length;
+      if ((/^[\u23fa\u23bf\u23f5]/u.test(normalizedText) || /exitcode\d+/iu.test(normalizedText))
+        || (normalizedText.length > 120 && whitespaceCount < 8)) {
+        return false;
+      }
+
+      if (
+        normalizedText.length >= 28
+        && whitespaceCount === 0
+        && /^[\p{L}\p{N}"'`.,!?;:()[\]{}%/+\\-]+$/u.test(normalizedText)
+      ) {
+        return false;
+      }
+
+      if (/\b(?:Bash|ApplyPatch|Edit|Find|Glob|Grep|LS|Open|Read|Search|Task|Write)\(/u.test(normalizedText)) {
+        return false;
+      }
+    }
+
+    if ((entry.kind === "tool" || entry.kind === "status") && normalizedText.length > 500) {
+      return false;
+    }
+
+    return entry.kind === "assistant" || entry.kind === "tool" || entry.kind === "status";
+  });
+}
+
+function timestampNarrativeEntries(entries = [], anchorTimestamp) {
+  const anchorMs = parseSessionTimestamp(anchorTimestamp, Date.now());
+  const count = Array.isArray(entries) ? entries.length : 0;
+
+  return (Array.isArray(entries) ? entries : []).map((entry, index) => {
+    const offset = Math.max(0, count - index - 1) * 40;
+    return {
+      ...entry,
+      timestamp: entry.timestamp || new Date(anchorMs - offset).toISOString(),
+    };
+  });
+}
+
 function normalizeInitialPrompt(value) {
   return String(value || "")
     .replace(/\r\n/g, "\n")
@@ -532,6 +729,27 @@ function providerHasReadyHint(providerId, buffer) {
   }
 
   return true;
+}
+
+function shouldDeferProviderInput(input) {
+  const text = String(input || "");
+  if (!text || (!text.includes("\r") && !text.includes("\n"))) {
+    return false;
+  }
+
+  const strippedText = text.replace(/[\r\n]+/g, "").trim();
+  if (!strippedText) {
+    return false;
+  }
+
+  return !/[\u0000-\u0008\u000b-\u001a\u001c-\u001f\u007f]/u.test(text.replace(/[\r\n\t]+/g, ""));
+}
+
+function getRecentNarrativeInputTexts(entries = [], maxEntries = 8) {
+  return (Array.isArray(entries) ? entries : [])
+    .filter((entry) => entry?.kind === "user" && entry.text)
+    .slice(-Math.max(1, Number(maxEntries) || 8))
+    .map((entry) => entry.text);
 }
 
 function isAgentActivitySession(session) {
@@ -770,6 +988,21 @@ function shellQuote(value) {
 
 function buildShellCommand(command, args = []) {
   return [command, ...args].map((part) => shellQuote(part)).join(" ");
+}
+
+function buildCodexProjectTrustConfig(cwd) {
+  const normalizedCwd = String(cwd || "").trim();
+  if (!normalizedCwd) {
+    return "";
+  }
+
+  const escapedCwd = path.resolve(normalizedCwd).replaceAll("\\", "\\\\").replaceAll("\"", "\\\"");
+  return `projects."${escapedCwd}".trust_level="trusted"`;
+}
+
+function getCodexLaunchArgs(cwd, args = []) {
+  const trustConfig = buildCodexProjectTrustConfig(cwd);
+  return trustConfig ? ["-c", trustConfig, ...args] : [...args];
 }
 
 function getSiblingNodeRuntime(commandPath) {
@@ -1667,6 +1900,7 @@ async function readCodexSessionMetaFile(filePath) {
       id: sessionMeta.id,
       cwd: normalizeSessionPath(sessionMeta.cwd),
       updated: Date.parse(payload.timestamp || sessionMeta.timestamp || 0) || 0,
+      filePath,
     };
   } catch {
     return null;
@@ -1876,6 +2110,7 @@ async function listCodexTrackedSessions(homeDir = os.homedir()) {
           id: entry.id,
           updated: nextUpdated,
           cwd: entry.cwd || existingEntry?.cwd || null,
+          filePath: entry.filePath || existingEntry?.filePath || null,
         });
       }
     }
@@ -1948,23 +2183,39 @@ async function listGeminiSessions(cwd, homeDir = os.homedir()) {
   const sessions = [];
 
   for (const fileName of files) {
-    if (!fileName.startsWith("session-") || !fileName.endsWith(".json")) {
+    if (
+      !fileName.startsWith("session-")
+      || (!fileName.endsWith(".json") && !fileName.endsWith(".jsonl"))
+    ) {
       continue;
     }
 
     try {
-      const payload = JSON.parse(await readFile(path.join(chatsDir, fileName), "utf8"));
-      if (
-        typeof payload?.sessionId !== "string"
-        || !payload.sessionId
-        || !hasGeminiConversationMessages(payload.messages)
-      ) {
+      const filePath = path.join(chatsDir, fileName);
+      const contents = await readFile(filePath, "utf8");
+      const firstLine = contents.split(/\r?\n/, 1)[0] || "";
+      const payload = JSON.parse(fileName.endsWith(".jsonl") ? firstLine : contents);
+      const hasMessages = fileName.endsWith(".jsonl")
+        ? contents
+          .split(/\r?\n/)
+          .slice(1)
+          .some((line) => {
+            try {
+              const entry = JSON.parse(line);
+              return entry?.type === "user" || entry?.type === "assistant" || entry?.type === "response";
+            } catch {
+              return false;
+            }
+          })
+        : hasGeminiConversationMessages(payload.messages);
+      if (typeof payload?.sessionId !== "string" || !payload.sessionId || !hasMessages) {
         continue;
       }
 
       sessions.push({
         id: payload.sessionId,
         updated: Date.parse(payload.lastUpdated || payload.startTime || 0) || 0,
+        filePath,
       });
     } catch {
       // Ignore malformed Gemini session files.
@@ -1974,6 +2225,52 @@ async function listGeminiSessions(cwd, homeDir = os.homedir()) {
   return sessions
     .sort((left, right) => Number(right.updated || 0) - Number(left.updated || 0))
     .slice(0, PROVIDER_SESSION_LIST_LIMIT);
+}
+
+function findClaudeSessionFile(session, homeDirOrEnv = process.env) {
+  const projectDir = getClaudeProjectDirForCwd(session?.cwd, homeDirOrEnv);
+  if (!projectDir) {
+    return "";
+  }
+
+  for (const sessionId of getClaudeSessionIdsForSession(session)) {
+    const filePath = path.join(projectDir, `${sessionId}.jsonl`);
+    try {
+      if (statSync(filePath).isFile()) {
+        return filePath;
+      }
+    } catch {
+      // Keep looking for another Claude session artifact.
+    }
+  }
+
+  const fallbackSessionId = listClaudeSessionsForCwd(session?.cwd, homeDirOrEnv)[0]?.id || "";
+  if (!fallbackSessionId) {
+    return "";
+  }
+
+  const fallbackFilePath = path.join(projectDir, `${fallbackSessionId}.jsonl`);
+  try {
+    return statSync(fallbackFilePath).isFile() ? fallbackFilePath : "";
+  } catch {
+    return "";
+  }
+}
+
+async function findGeminiSessionFile(cwd, sessionId, homeDir = os.homedir()) {
+  const knownSessions = await listGeminiSessions(cwd, homeDir);
+  if (!knownSessions.length) {
+    return "";
+  }
+
+  if (typeof sessionId === "string" && sessionId.trim()) {
+    const matchingSession = knownSessions.find((entry) => entry.id === sessionId);
+    if (matchingSession?.filePath) {
+      return matchingSession.filePath;
+    }
+  }
+
+  return String(knownSessions[0]?.filePath || "");
 }
 
 export class SessionManager {
@@ -2276,6 +2573,149 @@ export class SessionManager {
   getSession(sessionId) {
     this.consumePendingRenameRequests();
     return this.sessions.get(sessionId) ?? null;
+  }
+
+  async getSessionNarrative(sessionId, { maxEntries = 96 } = {}) {
+    this.consumePendingRenameRequests();
+    const session = this.sessions.get(sessionId);
+
+    if (!session) {
+      return null;
+    }
+
+    const serializedSession = this.serializeSession(session);
+    const nativeEntries = this.getNativeNarrativeEntries(session, { maxEntries, includePlaceholder: false });
+    const recentInputTexts = getRecentNarrativeInputTexts(nativeEntries);
+    const buildProjectedOverlayEntries = () => {
+      const projectedNarrative = buildProjectedNarrative({
+        providerId: serializedSession.providerId,
+        providerLabel: serializedSession.providerLabel,
+        transcript: session.buffer,
+        maxEntries,
+        recentInputs: recentInputTexts,
+      });
+
+      return {
+        sourceLabel: projectedNarrative.sourceLabel,
+        entries: timestampNarrativeEntries(
+          filterProjectedOverlayEntries(projectedNarrative.entries || []).slice(-Math.max(1, Math.min(12, maxEntries))),
+          session.lastOutputAt || session.updatedAt || session.createdAt,
+        ),
+      };
+    };
+    let filePath = "";
+
+    try {
+      if (session.providerId === "codex") {
+        const codexRootDir = getCodexRootDir(this.userHomeDir);
+        const referenceTime = Date.parse(session.updatedAt || session.createdAt || "") || Date.now();
+        const knownSessionId = session.providerState?.sessionId || "";
+
+        if (knownSessionId) {
+          filePath = String((await findCodexSessionMeta(codexRootDir, knownSessionId, referenceTime))?.filePath || "");
+        }
+
+        if (!filePath) {
+          const transcriptSession = matchCodexSessionsByCwd(await listCodexTranscriptSessions(this.userHomeDir), session.cwd)[0] || null;
+          if (transcriptSession?.filePath) {
+            filePath = transcriptSession.filePath;
+          }
+        }
+
+        if (!filePath) {
+          const trackedSession = matchCodexSessionsByCwd(await listCodexTrackedSessions(this.userHomeDir), session.cwd)[0] || null;
+          const trackedMeta = trackedSession?.filePath
+            ? trackedSession
+            : trackedSession?.id
+              ? await findCodexSessionMeta(codexRootDir, trackedSession.id, trackedSession.updated || referenceTime)
+              : null;
+          filePath = String(trackedMeta?.filePath || "");
+        }
+      } else if (isClaudeProviderId(session.providerId)) {
+        filePath = findClaudeSessionFile(session, this.userHomeDir);
+      } else if (session.providerId === "gemini") {
+        filePath = await findGeminiSessionFile(session.cwd, session.providerState?.sessionId || "", this.userHomeDir);
+      }
+    } catch (error) {
+      console.warn("[vibe-research] failed to locate provider narrative artifact", error);
+    }
+
+    if (filePath) {
+      try {
+        const providerNarrative = await loadProviderBackedNarrative({
+          providerId: session.providerId,
+          filePath,
+          session: serializedSession,
+          maxEntries,
+        });
+
+        if (providerNarrative) {
+          const relevantNativeEntries = nativeEntries.filter(shouldRetainNativeEntryWithProviderNarrative);
+          const projectedOverlay = shouldProjectLiveNarrativeOverlay(session, providerNarrative)
+            ? buildProjectedOverlayEntries()
+            : { sourceLabel: "", entries: [] };
+          return {
+            ...providerNarrative,
+            sourceLabel: projectedOverlay.entries.length
+              ? `${providerNarrative.sourceLabel} + live CLI overlay`
+              : providerNarrative.sourceLabel,
+            entries: mergeNarrativeEntries(
+              [...relevantNativeEntries, ...projectedOverlay.entries],
+              providerNarrative.entries || [],
+              maxEntries,
+            ),
+          };
+        }
+      } catch (error) {
+        console.warn("[vibe-research] failed to load provider narrative", error);
+      }
+    }
+
+    if (shouldPreferNativeBootstrapNarrative(serializedSession.providerId)) {
+      const projectedOverlay = shouldProjectLiveNarrativeOverlay(session)
+        ? buildProjectedOverlayEntries()
+        : { sourceLabel: "", entries: [] };
+      return {
+        providerBacked: false,
+        providerId: serializedSession.providerId,
+        providerLabel: serializedSession.providerLabel,
+        sourceLabel: projectedOverlay.entries.length
+          ? "Vibe Research native events + live CLI overlay"
+          : "Vibe Research native session events",
+        updatedAt: serializedSession.updatedAt || serializedSession.createdAt || "",
+        entries: projectedOverlay.entries.length
+          ? mergeNarrativeEntries(
+            nativeEntries.length
+              ? nativeEntries
+              : this.getNativeNarrativeEntries(session, { maxEntries, includePlaceholder: true }),
+            projectedOverlay.entries,
+            maxEntries,
+          )
+          : nativeEntries.length
+            ? nativeEntries
+            : this.getNativeNarrativeEntries(session, { maxEntries, includePlaceholder: true }),
+      };
+    }
+
+    const projectedNarrative = buildProjectedNarrative({
+      providerId: serializedSession.providerId,
+      providerLabel: serializedSession.providerLabel,
+      transcript: session.buffer,
+      maxEntries,
+      recentInputs: recentInputTexts,
+    });
+
+    return {
+      ...projectedNarrative,
+      sourceLabel: nativeEntries.length ? "Vibe Research native events + CLI projection" : projectedNarrative.sourceLabel,
+      entries: mergeNarrativeEntries(
+        nativeEntries.length
+          ? nativeEntries
+          : this.getNativeNarrativeEntries(session, { maxEntries, includePlaceholder: true }),
+        projectedNarrative.entries || [],
+        maxEntries,
+      ),
+    };
   }
 
   buildSessionEnvironment(session, providerId = session.providerId) {
@@ -2680,6 +3120,23 @@ export class SessionManager {
     });
 
     this.sessions.set(session.id, session);
+    this.pushNativeNarrativeEntry(session, {
+      kind: "status",
+      label: "Starting",
+      text: `Starting ${provider.label} in ${session.cwd}.`,
+      timestamp: createdAt,
+      meta: "launch",
+    });
+
+    if (provider.id !== "shell") {
+      this.pushNativeNarrativeEntry(session, {
+        kind: "status",
+        label: "Native",
+        text: "Native view is live. Switch to Terminal any time for the raw CLI.",
+        timestamp: createdAt,
+        meta: "owned-ui",
+      });
+    }
 
     try {
       this.startSession(session, provider);
@@ -2850,6 +3307,7 @@ export class SessionManager {
     session.skipExitHandling = true;
     session.restoreOnStartup = false;
     this.clearPendingMetaBroadcast(session);
+    this.clearPendingProviderInputRetry(session);
     this.clearPendingProviderCaptureRetry(session);
     this.clearSessionActivityTimer(session);
     session.clients.clear();
@@ -2898,14 +3356,11 @@ export class SessionManager {
       return false;
     }
 
-    this.queueAgentRunTracking(this.agentRunTracker?.handleInput(session, input));
-    session.pty.write(input);
-    this.trackSessionInputActivity(session, input);
-    this.maybeAutoRenameSessionFromInput(session, input);
-    this.maybeRetryPendingProviderCaptureFromInput(session, input);
-    session.updatedAt = new Date().toISOString();
-    this.schedulePersist();
-    return true;
+    if (this.shouldQueueProviderInputUntilReady(session, input)) {
+      return this.queueProviderInputUntilReady(session, input);
+    }
+
+    return this.performSessionWrite(session, input);
   }
 
   resize(sessionId, cols, rows) {
@@ -2934,6 +3389,7 @@ export class SessionManager {
 
     for (const session of this.sessions.values()) {
       this.clearPendingMetaBroadcast(session);
+      this.clearPendingProviderInputRetry(session);
       this.clearPendingProviderCaptureRetry(session);
       this.clearSessionActivityTimer(session);
 
@@ -3200,6 +3656,8 @@ export class SessionManager {
     cols = 120,
     rows = 34,
     buffer = "",
+    nativeNarrativeEntries = [],
+    nativeNarrativeInputBuffer = "",
     restoreOnStartup = false,
     providerState = null,
     autoRenameEnabled = false,
@@ -3227,6 +3685,26 @@ export class SessionManager {
       rows,
       pty: null,
       buffer: trimBuffer(buffer || ""),
+      nativeNarrativeEntries: Array.isArray(nativeNarrativeEntries)
+        ? nativeNarrativeEntries
+          .map((entry) => (
+            entry && typeof entry === "object"
+              ? {
+                  id: String(entry.id || randomUUID()),
+                  kind: String(entry.kind || "status"),
+                  label: String(entry.label || "Activity"),
+                  text: normalizeNarrativeEventText(entry.text || ""),
+                  timestamp: entry.timestamp || null,
+                  status: entry.status || null,
+                  meta: entry.meta || null,
+                  outputPreview: entry.outputPreview || "",
+                }
+              : null
+          ))
+          .filter((entry) => entry?.text)
+          .slice(-NATIVE_NARRATIVE_EVENT_LIMIT)
+        : [],
+      nativeNarrativeInputBuffer: String(nativeNarrativeInputBuffer || ""),
       clients: new Set(),
       metaBroadcastTimer: null,
       restoreOnStartup,
@@ -3236,11 +3714,266 @@ export class SessionManager {
       autoRenameBuffer: "",
       activityInputBuffer: "",
       activityIdleTimer: null,
+      pendingProviderInputs: [],
+      pendingProviderInputRetryTimer: null,
+      providerReadyNotified: false,
       pendingProviderCapture: null,
       providerCapturePromise: null,
       providerCaptureRetryTimer: null,
       skipExitHandling: false,
     };
+  }
+
+  pushNativeNarrativeEntry(session, entry) {
+    if (!session || !entry || typeof entry !== "object") {
+      return false;
+    }
+
+    const text = normalizeNarrativeEventText(entry.text || "");
+    if (!text) {
+      return false;
+    }
+
+    const normalizedEntry = {
+      id: String(entry.id || randomUUID()),
+      kind: String(entry.kind || "status"),
+      label: String(entry.label || "Activity"),
+      text,
+      timestamp: entry.timestamp || new Date().toISOString(),
+      status: entry.status || null,
+      meta: entry.meta || null,
+      outputPreview: normalizeNarrativeEventText(entry.outputPreview || "", 2_200),
+    };
+
+    const previousEntry = session.nativeNarrativeEntries[session.nativeNarrativeEntries.length - 1] || null;
+    if (
+      previousEntry
+      && buildNarrativeEntryDedupKey(previousEntry) === buildNarrativeEntryDedupKey(normalizedEntry)
+    ) {
+      return false;
+    }
+
+    session.nativeNarrativeEntries.push(normalizedEntry);
+    if (session.nativeNarrativeEntries.length > NATIVE_NARRATIVE_EVENT_LIMIT) {
+      session.nativeNarrativeEntries.splice(0, session.nativeNarrativeEntries.length - NATIVE_NARRATIVE_EVENT_LIMIT);
+    }
+
+    this.schedulePersist();
+    return true;
+  }
+
+  recordNativeNarrativeInput(session, input) {
+    if (!session || session.providerId === "shell") {
+      return;
+    }
+
+    const parsed = consumePromptInput(session.nativeNarrativeInputBuffer || "", input);
+    session.nativeNarrativeInputBuffer = parsed.buffer;
+
+    for (const completedLine of parsed.completedLines) {
+      const normalizedLine = normalizeInitialPrompt(completedLine);
+      if (!normalizedLine) {
+        continue;
+      }
+
+      if (
+        isClaudeProviderId(session.providerId)
+        && normalizedLine === "1"
+        && hasClaudeWorkspaceTrustPrompt(session.buffer)
+      ) {
+        continue;
+      }
+
+      const classified = classifyPromptEntry(normalizedLine);
+      if (classified.kind === "hide" || !classified.text) {
+        continue;
+      }
+
+      this.pushNativeNarrativeEntry(session, {
+        kind: classified.kind === "status" ? "status" : "user",
+        label: classified.kind === "status" ? "Kickoff" : "You",
+        text: classified.text,
+        timestamp: new Date().toISOString(),
+      });
+    }
+
+    if (parsed.interrupted) {
+      this.pushNativeNarrativeEntry(session, {
+        kind: "status",
+        label: "Interrupt",
+        text: "Interrupted the current run.",
+        timestamp: new Date().toISOString(),
+        meta: "signal",
+      });
+    }
+  }
+
+  getNativeNarrativeEntries(session, { maxEntries = 96, includePlaceholder = true } = {}) {
+    const entries = Array.isArray(session?.nativeNarrativeEntries)
+      ? session.nativeNarrativeEntries.slice(-Math.max(1, Number(maxEntries) || 96))
+      : [];
+
+    if (entries.length) {
+      return entries;
+    }
+
+    if (!includePlaceholder) {
+      return [];
+    }
+
+    const timestamp = session?.updatedAt || session?.createdAt || new Date().toISOString();
+    if (session?.status === "exited") {
+      return [{
+        id: `${session.id}-native-exited`,
+        kind: "status",
+        label: "Exited",
+        text: `${session.providerLabel || "Session"} exited.`,
+        timestamp,
+        meta: "offline",
+      }];
+    }
+
+    return [{
+      id: `${session?.id || "session"}-native-starting`,
+      kind: "status",
+      label: "Starting",
+      text: `Starting ${session?.providerLabel || "session"}. Native view will switch to provider-backed conversation data as it becomes available.`,
+      timestamp,
+      meta: "bootstrapping",
+    }];
+  }
+
+  clearPendingProviderInputRetry(session) {
+    if (!session?.pendingProviderInputRetryTimer) {
+      return;
+    }
+
+    clearTimeout(session.pendingProviderInputRetryTimer);
+    session.pendingProviderInputRetryTimer = null;
+  }
+
+  isProviderReadyForInput(session) {
+    if (!session || session.providerId === "shell") {
+      return true;
+    }
+
+    return providerHasReadyHint(session.providerId, session.buffer);
+  }
+
+  shouldQueueProviderInputUntilReady(session, input) {
+    if (
+      !session
+      || session.status === "exited"
+      || !session.pty
+      || session.providerId === "shell"
+      || session.lastPromptAt
+      || !shouldDeferProviderInput(input)
+    ) {
+      return false;
+    }
+
+    if (isClaudeProviderId(session.providerId) && hasClaudeWorkspaceTrustPrompt(session.buffer)) {
+      return false;
+    }
+
+    const provider = this.getProvider(session.providerId);
+    if (!provider?.launchCommand || this.isProviderReadyForInput(session)) {
+      return false;
+    }
+
+    return true;
+  }
+
+  performSessionWrite(session, input, { recordNarrativeInput = true } = {}) {
+    if (!session || session.status === "exited" || !session.pty) {
+      return false;
+    }
+
+    this.queueAgentRunTracking(this.agentRunTracker?.handleInput(session, input));
+    session.pty.write(input);
+
+    if (recordNarrativeInput) {
+      this.recordNativeNarrativeInput(session, input);
+    }
+
+    this.trackSessionInputActivity(session, input);
+    this.maybeAutoRenameSessionFromInput(session, input);
+    this.maybeRetryPendingProviderCaptureFromInput(session, input);
+    session.updatedAt = new Date().toISOString();
+    this.schedulePersist();
+    return true;
+  }
+
+  schedulePendingProviderInputRetry(session) {
+    if (!session?.pendingProviderInputs?.length || session.pendingProviderInputRetryTimer) {
+      return;
+    }
+
+    session.pendingProviderInputRetryTimer = this.setTimeoutFn(() => {
+      session.pendingProviderInputRetryTimer = null;
+      this.flushDeferredProviderInputsIfReady(session);
+    }, this.initialPromptRetryMs);
+  }
+
+  flushDeferredProviderInputsIfReady(session) {
+    if (!session?.pendingProviderInputs?.length) {
+      this.clearPendingProviderInputRetry(session);
+      return false;
+    }
+
+    if (session.status === "exited" || !session.pty) {
+      session.pendingProviderInputs = [];
+      this.clearPendingProviderInputRetry(session);
+      return false;
+    }
+
+    const oldestQueuedAt = Math.min(
+      ...session.pendingProviderInputs.map((entry) => Number(entry?.queuedAt || 0)).filter((value) => Number.isFinite(value)),
+    );
+    const timedOut = Number.isFinite(oldestQueuedAt) && oldestQueuedAt > 0
+      ? Date.now() - oldestQueuedAt >= this.initialPromptReadyTimeoutMs
+      : false;
+
+    if (!timedOut && !this.isProviderReadyForInput(session)) {
+      this.schedulePendingProviderInputRetry(session);
+      return false;
+    }
+
+    const queuedInputs = session.pendingProviderInputs.slice();
+    session.pendingProviderInputs = [];
+    this.clearPendingProviderInputRetry(session);
+
+    for (const entry of queuedInputs) {
+      this.performSessionWrite(session, entry.data, { recordNarrativeInput: false });
+    }
+
+    this.scheduleSessionMetaBroadcast(session, { immediate: true });
+    return queuedInputs.length > 0;
+  }
+
+  queueProviderInputUntilReady(session, input) {
+    if (!session) {
+      return false;
+    }
+
+    session.pendingProviderInputs.push({
+      data: input,
+      queuedAt: Date.now(),
+    });
+    this.recordNativeNarrativeInput(session, input);
+    this.maybeAutoRenameSessionFromInput(session, input);
+    this.pushNativeNarrativeEntry(session, {
+      kind: "status",
+      label: "Waiting",
+      text: `Holding your message until ${session.providerLabel || "the provider"} finishes booting.`,
+      timestamp: new Date().toISOString(),
+      meta: "queued-input",
+    });
+    session.updatedAt = new Date().toISOString();
+    this.scheduleSessionMetaBroadcast(session, { immediate: true });
+    this.schedulePendingProviderInputRetry(session);
+    this.schedulePersist();
+    return true;
   }
 
   clearPendingProviderCaptureRetry(session) {
@@ -3251,6 +3984,7 @@ export class SessionManager {
   }
 
   updateProviderState(session, nextProviderState) {
+    const previousSessionId = session?.providerState?.sessionId || "";
     const normalizedState =
       nextProviderState && typeof nextProviderState === "object"
         ? { ...(session.providerState || {}), ...nextProviderState }
@@ -3265,9 +3999,19 @@ export class SessionManager {
 
     session.providerState = normalizedState;
     if (normalizedState?.sessionId) {
+      this.clearPendingProviderInputRetry(session);
       this.clearPendingProviderCaptureRetry(session);
       session.pendingProviderCapture = null;
       session.providerCapturePromise = null;
+    }
+    if (normalizedState?.sessionId && normalizedState.sessionId !== previousSessionId) {
+      this.pushNativeNarrativeEntry(session, {
+        kind: "status",
+        label: "Connected",
+        text: `${session.providerLabel || "Provider"} transcript connected.`,
+        timestamp: new Date().toISOString(),
+        meta: "provider-backed",
+      });
     }
     session.updatedAt = new Date().toISOString();
     this.schedulePersist({ immediate: true });
@@ -3296,12 +4040,14 @@ export class SessionManager {
 
   setPendingProviderCapture(session, providerId, baselineSessionIds = [], launchedAt = null, launchCommand = null) {
     if (!shouldTrackProviderSession(providerId)) {
+      this.clearPendingProviderInputRetry(session);
       this.clearPendingProviderCaptureRetry(session);
       session.pendingProviderCapture = null;
       session.providerCapturePromise = null;
       return;
     }
 
+    this.clearPendingProviderInputRetry(session);
     this.clearPendingProviderCaptureRetry(session);
     session.pendingProviderCapture = {
       providerId,
@@ -3315,6 +4061,7 @@ export class SessionManager {
 
   schedulePendingProviderCaptureRetry(session, delayMs = PROVIDER_SESSION_CAPTURE_RETRY_INTERVAL_MS) {
     if (!session?.pendingProviderCapture || session.providerState?.sessionId || !session.pty) {
+      this.clearPendingProviderInputRetry(session);
       this.clearPendingProviderCaptureRetry(session);
       return;
     }
@@ -3444,8 +4191,8 @@ export class SessionManager {
 
     if (provider.id === "codex") {
       const launchCommand = getManagedProviderLaunchCommand(provider);
-      const resumeLastCommand = buildShellCommand(launchCommand, ["resume", "--last"]);
-      const createCommand = buildShellCommand(launchCommand);
+      const createCommand = buildShellCommand(launchCommand, getCodexLaunchArgs(session.cwd));
+      const resumeLastCommand = buildShellCommand(launchCommand, getCodexLaunchArgs(session.cwd, ["resume", "--last"]));
       const knownSessions = matchCodexSessionsByCwd(
         await listCodexTrackedSessions(this.userHomeDir),
         session.cwd,
@@ -3456,7 +4203,7 @@ export class SessionManager {
         this.setPendingProviderCapture(session, null);
         return {
           commandString: buildFallbackCommand([
-            buildShellCommand(launchCommand, ["resume", existingSessionId]),
+            buildShellCommand(launchCommand, getCodexLaunchArgs(session.cwd, ["resume", existingSessionId])),
             createCommand,
           ]),
           afterLaunch: null,
@@ -3472,7 +4219,7 @@ export class SessionManager {
         }
 
         const resumeCommand = restoreSessionId
-          ? buildShellCommand(launchCommand, ["resume", restoreSessionId])
+          ? buildShellCommand(launchCommand, getCodexLaunchArgs(session.cwd, ["resume", restoreSessionId]))
           : null;
 
         return {
@@ -3782,6 +4529,10 @@ export class SessionManager {
     session.exitSignal = null;
     session.restoreOnStartup = true;
     session.activityInputBuffer = "";
+    session.nativeNarrativeInputBuffer = "";
+    session.pendingProviderInputs = [];
+    session.providerReadyNotified = false;
+    this.clearPendingProviderInputRetry(session);
     session.updatedAt = new Date().toISOString();
     if (terminalLaunch.backend === "tmux") {
       this.updateProviderState(session, {
@@ -3829,6 +4580,26 @@ export class SessionManager {
           "",
         ].filter(Boolean);
 
+    this.pushNativeNarrativeEntry(session, {
+      kind: "status",
+      label: restored ? "Restored" : "Launch",
+      text: restored
+        ? `Restored ${provider.label} in ${sessionCwd}.`
+        : `Launching ${provider.label} in ${sessionCwd}.`,
+      timestamp: session.updatedAt,
+      meta: terminalLaunch.backend === "tmux" ? "persistent-terminal" : "pty",
+    });
+
+    if (provider.launchCommand && !terminalLaunch.attachedExisting) {
+      this.pushNativeNarrativeEntry(session, {
+        kind: "status",
+        label: "Waiting",
+        text: `Waiting for ${provider.label} to expose native session history.`,
+        timestamp: session.updatedAt,
+        meta: "bootstrapping",
+      });
+    }
+
     this.pushOutput(session, bannerLines.join("\r\n"));
 
     ptyProcess.onData((chunk) => {
@@ -3837,11 +4608,23 @@ export class SessionManager {
       this.agentRunTracker?.handleOutput(session, chunk);
       this.trackSessionOutputActivity(session);
       this.pushOutput(session, chunk);
+      if (!session.providerReadyNotified && this.isProviderReadyForInput(session)) {
+        session.providerReadyNotified = true;
+        this.pushNativeNarrativeEntry(session, {
+          kind: "status",
+          label: "Ready",
+          text: `${provider.label} is ready for prompts.`,
+          timestamp: session.updatedAt,
+          meta: "provider-ready",
+        });
+      }
+      this.flushDeferredProviderInputsIfReady(session);
       this.scheduleSessionMetaBroadcast(session);
     });
 
     ptyProcess.onExit(({ exitCode, signal }) => {
       session.pty = null;
+      this.clearPendingProviderInputRetry(session);
       this.clearPendingProviderCaptureRetry(session);
       this.clearSessionActivityTimer(session);
 
@@ -3857,6 +4640,13 @@ export class SessionManager {
         session.exitSignal = null;
         session.restoreOnStartup = true;
         session.updatedAt = new Date().toISOString();
+        this.pushNativeNarrativeEntry(session, {
+          kind: "status",
+          label: "Reattaching",
+          text: `Persistent terminal detached; reattaching ${tmuxSessionName}.`,
+          timestamp: session.updatedAt,
+          meta: "persistent-terminal",
+        });
         this.pushOutput(
           session,
           `\r\n\u001b[1;36m[vibe-research]\u001b[0m persistent terminal detached; reattaching ${tmuxSessionName}\r\n`,
@@ -3880,7 +4670,17 @@ export class SessionManager {
       session.exitSignal = signal ?? null;
       session.restoreOnStartup = false;
       session.activityStatus = "idle";
+      session.pendingProviderInputs = [];
+      this.clearPendingProviderInputRetry(session);
       session.updatedAt = new Date().toISOString();
+      this.pushNativeNarrativeEntry(session, {
+        kind: "status",
+        label: "Exited",
+        text: `Session exited (code ${exitCode}${signal ? `, signal ${signal}` : ""}).`,
+        timestamp: session.updatedAt,
+        status: exitCode === 0 ? "done" : "error",
+        meta: "process-exit",
+      });
 
       this.pushOutput(
         session,
@@ -3921,6 +4721,8 @@ export class SessionManager {
       cols: Number(snapshot.cols) > 0 ? Number(snapshot.cols) : 120,
       rows: Number(snapshot.rows) > 0 ? Number(snapshot.rows) : 34,
       buffer: snapshot.buffer || "",
+      nativeNarrativeEntries: snapshot.nativeNarrativeEntries || [],
+      nativeNarrativeInputBuffer: snapshot.nativeNarrativeInputBuffer || "",
       restoreOnStartup: Boolean(snapshot.restoreOnStartup),
       providerState: snapshot.providerState || null,
       occupationId: snapshot.occupationId || snapshot.promptId || this.occupationId,
@@ -3955,6 +4757,13 @@ export class SessionManager {
     if (revivePersistentTerminal) {
       session.restoreOnStartup = true;
       session.status = "running";
+      this.pushNativeNarrativeEntry(session, {
+        kind: "status",
+        label: "Reattaching",
+        text: `Persistent terminal still exists; reattaching ${session.providerState.tmuxSessionName}.`,
+        timestamp: new Date().toISOString(),
+        meta: "persistent-terminal",
+      });
       this.pushOutput(
         session,
         `\r\n\u001b[1;36m[vibe-research]\u001b[0m persistent terminal still exists; reattaching ${session.providerState.tmuxSessionName}\r\n`,
@@ -3979,6 +4788,14 @@ export class SessionManager {
     session.activityStatus = "idle";
     session.updatedAt = new Date().toISOString();
     session.pty = null;
+    this.pushNativeNarrativeEntry(session, {
+      kind: "status",
+      label: "Restore failed",
+      text: message,
+      timestamp: session.updatedAt,
+      status: "error",
+      meta: "restore-failure",
+    });
     this.pushOutput(session, buildPersistedExitMessage(message));
   }
 
@@ -3990,6 +4807,8 @@ export class SessionManager {
     return {
       ...this.serializeSession(session),
       buffer: session.buffer,
+      nativeNarrativeEntries: session.nativeNarrativeEntries,
+      nativeNarrativeInputBuffer: session.nativeNarrativeInputBuffer,
       providerState: session.providerState,
       restoreOnStartup: session.restoreOnStartup,
     };

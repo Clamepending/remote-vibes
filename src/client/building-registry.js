@@ -682,6 +682,42 @@ const CORE_BUILDING_MANIFESTS = [
       label: "Google access",
       detail: "Calendar access is enabled for this town. Keep the calendar scope narrow enough for agents to reason about safely.",
     },
+    agentGuide: {
+      summary: "Use Google Calendar when an agent needs to inspect events, check availability, or create a calendar event for the connected Google account.",
+      useCases: [
+        "List upcoming events on the primary calendar before proposing a meeting time.",
+        "Check free/busy coverage across one or more calendars before scheduling.",
+        "Create a simple calendar event after the human confirms the title and time.",
+      ],
+      commands: [
+        {
+          label: "List events",
+          command: "curl -s \"$VIBE_RESEARCH_URL/api/google/calendar/events?calendarId=primary&timeMin=2026-04-23T00:00:00Z&timeMax=2026-04-24T00:00:00Z\"",
+          detail: "Returns events from the connected calendar within the requested time range.",
+        },
+        {
+          label: "Check free busy",
+          command: "curl -s \"$VIBE_RESEARCH_URL/api/google/calendar/freebusy\" -H 'Content-Type: application/json' -d '{\"timeMin\":\"2026-04-23T00:00:00Z\",\"timeMax\":\"2026-04-24T00:00:00Z\",\"calendars\":[\"primary\"]}'",
+          detail: "Checks availability windows without creating anything.",
+        },
+        {
+          label: "Create event",
+          command: "curl -s \"$VIBE_RESEARCH_URL/api/google/calendar/events\" -H 'Content-Type: application/json' -d '{\"calendarId\":\"primary\",\"event\":{\"summary\":\"First day on Vibe Research\",\"start\":{\"dateTime\":\"2026-04-23T17:00:00Z\"},\"end\":{\"dateTime\":\"2026-04-23T17:30:00Z\"}}}'",
+          detail: "Creates a calendar event on the selected calendar.",
+        },
+      ],
+      docs: [
+        { label: "Google Calendar API events", url: "https://developers.google.com/workspace/calendar/api/v3/reference/events" },
+        { label: "Google Calendar API freeBusy", url: "https://developers.google.com/workspace/calendar/api/v3/reference/freebusy/query" },
+      ],
+      env: [
+        { name: "VIBE_RESEARCH_URL", detail: "Base URL for the current Vibe Research instance." },
+      ],
+      setup: [
+        "Confirm Google Calendar access from the building detail before sending API requests.",
+        "Prefer checking events or free/busy before creating a new meeting.",
+      ],
+    },
     onboarding: {
       variables: [
         { label: "Google account", value: "Calendar access enabled", required: true },
@@ -766,7 +802,7 @@ const CORE_BUILDING_MANIFESTS = [
       steps: [
         {
           title: "Log in to BuilderHub",
-          detail: "Open the BuildingHub building and click Log in with Google or GitHub.",
+          detail: "Open the BuildingHub building and click Log in with GitHub.",
           setupLabel: "Open login",
           completeWhen: { buildingAccessConfirmed: true },
         },

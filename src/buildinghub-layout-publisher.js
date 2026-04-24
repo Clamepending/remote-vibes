@@ -17,6 +17,16 @@ const DEFAULT_LAYOUT_DECORATION = Object.freeze({
 });
 const MAX_TEXT_LENGTH = 2_000;
 const IMAGE_EXTENSIONS = new Set([".apng", ".avif", ".bmp", ".gif", ".jpeg", ".jpg", ".png", ".webp"]);
+const IMAGE_MIME_TYPES = new Map([
+  [".apng", "image/apng"],
+  [".avif", "image/avif"],
+  [".bmp", "image/bmp"],
+  [".gif", "image/gif"],
+  [".jpeg", "image/jpeg"],
+  [".jpg", "image/jpeg"],
+  [".png", "image/png"],
+  [".webp", "image/webp"],
+]);
 
 function expandHomePath(value) {
   const rawValue = String(value || "").trim();
@@ -41,6 +51,78 @@ function normalizeText(value, limit = MAX_TEXT_LENGTH) {
     .replace(/\s+/g, " ")
     .trim();
   return text.slice(0, Math.max(1, limit));
+}
+
+function normalizeUrl(value) {
+  const rawValue = String(value || "").trim();
+  if (!rawValue) {
+    return "";
+  }
+
+  try {
+    const url = new URL(rawValue);
+    return url.protocol === "http:" || url.protocol === "https:" ? url.toString() : "";
+  } catch {
+    return "";
+  }
+}
+
+function normalizePublisher(value = {}) {
+  if (!value || typeof value !== "object" || Array.isArray(value)) {
+    return null;
+  }
+
+  const provider = normalizeText(value.provider, 40).toLowerCase();
+  const id = normalizeText(value.id, 120);
+  const login = normalizeText(value.login || value.username, 120);
+  const name = normalizeText(value.name || value.displayName, 160);
+  const profileUrl = normalizeUrl(value.profileUrl || value.url || value.htmlUrl);
+  const avatarUrl = normalizeUrl(value.avatarUrl || value.avatar_url);
+
+  if (!provider && !id && !login && !name && !profileUrl) {
+    return null;
+  }
+
+  return {
+    provider,
+    id,
+    login,
+    name,
+    profileUrl,
+    avatarUrl,
+  };
+}
+
+function getPublisherLabel(publisher) {
+  if (!publisher) {
+    return "";
+  }
+
+  if (publisher.login) {
+    return `@${publisher.login}`;
+  }
+
+  return publisher.name || "";
+}
+
+function renderPublisherMarkdown(publisher) {
+  const label = getPublisherLabel(publisher);
+  if (!label) {
+    return "";
+  }
+
+  return publisher.profileUrl ? `[${label}](${publisher.profileUrl})` : label;
+}
+
+function renderPublisherHtml(publisher) {
+  const label = getPublisherLabel(publisher);
+  if (!label) {
+    return "";
+  }
+
+  return publisher.profileUrl
+    ? `<a href="${escapeHtml(publisher.profileUrl)}">${escapeHtml(label)}</a>`
+    : escapeHtml(label);
 }
 
 function normalizeBuildingHubId(value, fallback = "") {
@@ -319,7 +401,9 @@ function getGitHubPagesBaseUrl(github) {
 }
 
 function getPublicUrls({ settings, github, branch, layoutId, previewAssetName }) {
-  const configuredBaseUrl = normalizeBaseUrl(settings.buildingHubLayoutBaseUrl || settings.buildingHubCatalogUrl);
+  const configuredBaseUrl = normalizeBaseUrl(
+    settings.buildingHubLayoutBaseUrl || settings.buildingHubAppUrl || settings.buildingHubCatalogUrl,
+  );
   const pagesBaseUrl = configuredBaseUrl || getGitHubPagesBaseUrl(github);
   const layoutUrl = pagesBaseUrl ? new URL(`layouts/${layoutId}/`, pagesBaseUrl).toString() : "";
   const previewUrl = pagesBaseUrl && previewAssetName
@@ -338,9 +422,11 @@ function getPublicUrls({ settings, github, branch, layoutId, previewAssetName })
 function renderLayoutReadme({ manifest, publicUrls }) {
   const sourceUrl = publicUrls.repositoryUrl || publicUrls.layoutUrl;
   const imageLine = publicUrls.previewUrl ? `\n![${manifest.name} preview](${publicUrls.previewUrl})\n` : "";
+  const publisherLine = manifest.publisher ? `- Published by: ${renderPublisherMarkdown(manifest.publisher)}` : "";
   const links = [
     publicUrls.layoutUrl ? `- Share page: ${publicUrls.layoutUrl}` : "",
     sourceUrl ? `- Source: ${sourceUrl}` : "",
+    publisherLine,
   ].filter(Boolean).join("\n");
 
   return `# ${manifest.name}
@@ -360,6 +446,7 @@ function renderLayoutPage({ manifest, publicUrls, previewAssetName }) {
   const title = `${manifest.name} - BuildingHub`;
   const description = manifest.description || DEFAULT_DESCRIPTION;
   const previewPath = previewAssetName ? `../../assets/layouts/${previewAssetName}` : "";
+  const publisherHtml = renderPublisherHtml(manifest.publisher);
   const imageMeta = publicUrls.previewUrl
     ? `
   <meta property="og:image" content="${escapeHtml(publicUrls.previewUrl)}" />
@@ -395,6 +482,8 @@ function renderLayoutPage({ manifest, publicUrls, previewAssetName }) {
     p { margin: 0; max-width: 72ch; color: #d1ccc2; line-height: 1.55; }
     .meta { display: flex; flex-wrap: wrap; gap: 8px; color: #e5ead0; font-size: .84rem; }
     .meta span { padding: 7px 9px; border: 1px solid rgba(246,241,232,.13); border-radius: 999px; background: rgba(246,241,232,.06); }
+    .publisher { color: #d1ccc2; font-size: .94rem; }
+    .publisher a { color: inherit; }
     .actions { display: flex; flex-wrap: wrap; gap: 10px; }
     .button { display: inline-flex; align-items: center; justify-content: center; min-height: 40px; padding: 0 14px; border: 1px solid rgba(246,241,232,.18); border-radius: 8px; background: #d7f36b; color: #101312; font-weight: 800; text-decoration: none; }
     .button.secondary { background: transparent; color: #f6f1e8; }
@@ -409,6 +498,7 @@ function renderLayoutPage({ manifest, publicUrls, previewAssetName }) {
       <span>${escapeHtml(`theme ${manifest.layout.themeId || "default"}`)}</span>
     </div>
     <h1>${escapeHtml(manifest.name)}</h1>
+    ${publisherHtml ? `<div class="publisher">Published by ${publisherHtml}</div>` : ""}
     <p>${escapeHtml(description)}</p>
     <div class="actions">
       <a class="button" href="../../">Browse BuildingHub</a>
@@ -420,7 +510,7 @@ function renderLayoutPage({ manifest, publicUrls, previewAssetName }) {
 `;
 }
 
-async function copyPreviewImage({ townShare, stateDir, layoutId, siteAssetsDir, layoutDir }) {
+async function loadPreviewImage({ townShare, stateDir, layoutId }) {
   const rawImagePath = normalizeText(townShare.imagePath, 1_000);
   if (!rawImagePath) {
     return { previewAssetName: "", previewExtension: "" };
@@ -446,11 +536,30 @@ async function copyPreviewImage({ townShare, stateDir, layoutId, siteAssetsDir, 
     return { previewAssetName: "", previewExtension: "" };
   }
 
-  const previewAssetName = `${layoutId}${extension}`;
+  const buffer = await readFile(sourcePath);
+  const mimeType = IMAGE_MIME_TYPES.get(extension) || "";
+  return {
+    sourcePath,
+    buffer,
+    mimeType,
+    previewAssetName: `${layoutId}${extension}`,
+    previewExtension: extension,
+    previewDataUrl: mimeType ? `data:${mimeType};base64,${buffer.toString("base64")}` : "",
+  };
+}
+
+async function copyPreviewImage({ townShare, stateDir, layoutId, siteAssetsDir, layoutDir }) {
+  const preview = await loadPreviewImage({ townShare, stateDir, layoutId });
+  if (!preview.sourcePath || !preview.previewAssetName) {
+    return { previewAssetName: "", previewExtension: "" };
+  }
   await mkdir(siteAssetsDir, { recursive: true });
-  await copyFile(sourcePath, path.join(siteAssetsDir, previewAssetName));
-  await copyFile(sourcePath, path.join(layoutDir, `snapshot${extension}`));
-  return { previewAssetName, previewExtension: extension };
+  await copyFile(preview.sourcePath, path.join(siteAssetsDir, preview.previewAssetName));
+  await copyFile(preview.sourcePath, path.join(layoutDir, `snapshot${preview.previewExtension}`));
+  return {
+    previewAssetName: preview.previewAssetName,
+    previewExtension: preview.previewExtension,
+  };
 }
 
 async function readJsonIfPresent(filePath) {
@@ -481,6 +590,48 @@ function ensurePublishableLayout({ layout, layoutId }) {
       throw error;
     }
   }
+}
+
+function buildLayoutManifest({
+  townShare,
+  layoutId,
+  layout,
+  existingManifest = null,
+  publicUrls,
+  publisher = null,
+} = {}) {
+  const normalizedPublisher = normalizePublisher(publisher || existingManifest?.publisher);
+  const requiredBuildings = Array.from(
+    new Set([
+      ...Object.keys(layout.functional || {}),
+      ...normalizePendingFunctional(layout.pendingFunctional),
+      ...(Array.isArray(existingManifest?.requiredBuildings)
+        ? existingManifest.requiredBuildings.map((entry) => normalizeBuildingHubId(entry)).filter(Boolean)
+        : []),
+    ]),
+  ).sort();
+
+  return {
+    id: layoutId,
+    name: normalizeText(townShare.name || existingManifest?.name || "Agent Town", 120) || "Agent Town",
+    version: normalizeText(existingManifest?.version || DEFAULT_LAYOUT_VERSION, 40) || DEFAULT_LAYOUT_VERSION,
+    category: normalizeText(existingManifest?.category || DEFAULT_CATEGORY, 80) || DEFAULT_CATEGORY,
+    description: normalizeText(townShare.description || existingManifest?.description || DEFAULT_DESCRIPTION, 900)
+      || DEFAULT_DESCRIPTION,
+    tags: Array.from(new Set([
+      "agent-town",
+      "base",
+      "shared",
+      layout.themeId,
+      ...(Array.isArray(existingManifest?.tags) ? existingManifest.tags.map((entry) => normalizeText(entry, 60)) : []),
+    ].filter(Boolean))).slice(0, 20),
+    requiredBuildings,
+    ...(publicUrls.repositoryUrl ? { repositoryUrl: publicUrls.repositoryUrl } : {}),
+    ...(publicUrls.layoutUrl ? { homepageUrl: publicUrls.layoutUrl } : {}),
+    ...(publicUrls.previewUrl ? { previewUrl: publicUrls.previewUrl } : {}),
+    ...(normalizedPublisher ? { publisher: normalizedPublisher } : {}),
+    layout,
+  };
 }
 
 async function assertNoStagedChanges(root) {
@@ -537,12 +688,72 @@ async function commitAndPush({ root, layoutId, relativePaths }) {
   };
 }
 
+async function publishHostedLayout({
+  settings,
+  accessToken,
+  manifest,
+  previewDataUrl = "",
+  fetchImpl = globalThis.fetch,
+} = {}) {
+  const appBaseUrl = normalizeBaseUrl(settings.buildingHubAppUrl);
+  if (!appBaseUrl || !accessToken) {
+    const error = new Error("Connect a hosted BuildingHub account before publishing there.");
+    error.statusCode = 400;
+    throw error;
+  }
+  if (typeof fetchImpl !== "function") {
+    const error = new Error("fetch is not available for hosted BuildingHub publishing.");
+    error.statusCode = 500;
+    throw error;
+  }
+
+  const response = await fetchImpl(new URL("/api/layouts", appBaseUrl).toString(), {
+    method: "POST",
+    headers: {
+      Accept: "application/json",
+      Authorization: `Bearer ${accessToken}`,
+      "Content-Type": "application/json",
+      "User-Agent": "vibe-research",
+    },
+    body: JSON.stringify({
+      layout: manifest,
+      ...(previewDataUrl ? { previewDataUrl } : {}),
+    }),
+  });
+  const payload = JSON.parse(await response.text().catch(() => "{}"));
+  if (!response.ok) {
+    const error = new Error(payload.error || `BuildingHub layout publish failed (${response.status}).`);
+    error.statusCode = response.status || 400;
+    throw error;
+  }
+
+  return {
+    layoutId: String(payload.layoutId || manifest.id || "").trim(),
+    layoutUrl: normalizeUrl(payload.layoutUrl || manifest.homepageUrl),
+    repositoryUrl: normalizeUrl(payload.repositoryUrl || manifest.repositoryUrl),
+    previewUrl: normalizeUrl(payload.previewUrl || manifest.previewUrl),
+    publisher: normalizePublisher(payload.publisher || manifest.publisher),
+    commit: String(payload.commit || "").trim(),
+    commitUrl: normalizeUrl(payload.commitUrl),
+    branch: String(payload.branch || "").trim(),
+    pushed: Boolean(payload.pushed),
+    publishedAt: String(payload.publishedAt || new Date().toISOString()).trim(),
+    publishedVia: "api",
+    recordedByBuildingHub: Boolean(payload.recordedByBuildingHub),
+    sourceId: String(payload.sourceId || "hosted").trim(),
+    status: String(payload.status || "published").trim(),
+  };
+}
+
 export async function publishTownShareToBuildingHub({
   townShare,
   stateDir,
   settings = {},
   cwd = process.cwd(),
   env = process.env,
+  publisher = null,
+  accessToken = "",
+  fetchImpl = globalThis.fetch,
 } = {}) {
   if (!townShare || typeof townShare !== "object" || Array.isArray(townShare)) {
     const error = new Error("Agent Town share is required before publishing to BuildingHub.");
@@ -550,7 +761,6 @@ export async function publishTownShareToBuildingHub({
     throw error;
   }
 
-  const root = await resolveBuildingHubCatalogRoot({ settings, cwd, env });
   const layoutId = normalizeLayoutId(townShare.id);
   if (!layoutId) {
     const error = new Error("Agent Town share id cannot be used as a BuildingHub layout id.");
@@ -561,6 +771,34 @@ export async function publishTownShareToBuildingHub({
   const layout = normalizeTownLayoutForBuildingHub(townShare.layout || {});
   ensurePublishableLayout({ layout, layoutId });
 
+  const preview = await loadPreviewImage({ townShare, stateDir, layoutId });
+  const hostedPublicUrls = getPublicUrls({
+    settings,
+    github: null,
+    branch: "",
+    layoutId,
+    previewAssetName: preview.previewAssetName || `${layoutId}.svg`,
+  });
+  const hostedManifest = buildLayoutManifest({
+    townShare,
+    layoutId,
+    layout,
+    existingManifest: null,
+    publicUrls: hostedPublicUrls,
+    publisher,
+  });
+  if (normalizeBaseUrl(settings.buildingHubAppUrl) && String(accessToken || "").trim()) {
+    return publishHostedLayout({
+      settings,
+      accessToken,
+      manifest: hostedManifest,
+      previewDataUrl: preview.previewDataUrl,
+      fetchImpl,
+    });
+  }
+
+  const root = await resolveBuildingHubCatalogRoot({ settings, cwd, env });
+
   const metadata = await getGitMetadata(root);
   const layoutDir = path.join(root, "layouts", layoutId);
   const siteLayoutDir = path.join(root, "site", "layouts", layoutId);
@@ -568,59 +806,38 @@ export async function publishTownShareToBuildingHub({
   await mkdir(layoutDir, { recursive: true });
   await mkdir(siteLayoutDir, { recursive: true });
 
-  const preview = await copyPreviewImage({ townShare, stateDir, layoutId, siteAssetsDir, layoutDir });
+  const copiedPreview = await copyPreviewImage({ townShare, stateDir, layoutId, siteAssetsDir, layoutDir });
   const publicUrls = getPublicUrls({
     settings,
     github: metadata.github,
     branch: metadata.branch || "main",
     layoutId,
-    previewAssetName: preview.previewAssetName || `${layoutId}.svg`,
+    previewAssetName: copiedPreview.previewAssetName || `${layoutId}.svg`,
   });
 
   const existingManifest = await readJsonIfPresent(path.join(layoutDir, "layout.json"));
-  const requiredBuildings = Array.from(
-    new Set([
-      ...Object.keys(layout.functional || {}),
-      ...normalizePendingFunctional(layout.pendingFunctional),
-      ...(Array.isArray(existingManifest?.requiredBuildings)
-        ? existingManifest.requiredBuildings.map((entry) => normalizeBuildingHubId(entry)).filter(Boolean)
-        : []),
-    ]),
-  ).sort();
-
-  const manifest = {
-    id: layoutId,
-    name: normalizeText(townShare.name || existingManifest?.name || "Agent Town", 120) || "Agent Town",
-    version: normalizeText(existingManifest?.version || DEFAULT_LAYOUT_VERSION, 40) || DEFAULT_LAYOUT_VERSION,
-    category: normalizeText(existingManifest?.category || DEFAULT_CATEGORY, 80) || DEFAULT_CATEGORY,
-    description: normalizeText(townShare.description || existingManifest?.description || DEFAULT_DESCRIPTION, 900)
-      || DEFAULT_DESCRIPTION,
-    tags: Array.from(new Set([
-      "agent-town",
-      "base",
-      "shared",
-      layout.themeId,
-      ...(Array.isArray(existingManifest?.tags) ? existingManifest.tags.map((entry) => normalizeText(entry, 60)) : []),
-    ].filter(Boolean))).slice(0, 20),
-    requiredBuildings,
-    ...(publicUrls.repositoryUrl ? { repositoryUrl: publicUrls.repositoryUrl } : {}),
-    ...(publicUrls.layoutUrl ? { homepageUrl: publicUrls.layoutUrl } : {}),
-    ...(publicUrls.previewUrl ? { previewUrl: publicUrls.previewUrl } : {}),
+  const manifest = buildLayoutManifest({
+    townShare,
+    layoutId,
     layout,
-  };
+    existingManifest,
+    publicUrls,
+    publisher,
+  });
+  const normalizedPublisher = normalizePublisher(manifest.publisher);
 
   await writeFile(path.join(layoutDir, "layout.json"), `${JSON.stringify(manifest, null, 2)}\n`, "utf8");
   await writeFile(path.join(layoutDir, "README.md"), renderLayoutReadme({ manifest, publicUrls }), "utf8");
   await writeFile(
     path.join(siteLayoutDir, "index.html"),
-    renderLayoutPage({ manifest, publicUrls, previewAssetName: preview.previewAssetName || `${layoutId}.svg` }),
+    renderLayoutPage({ manifest, publicUrls, previewAssetName: copiedPreview.previewAssetName || `${layoutId}.svg` }),
     "utf8",
   );
 
   const relativePaths = [
     path.join("layouts", layoutId),
     path.join("site", "layouts", layoutId),
-    ...(preview.previewAssetName ? [path.join("site", "assets", "layouts", preview.previewAssetName)] : []),
+    ...(copiedPreview.previewAssetName ? [path.join("site", "assets", "layouts", copiedPreview.previewAssetName)] : []),
   ];
   const gitResult = await commitAndPush({ root, layoutId, relativePaths });
   const commitUrl = metadata.github?.owner && metadata.github?.repo && gitResult.commit
@@ -632,11 +849,14 @@ export async function publishTownShareToBuildingHub({
     layoutUrl: publicUrls.layoutUrl || publicUrls.repositoryUrl,
     repositoryUrl: publicUrls.repositoryUrl,
     previewUrl: publicUrls.previewUrl,
+    publisher: normalizedPublisher,
     commit: gitResult.commit,
     commitUrl,
     branch: gitResult.branch,
     pushed: gitResult.pushed,
     publishedAt: new Date().toISOString(),
+    publishedVia: "git",
+    sourceId: "local",
     status: gitResult.status,
   };
 }

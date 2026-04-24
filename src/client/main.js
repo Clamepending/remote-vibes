@@ -62,8 +62,43 @@ import {
   BUILDING_CATALOG,
   normalizeBuildingId,
 } from "./building-registry.js";
+import {
+  normalizeRichSessionComparableText,
+  renderWrappedTerminalBufferPlainText,
+  sanitizeRichSessionTranscriptText,
+} from "./rich-session-transcript.js";
 
 const app = document.querySelector("#app");
+let appBootReported = false;
+
+function markAppBootReady() {
+  if (appBootReported) {
+    return;
+  }
+  appBootReported = true;
+  try {
+    document.documentElement.dataset.appBoot = "ready";
+    window.dispatchEvent(new CustomEvent("vibe-research:booted"));
+    if (typeof window.__vibeResearchBootReady === "function") {
+      window.__vibeResearchBootReady();
+    }
+  } catch {
+    // Boot-state reporting is best-effort only.
+  }
+}
+
+function markAppBootFailed(error) {
+  const message = error instanceof Error ? error.message : String(error || "Unknown error");
+  try {
+    document.documentElement.dataset.appBoot = "error";
+    window.dispatchEvent(new CustomEvent("vibe-research:boot-error", { detail: { message } }));
+    if (typeof window.__vibeResearchBootFailed === "function") {
+      window.__vibeResearchBootFailed(message);
+    }
+  } catch {
+    // The inline fallback still has its own timeout if this reporting path fails.
+  }
+}
 const TOUCH_TAP_SLOP_PX = 10;
 const KNOWLEDGE_BASE_GRAPH_WIDTH = 920;
 const KNOWLEDGE_BASE_GRAPH_HEIGHT = 680;
@@ -251,8 +286,12 @@ const MOBILE_KEYBOARD_RESIZE_THRESHOLD_PX = 80;
 const MOBILE_KEYBOARD_SETTLE_MS = 650;
 const TERMINAL_WEBSOCKET_RECONNECT_BASE_MS = 300;
 const TERMINAL_WEBSOCKET_RECONNECT_MAX_MS = 4_000;
+const NATIVE_SESSION_REFRESH_DEBOUNCE_MS = 320;
 const TERMINAL_TRANSCRIPT_RAW_LIMIT = 2_000_000;
 const TERMINAL_TRANSCRIPT_RENDER_LIMIT = 600_000;
+const RICH_SESSION_RENDER_LIMIT = 240_000;
+const RICH_SESSION_MAX_BLOCKS = 72;
+const RICH_SESSION_RECENT_INPUT_LIMIT = 16;
 const TERMINAL_THEME = {
   background: "#090b0d",
   foreground: "#f3efe8",
@@ -483,8 +522,8 @@ const GUIDED_ONBOARDING_STEPS = Object.freeze([
   {
     id: "welcome",
     title: "Welcome to our agent village!",
-    body: "This walkthrough is deterministic: one fixed path, one step at a time.",
-    note: "Follow the arrow and instruction text exactly.",
+    body: "This tutorial is fully deterministic: one fixed path, one step at a time.",
+    note: "Follow the arrow and the textbox instructions exactly.",
     manualAdvance: true,
     manualLabel: "Start tutorial",
   },
@@ -492,12 +531,14 @@ const GUIDED_ONBOARDING_STEPS = Object.freeze([
     id: "click-agent",
     title: "Step 1",
     body: "Tap an agent on the map to talk to it.",
+    note: "If no agent is visible yet, use the New Agent button first.",
     ensureView: "visual-interface",
   },
   {
     id: "say-hello",
     title: "Step 2",
-    body: "Say hello in the textbox and press Enter.",
+    body: "Type hello in the textbox and press Enter.",
+    note: "This starts your first real conversation.",
     ensureView: "visual-interface",
   },
   {
@@ -509,13 +550,13 @@ const GUIDED_ONBOARDING_STEPS = Object.freeze([
   {
     id: "open-buildinghub",
     title: "Step 4",
-    body: "Go to BuilderHub from the wrench button.",
+    body: "Open BuilderHub from the wrench button on the map.",
     ensureView: "visual-interface",
   },
   {
     id: "search-google-calendar",
     title: "Step 5",
-    body: "Search for Google Calendar.",
+    body: "Search for Google Calendar in BuilderHub.",
     ensureView: "visual-interface",
     requireBuilderOpen: true,
     requireBuilderTab: "functional",
@@ -524,7 +565,7 @@ const GUIDED_ONBOARDING_STEPS = Object.freeze([
   {
     id: "install-google-calendar",
     title: "Step 6",
-    body: "Click Install on Google Calendar.",
+    body: "Click Install on the Google Calendar building.",
     ensureView: "visual-interface",
     requireBuilderOpen: true,
     requireBuilderTab: "functional",
@@ -533,7 +574,7 @@ const GUIDED_ONBOARDING_STEPS = Object.freeze([
   {
     id: "place-google-calendar",
     title: "Step 7",
-    body: "Place the building on the map.",
+    body: "Click the highlighted spot on the map to place Google Calendar.",
     ensureView: "visual-interface",
     requireBuilderOpen: true,
     requireBuilderTab: "functional",
@@ -549,19 +590,21 @@ const GUIDED_ONBOARDING_STEPS = Object.freeze([
   {
     id: "tap-agent-again",
     title: "Step 9",
-    body: "Congratulations! Tap an agent again.",
+    body: "Congratulations! Your agents now have calendar access. Tap an agent again.",
     ensureView: "visual-interface",
   },
   {
     id: "first-event",
     title: "Step 10",
-    body: "Ask it to add an event commemorating your first day on vibe-research.",
+    body: "Ask it to create an event commemorating your first day on vibe-research.",
+    note: "Example: put an event in my calendar for my first day on vibe-research.",
     ensureView: "visual-interface",
   },
   {
     id: "finish",
     title: "Done",
-    body: "To add more services like Gmail, camera tools, Drive, iMessage, and Telegram: install the building, place it, then run setup.",
+    body: "To unlock more services, add buildings for Gmail, camera tools, Drive, iMessage, Telegram, and more.",
+    note: "Install, place, and run setup for each building the same way.",
     manualAdvance: true,
     manualLabel: "Finish tutorial",
   },
@@ -1493,12 +1536,33 @@ function saveAgentSetupPendingPreference(pending) {
   }
 }
 
+function loadGuidedOnboardingCompletedPreference() {
+  try {
+    return window.localStorage.getItem(GUIDED_ONBOARDING_STORAGE_KEY) === "1";
+  } catch {
+    return false;
+  }
+}
+
+function saveGuidedOnboardingCompletedPreference(completed) {
+  try {
+    if (completed) {
+      window.localStorage.setItem(GUIDED_ONBOARDING_STORAGE_KEY, "1");
+    } else {
+      window.localStorage.removeItem(GUIDED_ONBOARDING_STORAGE_KEY);
+    }
+  } catch {
+    // Tutorial completion is convenience-only.
+  }
+}
+
 const layoutPreferences = loadLayoutPreferences();
 const agentTownLayoutPreferences = loadAgentTownLayoutPreferences();
 const agentTownThemePreference = loadAgentTownThemePreference();
 const agentTownDogNamePreference = loadAgentTownDogNamePreference();
 const agentSetupCompletePreference = loadAgentSetupCompletePreference();
 const agentSetupPendingPreference = loadAgentSetupPendingPreference();
+const guidedOnboardingCompletedPreference = loadGuidedOnboardingCompletedPreference();
 
 const state = {
   providers: [],
@@ -1564,14 +1628,32 @@ const state = {
     },
     layoutSnapshots: [],
     layoutValidation: { ok: true, issues: [], warnings: [] },
+    onboardingPhase: "fresh",
+    isNewUser: true,
     quests: [],
     snapshots: [],
     signals: {
       agentClickedCount: 0,
       automationCreatedCount: 0,
       libraryNoteSavedCount: 0,
+      onboardingCompletedCount: 0,
     },
     townShares: [],
+  },
+  guidedOnboarding: {
+    active: false,
+    completed: guidedOnboardingCompletedPreference,
+    dismissed: false,
+    stepIndex: 0,
+    startedAt: 0,
+    baselineAgentClickedCount: 0,
+    inputBuffer: "",
+    inputSessionId: "",
+    awaitingHelloResponseSessionId: "",
+    localEvents: {},
+    lastRouteRequestAt: 0,
+    syncFrameHandle: 0,
+    focusSignature: "",
   },
   agentProfile: {
     sessionId: "",
@@ -1654,12 +1736,17 @@ const state = {
     browserUseProfileDir: "",
     browserUseStatus: null,
     browserUseWorkerPath: "",
+    buildingHubAppUrl: "",
     buildingHubAuthProvider: "",
+    buildingHubAccountStatus: null,
     buildingHubCatalogPath: "",
     buildingHubCatalogUrl: "",
     buildingHubEnabled: false,
     buildingHubProfileUrl: "",
     buildingHubStatus: null,
+    githubOAuthClientId: "",
+    githubOAuthClientSecretConfigured: false,
+    githubOAuthStatus: null,
     googleOAuthClientId: "",
     ottoAuthBaseUrl: "https://ottoauth.vercel.app",
     ottoAuthCallbackUrl: "",
@@ -1809,6 +1896,17 @@ const state = {
   terminalTranscriptRenderFrame: null,
   terminalTranscriptScrollToBottom: false,
   terminalTranscriptVisible: false,
+  shellSurfaceMode: "native",
+  nativeSessionNarratives: {},
+  nativeSessionNarrativeErrors: {},
+  nativeSessionNarrativeLoading: {},
+  nativeSessionNarrativeRequestCounter: 0,
+  nativeSessionNarrativeTimers: {},
+  richSessionComposerDrafts: {},
+  richSessionInputBuffers: {},
+  richSessionRecentInputs: {},
+  richSessionRenderFrame: null,
+  richSessionScrollToBottom: false,
   terminalComposing: false,
   terminalTextareaResetTimer: null,
   update: null,
@@ -3340,6 +3438,10 @@ function applyTerminalDisplayProfile(mount) {
 }
 
 function isTerminalAtBottom() {
+  if (isRichSessionSurfaceActive()) {
+    return isRichSessionFeedAtBottom();
+  }
+
   if (state.terminalTranscriptVisible) {
     return isTerminalTranscriptAtBottom();
   }
@@ -3381,6 +3483,20 @@ function syncTerminalScrollState() {
 }
 
 function scrollTerminalToBottom() {
+  const richViewport = getRichSessionFeedViewport();
+  if (isRichSessionSurfaceActive() && richViewport instanceof HTMLElement) {
+    richViewport.scrollTop = richViewport.scrollHeight;
+    state.terminalShowJumpToBottom = false;
+    refreshTerminalJumpUi();
+    if (!isCoarsePointerDevice()) {
+      focusRichSessionComposer();
+    }
+    window.requestAnimationFrame(() => {
+      syncTerminalScrollState();
+    });
+    return;
+  }
+
   const transcriptViewport = getTerminalTranscriptViewport();
   if (transcriptViewport instanceof HTMLElement) {
     transcriptViewport.scrollTop = transcriptViewport.scrollHeight;
@@ -3953,6 +4069,872 @@ function renderTerminalTranscriptHtml(rawOutput) {
   return hasScrollableBuffer && bufferHtml ? bufferHtml : renderTerminalRawTranscriptHtml(rawOutput);
 }
 
+function renderTerminalRawTranscriptPlainText(rawOutput) {
+  const source = String(rawOutput || "")
+    .slice(-RICH_SESSION_RENDER_LIMIT)
+    .replace(/\u001b\[\?(?:47|1047|1048|1049)[hl]/g, "")
+    .replace(/\u001b\[\?2004[hl]/g, "");
+  const lines = [[]];
+  let row = 0;
+  let column = 0;
+  let screenTop = 0;
+  const terminalColumns = Math.max(20, Number(state.terminal?.cols) || 120);
+  const terminalRows = Math.max(8, Number(state.terminal?.rows) || 36);
+
+  const ensureLine = (nextRow) => {
+    while (lines.length <= nextRow) {
+      lines.push([]);
+    }
+  };
+
+  const ensureColumn = (nextRow, nextColumn) => {
+    ensureLine(nextRow);
+    while ((lines[nextRow]?.length || 0) < nextColumn) {
+      lines[nextRow].push(" ");
+    }
+  };
+
+  const lineHasContent = (targetRow) =>
+    Array.isArray(lines[targetRow]) && lines[targetRow].some((value) => typeof value === "string" && value.trim());
+
+  const newLine = () => {
+    if (row - screenTop >= terminalRows - 1) {
+      lines.push([]);
+      screenTop = Math.max(0, screenTop + 1);
+      row = screenTop + terminalRows - 1;
+    } else {
+      row += 1;
+      ensureLine(row);
+    }
+    column = 0;
+  };
+
+  const eraseLine = (mode) => {
+    ensureLine(row);
+    if (mode === 1) {
+      for (let eraseColumn = 0; eraseColumn <= column; eraseColumn += 1) {
+        lines[row][eraseColumn] = "";
+      }
+      return;
+    }
+
+    if (mode === 2) {
+      lines[row] = [];
+      return;
+    }
+
+    for (let eraseColumn = column; eraseColumn < terminalColumns; eraseColumn += 1) {
+      lines[row][eraseColumn] = "";
+    }
+  };
+
+  const applyCsiSequence = (sequence) => {
+    const parsed = parseTerminalCsiSequence(sequence);
+    if (!parsed || parsed.privatePrefix) {
+      return false;
+    }
+
+    const getParam = (index, fallback) => Math.max(1, Number(parsed.params[index]) || fallback);
+    if (parsed.final === "m") {
+      return true;
+    }
+
+    if (parsed.final === "A" || parsed.final === "B") {
+      return true;
+    }
+    if (parsed.final === "C") {
+      column = Math.min(terminalColumns - 1, column + getParam(0, 1));
+      return true;
+    }
+    if (parsed.final === "D") {
+      column = Math.max(0, column - getParam(0, 1));
+      return true;
+    }
+    if (parsed.final === "E") {
+      for (let count = 0; count < getParam(0, 1); count += 1) {
+        newLine();
+      }
+      return true;
+    }
+    if (parsed.final === "F") {
+      column = 0;
+      return true;
+    }
+    if (parsed.final === "G") {
+      column = clamp(getParam(0, 1) - 1, 0, terminalColumns - 1);
+      return true;
+    }
+    if (parsed.final === "H" || parsed.final === "f") {
+      const nextRow = getParam(0, 1) - 1;
+      const nextColumn = getParam(1, 1) - 1;
+      if (nextRow === 0 && nextColumn === 0 && lineHasContent(row)) {
+        newLine();
+      }
+      column = clamp(nextColumn, 0, terminalColumns - 1);
+      return true;
+    }
+    if (parsed.final === "d") {
+      return true;
+    }
+    if (parsed.final === "J") {
+      if (lineHasContent(row)) {
+        newLine();
+      }
+      return true;
+    }
+    if (parsed.final === "K") {
+      eraseLine(Number(parsed.params[0]) || 0);
+      return true;
+    }
+
+    return false;
+  };
+
+  for (let index = 0; index < source.length; index += 1) {
+    const character = source[index];
+    const code = source.charCodeAt(index);
+
+    if (character === "\u001b") {
+      const { endIndex, sequence } = getTerminalAnsiSequence(source, index);
+      applyCsiSequence(sequence);
+      index = endIndex;
+      continue;
+    }
+
+    if (character === "\r") {
+      column = 0;
+      continue;
+    }
+
+    if (character === "\n") {
+      newLine();
+      continue;
+    }
+
+    if (character === "\b") {
+      column = Math.max(0, column - 1);
+      continue;
+    }
+
+    if (character === "\t") {
+      const spaces = 8 - (column % 8);
+      for (let offset = 0; offset < spaces; offset += 1) {
+        ensureColumn(row, column);
+        lines[row][column] = " ";
+        column += 1;
+      }
+      continue;
+    }
+
+    if (code < 32 || code === 127) {
+      continue;
+    }
+
+    ensureColumn(row, column);
+    lines[row][column] = character;
+    column += 1;
+    if (column >= terminalColumns) {
+      newLine();
+    }
+  }
+
+  return lines
+    .map((line) => line.join("").replace(/\s+$/u, ""))
+    .join("\n")
+    .replace(/\n{4,}/gu, "\n\n\n")
+    .trim();
+}
+
+function getRichSessionInputBuffer(sessionId) {
+  return String(state.richSessionInputBuffers[String(sessionId || "")] || "");
+}
+
+function setRichSessionInputBuffer(sessionId, value) {
+  const normalizedSessionId = String(sessionId || "").trim();
+  if (!normalizedSessionId) {
+    return;
+  }
+
+  const nextValue = String(value || "");
+  if (!nextValue) {
+    delete state.richSessionInputBuffers[normalizedSessionId];
+    return;
+  }
+
+  state.richSessionInputBuffers[normalizedSessionId] = nextValue.slice(-512);
+}
+
+function getRichSessionRecentInputs(sessionId) {
+  const normalizedSessionId = String(sessionId || "").trim();
+  return Array.isArray(state.richSessionRecentInputs[normalizedSessionId])
+    ? state.richSessionRecentInputs[normalizedSessionId]
+    : [];
+}
+
+function rememberRichSessionInputLines(sessionId, lines) {
+  const normalizedSessionId = String(sessionId || "").trim();
+  if (!normalizedSessionId || !Array.isArray(lines) || !lines.length) {
+    return;
+  }
+
+  const recent = getRichSessionRecentInputs(normalizedSessionId);
+  for (const line of lines) {
+    const normalizedLine = normalizeRichSessionComparableText(line);
+    if (!normalizedLine) {
+      continue;
+    }
+
+    recent.push(normalizedLine);
+  }
+
+  state.richSessionRecentInputs[normalizedSessionId] = recent.slice(-RICH_SESSION_RECENT_INPUT_LIMIT);
+}
+
+function trackRichSessionInput(data, sessionId = state.activeSessionId || state.connectedSessionId) {
+  const normalizedSessionId = String(sessionId || "").trim();
+  const source = String(data || "");
+  if (!normalizedSessionId || !source) {
+    return;
+  }
+
+  let buffer = getRichSessionInputBuffer(normalizedSessionId);
+  let escapeState = "";
+  let escapeSequenceLength = 0;
+  const completedLines = [];
+
+  for (const character of source.replace(/\r\n/g, "\r")) {
+    if (escapeState) {
+      escapeSequenceLength += 1;
+
+      if (escapeState === "start") {
+        if (character === "[") {
+          escapeState = "control";
+          continue;
+        }
+        if (character === "]") {
+          escapeState = "osc";
+          continue;
+        }
+        if (character === "P" || character === "^" || character === "_") {
+          escapeState = "string";
+          continue;
+        }
+        if ((character >= "@" && character <= "~") || escapeSequenceLength >= 128) {
+          escapeState = "";
+          escapeSequenceLength = 0;
+        }
+        continue;
+      }
+
+      if (escapeState === "control") {
+        if ((character >= "@" && character <= "~") || escapeSequenceLength >= 128) {
+          escapeState = "";
+          escapeSequenceLength = 0;
+        }
+        continue;
+      }
+
+      if (escapeState === "osc" || escapeState === "string") {
+        if (character === "\u0007") {
+          escapeState = "";
+          escapeSequenceLength = 0;
+        } else if (character === "\u001b") {
+          escapeState = "string-esc";
+        } else if (escapeSequenceLength >= 512) {
+          escapeState = "";
+          escapeSequenceLength = 0;
+        }
+        continue;
+      }
+
+      if (escapeState === "string-esc") {
+        if (character === "\\") {
+          escapeState = "";
+          escapeSequenceLength = 0;
+        } else {
+          escapeState = "string";
+        }
+        continue;
+      }
+    }
+
+    if (character === "\u001b") {
+      escapeState = "start";
+      escapeSequenceLength = 1;
+      continue;
+    }
+
+    if (character === "\u0003") {
+      buffer = "";
+      continue;
+    }
+
+    if (character === "\r" || character === "\n") {
+      const completedLine = buffer.trim();
+      if (completedLine) {
+        completedLines.push(completedLine);
+      }
+      buffer = "";
+      continue;
+    }
+
+    if (character === "\u0008" || character === "\u007f") {
+      buffer = buffer.slice(0, -1);
+      continue;
+    }
+
+    if (character < " " && character !== "\t") {
+      continue;
+    }
+
+    buffer += character === "\t" ? " " : character;
+    if (buffer.length > 512) {
+      buffer = buffer.slice(-512);
+    }
+  }
+
+  setRichSessionInputBuffer(normalizedSessionId, buffer);
+  rememberRichSessionInputLines(normalizedSessionId, completedLines);
+}
+
+function getTerminalTranscriptBufferText() {
+  return renderWrappedTerminalBufferPlainText(state.terminal?.buffer?.active, {
+    columns: Number(state.terminal?.cols) || 0,
+  });
+}
+
+function getRichSessionTranscriptText(rawOutput = state.terminalTranscriptRaw) {
+  const bufferText = sanitizeRichSessionTranscriptText(getTerminalTranscriptBufferText());
+  if (bufferText) {
+    return bufferText;
+  }
+
+  if (typeof document !== "undefined") {
+    const template = document.createElement("template");
+    template.innerHTML = `<pre>${renderTerminalTranscriptHtml(rawOutput)}</pre>`;
+    const htmlText = sanitizeRichSessionTranscriptText(template.content.textContent || "");
+    if (htmlText) {
+      return htmlText;
+    }
+  }
+
+  return sanitizeRichSessionTranscriptText(renderTerminalRawTranscriptPlainText(rawOutput));
+}
+
+function isRichSessionProviderId(providerId) {
+  const normalizedProviderId = String(providerId || "").trim().toLowerCase();
+  return Boolean(normalizedProviderId) && normalizedProviderId !== "shell";
+}
+
+function isRichSessionSurfaceSupported(session = getActiveSession()) {
+  return Boolean(session && isRichSessionProviderId(session.providerId));
+}
+
+function getShellSurfaceMode(session = getActiveSession()) {
+  return isRichSessionSurfaceSupported(session)
+    ? (state.shellSurfaceMode === "terminal" ? "terminal" : "native")
+    : "terminal";
+}
+
+function isRichSessionSurfaceActive(session = getActiveSession()) {
+  return getShellSurfaceMode(session) === "native";
+}
+
+function getRichSessionFeedViewport() {
+  const viewport = document.querySelector("#rich-session-feed");
+  return viewport instanceof HTMLElement ? viewport : null;
+}
+
+function isRichSessionFeedAtBottom(viewport = getRichSessionFeedViewport()) {
+  if (!(viewport instanceof HTMLElement) || viewport.scrollHeight <= viewport.clientHeight) {
+    return true;
+  }
+
+  return viewport.scrollHeight - viewport.clientHeight - viewport.scrollTop <= 12;
+}
+
+function focusRichSessionComposer() {
+  const input = document.querySelector("#rich-session-input");
+  if (!(input instanceof HTMLTextAreaElement)) {
+    return;
+  }
+
+  try {
+    input.focus({ preventScroll: true });
+  } catch {
+    input.focus();
+  }
+}
+
+function syncRichSessionComposerHeight(textarea) {
+  if (!(textarea instanceof HTMLTextAreaElement)) {
+    return;
+  }
+
+  textarea.style.height = "0px";
+  textarea.style.height = `${clamp(textarea.scrollHeight, 56, 220)}px`;
+}
+
+function getRichSessionComposerDraft(sessionId) {
+  return String(state.richSessionComposerDrafts[String(sessionId || "")] || "");
+}
+
+function setRichSessionComposerDraft(sessionId, value) {
+  const normalizedSessionId = String(sessionId || "").trim();
+  if (!normalizedSessionId) {
+    return;
+  }
+
+  const nextValue = String(value || "").slice(0, 20_000);
+  if (!nextValue) {
+    delete state.richSessionComposerDrafts[normalizedSessionId];
+    return;
+  }
+
+  state.richSessionComposerDrafts[normalizedSessionId] = nextValue;
+}
+
+function appendRichSessionComposerText(sessionId, text) {
+  const normalizedSessionId = String(sessionId || "").trim();
+  const addition = String(text || "").trim();
+  if (!normalizedSessionId || !addition) {
+    return;
+  }
+
+  const current = getRichSessionComposerDraft(normalizedSessionId);
+  setRichSessionComposerDraft(
+    normalizedSessionId,
+    current ? `${current}${current.endsWith("\n") ? "" : "\n"}${addition}` : addition,
+  );
+}
+
+async function attachRichSessionImagePlaceholderPaste(fallbackText) {
+  try {
+    const files = await getImageFilesFromNavigatorClipboard();
+    if (files.length) {
+      await attachRichSessionImageFiles(files, "paste");
+      return;
+    }
+  } catch (error) {
+    console.warn("[vibe-research] clipboard image read failed", error);
+  }
+
+  appendRichSessionComposerText(state.activeSessionId, fallbackText);
+  refreshRichSessionSurfaceUi();
+}
+
+async function attachRichSessionImageFiles(files, source) {
+  const imageFiles = Array.from(files || []).filter(isImageFileLike).slice(0, TERMINAL_ATTACHMENT_MAX_IMAGES);
+  if (!imageFiles.length) {
+    return;
+  }
+
+  try {
+    const attachments = [];
+    for (const file of imageFiles) {
+      attachments.push(await uploadTerminalImageAttachment(file, source));
+    }
+
+    appendRichSessionComposerText(
+      state.activeSessionId,
+      attachments.map(formatTerminalImageAttachmentReference).join(" "),
+    );
+    refreshRichSessionSurfaceUi();
+    focusRichSessionComposer();
+  } catch (error) {
+    console.error("[vibe-research] rich session image attachment failed", error);
+    window.alert(error.message || "Could not attach image.");
+  }
+}
+
+function getRichSessionNarrative(sessionId) {
+  return state.nativeSessionNarratives[String(sessionId || "")] || null;
+}
+
+function clearRichSessionNarrativeTimer(sessionId) {
+  const normalizedSessionId = String(sessionId || "").trim();
+  if (!normalizedSessionId || !state.nativeSessionNarrativeTimers[normalizedSessionId]) {
+    return;
+  }
+
+  window.clearTimeout(state.nativeSessionNarrativeTimers[normalizedSessionId]);
+  delete state.nativeSessionNarrativeTimers[normalizedSessionId];
+}
+
+async function fetchRichSessionNarrative(sessionId) {
+  const normalizedSessionId = String(sessionId || "").trim();
+  if (!normalizedSessionId) {
+    return null;
+  }
+
+  const requestId = ++state.nativeSessionNarrativeRequestCounter;
+  state.nativeSessionNarrativeLoading[normalizedSessionId] = requestId;
+
+  try {
+    const payload = await fetchJson(`/api/sessions/${encodeURIComponent(normalizedSessionId)}/narrative`);
+    if (state.nativeSessionNarrativeLoading[normalizedSessionId] !== requestId) {
+      return null;
+    }
+
+    delete state.nativeSessionNarrativeLoading[normalizedSessionId];
+    delete state.nativeSessionNarrativeErrors[normalizedSessionId];
+    state.nativeSessionNarratives[normalizedSessionId] = payload.narrative || null;
+    if (normalizedSessionId === String(state.activeSessionId || "")) {
+      refreshRichSessionSurfaceUi();
+    }
+    return payload.narrative || null;
+  } catch (error) {
+    if (state.nativeSessionNarrativeLoading[normalizedSessionId] !== requestId) {
+      return null;
+    }
+
+    delete state.nativeSessionNarrativeLoading[normalizedSessionId];
+    state.nativeSessionNarrativeErrors[normalizedSessionId] = error.message || "Could not load the session narrative.";
+    if (normalizedSessionId === String(state.activeSessionId || "")) {
+      refreshRichSessionSurfaceUi();
+    }
+    return null;
+  }
+}
+
+function scheduleRichSessionNarrativeRefresh(sessionId = state.activeSessionId, { immediate = false } = {}) {
+  const normalizedSessionId = String(sessionId || "").trim();
+  if (!normalizedSessionId) {
+    return;
+  }
+
+  if (immediate) {
+    clearRichSessionNarrativeTimer(normalizedSessionId);
+    void fetchRichSessionNarrative(normalizedSessionId);
+    return;
+  }
+
+  if (state.nativeSessionNarrativeTimers[normalizedSessionId]) {
+    return;
+  }
+
+  state.nativeSessionNarrativeTimers[normalizedSessionId] = window.setTimeout(() => {
+    delete state.nativeSessionNarrativeTimers[normalizedSessionId];
+    void fetchRichSessionNarrative(normalizedSessionId);
+  }, NATIVE_SESSION_REFRESH_DEBOUNCE_MS);
+}
+
+function formatRichSessionTimestamp(timestamp) {
+  const parsed = Date.parse(String(timestamp || ""));
+  if (!Number.isFinite(parsed)) {
+    return "";
+  }
+
+  return new Date(parsed).toLocaleTimeString([], {
+    hour: "numeric",
+    minute: "2-digit",
+  });
+}
+
+function getRichSessionEntryLabel(entry) {
+  if (entry?.label) {
+    return entry.label;
+  }
+
+  if (entry?.kind === "tool") {
+    return "Tool";
+  }
+
+  if (entry?.kind === "status") {
+    return "Activity";
+  }
+
+  if (entry?.kind === "user") {
+    return "You";
+  }
+
+  return "Assistant";
+}
+
+function getRichSessionEntryIcon(kind) {
+  if (kind === "tool") {
+    return Wrench;
+  }
+  if (kind === "status" || kind === "system") {
+    return ServerCog;
+  }
+  if (kind === "user") {
+    return Pencil;
+  }
+  return Bot;
+}
+
+function renderRichSessionEntry(entry, index) {
+  const kind = ["assistant", "user", "tool", "status", "system"].includes(entry?.kind) ? entry.kind : "assistant";
+  const label = getRichSessionEntryLabel(entry);
+  const icon = renderIcon(getRichSessionEntryIcon(kind), { className: "rich-session-entry-icon" });
+  const body = escapeHtml(entry?.text || "");
+  const metaParts = [entry?.meta || "", formatRichSessionTimestamp(entry?.timestamp)].filter(Boolean);
+  const meta = metaParts.join(" · ");
+  const outputPreview = entry?.outputPreview
+    ? `<pre class="rich-session-entry-pre is-output">${escapeHtml(entry.outputPreview)}</pre>`
+    : "";
+  const bodyHtml = kind === "tool"
+    ? `<pre class="rich-session-entry-pre">${body}</pre>${outputPreview}`
+    : `<div class="rich-session-entry-copy">${body}</div>`;
+
+  return `
+    <article class="rich-session-entry is-${escapeHtml(kind)} ${entry?.status ? `is-${escapeHtml(entry.status)}` : ""}" data-rich-session-entry="${index}">
+      <div class="rich-session-entry-head">
+        <span class="rich-session-entry-badge is-${escapeHtml(kind)}">${icon}<span>${escapeHtml(label)}</span></span>
+        ${meta ? `<span class="rich-session-entry-meta">${escapeHtml(meta)}</span>` : ""}
+      </div>
+      ${bodyHtml}
+    </article>
+  `;
+}
+
+function renderRichSessionOverviewCard(activeSession) {
+  if (!activeSession) {
+    return "";
+  }
+
+  const statusLabel = String(activeSession.status || "running").replace(/-/g, " ");
+  const workspaceName = getWorkspacePathLeafName(activeSession.cwd || "") || activeSession.cwd || state.defaultCwd;
+  const narrative = getRichSessionNarrative(activeSession.id);
+  const narrativeSource = narrative?.sourceLabel || "Loading native session…";
+  const narrativeCopy = narrative?.providerBacked
+    ? "Readable cards backed by provider session data. Switch back to Terminal any time."
+    : "Readable cards backed by Vibe Research's own native session events. Switch back to Terminal any time.";
+  return `
+    <article class="rich-session-entry is-overview">
+      <div class="rich-session-entry-head">
+        <span class="rich-session-entry-badge is-overview">${renderIcon(Bot, { className: "rich-session-entry-icon" })}<span>Native session</span></span>
+        <span class="rich-session-overview-status">${escapeHtml(statusLabel)}</span>
+      </div>
+      <strong class="rich-session-overview-title">${escapeHtml(activeSession.name || activeSession.providerLabel || "Session")}</strong>
+      <div class="rich-session-overview-meta">${escapeHtml(`${activeSession.providerLabel} · ${workspaceName}`)}</div>
+      <div class="rich-session-overview-source">${escapeHtml(narrativeSource)}</div>
+      <p class="rich-session-overview-copy">${escapeHtml(narrativeCopy)}</p>
+    </article>
+  `;
+}
+
+function renderRichSessionEmptyState(activeSession) {
+  const normalizedSessionId = String(activeSession?.id || "");
+  const loading = Boolean(state.nativeSessionNarrativeLoading[normalizedSessionId]);
+  const error = state.nativeSessionNarrativeErrors[normalizedSessionId] || "";
+  const connecting = String(state.connectedSessionId || "") !== String(activeSession?.id || "");
+  const label = error ? "Narrative unavailable" : loading || connecting ? "Connecting" : "Ready";
+  const copy = error
+    ? `${error} Switch to Terminal if you need the raw CLI immediately.`
+    : connecting || loading
+      ? "Connecting to the live session stream..."
+      : "Native cards will appear here as soon as the agent starts responding.";
+  return `
+    <article class="rich-session-entry is-empty">
+      <div class="rich-session-entry-head">
+        <span class="rich-session-entry-badge is-status">${renderIcon(ServerCog, { className: "rich-session-entry-icon" })}<span>${escapeHtml(label)}</span></span>
+      </div>
+      <div class="rich-session-entry-copy">${escapeHtml(copy)}</div>
+    </article>
+  `;
+}
+
+function renderRichSessionFeedHtml(activeSession) {
+  if (!activeSession) {
+    return "";
+  }
+
+  const narrative = getRichSessionNarrative(activeSession.id);
+  const entries = Array.isArray(narrative?.entries) ? narrative.entries : [];
+
+  return `
+    ${renderRichSessionOverviewCard(activeSession)}
+    ${entries.length ? entries.map((entry, index) => renderRichSessionEntry(entry, index)).join("") : renderRichSessionEmptyState(activeSession)}
+  `;
+}
+
+function renderRichSessionSurface(activeSession) {
+  if (!isRichSessionSurfaceSupported(activeSession)) {
+    return "";
+  }
+
+  const canSend = Boolean(activeSession && activeSession.status !== "exited");
+  const draft = getRichSessionComposerDraft(activeSession?.id);
+  const richActive = isRichSessionSurfaceActive(activeSession);
+  return `
+    <div class="rich-session-surface ${richActive ? "is-active" : ""}" id="rich-session-surface" aria-hidden="${richActive ? "false" : "true"}">
+      <div class="rich-session-feed" id="rich-session-feed">${renderRichSessionFeedHtml(activeSession)}</div>
+      <form class="rich-session-composer" id="rich-session-form">
+        <label class="sr-only" for="rich-session-input">Send input</label>
+        <textarea
+          class="rich-session-input"
+          id="rich-session-input"
+          rows="1"
+          placeholder="${escapeHtml(`Message ${activeSession?.providerLabel || "agent"}...`)}"
+          ${canSend ? "" : "disabled"}
+          spellcheck="true"
+        >${escapeHtml(draft)}</textarea>
+        <div class="rich-session-composer-foot">
+          <span class="rich-session-composer-hint">Enter to send. Shift+Enter for a newline. Paste or drop images to attach them.</span>
+          <div class="rich-session-composer-actions">
+            <button class="ghost-button toolbar-control" type="button" id="rich-session-stop" data-terminal-control ${canSend ? "" : "disabled"}>Interrupt</button>
+            <button class="primary-button toolbar-control rich-session-send" type="submit" id="rich-session-send" data-terminal-control ${canSend ? "" : "disabled"}>
+              ${renderIcon(Share2)}
+              <span>Send</span>
+            </button>
+          </div>
+        </div>
+      </form>
+    </div>
+  `;
+}
+
+function refreshShellSurfaceToggleUi(activeSession = getActiveSession()) {
+  const supported = isRichSessionSurfaceSupported(activeSession);
+  const mode = getShellSurfaceMode(activeSession);
+  const toggle = document.querySelector("#shell-surface-toggle");
+  const richButton = document.querySelector("#toggle-shell-surface-native");
+  const terminalButton = document.querySelector("#toggle-shell-surface-terminal");
+
+  toggle?.classList.toggle("is-hidden", !supported);
+
+  if (richButton instanceof HTMLButtonElement) {
+    richButton.classList.toggle("is-active", supported && mode === "native");
+    richButton.setAttribute("aria-selected", supported && mode === "native" ? "true" : "false");
+    richButton.disabled = !supported;
+  }
+
+  if (terminalButton instanceof HTMLButtonElement) {
+    terminalButton.classList.toggle("is-active", !supported || mode === "terminal");
+    terminalButton.setAttribute("aria-selected", !supported || mode === "terminal" ? "true" : "false");
+    terminalButton.disabled = false;
+  }
+}
+
+function refreshRichSessionSurfaceUi({ scrollToBottom = false } = {}) {
+  const activeSession = getActiveSession();
+  const richActive = isRichSessionSurfaceActive(activeSession);
+  const stack = document.querySelector(".terminal-stack");
+  const surface = document.querySelector("#rich-session-surface");
+  const feed = getRichSessionFeedViewport();
+  const input = document.querySelector("#rich-session-input");
+  const stopButton = document.querySelector("#rich-session-stop");
+  const sendButton = document.querySelector("#rich-session-send");
+  const canSend = Boolean(activeSession && activeSession.status !== "exited");
+
+  stack?.classList.toggle("is-rich-surface", richActive);
+  refreshShellSurfaceToggleUi(activeSession);
+
+  if (
+    activeSession?.id
+    && !getRichSessionNarrative(activeSession.id)
+    && !state.nativeSessionNarrativeLoading[activeSession.id]
+    && !state.nativeSessionNarrativeErrors[activeSession.id]
+  ) {
+    scheduleRichSessionNarrativeRefresh(activeSession.id, { immediate: true });
+  }
+
+  if (!(surface instanceof HTMLElement)) {
+    syncTerminalScrollState();
+    return;
+  }
+
+  if (!isRichSessionSurfaceSupported(activeSession)) {
+    surface.classList.remove("is-active");
+    surface.setAttribute("aria-hidden", "true");
+    syncTerminalScrollState();
+    return;
+  }
+
+  const shouldStickToBottom = scrollToBottom || isRichSessionFeedAtBottom(feed);
+  const previousBottomOffset =
+    feed instanceof HTMLElement ? Math.max(0, feed.scrollHeight - feed.clientHeight - feed.scrollTop) : 0;
+
+  surface.classList.toggle("is-active", richActive);
+  surface.setAttribute("aria-hidden", richActive ? "false" : "true");
+
+  if (feed instanceof HTMLElement) {
+    feed.innerHTML = renderRichSessionFeedHtml(activeSession);
+    if (shouldStickToBottom) {
+      feed.scrollTop = feed.scrollHeight;
+    } else {
+      feed.scrollTop = Math.max(0, feed.scrollHeight - feed.clientHeight - previousBottomOffset);
+    }
+  }
+
+  if (input instanceof HTMLTextAreaElement) {
+    const draft = getRichSessionComposerDraft(activeSession?.id);
+    if (input.value !== draft) {
+      input.value = draft;
+    }
+    input.disabled = !canSend;
+    input.placeholder = `Message ${activeSession?.providerLabel || "agent"}...`;
+    syncRichSessionComposerHeight(input);
+  }
+
+  if (stopButton instanceof HTMLButtonElement) {
+    stopButton.disabled = !canSend;
+  }
+
+  if (sendButton instanceof HTMLButtonElement) {
+    sendButton.disabled = !canSend;
+  }
+
+  syncTerminalScrollState();
+}
+
+function scheduleRichSessionSurfaceRender({ scrollToBottom = false } = {}) {
+  state.richSessionScrollToBottom = state.richSessionScrollToBottom || scrollToBottom;
+  if (state.richSessionRenderFrame) {
+    return;
+  }
+
+  state.richSessionRenderFrame = window.requestAnimationFrame(() => {
+    const nextScrollToBottom = state.richSessionScrollToBottom;
+    state.richSessionRenderFrame = null;
+    state.richSessionScrollToBottom = false;
+    refreshRichSessionSurfaceUi({ scrollToBottom: nextScrollToBottom });
+  });
+}
+
+function setShellSurfaceMode(mode) {
+  const nextMode = mode === "terminal" ? "terminal" : "native";
+  if (nextMode === "native" && !isRichSessionSurfaceSupported()) {
+    return;
+  }
+
+  if (state.shellSurfaceMode === nextMode) {
+    refreshRichSessionSurfaceUi();
+    return;
+  }
+
+  state.shellSurfaceMode = nextMode;
+  if (nextMode === "native") {
+    hideTerminalTranscriptOverlay();
+    scheduleRichSessionNarrativeRefresh(state.activeSessionId, { immediate: true });
+  }
+  refreshRichSessionSurfaceUi({ scrollToBottom: nextMode === "native" });
+
+  if (!isCoarsePointerDevice()) {
+    if (nextMode === "native") {
+      focusRichSessionComposer();
+    } else {
+      state.terminal?.focus();
+    }
+  }
+}
+
+function renderShellSurfaceToggle(activeSession) {
+  if (!isRichSessionSurfaceSupported(activeSession)) {
+    return "";
+  }
+
+  const mode = getShellSurfaceMode(activeSession);
+  return `
+    <div class="shell-surface-toggle" id="shell-surface-toggle" role="tablist" aria-label="Session surface">
+      <button class="ghost-button toolbar-control shell-surface-button ${mode === "native" ? "is-active" : ""}" type="button" id="toggle-shell-surface-native" role="tab" aria-selected="${mode === "native" ? "true" : "false"}">Native</button>
+      <button class="ghost-button toolbar-control shell-surface-button ${mode === "terminal" ? "is-active" : ""}" type="button" id="toggle-shell-surface-terminal" role="tab" aria-selected="${mode === "terminal" ? "true" : "false"}">Terminal</button>
+    </div>
+  `;
+}
+
 function renderTerminalTranscriptHistory({ afterRender = null, scrollToBottom = false } = {}) {
   const pre = document.querySelector("#terminal-transcript-pre");
   if (!(pre instanceof HTMLElement)) {
@@ -3987,6 +4969,7 @@ function scheduleTerminalTranscriptRender({ scrollToBottom = false } = {}) {
 function setTerminalTranscriptHistory(rawOutput, { scrollToBottom = false } = {}) {
   state.terminalTranscriptRaw = String(rawOutput || "").slice(-TERMINAL_TRANSCRIPT_RAW_LIMIT);
   scheduleTerminalTranscriptRender({ scrollToBottom });
+  scheduleRichSessionSurfaceRender({ scrollToBottom });
 }
 
 function appendTerminalTranscriptOutput(chunk, { scrollToBottom = false } = {}) {
@@ -3998,6 +4981,7 @@ function appendTerminalTranscriptOutput(chunk, { scrollToBottom = false } = {}) 
   state.terminalTranscriptRaw = `${state.terminalTranscriptRaw}${chunk}`.slice(-TERMINAL_TRANSCRIPT_RAW_LIMIT);
 
   scheduleTerminalTranscriptRender({ scrollToBottom: shouldStickToBottom });
+  scheduleRichSessionSurfaceRender({ scrollToBottom: scrollToBottom || isRichSessionFeedAtBottom() });
 }
 
 function setTerminalTranscriptVisible(visible) {
@@ -4024,15 +5008,22 @@ function clearTerminalTranscriptHistory() {
     window.cancelAnimationFrame(state.terminalTranscriptRenderFrame);
     state.terminalTranscriptRenderFrame = null;
   }
+  if (state.richSessionRenderFrame) {
+    window.cancelAnimationFrame(state.richSessionRenderFrame);
+    state.richSessionRenderFrame = null;
+  }
 
   state.terminalTranscriptRaw = "";
   state.terminalTranscriptScrollToBottom = false;
+  state.richSessionScrollToBottom = false;
   hideTerminalTranscriptOverlay();
 
   const pre = document.querySelector("#terminal-transcript-pre");
   if (pre instanceof HTMLElement) {
     pre.textContent = "";
   }
+
+  scheduleRichSessionSurfaceRender({ scrollToBottom: true });
 }
 
 function getTerminalWheelDeltaY(event) {
@@ -5485,6 +6476,39 @@ function normalizeBuildingHubAuthProvider(value) {
   return provider === "google" || provider === "github" ? provider : "";
 }
 
+function getBuildingHubAccount() {
+  const status = state.settings.buildingHubAccountStatus;
+  if (!status || typeof status !== "object") {
+    return null;
+  }
+
+  const account = status.account;
+  return account && typeof account === "object" ? account : null;
+}
+
+function getBuildingHubGitHubUser() {
+  const status = state.settings.githubOAuthStatus;
+  if (!status || typeof status !== "object") {
+    return null;
+  }
+
+  const user = status.user;
+  return user && typeof user === "object" ? user : null;
+}
+
+function getBuildingHubGitHubUserLabel() {
+  const user = getBuildingHubGitHubUser();
+  if (!user) {
+    return "";
+  }
+
+  if (user.login) {
+    return `@${user.login}`;
+  }
+
+  return String(user.name || "").trim();
+}
+
 function getBuildingHubAuthProviderLabel(provider = state.settings.buildingHubAuthProvider) {
   const normalizedProvider = normalizeBuildingHubAuthProvider(provider);
   if (normalizedProvider === "google") {
@@ -5501,7 +6525,22 @@ function isBuildingHubAuthenticated() {
 }
 
 function getBuildingHubProfileUrl() {
+  const account = getBuildingHubAccount();
+  if (account?.profileUrl) {
+    return normalizePluginSetupUrl(account.profileUrl);
+  }
   return normalizePluginSetupUrl(state.settings.buildingHubProfileUrl);
+}
+
+function getBuildingHubConnectedAccountLabel() {
+  const account = getBuildingHubAccount();
+  if (account?.login) {
+    return `@${account.login}`;
+  }
+  if (account?.name) {
+    return String(account.name).trim();
+  }
+  return getBuildingHubGitHubUserLabel() || getBuildingHubAuthProviderLabel();
 }
 
 function getBuildingHubStatusText() {
@@ -6339,14 +7378,33 @@ function getParentPathForDisplay(value) {
   return normalizedPath.slice(0, separatorIndex);
 }
 
-function sendTerminalInput(data) {
+function sendTerminalInput(data, { queueIfDisconnected = false } = {}) {
+  const text = String(data || "");
+  if (!text) {
+    return false;
+  }
+
+  const sessionId = String(state.activeSessionId || state.connectedSessionId || "").trim();
+  if (sessionId) {
+    trackRichSessionInput(text, sessionId);
+  }
+
   if (!state.websocket || state.websocket.readyState !== WebSocket.OPEN) {
-    return;
+    if (queueIfDisconnected) {
+      if (sessionId) {
+        queueSessionInput(sessionId, text, { delayMs: 180 });
+        trackGuidedOnboardingInputSafe(text);
+        return true;
+      }
+    }
+    return false;
   }
 
   hideTerminalTranscriptOverlay();
-  state.websocket.send(JSON.stringify({ type: "input", data }));
+  trackGuidedOnboardingInputSafe(text);
+  state.websocket.send(JSON.stringify({ type: "input", data: text }));
   scheduleTerminalTextareaReset();
+  return true;
 }
 
 function isImageFileLike(file) {
@@ -10926,8 +11984,13 @@ function bindAgentCanvasWindowDrag(root = document) {
         event.preventDefault();
       }
     });
-    handle.addEventListener("pointerdown", (event) => {
+
+    const startDrag = (event, pointerId = null) => {
       if (event.button !== 0 || event.target?.closest?.("a, button, input, textarea, select")) {
+        return;
+      }
+
+      if (handle.dataset.agentCanvasDragActive === "true") {
         return;
       }
 
@@ -10936,6 +11999,7 @@ function bindAgentCanvasWindowDrag(root = document) {
         return;
       }
 
+      handle.dataset.agentCanvasDragActive = "true";
       const boundary = getAgentCanvasDragBoundary(host);
       const boundaryRect = boundary.getBoundingClientRect();
       const hostRect = host.getBoundingClientRect();
@@ -10944,6 +12008,12 @@ function bindAgentCanvasWindowDrag(root = document) {
       const startX = event.clientX;
       const startY = event.clientY;
       let dragging = false;
+      let ended = false;
+
+      event.preventDefault();
+      if (pointerId != null) {
+        handle.setPointerCapture?.(pointerId);
+      }
 
       const move = (moveEvent) => {
         const distance = Math.hypot(moveEvent.clientX - startX, moveEvent.clientY - startY);
@@ -10961,16 +12031,43 @@ function bindAgentCanvasWindowDrag(root = document) {
         setAgentCanvasFloatingPosition(host, boundaryRect, hostRect, moveEvent.clientX, moveEvent.clientY, offsetX, offsetY);
         moveEvent.preventDefault();
       };
+
+      const moveWithMouse = (moveEvent) => {
+        move(moveEvent);
+      };
+
       const up = () => {
+        if (ended) {
+          return;
+        }
+
+        ended = true;
+        delete handle.dataset.agentCanvasDragActive;
         window.removeEventListener("pointermove", move);
+        window.removeEventListener("mousemove", moveWithMouse);
         window.removeEventListener("pointerup", up);
+        window.removeEventListener("mouseup", up);
         window.removeEventListener("pointercancel", up);
+        window.removeEventListener("blur", up);
+        if (pointerId != null) {
+          handle.releasePointerCapture?.(pointerId);
+        }
         host.classList.remove("is-dragging");
       };
 
       window.addEventListener("pointermove", move);
+      window.addEventListener("mousemove", moveWithMouse);
       window.addEventListener("pointerup", up, { once: true });
+      window.addEventListener("mouseup", up, { once: true });
       window.addEventListener("pointercancel", up, { once: true });
+      window.addEventListener("blur", up, { once: true });
+    };
+
+    handle.addEventListener("pointerdown", (event) => {
+      startDrag(event, event.pointerId);
+    });
+    handle.addEventListener("mousedown", (event) => {
+      startDrag(event);
     });
   });
 }
@@ -11346,7 +12443,7 @@ function getCommunitySidebarItems() {
 function renderSidebarNav() {
   const wikiLabel = state.settings.wikiRelativeRoot || state.agentPromptWikiRoot || "wiki";
   const profileUrl = getBuildingHubProfileUrl();
-  const authProviderLabel = getBuildingHubAuthProviderLabel();
+  const authProviderLabel = getBuildingHubConnectedAccountLabel();
   const profileMeta = profileUrl
     ? `${authProviderLabel || "BuilderHub"} profile`
     : isBuildingHubAuthenticated()
@@ -12887,7 +13984,7 @@ function getPluginNextSetupAction(plugin) {
   if (pluginId === "buildinghub" && !isBuildingHubAuthenticated()) {
     return {
       type: "form",
-      detail: "Log in with Google or GitHub to unlock BuildingHub.",
+      detail: "Log in with GitHub to unlock BuildingHub.",
       form: `<div class="buildinghub-auth-inline" data-plugin-setup-root="buildinghub">${renderBuildingHubAuthButtons({ includeLogout: true })}</div>`,
     };
   }
@@ -13544,14 +14641,11 @@ function getBuildingHubSourceSummary() {
 }
 
 function renderBuildingHubAuthButtons({ includeLogout = false } = {}) {
-  const providerLabel = getBuildingHubAuthProviderLabel();
+  const providerLabel = getBuildingHubConnectedAccountLabel();
   return `
     <div class="buildinghub-auth-actions">
-      <button class="primary-button toolbar-control" type="button" data-buildinghub-login="google">
-        <span>Log in with Google</span>
-      </button>
-      <button class="ghost-button toolbar-control" type="button" data-buildinghub-login="github">
-        <span>Log in with GitHub</span>
+      <button class="primary-button toolbar-control" type="button" data-buildinghub-login="github">
+        <span>${escapeHtml(providerLabel ? "Reconnect GitHub" : "Log in with GitHub")}</span>
       </button>
       ${
         includeLogout && providerLabel
@@ -13565,17 +14659,17 @@ function renderBuildingHubAuthButtons({ includeLogout = false } = {}) {
 }
 
 function renderBuildingHubAuthGate({ compact = false } = {}) {
-  const providerLabel = getBuildingHubAuthProviderLabel();
+  const providerLabel = getBuildingHubConnectedAccountLabel();
   return `
     <section class="plugin-next-step buildinghub-auth-gate ${compact ? "is-minimal" : ""}" aria-label="BuilderHub login" data-plugin-setup-root="buildinghub">
       <div class="plugin-next-step-head">
-        <strong>${escapeHtml(providerLabel ? "BuilderHub login ready" : "BuilderHub login required")}</strong>
+        <strong>${escapeHtml(providerLabel ? "GitHub connected" : "GitHub login required")}</strong>
         <span>${escapeHtml(providerLabel || "not logged in")}</span>
       </div>
       <p>${
         compact
-          ? "Sign in with Google or GitHub to unlock BuildingHub."
-          : "Sign in with Google or GitHub in BuildingHub. Until login is complete, this view stays focused on that single step."
+          ? "Sign in with GitHub so BuildingHub publishes can be tied to your account."
+          : "Sign in with GitHub in BuildingHub. Published layouts and recipes will carry that account as their publisher."
       }</p>
       ${renderBuildingHubAuthButtons({ includeLogout: true })}
     </section>
@@ -13584,14 +14678,27 @@ function renderBuildingHubAuthGate({ compact = false } = {}) {
 
 function renderBuildingHubSourceSettings({ idPrefix = "", actionLabel = "save BuildingHub" } = {}) {
   return `
-    <label class="field-label" for="${escapeHtml(idPrefix)}buildinghub-profile-url">BuilderHub profile URL</label>
+    <label class="field-label" for="${escapeHtml(idPrefix)}buildinghub-profile-url">BuildingHub profile URL</label>
     <input
       class="file-root-input"
       id="${escapeHtml(idPrefix)}buildinghub-profile-url"
       name="buildingHubProfileUrl"
       type="url"
       value="${escapeHtml(state.settings.buildingHubProfileUrl || "")}"
-      placeholder="https://builderhub.example/profile/you"
+      placeholder="https://buildinghub.example/u/your-name"
+      autocomplete="off"
+      autocorrect="off"
+      autocapitalize="none"
+      spellcheck="false"
+    />
+    <label class="field-label" for="${escapeHtml(idPrefix)}buildinghub-app-url">BuildingHub app URL</label>
+    <input
+      class="file-root-input"
+      id="${escapeHtml(idPrefix)}buildinghub-app-url"
+      name="buildingHubAppUrl"
+      type="url"
+      value="${escapeHtml(state.settings.buildingHubAppUrl || "")}"
+      placeholder="https://buildinghub.example"
       autocomplete="off"
       autocorrect="off"
       autocapitalize="none"
@@ -13690,7 +14797,11 @@ function getTownShareSummaryText(townShare) {
 function renderBuildingHubTownShareCard(townShare) {
   const shareUrl = getAgentTownShareUrl(townShare);
   const openUrl = shareUrl || townShare.sharePath || getAgentTownSharePath(townShare.id);
-  const profileUrl = getBuildingHubProfileUrl() || openUrl;
+  const publisher = townShare?.buildingHub?.publisher && typeof townShare.buildingHub.publisher === "object"
+    ? townShare.buildingHub.publisher
+    : null;
+  const publisherLabel = publisher?.login ? `@${publisher.login}` : String(publisher?.name || "").trim();
+  const profileUrl = normalizePluginSetupUrl(publisher?.profileUrl) || getBuildingHubProfileUrl() || openUrl;
   const updated = townShare.updatedAt ? relativeTime(townShare.updatedAt) : "saved";
   const image = townShare.imageUrl
     ? `<img src="${escapeHtml(townShare.imageUrl)}" alt="${escapeHtml(`${townShare.name} town snapshot`)}" loading="lazy" />`
@@ -13706,9 +14817,10 @@ function renderBuildingHubTownShareCard(townShare) {
           <span>${escapeHtml(updated)}</span>
         </div>
         <p>${escapeHtml(getTownShareSummaryText(townShare))}</p>
+        ${publisherLabel ? `<p>${escapeHtml(`Published by ${publisherLabel}`)}</p>` : ""}
         <div class="buildinghub-town-card-actions">
           <a class="icon-button toolbar-control" href="${escapeHtml(openUrl)}" target="_blank" rel="noreferrer" aria-label="Open town link" ${tooltipAttributes("Open town link")}>${renderIcon(Waypoints)}</a>
-          <a class="ghost-button toolbar-control buildinghub-profile-link" href="${escapeHtml(profileUrl)}" target="_blank" rel="noreferrer">builderhub profile</a>
+          <a class="ghost-button toolbar-control buildinghub-profile-link" href="${escapeHtml(profileUrl)}" target="_blank" rel="noreferrer">${escapeHtml(publisherLabel || "publisher profile")}</a>
           <button class="ghost-button toolbar-control" type="button" data-town-share-import="${escapeHtml(townShare.id)}">import</button>
         </div>
       </div>
@@ -13743,14 +14855,14 @@ function renderBuildingHubTownGallery() {
 
 function renderBuildingHubPluginPanel({ install = false } = {}) {
   const actionLabel = install ? "save community catalogs" : "save BuildingHub";
-  const providerLabel = getBuildingHubAuthProviderLabel();
+  const providerLabel = getBuildingHubConnectedAccountLabel();
 
   if (!isBuildingHubAuthenticated()) {
     return `
       <aside class="mcp-import-card buildinghub-plugin-card">
         <span class="main-search-kind">building catalog</span>
         <strong>BuildingHub</strong>
-        <p>Setup is one step: log in.</p>
+        <p>Setup is one step: connect GitHub.</p>
         ${renderBuildingHubAuthGate({ compact: true })}
       </aside>
     `;
@@ -13761,7 +14873,7 @@ function renderBuildingHubPluginPanel({ install = false } = {}) {
       <span class="main-search-kind">building catalog</span>
       <strong>BuildingHub</strong>
       <p>Load manifest-only community buildings from a reviewed catalog. Catalogs can add setup guides and town lots, but not executable app code.</p>
-      <p class="mcp-import-paths">logged in with ${escapeHtml(providerLabel || "BuilderHub")}</p>
+      <p class="mcp-import-paths">connected as ${escapeHtml(providerLabel || "GitHub")}</p>
       <form class="settings-form buildinghub-form ${install ? "plugin-install-form" : ""}" ${install ? "" : "id=\"buildinghub-form\""} data-settings-form>
         <label class="checkbox-row browser-use-compact-checkbox">
           <input type="checkbox" name="buildingHubEnabled" ${state.settings.buildingHubEnabled ? "checked" : ""} />
@@ -14508,9 +15620,16 @@ function renderAgentTownActionItemCard(item) {
   const metaLabel = getAgentTownActionItemMetaLabel(item);
   const fallbackLabel = item.predicate ? `waits for ${item.predicate.replaceAll("_", " ")}` : "agent requested";
   const href = String(item.href || item.target?.href || "").trim();
+  const tutorialId = String(item.tutorialId || "").trim();
   const priorityClass = item.priority && item.priority !== "normal" ? ` is-priority-${escapeHtml(item.priority)}` : "";
+  const tutorialAttr = tutorialId ? ` data-tutorial-id="${escapeHtml(tutorialId)}"` : "";
+  const primaryButton = tutorialId
+    ? `<button class="primary-button toolbar-control" type="button" data-tutorial-open="${escapeHtml(tutorialId)}" data-tutorial-action-item="${escapeHtml(item.id)}">View tutorial</button>`
+    : href
+      ? `<button class="primary-button toolbar-control" type="button" data-agent-town-action-open="${escapeHtml(item.id)}">${escapeHtml(item.cta || "Open")}</button>`
+      : "";
   return `
-    <article class="automation-card agent-inbox-card is-action is-${escapeHtml(item.kind || "action")}${priorityClass}" data-agent-town-action-item="${escapeHtml(item.id)}">
+    <article class="automation-card agent-inbox-card is-action is-${escapeHtml(item.kind || "action")}${priorityClass}" data-agent-town-action-item="${escapeHtml(item.id)}"${tutorialAttr}>
       <div class="agent-inbox-card-head">
         <div class="automation-card-icon" aria-hidden="true">${renderIcon(Inbox)}</div>
         <span class="plugin-status">${escapeHtml(kindLabel)}</span>
@@ -14519,11 +15638,7 @@ function renderAgentTownActionItemCard(item) {
       <p>${escapeHtml(item.detail || fallbackLabel)}</p>
       <div class="agent-inbox-card-meta">${escapeHtml(metaLabel || fallbackLabel)}</div>
       <div class="plugin-onboarding-actions">
-        ${
-          href
-            ? `<button class="primary-button toolbar-control" type="button" data-agent-town-action-open="${escapeHtml(item.id)}">${escapeHtml(item.cta || "Open")}</button>`
-            : ""
-        }
+        ${primaryButton}
         <button class="ghost-button toolbar-control" type="button" data-agent-town-action-complete="${escapeHtml(item.id)}">done</button>
         <button class="ghost-button toolbar-control" type="button" data-agent-town-action-dismiss="${escapeHtml(item.id)}">dismiss</button>
       </div>
@@ -19044,6 +20159,158 @@ function openAgentTownActionHref(actionItemId) {
   window.location.href = href;
 }
 
+function renderTutorialMarkdown(markdown) {
+  const lines = String(markdown || "").replace(/\r\n/g, "\n").split("\n");
+  const blocks = [];
+  let paragraphBuffer = [];
+  let listBuffer = null;
+  let codeBuffer = null;
+
+  const flushParagraph = () => {
+    if (paragraphBuffer.length) {
+      blocks.push(`<p>${renderTutorialInline(paragraphBuffer.join(" "))}</p>`);
+      paragraphBuffer = [];
+    }
+  };
+  const flushList = () => {
+    if (listBuffer) {
+      const tag = listBuffer.type === "ol" ? "ol" : "ul";
+      blocks.push(`<${tag}>${listBuffer.items.map((entry) => `<li>${renderTutorialInline(entry)}</li>`).join("")}</${tag}>`);
+      listBuffer = null;
+    }
+  };
+
+  for (const rawLine of lines) {
+    const line = rawLine;
+    if (codeBuffer !== null) {
+      if (/^```/.test(line.trim())) {
+        blocks.push(`<pre><code>${escapeHtml(codeBuffer.join("\n"))}</code></pre>`);
+        codeBuffer = null;
+      } else {
+        codeBuffer.push(line);
+      }
+      continue;
+    }
+
+    if (/^```/.test(line.trim())) {
+      flushParagraph();
+      flushList();
+      codeBuffer = [];
+      continue;
+    }
+
+    if (!line.trim()) {
+      flushParagraph();
+      flushList();
+      continue;
+    }
+
+    const headingMatch = /^(#{1,3})\s+(.*)$/.exec(line);
+    if (headingMatch) {
+      flushParagraph();
+      flushList();
+      const level = headingMatch[1].length;
+      blocks.push(`<h${level}>${renderTutorialInline(headingMatch[2])}</h${level}>`);
+      continue;
+    }
+
+    const orderedMatch = /^\s*\d+\.\s+(.*)$/.exec(line);
+    const unorderedMatch = /^\s*-\s+(.*)$/.exec(line);
+    if (orderedMatch || unorderedMatch) {
+      flushParagraph();
+      const type = orderedMatch ? "ol" : "ul";
+      const text = (orderedMatch || unorderedMatch)[1];
+      if (!listBuffer || listBuffer.type !== type) {
+        flushList();
+        listBuffer = { type, items: [] };
+      }
+      listBuffer.items.push(text);
+      continue;
+    }
+
+    flushList();
+    paragraphBuffer.push(line.trim());
+  }
+
+  if (codeBuffer !== null) {
+    blocks.push(`<pre><code>${escapeHtml(codeBuffer.join("\n"))}</code></pre>`);
+  }
+  flushParagraph();
+  flushList();
+
+  return blocks.join("\n");
+}
+
+function renderTutorialInline(text) {
+  const escaped = escapeHtml(String(text || ""));
+  return escaped.replace(/`([^`]+)`/g, (_, code) => `<code>${code}</code>`);
+}
+
+function closeTutorialOverlay() {
+  const existing = document.querySelector(".tutorial-overlay");
+  if (existing) {
+    existing.remove();
+  }
+}
+
+async function openTutorialOverlay(tutorialId, actionItemId) {
+  const id = String(tutorialId || "").trim();
+  if (!id) {
+    return;
+  }
+  let tutorial = null;
+  try {
+    const payload = await fetchJson(`/api/tutorials/${encodeURIComponent(id)}`);
+    tutorial = payload.tutorial;
+  } catch (error) {
+    window.alert(error.message || "Could not load tutorial.");
+    return;
+  }
+  if (!tutorial) {
+    return;
+  }
+
+  closeTutorialOverlay();
+  const overlay = document.createElement("div");
+  overlay.className = "tutorial-overlay";
+  overlay.innerHTML = `
+    <div class="tutorial-overlay-backdrop" data-tutorial-dismiss></div>
+    <div class="tutorial-overlay-card" role="dialog" aria-label="${escapeHtml(tutorial.title || "Tutorial")}">
+      <header class="tutorial-overlay-head">
+        <strong>${escapeHtml(tutorial.title || "Tutorial")}</strong>
+        <button type="button" class="icon-button" data-tutorial-dismiss aria-label="Close tutorial">&times;</button>
+      </header>
+      <div class="tutorial-overlay-body">${renderTutorialMarkdown(tutorial.body)}</div>
+      <footer class="tutorial-overlay-actions">
+        <button type="button" class="ghost-button toolbar-control" data-tutorial-dismiss>Close</button>
+        <button type="button" class="primary-button toolbar-control" data-tutorial-done="${escapeHtml(String(actionItemId || ""))}">Got it</button>
+      </footer>
+    </div>
+  `;
+  document.body.appendChild(overlay);
+
+  overlay.querySelectorAll("[data-tutorial-dismiss]").forEach((element) => {
+    element.addEventListener("click", (event) => {
+      event.preventDefault();
+      event.stopPropagation();
+      closeTutorialOverlay();
+    });
+  });
+
+  const doneButton = overlay.querySelector("[data-tutorial-done]");
+  if (doneButton) {
+    doneButton.addEventListener("click", async (event) => {
+      event.preventDefault();
+      event.stopPropagation();
+      const targetId = doneButton.getAttribute("data-tutorial-done") || "";
+      if (targetId) {
+        await updateAgentTownActionItemStatus(targetId, "completed");
+      }
+      closeTutorialOverlay();
+    });
+  }
+}
+
 function getAgentTownTheme(themeId = state.visualGame.themeId) {
   return AGENT_TOWN_THEME_BY_ID.get(normalizeAgentTownThemeId(themeId)) || AGENT_TOWN_THEME_BY_ID.get(AGENT_TOWN_DEFAULT_THEME_ID);
 }
@@ -20129,6 +21396,36 @@ function zoomVisualGameCameraAt(viewportPoint, zoomFactor, viewport = state.visu
   }, viewport);
 }
 
+function centerVisualGameCameraOnWorldRect(rect, { paddingWorld = 56, maxZoom = 1.6 } = {}) {
+  if (!rect) {
+    return null;
+  }
+
+  const viewport = state.visualGame.viewport || getVisualGameDefaultViewport();
+  const width = Math.max(32, Number(rect.width) || 0);
+  const height = Math.max(32, Number(rect.height) || 0);
+  const x = Number(rect.x);
+  const y = Number(rect.y);
+  if (!Number.isFinite(x) || !Number.isFinite(y)) {
+    return null;
+  }
+
+  const paddedWidth = width + paddingWorld * 2;
+  const paddedHeight = height + paddingWorld * 2;
+  const fitZoom = Math.min(viewport.width / paddedWidth, viewport.height / paddedHeight);
+  const zoom = clamp(
+    Math.min(Number.isFinite(fitZoom) ? fitZoom : getVisualGameFitZoom(viewport), maxZoom),
+    VISUAL_GAME_MIN_ZOOM,
+    VISUAL_GAME_MAX_ZOOM,
+  );
+
+  return setVisualGameCamera({
+    x: x + width / 2 - viewport.width / zoom / 2,
+    y: y + height / 2 - viewport.height / zoom / 2,
+    zoom,
+  }, viewport);
+}
+
 function ensureVisualGameSimulationLoop() {
   if (state.visualGame.simulationFrameHandle || !state.swarmGraph.data) {
     return;
@@ -20632,6 +21929,7 @@ function mountVisualPixelGame() {
     const gameModel = getVisualGameModel(graph);
     const agents = advanceVisualGameSimulation(time, graph);
     drawVisualGameScene(context, graph, gameModel, time, state.visualGame.hitAreas, visibleWorld, agents);
+    syncGuidedOnboardingVisualFocus();
     state.visualGame.frameHandle = window.requestAnimationFrame(drawFrame);
   };
 
@@ -25833,6 +27131,11 @@ function renderTerminalPanel(activeSession) {
     hasAgentCanvas ? "has-agent-canvas" : "",
     state.openFileTabs.length ? "has-file-preview" : "",
   ].filter(Boolean).join(" ");
+  const terminalStackClass = [
+    "terminal-stack",
+    state.terminalTranscriptVisible ? "is-transcript-scroll" : "",
+    isRichSessionSurfaceActive(activeSession) ? "is-rich-surface" : "",
+  ].filter(Boolean).join(" ");
 
   return `
     <section class="terminal-panel" ${renderMainViewAttributes("shell", `shell:${activeSession?.id || ""}`)}>
@@ -25852,17 +27155,19 @@ function renderTerminalPanel(activeSession) {
               `
           }
           <div class="toolbar-actions">
+            ${renderShellSurfaceToggle(activeSession)}
             <button class="icon-button" type="button" id="refresh-sessions" aria-label="Refresh sessions" ${tooltipAttributes("Refresh sessions")}>${renderIcon(RefreshCw)}</button>
           </div>
         </div>
       </div>
 
       <div class="${workspaceSplitClass}" id="workspace-split" style="${renderWorkspaceSplitStyle()}">
-        <div class="terminal-stack">
+        <div class="${terminalStackClass}">
           <div class="terminal-mount" id="terminal-mount"></div>
           <div class="terminal-transcript-scroll" id="terminal-transcript-scroll" tabindex="0" aria-label="Terminal transcript history">
             <pre class="terminal-transcript-pre" id="terminal-transcript-pre"></pre>
           </div>
+          ${renderRichSessionSurface(activeSession)}
           <button class="jump-bottom-button ${activeSession && state.terminalShowJumpToBottom ? "is-visible" : ""}" type="button" id="jump-to-bottom" aria-label="Jump to bottom" ${tooltipAttributes("Jump to bottom")} ${activeSession ? "" : "disabled"}>
             bottom
           </button>
@@ -26237,6 +27542,46 @@ function renderMainViewAttributes(view, key = view) {
   return `data-main-view="${escapeHtml(view)}" data-main-scroll-key="${escapeHtml(key || view)}"`;
 }
 
+function renderGuidedOnboardingOverlaySafe() {
+  return typeof renderGuidedOnboardingOverlay === "function" ? renderGuidedOnboardingOverlay() : "";
+}
+
+function scheduleGuidedOnboardingSyncSafe() {
+  if (typeof scheduleGuidedOnboardingSync === "function") {
+    scheduleGuidedOnboardingSync();
+  }
+}
+
+function trackGuidedOnboardingInputSafe(data) {
+  if (typeof trackGuidedOnboardingInput === "function") {
+    trackGuidedOnboardingInput(data);
+  }
+}
+
+function trackGuidedOnboardingOutputSafe(data, sessionId) {
+  if (typeof trackGuidedOnboardingOutput === "function") {
+    trackGuidedOnboardingOutput(data, sessionId);
+  }
+}
+
+function advanceGuidedOnboardingStepSafe() {
+  if (typeof advanceGuidedOnboardingStep === "function") {
+    advanceGuidedOnboardingStep();
+  }
+}
+
+function rewindGuidedOnboardingStepSafe() {
+  if (typeof rewindGuidedOnboardingStep === "function") {
+    rewindGuidedOnboardingStep();
+  }
+}
+
+function skipGuidedOnboardingSafe() {
+  if (typeof skipGuidedOnboarding === "function") {
+    skipGuidedOnboarding();
+  }
+}
+
 function captureScrollSnapshot(selector) {
   const element = document.querySelector(selector);
   if (!(element instanceof HTMLElement)) {
@@ -26497,6 +27842,7 @@ function renderAgentSetupScreen() {
     </main>
   `;
 
+  markAppBootReady();
   bindShellEvents();
   disposeTerminal();
 }
@@ -26608,6 +27954,7 @@ function renderBrainSetupScreen() {
     </main>
   `;
 
+  markAppBootReady();
   bindShellEvents();
   disposeTerminal();
 }
@@ -26732,12 +28079,14 @@ function renderShell() {
 
       ${renderWorkspaceArea(activeSession)}
       ${renderFolderPickerModal()}
+      ${renderGuidedOnboardingOverlaySafe()}
       ${renderSystemToasts()}
     </main>
   `;
   restoreExplorerScrollSnapshots(explorerScrollSnapshot);
   restoreMainViewScrollSnapshots(mainViewScrollSnapshot);
 
+  markAppBootReady();
   bindShellEvents();
   schedulePendingPluginSetupFocus();
 
@@ -26762,6 +28111,640 @@ function renderShell() {
   }
 
   void refreshOpenFileTree();
+  scheduleGuidedOnboardingSyncSafe();
+}
+
+function getGuidedOnboardingStep() {
+  return GUIDED_ONBOARDING_STEPS[state.guidedOnboarding.stepIndex] || null;
+}
+
+function isGuidedOnboardingForced() {
+  try {
+    return new URLSearchParams(window.location.search).get("tutorial") === "1";
+  } catch {
+    return false;
+  }
+}
+
+function shouldStartGuidedOnboarding() {
+  const forced = isGuidedOnboardingForced();
+  if (!forced) {
+    return false;
+  }
+  if (isBrainSetupRequired() || isAgentSetupRequired()) {
+    return false;
+  }
+  return true;
+}
+
+function ensureGuidedOnboardingStarted() {
+  if (!shouldStartGuidedOnboarding()) {
+    return false;
+  }
+  if (state.guidedOnboarding.active) {
+    return false;
+  }
+
+  if (isGuidedOnboardingForced()) {
+    state.guidedOnboarding.completed = false;
+    state.guidedOnboarding.dismissed = false;
+  }
+
+  state.guidedOnboarding.active = true;
+  state.guidedOnboarding.stepIndex = 0;
+  state.guidedOnboarding.startedAt = Date.now();
+  state.guidedOnboarding.baselineAgentClickedCount = Number(state.agentTown?.signals?.agentClickedCount) || 0;
+  state.guidedOnboarding.inputBuffer = "";
+  state.guidedOnboarding.inputSessionId = "";
+  state.guidedOnboarding.awaitingHelloResponseSessionId = "";
+  state.guidedOnboarding.localEvents = {};
+  state.guidedOnboarding.lastRouteRequestAt = 0;
+  state.guidedOnboarding.focusSignature = "";
+  return true;
+}
+
+function isGuidedOnboardingRouteSatisfied(step) {
+  if (step?.ensureView) {
+    if (step.ensureView === "visual-interface") {
+      if (!isVisualInterfaceView()) {
+        return false;
+      }
+    } else if (step.ensureView === "plugins") {
+      if (state.currentView !== "plugins") {
+        return false;
+      }
+
+      if (step.ensurePluginDetail) {
+        if (state.pluginDetailId !== normalizeBuildingId(step.ensurePluginDetail)) {
+          return false;
+        }
+      } else if (state.pluginDetailId) {
+        return false;
+      }
+    } else if (state.currentView !== step.ensureView) {
+      return false;
+    }
+  }
+
+  if (step?.requireBuilderOpen) {
+    if (!isVisualInterfaceView() || !isAgentTownBuilderOpen()) {
+      return false;
+    }
+
+    if (
+      step.requireBuilderTab &&
+      normalizeAgentTownBuilderTab(state.visualGame.builderTab) !== normalizeAgentTownBuilderTab(step.requireBuilderTab)
+    ) {
+      return false;
+    }
+  }
+
+  return true;
+}
+
+function requestGuidedOnboardingRoute(step) {
+  if (!step || isGuidedOnboardingRouteSatisfied(step)) {
+    return;
+  }
+
+  const now = Date.now();
+  if (now - state.guidedOnboarding.lastRouteRequestAt < 900) {
+    return;
+  }
+  state.guidedOnboarding.lastRouteRequestAt = now;
+
+  if (step.ensureView === "visual-interface") {
+    void openMainView("visual-interface").then(() => {
+      if (step.autoOpenBuilder && step.requireBuilderOpen) {
+        openAgentTownBuilder({
+          tab: step.requireBuilderTab ? normalizeAgentTownBuilderTab(step.requireBuilderTab) : state.visualGame.builderTab,
+          render: true,
+        });
+      }
+    });
+    return;
+  }
+
+  if (step.ensureView === "plugins") {
+    const buildingId = step.ensurePluginDetail ? normalizeBuildingId(step.ensurePluginDetail) : "";
+    void openMainView("plugins", { buildingId });
+    return;
+  }
+
+  if (step.autoOpenBuilder && step.requireBuilderOpen && isVisualInterfaceView()) {
+    openAgentTownBuilder({
+      tab: step.requireBuilderTab ? normalizeAgentTownBuilderTab(step.requireBuilderTab) : state.visualGame.builderTab,
+      render: true,
+    });
+    return;
+  }
+
+  if (step.ensureView) {
+    void openMainView(step.ensureView);
+  }
+}
+
+function normalizeGuidedOnboardingInputText(value) {
+  return String(value || "")
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, " ")
+    .replace(/\s+/g, " ")
+    .trim();
+}
+
+function getGuidedOnboardingStartTime() {
+  return Number(state.guidedOnboarding.startedAt) || 0;
+}
+
+function hasGuidedOnboardingEvent(type) {
+  if (!type) {
+    return false;
+  }
+
+  if (state.guidedOnboarding.localEvents?.[type]) {
+    return true;
+  }
+
+  const startTime = getGuidedOnboardingStartTime();
+  return (Array.isArray(state.agentTown?.events) ? state.agentTown.events : []).some((event) => {
+    if (!event || event.type !== type) {
+      return false;
+    }
+
+    if (!startTime) {
+      return true;
+    }
+
+    const eventTime = Date.parse(String(event.createdAt || ""));
+    return Number.isFinite(eventTime) && eventTime >= startTime - 250;
+  });
+}
+
+function markGuidedOnboardingEvent(type, detail = {}) {
+  if (!type) {
+    return;
+  }
+
+  if (!state.guidedOnboarding.localEvents || typeof state.guidedOnboarding.localEvents !== "object") {
+    state.guidedOnboarding.localEvents = {};
+  }
+  if (state.guidedOnboarding.localEvents[type]) {
+    return;
+  }
+
+  state.guidedOnboarding.localEvents[type] = true;
+  void recordAgentTownEvent(type, detail);
+  scheduleGuidedOnboardingSyncSafe();
+}
+
+function isGuidedOnboardingHelloText(normalizedText) {
+  return normalizedText === "hello" || normalizedText.startsWith("hello ");
+}
+
+function isGuidedOnboardingBuildRequestText(normalizedText) {
+  return /\blet(?:\s+s|\s+us)?\s+build\s+our\s+first\s+building\b/.test(normalizedText);
+}
+
+function isGuidedOnboardingFirstDayCalendarRequestText(normalizedText) {
+  const mentionsFirstDay = /\b(first\s+day|day\s+one|commemorat(?:e|ing|ion))\b/.test(normalizedText);
+  const mentionsCalendarIntent = /\b(calendar|event|schedule)\b/.test(normalizedText);
+  return mentionsFirstDay && mentionsCalendarIntent;
+}
+
+function trackGuidedOnboardingInputLine(line, sessionId) {
+  if (!state.guidedOnboarding.active || !line) {
+    return;
+  }
+
+  const normalized = normalizeGuidedOnboardingInputText(line);
+  if (!normalized) {
+    return;
+  }
+
+  if (!hasGuidedOnboardingEvent(GUIDED_ONBOARDING_EVENT_TYPES.helloSent) && isGuidedOnboardingHelloText(normalized)) {
+    state.guidedOnboarding.awaitingHelloResponseSessionId = sessionId;
+    markGuidedOnboardingEvent(GUIDED_ONBOARDING_EVENT_TYPES.helloSent, {
+      label: "hello",
+      metadata: { sessionId },
+    });
+  }
+
+  if (!hasGuidedOnboardingEvent(GUIDED_ONBOARDING_EVENT_TYPES.buildRequestSent) && isGuidedOnboardingBuildRequestText(normalized)) {
+    markGuidedOnboardingEvent(GUIDED_ONBOARDING_EVENT_TYPES.buildRequestSent, {
+      label: "lets build our first building",
+      metadata: { sessionId },
+    });
+  }
+
+  if (
+    !hasGuidedOnboardingEvent(GUIDED_ONBOARDING_EVENT_TYPES.firstDayCalendarRequest)
+    && isGuidedOnboardingFirstDayCalendarRequestText(normalized)
+  ) {
+    markGuidedOnboardingEvent(GUIDED_ONBOARDING_EVENT_TYPES.firstDayCalendarRequest, {
+      label: "first day calendar request",
+      metadata: { sessionId },
+    });
+  }
+}
+
+function trackGuidedOnboardingInput(data) {
+  if (!state.guidedOnboarding.active) {
+    return;
+  }
+
+  const sessionId = String(state.activeSessionId || state.connectedSessionId || "").trim();
+  if (!sessionId) {
+    return;
+  }
+
+  if (state.guidedOnboarding.inputSessionId !== sessionId) {
+    state.guidedOnboarding.inputSessionId = sessionId;
+    state.guidedOnboarding.inputBuffer = "";
+  }
+
+  let buffer = String(state.guidedOnboarding.inputBuffer || "");
+  for (const char of String(data || "")) {
+    if (char === "\r" || char === "\n") {
+      const line = buffer.trim();
+      buffer = "";
+      if (line) {
+        trackGuidedOnboardingInputLine(line, sessionId);
+      }
+      continue;
+    }
+
+    if (char === "\u007f" || char === "\b") {
+      buffer = buffer.slice(0, -1);
+      continue;
+    }
+
+    if (char >= " " && char !== "\u007f") {
+      buffer = `${buffer}${char}`;
+      if (buffer.length > 512) {
+        buffer = buffer.slice(-512);
+      }
+    }
+  }
+
+  state.guidedOnboarding.inputBuffer = buffer;
+}
+
+function stripGuidedOnboardingTerminalOutput(value) {
+  return String(value || "")
+    .replace(/\u001b\[[0-9;?]*[ -/]*[@-~]/g, "")
+    .replace(/\u001b\][^\u0007]*(?:\u0007|\u001b\\)/g, "")
+    .replace(/[\u0000-\u001f\u007f]/g, " ")
+    .replace(/\s+/g, " ")
+    .trim();
+}
+
+function trackGuidedOnboardingOutput(data, sessionId) {
+  if (!state.guidedOnboarding.active) {
+    return;
+  }
+
+  if (hasGuidedOnboardingEvent(GUIDED_ONBOARDING_EVENT_TYPES.helloResponse)) {
+    return;
+  }
+
+  const awaitingSessionId = String(state.guidedOnboarding.awaitingHelloResponseSessionId || "");
+  if (!awaitingSessionId || awaitingSessionId !== String(sessionId || "")) {
+    return;
+  }
+
+  const normalizedOutput = normalizeGuidedOnboardingInputText(stripGuidedOnboardingTerminalOutput(data));
+  if (!normalizedOutput || normalizedOutput === "hello") {
+    return;
+  }
+
+  state.guidedOnboarding.awaitingHelloResponseSessionId = "";
+  markGuidedOnboardingEvent(GUIDED_ONBOARDING_EVENT_TYPES.helloResponse, {
+    label: "hello response",
+    metadata: { sessionId },
+  });
+}
+
+function isGuidedOnboardingStepComplete(step) {
+  if (!step || step.manualAdvance) {
+    return false;
+  }
+
+  switch (step.id) {
+    case "click-agent":
+      return Number(state.agentTown?.signals?.agentClickedCount || 0) >= Number(state.guidedOnboarding.baselineAgentClickedCount || 0) + 1;
+    case "say-hello":
+      return hasGuidedOnboardingEvent(GUIDED_ONBOARDING_EVENT_TYPES.helloSent);
+    case "say-build-first-building":
+      return hasGuidedOnboardingEvent(GUIDED_ONBOARDING_EVENT_TYPES.helloResponse)
+        && hasGuidedOnboardingEvent(GUIDED_ONBOARDING_EVENT_TYPES.buildRequestSent);
+    case "open-buildinghub":
+      return isVisualInterfaceView() && isAgentTownBuilderOpen();
+    case "search-google-calendar": {
+      const query = String(state.visualGame.builderFunctionalSearchQuery || "").toLowerCase();
+      return query.includes("google") && query.includes("calendar");
+    }
+    case "install-google-calendar":
+      return Boolean(
+        isPluginInstallPlacementPending("google-calendar")
+        || (state.visualGame.builderPlacement?.kind === "functional" && state.visualGame.builderPlacement?.pluginId === "google-calendar")
+        || isPluginIdInstalled("google-calendar"),
+      );
+    case "place-google-calendar":
+      return Boolean(getAgentTownFunctionalPlacement("google-calendar"));
+    case "signin-google-calendar": {
+      const plugin = getPluginById("google-calendar");
+      return Boolean(plugin && isPluginBuildingAccessConfirmed(plugin));
+    }
+    case "tap-agent-again":
+      return Number(state.agentTown?.signals?.agentClickedCount || 0) >= Number(state.guidedOnboarding.baselineAgentClickedCount || 0) + 2;
+    case "first-event":
+      return hasGuidedOnboardingEvent(GUIDED_ONBOARDING_EVENT_TYPES.firstDayCalendarRequest);
+    default:
+      return false;
+  }
+}
+
+function getGuidedOnboardingSessionPointerTarget() {
+  const selectedSessionId = String(state.visualGame.selectedSessionId || "").trim();
+  if (selectedSessionId) {
+    return `session:${selectedSessionId}`;
+  }
+
+  if ((state.visualGame.hitAreas || []).some((area) => area.kind === "session")) {
+    return "session:any";
+  }
+
+  return "selector-fallback:[data-start-new-agent=\"town\"]||[data-start-new-agent]";
+}
+
+function getGuidedOnboardingTerminalPointerTarget() {
+  return "terminal-input";
+}
+
+function getGuidedOnboardingPointerTarget(step) {
+  if (!step) {
+    return "";
+  }
+
+  switch (step.id) {
+    case "click-agent":
+    case "tap-agent-again":
+      return getGuidedOnboardingSessionPointerTarget();
+    case "say-hello":
+    case "say-build-first-building":
+    case "first-event":
+      return getGuidedOnboardingTerminalPointerTarget();
+    case "open-buildinghub":
+      return "selector:[data-agent-town-builder-toggle]";
+    case "search-google-calendar":
+      return "selector:[data-agent-town-builder-search=\"functional\"]";
+    case "install-google-calendar":
+      return "selector:[data-agent-town-builder-install-functional=\"google-calendar\"]";
+    case "place-google-calendar":
+      return state.visualGame.builderPlacement?.cursorRect ? "placement-preview" : "selector:#visual-game-canvas";
+    case "signin-google-calendar":
+      return "selector-fallback:[data-plugin-confirm-access=\"google-calendar\"]||[data-plugin-open=\"google-calendar\"]";
+    default:
+      return "";
+  }
+}
+
+function getGuidedOnboardingSessionFocusRect() {
+  const selectedSessionId = String(state.visualGame.selectedSessionId || "").trim();
+  const hit = (state.visualGame.hitAreas || []).find((area) => (
+    area.kind === "session" && (!selectedSessionId || area.sessionId === selectedSessionId)
+  ));
+  return hit || null;
+}
+
+function getGuidedOnboardingFocusRect(step) {
+  if (!step || !isVisualInterfaceView()) {
+    return null;
+  }
+
+  switch (step.id) {
+    case "click-agent":
+    case "tap-agent-again":
+      return getGuidedOnboardingSessionFocusRect();
+    case "place-google-calendar":
+      return state.visualGame.builderPlacement?.cursorRect || null;
+    default:
+      return null;
+  }
+}
+
+function getGuidedOnboardingFocusSignature(step, rect) {
+  if (!step || !rect) {
+    return "";
+  }
+
+  return [
+    step.id,
+    Math.round(Number(rect.x) || 0),
+    Math.round(Number(rect.y) || 0),
+    Math.round(Number(rect.width) || 0),
+    Math.round(Number(rect.height) || 0),
+  ].join(":");
+}
+
+function syncGuidedOnboardingVisualFocus(step = getGuidedOnboardingStep()) {
+  if (!state.guidedOnboarding.active || !isVisualInterfaceView()) {
+    state.guidedOnboarding.focusSignature = "";
+    return;
+  }
+
+  const rect = getGuidedOnboardingFocusRect(step);
+  const signature = getGuidedOnboardingFocusSignature(step, rect);
+  if (!signature || signature === state.guidedOnboarding.focusSignature) {
+    return;
+  }
+
+  centerVisualGameCameraOnWorldRect(
+    rect,
+    step?.id === "place-google-calendar"
+      ? { paddingWorld: 84, maxZoom: 1.28 }
+      : { paddingWorld: 56, maxZoom: 1.7 },
+  );
+  state.guidedOnboarding.focusSignature = signature;
+}
+
+function syncGuidedOnboardingPointer() {
+  const step = getGuidedOnboardingStep();
+  const target = state.guidedOnboarding.active ? getGuidedOnboardingPointerTarget(step) : "";
+  const current = state.agentPointer;
+
+  if (!target) {
+    if (current?.source === "guided-onboarding") {
+      state.agentPointer = null;
+      clearAgentPointerOverlay();
+    }
+    return;
+  }
+
+  const nextPointer = {
+    id: `guided-onboarding-${step.id}`,
+    source: "guided-onboarding",
+    target,
+    reason: "",
+    expiresAt: Date.now() + 60 * 60 * 1000,
+  };
+
+  if (current?.source === "guided-onboarding" && current.id === nextPointer.id && current.target === nextPointer.target) {
+    return;
+  }
+
+  clearAgentPointerOverlay();
+  state.agentPointer = nextPointer;
+  startAgentPointerOverlay();
+}
+
+function completeGuidedOnboarding({ render = true } = {}) {
+  state.guidedOnboarding.active = false;
+  state.guidedOnboarding.completed = true;
+  state.guidedOnboarding.stepIndex = GUIDED_ONBOARDING_STEPS.length;
+  state.guidedOnboarding.startedAt = 0;
+  state.guidedOnboarding.inputBuffer = "";
+  state.guidedOnboarding.awaitingHelloResponseSessionId = "";
+  state.guidedOnboarding.localEvents = {};
+  state.guidedOnboarding.lastRouteRequestAt = 0;
+  state.guidedOnboarding.focusSignature = "";
+  saveGuidedOnboardingCompletedPreference(true);
+  syncGuidedOnboardingPointer();
+  if (render) {
+    renderShell();
+  }
+}
+
+function skipGuidedOnboarding() {
+  state.guidedOnboarding.dismissed = true;
+  completeGuidedOnboarding();
+}
+
+function advanceGuidedOnboardingStep() {
+  if (!state.guidedOnboarding.active) {
+    return;
+  }
+
+  state.guidedOnboarding.stepIndex += 1;
+  state.guidedOnboarding.lastRouteRequestAt = 0;
+  state.guidedOnboarding.focusSignature = "";
+  if (state.guidedOnboarding.stepIndex >= GUIDED_ONBOARDING_STEPS.length) {
+    completeGuidedOnboarding();
+    return;
+  }
+  renderShell();
+}
+
+function rewindGuidedOnboardingStep() {
+  if (!state.guidedOnboarding.active || state.guidedOnboarding.stepIndex <= 0) {
+    return;
+  }
+
+  state.guidedOnboarding.stepIndex -= 1;
+  state.guidedOnboarding.lastRouteRequestAt = 0;
+  state.guidedOnboarding.focusSignature = "";
+  renderShell();
+}
+
+function runGuidedOnboardingAutoProgress() {
+  if (!state.guidedOnboarding.active) {
+    return false;
+  }
+
+  let advanced = false;
+  let safety = 0;
+  while (safety < GUIDED_ONBOARDING_STEPS.length) {
+    safety += 1;
+    const step = getGuidedOnboardingStep();
+    if (!step) {
+      completeGuidedOnboarding({ render: false });
+      break;
+    }
+    if (!isGuidedOnboardingStepComplete(step)) {
+      break;
+    }
+    state.guidedOnboarding.stepIndex += 1;
+    state.guidedOnboarding.lastRouteRequestAt = 0;
+    state.guidedOnboarding.focusSignature = "";
+    advanced = true;
+  }
+
+  if (state.guidedOnboarding.stepIndex >= GUIDED_ONBOARDING_STEPS.length) {
+    completeGuidedOnboarding({ render: false });
+    advanced = true;
+  }
+
+  return advanced;
+}
+
+function renderGuidedOnboardingOverlay() {
+  if (!state.guidedOnboarding.active) {
+    return "";
+  }
+
+  const step = getGuidedOnboardingStep();
+  if (!step) {
+    return "";
+  }
+
+  const index = state.guidedOnboarding.stepIndex + 1;
+  const total = GUIDED_ONBOARDING_STEPS.length;
+  const nextLabel = step.manualLabel || "Continue";
+
+  return `
+    <section class="guided-onboarding-overlay" data-guided-onboarding-overlay>
+      <article class="guided-onboarding-bubble" aria-label="Onboarding tutorial">
+        <span class="main-search-kind">tutorial ${escapeHtml(`${index}/${total}`)}</span>
+        <strong>${escapeHtml(step.title)}</strong>
+        <p>${escapeHtml(step.body)}</p>
+        ${step.note ? `<p class="guided-onboarding-note">${escapeHtml(step.note)}</p>` : ""}
+        <div class="plugin-onboarding-actions guided-onboarding-actions">
+          ${
+            state.guidedOnboarding.stepIndex > 0
+              ? `<button class="ghost-button toolbar-control" type="button" data-guided-onboarding-back>Back</button>`
+              : ""
+          }
+          ${
+            step.manualAdvance
+              ? `<button class="primary-button toolbar-control" type="button" data-guided-onboarding-next>${escapeHtml(nextLabel)}</button>`
+              : `<button class="ghost-button toolbar-control" type="button" data-guided-onboarding-next>Skip step</button>`
+          }
+          <button class="ghost-button toolbar-control" type="button" data-guided-onboarding-skip>Skip tutorial</button>
+        </div>
+      </article>
+    </section>
+  `;
+}
+
+function scheduleGuidedOnboardingSync() {
+  if (state.guidedOnboarding.syncFrameHandle) {
+    window.cancelAnimationFrame(state.guidedOnboarding.syncFrameHandle);
+    state.guidedOnboarding.syncFrameHandle = 0;
+  }
+
+  state.guidedOnboarding.syncFrameHandle = window.requestAnimationFrame(() => {
+    state.guidedOnboarding.syncFrameHandle = 0;
+    syncGuidedOnboarding();
+  });
+}
+
+function syncGuidedOnboarding() {
+  const started = ensureGuidedOnboardingStarted();
+  const autoAdvanced = runGuidedOnboardingAutoProgress();
+  if (started || autoAdvanced) {
+    renderShell();
+    return;
+  }
+
+  const step = getGuidedOnboardingStep();
+  if (!state.guidedOnboarding.active || !step) {
+    syncGuidedOnboardingPointer();
+    return;
+  }
+
+  requestGuidedOnboardingRoute(step);
+  syncGuidedOnboardingPointer();
+  syncGuidedOnboardingVisualFocus(step);
 }
 
 function getUiNow() {
@@ -27171,6 +29154,17 @@ function bindSessionEvents() {
     });
   });
 
+  document.querySelectorAll("[data-tutorial-open]").forEach((button) => {
+    button.addEventListener("click", (event) => {
+      event.preventDefault();
+      event.stopPropagation();
+      void openTutorialOverlay(
+        button.getAttribute("data-tutorial-open") || "",
+        button.getAttribute("data-tutorial-action-item") || "",
+      );
+    });
+  });
+
   document.querySelectorAll("[data-agent-town-action-complete]").forEach((button) => {
     button.addEventListener("click", (event) => {
       event.preventDefault();
@@ -27421,6 +29415,7 @@ function refreshPluginSearchUi() {
   bindOttoAuthForm();
   bindCommunicationsForm();
   bindVideoMemoryForm();
+  scheduleGuidedOnboardingSyncSafe();
 }
 
 function bindBuildingHubCatalogControls() {
@@ -27583,6 +29578,10 @@ async function setPluginInstalled(pluginId, installed, { force = false, placeAft
   }
 }
 
+const BUILDINGHUB_GITHUB_OAUTH_START_PATH = "/buildinghub/auth/github/start";
+const BUILDINGHUB_GITHUB_OAUTH_DISCONNECT_PATH = "/buildinghub/auth/github/disconnect";
+const GITHUB_OAUTH_RESULT_MESSAGE_TYPE = "buildinghub-github-oauth-result";
+const GITHUB_OAUTH_POPUP_TIMEOUT_MS = 3 * 60 * 1000;
 const GOOGLE_OAUTH_RESULT_MESSAGE_TYPE = "vibe-research-google-oauth-result";
 const GOOGLE_OAUTH_POPUP_TIMEOUT_MS = 3 * 60 * 1000;
 const GOOGLE_OAUTH_BUILDING_IDS = new Set(["google-drive", "google-calendar", "gmail"]);
@@ -27671,6 +29670,77 @@ async function completeGoogleOAuthSetup(buildingId) {
   applySettingsState(payload.settings);
 }
 
+async function completeGitHubOAuthSetup() {
+  const popup = window.open(
+    BUILDINGHUB_GITHUB_OAUTH_START_PATH,
+    "buildinghub-github-oauth",
+    "popup,width=520,height=700,resizable=yes,scrollbars=yes,toolbar=no,menubar=no,status=no",
+  );
+
+  if (!popup) {
+    throw new Error("GitHub authorization popup was blocked. Allow popups and try again.");
+  }
+
+  popup.focus?.();
+
+  await new Promise((resolve, reject) => {
+    let settled = false;
+
+    const cleanup = () => {
+      window.removeEventListener("message", handleMessage);
+      window.clearTimeout(timeoutId);
+      window.clearInterval(popupPollId);
+    };
+
+    const finish = (error = null) => {
+      if (settled) {
+        return;
+      }
+
+      settled = true;
+      cleanup();
+      if (error) {
+        reject(error);
+      } else {
+        resolve();
+      }
+    };
+
+    const handleMessage = (event) => {
+      if (event.origin !== window.location.origin) {
+        return;
+      }
+
+      const payload = event.data && typeof event.data === "object" ? event.data : null;
+      if (!payload || payload.type !== GITHUB_OAUTH_RESULT_MESSAGE_TYPE) {
+        return;
+      }
+
+      if (payload.status === "success") {
+        finish();
+        return;
+      }
+
+      finish(new Error(String(payload.message || "GitHub sign-in was not completed.")));
+    };
+
+    const timeoutId = window.setTimeout(() => {
+      finish(new Error("GitHub authorization timed out. Please try again."));
+    }, GITHUB_OAUTH_POPUP_TIMEOUT_MS);
+
+    const popupPollId = window.setInterval(() => {
+      if (popup.closed) {
+        finish(new Error("GitHub authorization window was closed before completion."));
+      }
+    }, 350);
+
+    window.addEventListener("message", handleMessage);
+  });
+
+  const payload = await fetchJson("/api/settings");
+  applySettingsState(payload.settings);
+}
+
 async function saveBuildingHubAuthState(provider = "") {
   const normalizedProvider = normalizeBuildingHubAuthProvider(provider);
   const confirmedIds = getBuildingAccessConfirmedIds();
@@ -27701,10 +29771,29 @@ async function saveBuildingHubAuthState(provider = "") {
 }
 
 async function loginToBuildingHub(provider) {
+  if (normalizeBuildingHubAuthProvider(provider) === "github") {
+    await completeGitHubOAuthSetup();
+    if (state.settings.buildingHubEnabled) {
+      await loadBuildingHubCatalog({ force: true, renderOnComplete: false });
+    }
+    renderShell();
+    return;
+  }
+
   await saveBuildingHubAuthState(provider);
 }
 
 async function logoutFromBuildingHub() {
+  if (normalizeBuildingHubAuthProvider(state.settings.buildingHubAuthProvider) === "github") {
+    const payload = await fetchJson(BUILDINGHUB_GITHUB_OAUTH_DISCONNECT_PATH, {
+      method: "POST",
+      body: "{}",
+    });
+    applySettingsState(payload.settings);
+    renderShell();
+    return;
+  }
+
   await saveBuildingHubAuthState("");
 }
 
@@ -30269,6 +32358,8 @@ function refreshToolbarUi() {
     button.disabled = !canSend;
   });
 
+  refreshShellSurfaceToggleUi(activeSession);
+  refreshRichSessionSurfaceUi();
   refreshTerminalJumpUi();
 }
 
@@ -30955,15 +33046,21 @@ function applyAgentTownState(payload) {
     },
     layoutSnapshots: snapshots,
     layoutValidation: normalizeAgentTownLayoutValidation(agentTown.layoutValidation),
+    onboardingPhase: String(agentTown.onboardingPhase || "fresh"),
+    isNewUser: agentTown.isNewUser === undefined
+      ? (agentTown.onboardingPhase ? String(agentTown.onboardingPhase) === "fresh" : true)
+      : Boolean(agentTown.isNewUser),
     quests: normalizeAgentTownQuests(agentTown.quests),
     snapshots,
     signals: {
       agentClickedCount: Number(agentTown.signals?.agentClickedCount) || 0,
       automationCreatedCount: Number(agentTown.signals?.automationCreatedCount) || 0,
       libraryNoteSavedCount: Number(agentTown.signals?.libraryNoteSavedCount) || 0,
+      onboardingCompletedCount: Number(agentTown.signals?.onboardingCompletedCount) || 0,
     },
     townShares: normalizeAgentTownTownShares(agentTown.townShares || agentTown.shares),
   };
+  scheduleGuidedOnboardingSyncSafe();
 
   if (!serverLayout) {
     return;
@@ -30974,7 +33071,7 @@ function applyAgentTownState(payload) {
   const firstServerLayout = !state.visualGame.serverLayoutLoaded;
   state.visualGame.serverLayoutLoaded = true;
 
-  if (firstServerLayout && localIsCustomized && !serverIsCustomized) {
+  if (firstServerLayout && localIsCustomized && !serverIsCustomized && state.agentTown.isNewUser === false) {
     queueMicrotask(() => {
       void mirrorAgentTownState({ refreshUi: false, reason: "migrate local layout" });
     });
@@ -31071,6 +33168,16 @@ function applySettingsState(payload) {
       settings.buildingHubAuthProvider === undefined
         ? normalizeBuildingHubAuthProvider(state.settings.buildingHubAuthProvider || "")
         : normalizeBuildingHubAuthProvider(settings.buildingHubAuthProvider),
+    buildingHubAppUrl:
+      settings.buildingHubAppUrl === undefined
+        ? state.settings.buildingHubAppUrl || ""
+        : String(settings.buildingHubAppUrl || ""),
+    buildingHubAccountStatus:
+      settings.buildingHubAccountStatus === undefined
+        ? state.settings.buildingHubAccountStatus || null
+        : (settings.buildingHubAccountStatus && typeof settings.buildingHubAccountStatus === "object"
+            ? settings.buildingHubAccountStatus
+            : null),
     buildingHubCatalogPath:
       settings.buildingHubCatalogPath === undefined
         ? state.settings.buildingHubCatalogPath || ""
@@ -31088,6 +33195,18 @@ function applySettingsState(payload) {
         ? normalizePluginSetupUrl(state.settings.buildingHubProfileUrl || "")
         : normalizePluginSetupUrl(settings.buildingHubProfileUrl),
     buildingHubStatus: buildingHubStatus || null,
+    githubOAuthClientId:
+      settings.githubOAuthClientId === undefined
+        ? state.settings.githubOAuthClientId || ""
+        : String(settings.githubOAuthClientId || ""),
+    githubOAuthClientSecretConfigured:
+      settings.githubOAuthClientSecretConfigured === undefined
+        ? Boolean(state.settings.githubOAuthClientSecretConfigured)
+        : Boolean(settings.githubOAuthClientSecretConfigured),
+    githubOAuthStatus:
+      settings.githubOAuthStatus === undefined
+        ? state.settings.githubOAuthStatus || null
+        : (settings.githubOAuthStatus && typeof settings.githubOAuthStatus === "object" ? settings.githubOAuthStatus : null),
     googleOAuthClientId:
       settings.googleOAuthClientId === undefined
         ? state.settings.googleOAuthClientId || ""
@@ -32203,6 +34322,27 @@ function bindShellEvents() {
     }
   });
 
+  document.querySelectorAll("[data-guided-onboarding-next]").forEach((button) => {
+    button.addEventListener("click", (event) => {
+      event.preventDefault();
+      advanceGuidedOnboardingStepSafe();
+    });
+  });
+
+  document.querySelectorAll("[data-guided-onboarding-back]").forEach((button) => {
+    button.addEventListener("click", (event) => {
+      event.preventDefault();
+      rewindGuidedOnboardingStepSafe();
+    });
+  });
+
+  document.querySelectorAll("[data-guided-onboarding-skip]").forEach((button) => {
+    button.addEventListener("click", (event) => {
+      event.preventDefault();
+      skipGuidedOnboardingSafe();
+    });
+  });
+
   bindSessionEvents();
   bindPortEvents();
   bindFileTreeEvents();
@@ -32244,6 +34384,129 @@ function bindShellEvents() {
     document.querySelector("#ctrl-c-button")?.addEventListener("click", () => sendTerminalInput("\u0003"));
     document.querySelector("#jump-to-bottom")?.addEventListener("click", () => {
       scrollTerminalToBottom();
+    });
+  }
+
+  document.querySelector("#toggle-shell-surface-native")?.addEventListener("click", () => {
+    setShellSurfaceMode("native");
+  });
+  document.querySelector("#toggle-shell-surface-terminal")?.addEventListener("click", () => {
+    setShellSurfaceMode("terminal");
+  });
+  document.querySelector("#rich-session-feed")?.addEventListener("scroll", () => {
+    syncTerminalScrollState();
+  }, { passive: true });
+  document.querySelector("#rich-session-stop")?.addEventListener("click", () => {
+    sendTerminalInput("\u0003");
+  });
+  document.querySelector("#rich-session-form")?.addEventListener("submit", (event) => {
+    event.preventDefault();
+    const activeSession = getActiveSession();
+    const input = document.querySelector("#rich-session-input");
+    if (!(input instanceof HTMLTextAreaElement) || !activeSession) {
+      return;
+    }
+
+    const value = input.value.replace(/\s+$/u, "");
+    if (!value) {
+      return;
+    }
+
+    const sent = sendTerminalInput(`${value}\r`, { queueIfDisconnected: true });
+    if (!sent) {
+      window.alert("That session is not connected yet.");
+      return;
+    }
+
+    setRichSessionComposerDraft(activeSession.id, "");
+    input.value = "";
+    syncRichSessionComposerHeight(input);
+    scheduleRichSessionNarrativeRefresh(activeSession.id, { immediate: true });
+    refreshRichSessionSurfaceUi({ scrollToBottom: true });
+    focusRichSessionComposer();
+  });
+  document.querySelector("#rich-session-input")?.addEventListener("input", (event) => {
+    const activeSession = getActiveSession();
+    const input = event.currentTarget;
+    if (!(input instanceof HTMLTextAreaElement) || !activeSession) {
+      return;
+    }
+
+    setRichSessionComposerDraft(activeSession.id, input.value);
+    syncRichSessionComposerHeight(input);
+  });
+  document.querySelector("#rich-session-input")?.addEventListener("keydown", (event) => {
+    if (event.key !== "Enter" || event.shiftKey || event.metaKey || event.ctrlKey || event.altKey) {
+      return;
+    }
+
+    const form = document.querySelector("#rich-session-form");
+    if (!(form instanceof HTMLFormElement)) {
+      return;
+    }
+
+    event.preventDefault();
+    form.requestSubmit();
+  });
+  document.querySelector("#rich-session-input")?.addEventListener("paste", (event) => {
+    const files = getImageFilesFromClipboardData(event.clipboardData);
+    if (files.length) {
+      event.preventDefault();
+      event.stopPropagation();
+      void attachRichSessionImageFiles(files, "paste");
+      return;
+    }
+
+    const clipboardText = getClipboardText(event.clipboardData);
+    if (!isImagePlaceholderPasteText(clipboardText)) {
+      return;
+    }
+
+    event.preventDefault();
+    event.stopPropagation();
+    void attachRichSessionImagePlaceholderPaste(clipboardText);
+  });
+
+  const richSurface = document.querySelector("#rich-session-surface");
+  if (richSurface instanceof HTMLElement) {
+    const clearRichSurfaceDrag = () => {
+      richSurface.classList.remove("is-attachment-dragover");
+    };
+
+    richSurface.addEventListener("dragenter", (event) => {
+      if (!dataTransferHasImage(event.dataTransfer)) {
+        return;
+      }
+
+      event.preventDefault();
+      richSurface.classList.add("is-attachment-dragover");
+    });
+    richSurface.addEventListener("dragover", (event) => {
+      if (!dataTransferHasImage(event.dataTransfer)) {
+        return;
+      }
+
+      event.preventDefault();
+      event.dataTransfer.dropEffect = "copy";
+      richSurface.classList.add("is-attachment-dragover");
+    });
+    richSurface.addEventListener("dragleave", (event) => {
+      if (event.relatedTarget instanceof Node && richSurface.contains(event.relatedTarget)) {
+        return;
+      }
+
+      clearRichSurfaceDrag();
+    });
+    richSurface.addEventListener("drop", (event) => {
+      const files = getImageFilesFromDataTransfer(event.dataTransfer);
+      clearRichSurfaceDrag();
+      if (!files.length) {
+        return;
+      }
+
+      event.preventDefault();
+      event.stopPropagation();
+      void attachRichSessionImageFiles(files, "drop");
     });
   }
 
@@ -33087,13 +35350,7 @@ function mountTerminal() {
     .catch(() => {});
 
   state.terminal.onData((data) => {
-    if (!state.websocket || state.websocket.readyState !== WebSocket.OPEN) {
-      return;
-    }
-
-    hideTerminalTranscriptOverlay();
-    state.websocket.send(JSON.stringify({ type: "input", data }));
-    scheduleTerminalTextareaReset();
+    sendTerminalInput(data);
   });
 
   state.terminal.onScroll(() => {
@@ -33202,9 +35459,15 @@ function connectToSession(sessionId) {
     state.websocketReconnectSessionId = "";
     fitTerminalSoon();
     if (!isCoarsePointerDevice()) {
-      state.terminal.focus();
+      if (isRichSessionSurfaceActive()) {
+        focusRichSessionComposer();
+      } else {
+        state.terminal.focus();
+      }
     }
     syncTerminalScrollState();
+    scheduleRichSessionSurfaceRender({ scrollToBottom: true });
+    scheduleRichSessionNarrativeRefresh(sessionId, { immediate: true });
     flushPendingSessionInputs(sessionId, socket);
   });
 
@@ -33219,16 +35482,20 @@ function connectToSession(sessionId) {
       setTerminalTranscriptHistory(payload.data || "", { scrollToBottom: true });
       queueTerminalOutput(payload.data || "", { mirrorTranscript: false, scrollToBottom: true });
       updateSession(payload.session);
+      scheduleRichSessionNarrativeRefresh(sessionId, { immediate: true });
       return;
     }
 
     if (payload.type === "output") {
+      trackGuidedOnboardingOutputSafe(payload.data || "", sessionId);
       queueTerminalOutput(payload.data || "");
+      scheduleRichSessionNarrativeRefresh(sessionId);
       return;
     }
 
     if (payload.type === "session") {
       updateSession(payload.session);
+      scheduleRichSessionNarrativeRefresh(sessionId);
       return;
     }
 
@@ -33247,6 +35514,10 @@ function connectToSession(sessionId) {
 
     if (payload.type === "session-deleted") {
       state.sessions = state.sessions.filter((session) => session.id !== payload.sessionId);
+      clearRichSessionNarrativeTimer(payload.sessionId);
+      delete state.nativeSessionNarratives[payload.sessionId];
+      delete state.nativeSessionNarrativeErrors[payload.sessionId];
+      delete state.nativeSessionNarrativeLoading[payload.sessionId];
       const visualSelectionPruned = pruneVisualGameSessionSelection();
       if (state.activeSessionId === payload.sessionId) {
         state.activeSessionId = state.sessions[0]?.id ?? null;
@@ -33304,6 +35575,10 @@ function updateSession(session) {
 
   if (shouldMarkSessionRead(session.id)) {
     markSessionRead(session, { refresh: false });
+  }
+
+  if (String(session.id || "") === String(state.activeSessionId || "")) {
+    scheduleRichSessionNarrativeRefresh(session.id);
   }
 
   refreshToolbarUi();
@@ -33822,6 +36097,10 @@ async function saveSettingsFromForm(form) {
     body.buildingHubCatalogPath = String(formData.get("buildingHubCatalogPath") || "");
   }
 
+  if (hasField("buildingHubAppUrl")) {
+    body.buildingHubAppUrl = String(formData.get("buildingHubAppUrl") || "");
+  }
+
   if (hasField("buildingHubCatalogUrl")) {
     body.buildingHubCatalogUrl = String(formData.get("buildingHubCatalogUrl") || "");
   }
@@ -33862,6 +36141,7 @@ async function saveSettingsFromForm(form) {
 
   if (
     hasField("buildingHubEnabled") ||
+    hasField("buildingHubAppUrl") ||
     hasField("buildingHubCatalogPath") ||
     hasField("buildingHubCatalogUrl") ||
     hasField("buildingHubProfileUrl")
@@ -34122,6 +36402,7 @@ function renderFileEditorPage() {
     </main>
   `;
 
+  markAppBootReady();
   bindFileEditorEvents();
   bindSystemToastEvents();
 }
@@ -34286,6 +36567,9 @@ function handleIncomingAgentPointer(pointer) {
 function getAgentPointerAutoNavView(target) {
   if (!target || typeof target !== "string") return "";
   if (target.startsWith("building:")) return "visual-interface";
+  if (target.startsWith("session:")) return "visual-interface";
+  if (target === "placement-preview") return "visual-interface";
+  if (target === "terminal-input") return "visual-interface";
   if (target.startsWith("plugin-card:")) return "plugins";
   if (target.startsWith("view:")) return target.slice("view:".length);
   return "";
@@ -34323,10 +36607,45 @@ function resolveAgentPointerTarget(target) {
     return node ? { element: node, rect: node.getBoundingClientRect() } : null;
   }
 
+  if (target.startsWith("selector-fallback:")) {
+    const selectors = target
+      .slice("selector-fallback:".length)
+      .split("||")
+      .map((selector) => selector.trim())
+      .filter(Boolean);
+    for (const selector of selectors) {
+      const node = findAgentPointerTargetBySelector(selector, { visibleOnly: true });
+      if (node) {
+        return { element: node, rect: node.getBoundingClientRect() };
+      }
+    }
+    return null;
+  }
+
+  if (target.startsWith("selector:")) {
+    const selector = target.slice("selector:".length).trim();
+    if (!selector) {
+      return null;
+    }
+    const node = findAgentPointerTargetBySelector(selector);
+    return node ? { element: node, rect: node.getBoundingClientRect() } : null;
+  }
+
   if (target.startsWith("element:")) {
     const token = target.slice("element:".length);
     const node = document.querySelector(`[data-agent-target="${cssEscape(token)}"]`);
     return node ? { element: node, rect: node.getBoundingClientRect() } : null;
+  }
+
+  if (target === "terminal-input") {
+    const rect = getAgentPointerTerminalRect();
+    return rect ? { element: null, rect } : null;
+  }
+
+  if (target.startsWith("session:")) {
+    const sessionId = target.slice("session:".length);
+    const rect = getAgentPointerSessionRect(sessionId);
+    return rect ? { element: null, rect } : null;
   }
 
   if (target.startsWith("building:")) {
@@ -34335,27 +36654,135 @@ function resolveAgentPointerTarget(target) {
     return rect ? { element: null, rect } : null;
   }
 
+  if (target === "placement-preview") {
+    const rect = getAgentTownBuilderPlacementScreenRect();
+    return rect ? { element: null, rect } : null;
+  }
+
   return null;
 }
 
-function getAgentPointerBuildingRect(buildingId) {
+function getAgentPointerWorldRect(rectInput) {
   const canvas = document.querySelector("#visual-game-canvas");
-  if (!(canvas instanceof HTMLCanvasElement)) return null;
+  if (!(canvas instanceof HTMLCanvasElement) || !rectInput) return null;
+
+  const x = Number(rectInput.x);
+  const y = Number(rectInput.y);
+  const width = Number(rectInput.width);
+  const height = Number(rectInput.height);
+  if (![x, y, width, height].every(Number.isFinite)) {
+    return null;
+  }
+
+  const camera = state.visualGame.camera || { x: 0, y: 0, zoom: 1 };
+  const canvasRect = canvas.getBoundingClientRect();
+  return {
+    left: canvasRect.left + (x - camera.x) * camera.zoom,
+    top: canvasRect.top + (y - camera.y) * camera.zoom,
+    width: Math.max(24, width * camera.zoom),
+    height: Math.max(24, height * camera.zoom),
+  };
+}
+
+function getAgentTownBuilderPlacementScreenRect() {
+  return getAgentPointerWorldRect(state.visualGame.builderPlacement?.cursorRect);
+}
+
+function getAgentPointerTerminalRect() {
+  const richInput = document.querySelector("#rich-session-input");
+  if (richInput instanceof HTMLElement && richInput.getClientRects().length) {
+    return richInput.getBoundingClientRect();
+  }
+
+  const richForm = document.querySelector("#rich-session-form");
+  if (richForm instanceof HTMLElement && richForm.getClientRects().length) {
+    return richForm.getBoundingClientRect();
+  }
+
+  const mount = document.querySelector("#terminal-mount");
+  if (!(mount instanceof HTMLElement) || !mount.getClientRects().length) {
+    return null;
+  }
+
+  const rect = mount.getBoundingClientRect();
+  const insetX = Math.max(16, Math.min(36, rect.width * 0.08));
+  const height = Math.max(44, Math.min(96, rect.height * 0.24));
+  const width = Math.max(72, rect.width - insetX * 2);
+  return {
+    left: rect.left + insetX,
+    top: rect.top + rect.height - height - 18,
+    width,
+    height,
+  };
+}
+
+function getAgentPointerSessionRect(sessionId) {
+  const requestedSessionId = String(sessionId || "").trim();
+  const selectedSessionId = String(state.visualGame.selectedSessionId || "").trim();
+  const sessionHits = (state.visualGame.hitAreas || []).filter((area) => area.kind === "session");
+  if (!sessionHits.length) {
+    return null;
+  }
+
+  const hit = (
+    (requestedSessionId && requestedSessionId !== "any"
+      ? sessionHits.find((area) => area.sessionId === requestedSessionId)
+      : null)
+    || (selectedSessionId ? sessionHits.find((area) => area.sessionId === selectedSessionId) : null)
+    || sessionHits[0]
+  );
+  return hit ? getAgentPointerWorldRect(hit) : null;
+}
+
+function getAgentPointerBuildingRect(buildingId) {
   const hit = (state.visualGame.hitAreas || []).find(
     (area) => area.kind === "building" && area.buildingId === buildingId,
   );
-  if (!hit) return null;
-  const camera = state.visualGame.camera || { x: 0, y: 0, zoom: 1 };
-  const canvasRect = canvas.getBoundingClientRect();
-  const left = canvasRect.left + (hit.x - camera.x) * camera.zoom;
-  const top = canvasRect.top + (hit.y - camera.y) * camera.zoom;
-  const width = Math.max(24, hit.width * camera.zoom);
-  const height = Math.max(24, hit.height * camera.zoom);
-  return { left, top, width, height };
+  return hit ? getAgentPointerWorldRect(hit) : null;
 }
 
 function cssEscape(value) {
   return String(value).replace(/["\\]/g, "\\$&");
+}
+
+function isAgentPointerTargetVisible(node) {
+  if (!(node instanceof Element) || !document.contains(node)) {
+    return false;
+  }
+
+  const rect = node.getBoundingClientRect();
+  if (!(rect.width > 0 && rect.height > 0)) {
+    return false;
+  }
+
+  const style = window.getComputedStyle(node);
+  if (!style || style.display === "none" || style.visibility === "hidden" || style.visibility === "collapse") {
+    return false;
+  }
+
+  return true;
+}
+
+function findAgentPointerTargetBySelector(selector, { visibleOnly = false } = {}) {
+  if (!selector) {
+    return null;
+  }
+
+  try {
+    const nodes = [...document.querySelectorAll(selector)];
+    if (!nodes.length) {
+      return null;
+    }
+
+    const visibleNode = nodes.find((node) => isAgentPointerTargetVisible(node));
+    if (visibleNode) {
+      return visibleNode;
+    }
+
+    return visibleOnly ? null : nodes[0];
+  } catch {
+    return null;
+  }
 }
 
 function ensureAgentPointerOverlay() {
@@ -34396,6 +36823,7 @@ function startAgentPointerOverlay() {
     const target = event.target instanceof Element ? event.target : null;
     if (!target) return;
     if (!AGENT_POINTER_AUTO_DISMISS_ELEMENT_CLICK) return;
+    if (state.agentPointer?.source === "guided-onboarding") return;
     const current = agentPointerRuntime.lastTargetElement;
     if (current && current.contains(target)) {
       void dismissAgentPointer("click");
@@ -34403,6 +36831,9 @@ function startAgentPointerOverlay() {
   };
 
   const onKeyDown = (event) => {
+    if (state.agentPointer?.source === "guided-onboarding") {
+      return;
+    }
     if (event.key === "Escape") {
       void dismissAgentPointer("escape");
     }
@@ -34495,6 +36926,9 @@ function clearAgentPointerOverlay() {
 
 async function dismissAgentPointer(_reason) {
   const pointer = state.agentPointer;
+  if (pointer?.source === "guided-onboarding") {
+    return;
+  }
   state.agentPointer = null;
   clearAgentPointerOverlay();
   if (!pointer) return;
@@ -34518,5 +36952,8 @@ async function bootstrapAgentPointer() {
   }
 }
 
-bootstrapApp();
+bootstrapApp().catch((error) => {
+  console.error("[vibe-research] app boot failed", error);
+  markAppBootFailed(error);
+});
 void bootstrapAgentPointer();

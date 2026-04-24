@@ -22,6 +22,8 @@ import { AgentCallbackService } from "./agent-callback-service.js";
 import { AgentPromptStore } from "./agent-prompt-store.js";
 import { AgentRunStore } from "./agent-run-store.js";
 import { AgentTownStore } from "./agent-town-store.js";
+import { BuildingHubAccountService } from "./buildinghub-account-service.js";
+import { BuildingHubAccountTokenStore } from "./buildinghub-account-token-store.js";
 import { publishTownShareToBuildingHub } from "./buildinghub-layout-publisher.js";
 import { publishScaffoldRecipeToBuildingHub } from "./buildinghub-scaffold-publisher.js";
 import { writeBuildingAgentGuides } from "./building-agent-guides.js";
@@ -30,6 +32,8 @@ import { BrowserUseService } from "./browser-use-service.js";
 import { BUILDING_CATALOG } from "./client/building-registry.js";
 import { normalizeBuildingId } from "./client/building-sdk.js";
 import { createFolderEntry, listFolderEntries } from "./folder-browser.js";
+import { GitHubOAuthTokenStore } from "./github-oauth-token-store.js";
+import { GitHubService } from "./github-service.js";
 import { GoogleOAuthTokenStore } from "./google-oauth-token-store.js";
 import { GoogleService } from "./google-service.js";
 import { OttoAuthService } from "./ottoauth-service.js";
@@ -41,6 +45,7 @@ import {
   previewScaffoldRecipe,
   ScaffoldRecipeService,
 } from "./scaffold-recipe-service.js";
+import { TutorialRegistry } from "./tutorial-registry.js";
 import { buildAgentCredentialEnv, SettingsStore } from "./settings-store.js";
 import { SessionManager } from "./session-manager.js";
 import { startLibraryActivityWatcher } from "./library-activity-watcher.js";
@@ -86,6 +91,14 @@ const PROVIDER_INSTALL_MAX_BUFFER = Number(
 );
 const WIKI_CLONE_RATE_LIMIT_WINDOW_MS = 60 * 1000;
 const WIKI_CLONE_RATE_LIMIT_MAX = 5;
+const BUILDINGHUB_GITHUB_OAUTH_INTEGRATION_ID = "buildinghub";
+const BUILDINGHUB_GITHUB_OAUTH_START_PATH = "/buildinghub/auth/github/start";
+const BUILDINGHUB_GITHUB_OAUTH_CALLBACK_PATH = "/buildinghub/auth/github/callback";
+const BUILDINGHUB_GITHUB_OAUTH_DISCONNECT_PATH = "/buildinghub/auth/github/disconnect";
+const BUILDINGHUB_ACCOUNT_AUTH_COMPLETE_PATH = "/buildinghub/auth/complete";
+const GITHUB_OAUTH_RESULT_MESSAGE_TYPE = "buildinghub-github-oauth-result";
+const GITHUB_OAUTH_STATE_TTL_MS = 10 * 60 * 1000;
+const GITHUB_OAUTH_SCOPES = Object.freeze(["read:user"]);
 const GOOGLE_OAUTH_RESULT_MESSAGE_TYPE = "vibe-research-google-oauth-result";
 const GOOGLE_OAUTH_STATE_TTL_MS = 10 * 60 * 1000;
 const GOOGLE_OAUTH_FLOWS = Object.freeze({
@@ -363,6 +376,70 @@ function renderGoogleOAuthPopupPage({
 </html>`;
 }
 
+function renderGitHubOAuthPopupPage({
+  status = "error",
+  message = "",
+} = {}) {
+  const normalizedStatus = status === "success" ? "success" : "error";
+  const defaultMessage = normalizedStatus === "success"
+    ? "GitHub account connected. You can close this window."
+    : "GitHub sign-in was not completed.";
+  const payload = {
+    type: GITHUB_OAUTH_RESULT_MESSAGE_TYPE,
+    status: normalizedStatus,
+    message: String(message || defaultMessage).trim() || defaultMessage,
+  };
+  const title = normalizedStatus === "success" ? "GitHub Connected" : "GitHub Sign-in Not Completed";
+  const bodyMessage = escapeHtml(payload.message);
+  const statusClass = normalizedStatus === "success" ? "status-success" : "status-error";
+
+  return `<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>${escapeHtml(title)}</title>
+  <style>
+    :root { font-family: "SF Pro Text", "Segoe UI", sans-serif; color-scheme: light; }
+    body { margin: 0; min-height: 100vh; display: grid; place-items: center; background: #f6f8fc; color: #1f2937; }
+    main { width: min(460px, calc(100% - 32px)); border: 1px solid #dce3ef; border-radius: 14px; padding: 20px; background: #ffffff; }
+    h1 { margin: 0 0 10px; font-size: 1.05rem; }
+    p { margin: 0; font-size: 0.95rem; line-height: 1.4; color: #374151; }
+    .status-success { color: #0f5132; }
+    .status-error { color: #991b1b; }
+    .actions { margin-top: 14px; display: flex; gap: 10px; }
+    a { color: #1d4ed8; text-decoration: none; font-weight: 600; }
+  </style>
+</head>
+<body>
+  <main>
+    <h1>${escapeHtml(title)}</h1>
+    <p class="${statusClass}" data-status>${bodyMessage}</p>
+    <div class="actions">
+      <a href="/">Return to Vibe Research</a>
+    </div>
+  </main>
+  <script>
+    (() => {
+      const payload = ${JSON.stringify(payload)};
+      try {
+        if (window.opener && !window.opener.closed) {
+          window.opener.postMessage(payload, window.location.origin);
+        }
+      } catch {
+        // Ignore cross-window access failures in fallback browser modes.
+      }
+      if (payload.status === "success") {
+        window.setTimeout(() => {
+          window.close();
+        }, 150);
+      }
+    })();
+  </script>
+</body>
+</html>`;
+}
+
 function normalizeAttachmentSource(value) {
   return value === "drop" ? "drop" : "paste";
 }
@@ -588,10 +665,99 @@ function escapeHtml(value) {
     .replace(/'/g, "&#39;");
 }
 
+function normalizeGitHubProfileUrl(value) {
+  const rawValue = String(value || "").trim();
+  if (!rawValue) {
+    return "";
+  }
+
+  try {
+    const url = new URL(rawValue);
+    if (url.protocol !== "http:" && url.protocol !== "https:") {
+      return "";
+    }
+    if (url.hostname.toLowerCase() !== "github.com") {
+      return "";
+    }
+
+    url.search = "";
+    url.hash = "";
+    return url.toString();
+  } catch {
+    return "";
+  }
+}
+
+function getGitHubLoginFromProfileUrl(value) {
+  const profileUrl = normalizeGitHubProfileUrl(value);
+  if (!profileUrl) {
+    return "";
+  }
+
+  try {
+    const url = new URL(profileUrl);
+    const [login = ""] = url.pathname
+      .split("/")
+      .map((entry) => entry.trim())
+      .filter(Boolean);
+    return login;
+  } catch {
+    return "";
+  }
+}
+
+function normalizeBuildingHubPublisher(value = {}) {
+  if (!value || typeof value !== "object" || Array.isArray(value)) {
+    return null;
+  }
+
+  const provider = String(value.provider || "").trim().toLowerCase();
+  const id = String(value.id || "").trim();
+  const login = String(value.login || value.username || "").trim();
+  const name = String(value.name || value.displayName || "").trim();
+  const profileUrl = provider === "github"
+    ? normalizeGitHubProfileUrl(value.profileUrl || value.url || value.htmlUrl)
+    : String(value.profileUrl || value.url || value.htmlUrl || "").trim();
+  const avatarUrl = String(value.avatarUrl || value.avatar_url || "").trim();
+
+  if (!provider && !id && !login && !name && !profileUrl) {
+    return null;
+  }
+
+  return {
+    provider,
+    id,
+    login,
+    name,
+    profileUrl,
+    avatarUrl,
+  };
+}
+
+function getBuildingHubPublisherLabel(publisher) {
+  const normalized = normalizeBuildingHubPublisher(publisher);
+  if (!normalized) {
+    return "";
+  }
+
+  if (normalized.login) {
+    return `@${normalized.login}`;
+  }
+
+  return normalized.name || "";
+}
+
 function renderTownSharePage(townShare, request) {
   const share = withTownShareUrls(townShare, request);
   const title = `${share.name} · BuildingHub`;
   const description = share.description || "A shared Agent Town base layout.";
+  const publisher = normalizeBuildingHubPublisher(share.buildingHub?.publisher);
+  const publisherLabel = getBuildingHubPublisherLabel(publisher);
+  const publisherHtml = publisherLabel
+    ? (publisher?.profileUrl
+        ? `<a href="${escapeHtml(publisher.profileUrl)}">${escapeHtml(publisherLabel)}</a>`
+        : escapeHtml(publisherLabel))
+    : "";
   const imageMeta = share.imageUrl
     ? `
     <meta property="og:image" content="${escapeHtml(share.imageUrl)}" />
@@ -628,6 +794,8 @@ function renderTownSharePage(townShare, request) {
     p { margin: 0; max-width: 68ch; color: #c8ccc5; font-size: 1rem; line-height: 1.55; }
     .meta { display: flex; flex-wrap: wrap; gap: 8px; color: #d8ddcd; font-size: .82rem; }
     .meta span { padding: 7px 9px; border: 1px solid rgba(255,255,255,.12); border-radius: 999px; background: rgba(255,255,255,.05); }
+    .publisher { color: #c8ccc5; font-size: .94rem; }
+    .publisher a { color: inherit; }
     .actions { display: flex; flex-wrap: wrap; gap: 10px; }
     button, a.button { appearance: none; display: inline-flex; align-items: center; justify-content: center; min-height: 40px; padding: 0 14px; border: 1px solid rgba(255,255,255,.16); border-radius: 8px; background: #d7f36b; color: #12140f; font-weight: 750; text-decoration: none; cursor: pointer; }
     a.button.secondary { background: transparent; color: #f4f0e8; }
@@ -643,6 +811,7 @@ function renderTownSharePage(townShare, request) {
       <span>${escapeHtml(`theme ${theme}`)}</span>
     </div>
     <h1>${escapeHtml(share.name)}</h1>
+    ${publisherHtml ? `<div class="publisher">Published by ${publisherHtml}</div>` : ""}
     <p>${escapeHtml(description)}</p>
     <div class="actions">
       <button type="button" data-import-town>Import town</button>
@@ -1035,6 +1204,58 @@ function isDirectlyReachablePort(portEntry, tailscaleBaseUrl) {
   );
 }
 
+function tutorialBuildingAlreadyConfigured({ tutorial, settings }) {
+  const confirmed = Array.isArray(settings?.buildingAccessConfirmedIds)
+    ? settings.buildingAccessConfirmedIds
+    : [];
+  if (tutorial.id === "connect-telegram") {
+    if (String(settings?.telegramBotToken || "").trim()) {
+      return true;
+    }
+    return confirmed.includes("telegram");
+  }
+  if (tutorial.id === "connect-stripe") {
+    return Boolean(String(settings?.walletStripeSecretKey || "").trim());
+  }
+  if (tutorial.id === "connect-cameras") {
+    return confirmed.includes("browser-use");
+  }
+  return false;
+}
+
+async function seedTutorialActionItems({ tutorialRegistry, agentTownStore, settingsStore }) {
+  if (!tutorialRegistry || !agentTownStore) {
+    return;
+  }
+  const tutorials = tutorialRegistry.list();
+  if (!tutorials.length) {
+    return;
+  }
+  const settings = settingsStore?.settings || {};
+  for (const tutorial of tutorials) {
+    if (agentTownStore.hasSeededTutorial(tutorial.id)) {
+      continue;
+    }
+    if (tutorialBuildingAlreadyConfigured({ tutorial, settings })) {
+      continue;
+    }
+    try {
+      await agentTownStore.seedTutorialActionItem({
+        id: `tutorial-${tutorial.id}`,
+        kind: "setup",
+        priority: tutorial.priority || "normal",
+        title: tutorial.title,
+        detail: tutorial.summary,
+        tutorialId: tutorial.id,
+        source: "tutorials",
+        capabilityIds: ["ui-guidance"],
+      });
+    } catch (error) {
+      console.warn(`[vibe-research] failed to seed tutorial action item ${tutorial.id}:`, error);
+    }
+  }
+}
+
 export async function createVibeResearchApp({
   host = process.env.VIBE_RESEARCH_HOST || process.env.REMOTE_VIBES_HOST || "0.0.0.0",
   port = Number(process.env.VIBE_RESEARCH_PORT || process.env.REMOTE_VIBES_PORT || 4826),
@@ -1054,12 +1275,19 @@ export async function createVibeResearchApp({
   agentMailServiceFactory = null,
   buildingHubServiceFactory = null,
   scaffoldRecipeServiceFactory = null,
+  tutorialRegistryFactory = null,
   browserUseServiceFactory = null,
   ottoAuthServiceFactory = null,
   telegramServiceFactory = null,
   twilioServiceFactory = null,
   videoMemoryServiceFactory = null,
   walletServiceFactory = null,
+  buildingHubFetchImpl = globalThis.fetch,
+  buildingHubAccountTokenStoreFactory = null,
+  buildingHubAccountServiceFactory = null,
+  githubFetchImpl = globalThis.fetch,
+  githubOAuthTokenStoreFactory = null,
+  githubServiceFactory = null,
   stripeFetchImpl = globalThis.fetch,
   googleFetchImpl = globalThis.fetch,
   googleOAuthTokenStoreFactory = null,
@@ -1088,10 +1316,32 @@ export async function createVibeResearchApp({
   const systemMetricsHistoryStore = new SystemMetricsHistoryStore({ stateDir });
   const portAliasStore = new PortAliasStore({ stateDir });
   await settingsStore.initialize();
-  const tutorialRegistry = new TutorialRegistry({
-    tutorialsDir: path.join(appRootDir, "tutorials"),
-  });
-  await tutorialRegistry.load();
+  const buildingHubAccountTokenStore =
+    typeof buildingHubAccountTokenStoreFactory === "function"
+      ? buildingHubAccountTokenStoreFactory({ stateDir })
+      : new BuildingHubAccountTokenStore({ stateDir });
+  await buildingHubAccountTokenStore.load();
+  const buildingHubAccountService =
+    typeof buildingHubAccountServiceFactory === "function"
+      ? buildingHubAccountServiceFactory({ tokenStore: buildingHubAccountTokenStore, settingsStore, fetchImpl: buildingHubFetchImpl })
+      : new BuildingHubAccountService({
+          tokenStore: buildingHubAccountTokenStore,
+          fetchImpl: buildingHubFetchImpl,
+        });
+  const githubOAuthStates = new Map();
+  const githubOAuthTokenStore =
+    typeof githubOAuthTokenStoreFactory === "function"
+      ? githubOAuthTokenStoreFactory({ stateDir })
+      : new GitHubOAuthTokenStore({ stateDir });
+  await githubOAuthTokenStore.load();
+  const githubService =
+    typeof githubServiceFactory === "function"
+      ? githubServiceFactory({ tokenStore: githubOAuthTokenStore, settingsStore, fetchImpl: githubFetchImpl })
+      : new GitHubService({
+          tokenStore: githubOAuthTokenStore,
+          settingsStore,
+          fetchImpl: githubFetchImpl,
+        });
   const googleOAuthStates = new Map();
   const googleOAuthTokenStore =
     typeof googleOAuthTokenStoreFactory === "function"
@@ -1123,6 +1373,10 @@ export async function createVibeResearchApp({
     typeof scaffoldRecipeServiceFactory === "function"
       ? scaffoldRecipeServiceFactory(settingsStore.settings, { cwd, stateDir, systemRootPath })
       : new ScaffoldRecipeService({ stateDir });
+  const tutorialRegistry =
+    typeof tutorialRegistryFactory === "function"
+      ? tutorialRegistryFactory({ systemRootPath, cwd, stateDir })
+      : new TutorialRegistry({ tutorialsDir: path.join(appRootDir, "tutorials") });
   const browserUseService =
     typeof browserUseServiceFactory === "function"
       ? browserUseServiceFactory(settingsStore.settings, { cwd, stateDir, systemRootPath })
@@ -1248,6 +1502,12 @@ export async function createVibeResearchApp({
   await videoMemoryService.initialize();
   await agentCallbackService.initialize();
   await scaffoldRecipeService.initialize();
+  await tutorialRegistry.load();
+  await seedTutorialActionItems({
+    tutorialRegistry,
+    agentTownStore,
+    settingsStore,
+  });
   await sessionManager.initialize();
   await agentPromptStore.initialize();
   sessionManager.setOccupationId(agentPromptStore.selectedPromptId);
@@ -1358,8 +1618,10 @@ export async function createVibeResearchApp({
     return settingsStore.getState({
       agentMailStatus: agentMailService.getStatus(),
       backupStatus: wikiBackupService.getStatus(),
+      buildingHubAccountStatus: buildingHubAccountTokenStore.getStatus(),
       buildingHubStatus: buildingHubService.getStatus(),
       browserUseStatus: browserUseService.getStatus(),
+      githubOAuthStatus: githubOAuthTokenStore.getStatus(BUILDINGHUB_GITHUB_OAUTH_INTEGRATION_ID),
       googleOAuthStatus: googleOAuthTokenStore.getStatus(),
       ottoAuthStatus: ottoAuthService.getStatus(),
       sleepStatus: sleepPreventionService.getStatus(),
@@ -1504,6 +1766,116 @@ export async function createVibeResearchApp({
       if (!entry || now - Number(entry.createdAt || 0) > GOOGLE_OAUTH_STATE_TTL_MS) {
         googleOAuthStates.delete(stateToken);
       }
+    }
+  }
+
+  function pruneGitHubOAuthStates(now = Date.now()) {
+    for (const [stateToken, entry] of githubOAuthStates.entries()) {
+      if (!entry || now - Number(entry.createdAt || 0) > GITHUB_OAUTH_STATE_TTL_MS) {
+        githubOAuthStates.delete(stateToken);
+      }
+    }
+  }
+
+  function getBuildingHubPublisherFromGitHub() {
+    const status = githubOAuthTokenStore.getStatus(BUILDINGHUB_GITHUB_OAUTH_INTEGRATION_ID);
+    const user = normalizeBuildingHubPublisher(status?.user);
+    if (!user) {
+      return null;
+    }
+
+    return {
+      provider: "github",
+      id: user.id,
+      login: user.login,
+      name: user.name,
+      profileUrl: user.profileUrl,
+      avatarUrl: user.avatarUrl,
+    };
+  }
+
+  function getBuildingHubAppBaseUrl() {
+    return buildingHubAccountService.getAppBaseUrl(settingsStore.settings);
+  }
+
+  function getBuildingHubPublisherFromAccount() {
+    const status = buildingHubAccountTokenStore.getStatus();
+    const account = normalizeBuildingHubPublisher(status?.account);
+    if (!account) {
+      return null;
+    }
+
+    return {
+      provider: "buildinghub",
+      id: account.id,
+      login: account.login,
+      name: account.name,
+      profileUrl: account.profileUrl,
+      avatarUrl: account.avatarUrl,
+    };
+  }
+
+  function getBuildingHubAccountAccessToken() {
+    return String(buildingHubAccountTokenStore.getRecord()?.accessToken || "").trim();
+  }
+
+  function getBuildingHubPublisherFromSettings() {
+    if (String(settingsStore.settings.buildingHubAuthProvider || "").trim().toLowerCase() !== "github") {
+      return null;
+    }
+
+    const profileUrl = normalizeGitHubProfileUrl(settingsStore.settings.buildingHubProfileUrl);
+    const login = getGitHubLoginFromProfileUrl(profileUrl);
+    if (!profileUrl && !login) {
+      return null;
+    }
+
+    return {
+      provider: "github",
+      id: "",
+      login,
+      name: "",
+      profileUrl,
+      avatarUrl: "",
+    };
+  }
+
+  function getBuildingHubPublisher() {
+    return getBuildingHubPublisherFromAccount() || getBuildingHubPublisherFromGitHub() || getBuildingHubPublisherFromSettings();
+  }
+
+  function getBuildingHubGitHubOAuthRedirectUri(callbackPort) {
+    const normalizedPort = normalizePort(callbackPort);
+    if (!normalizedPort) {
+      return "";
+    }
+
+    return `http://127.0.0.1:${normalizedPort}${BUILDINGHUB_GITHUB_OAUTH_CALLBACK_PATH}`;
+  }
+
+  function getBuildingHubAccountCompletionUrl(callbackPort) {
+    const normalizedPort = normalizePort(callbackPort);
+    if (!normalizedPort) {
+      return "";
+    }
+
+    return `http://127.0.0.1:${normalizedPort}${BUILDINGHUB_ACCOUNT_AUTH_COMPLETE_PATH}`;
+  }
+
+  async function syncBuildingHubPublication(publication) {
+    const publisher = getBuildingHubPublisherFromAccount();
+    if (!publisher || !publication) {
+      return null;
+    }
+
+    try {
+      return await buildingHubAccountService.recordPublication({
+        settings: settingsStore.settings,
+        publication,
+      });
+    } catch (error) {
+      console.warn("[vibe-research] could not sync BuildingHub publication", error);
+      return null;
     }
   }
 
@@ -2042,6 +2414,8 @@ export async function createVibeResearchApp({
         settings: settingsStore.settings,
         cwd,
         env: serverEnv,
+        publisher: getBuildingHubPublisher(),
+        accessToken: getBuildingHubAccountAccessToken(),
       });
       const saved = await scaffoldRecipeService.saveRecipe({
         ...recipe,
@@ -2052,6 +2426,16 @@ export async function createVibeResearchApp({
           ...buildingHub,
         },
       });
+      if (!buildingHub.recordedByBuildingHub) {
+        await syncBuildingHubPublication({
+          kind: "recipe",
+          id: buildingHub.recipeId,
+          name: saved.name || recipe.name,
+          url: buildingHub.recipeUrl,
+          sourceUrl: buildingHub.repositoryUrl,
+          commitUrl: buildingHub.commitUrl,
+        });
+      }
       await buildingHubService.refresh({ force: true });
       await syncBuildingAgentGuides();
       response.status(201).json({
@@ -2319,11 +2703,23 @@ export async function createVibeResearchApp({
         settings: settingsStore.settings,
         cwd,
         env: serverEnv,
+        publisher: getBuildingHubPublisher(),
+        accessToken: getBuildingHubAccountAccessToken(),
       });
       const payload = await agentTownStore.publishTownShare({
         ...localPayload.townShare,
         buildingHub,
       });
+      if (!buildingHub.recordedByBuildingHub) {
+        await syncBuildingHubPublication({
+          kind: "layout",
+          id: buildingHub.layoutId,
+          name: payload.townShare?.name || localPayload.townShare?.name || "Agent Town share",
+          url: buildingHub.layoutUrl,
+          sourceUrl: buildingHub.repositoryUrl,
+          commitUrl: buildingHub.commitUrl,
+        });
+      }
       await buildingHubService.refresh({ force: true });
       await syncBuildingAgentGuides();
       response.status(201).json({
@@ -2480,6 +2876,19 @@ export async function createVibeResearchApp({
     });
   });
 
+  app.get("/api/tutorials", (_request, response) => {
+    response.json({ tutorials: tutorialRegistry.list() });
+  });
+
+  app.get("/api/tutorials/:id", (request, response) => {
+    const tutorial = tutorialRegistry.get(request.params.id);
+    if (!tutorial) {
+      response.status(404).json({ error: "Tutorial not found." });
+      return;
+    }
+    response.json({ tutorial });
+  });
+
   app.get("/api/agent-town/canvases", (_request, response) => {
     response.json({
       canvases: agentTownStore.getState().canvases,
@@ -2631,11 +3040,14 @@ export async function createVibeResearchApp({
         browserUseProfileDir: request.body?.browserUseProfileDir,
         browserUseWorkerPath: request.body?.browserUseWorkerPath,
         buildingAccessConfirmedIds: request.body?.buildingAccessConfirmedIds,
+        buildingHubAppUrl: request.body?.buildingHubAppUrl,
         buildingHubAuthProvider: request.body?.buildingHubAuthProvider,
         buildingHubCatalogPath: request.body?.buildingHubCatalogPath,
         buildingHubCatalogUrl: request.body?.buildingHubCatalogUrl,
         buildingHubEnabled: request.body?.buildingHubEnabled,
         buildingHubProfileUrl: request.body?.buildingHubProfileUrl,
+        githubOAuthClientId: request.body?.githubOAuthClientId,
+        githubOAuthClientSecret: request.body?.githubOAuthClientSecret,
         googleOAuthClientId: request.body?.googleOAuthClientId,
         googleOAuthClientSecret: request.body?.googleOAuthClientSecret,
         ottoAuthBaseUrl: request.body?.ottoAuthBaseUrl,
@@ -2684,6 +3096,179 @@ export async function createVibeResearchApp({
       response.status(error.statusCode || 400).json({ error: error.message });
     }
   });
+
+  const handleBuildingHubGitHubOAuthStart = (request, response) => {
+    const buildingHubAppBaseUrl = getBuildingHubAppBaseUrl();
+    if (buildingHubAppBaseUrl) {
+      const callbackPort = exposedPort || port;
+      const completionUrl = getBuildingHubAccountCompletionUrl(callbackPort);
+      if (!completionUrl) {
+        response.status(500).send(renderGitHubOAuthPopupPage({
+          message: "Could not determine callback URL for BuildingHub account login.",
+        }));
+        return;
+      }
+
+      const authUrl = new URL("/auth/github/start", buildingHubAppBaseUrl);
+      authUrl.searchParams.set("return_to", completionUrl);
+      authUrl.searchParams.set("token_label", "Vibe Research");
+      response.redirect(authUrl.toString());
+      return;
+    }
+
+    const clientId = String(settingsStore.settings.githubOAuthClientId || "").trim();
+    if (!clientId) {
+      response.status(400).send(renderGitHubOAuthPopupPage({
+        message: "BuildingHub login is not configured yet. Set a hosted BuildingHub registry URL or local GitHub OAuth credentials.",
+      }));
+      return;
+    }
+
+    const callbackPort = exposedPort || port;
+    const redirectUri = getBuildingHubGitHubOAuthRedirectUri(callbackPort);
+    if (!redirectUri) {
+      response.status(500).send(renderGitHubOAuthPopupPage({
+        message: "Could not determine callback URL for GitHub OAuth.",
+      }));
+      return;
+    }
+
+    pruneGitHubOAuthStates();
+    const stateToken = randomUUID();
+    githubOAuthStates.set(stateToken, {
+      createdAt: Date.now(),
+      redirectUri,
+    });
+
+    const authUrl = new URL("https://github.com/login/oauth/authorize");
+    authUrl.searchParams.set("client_id", clientId);
+    authUrl.searchParams.set("redirect_uri", redirectUri);
+    authUrl.searchParams.set("scope", GITHUB_OAUTH_SCOPES.join(" "));
+    authUrl.searchParams.set("state", stateToken);
+    authUrl.searchParams.set("allow_signup", "true");
+
+    response.redirect(authUrl.toString());
+  };
+
+  const handleBuildingHubGitHubOAuthCallback = async (request, response) => {
+    const stateToken = String(request.query?.state || "").trim();
+    const oauthError = String(request.query?.error || "").trim();
+    const authCode = String(request.query?.code || "").trim();
+
+    pruneGitHubOAuthStates();
+    const stateEntry = stateToken ? githubOAuthStates.get(stateToken) : null;
+    if (stateToken) {
+      githubOAuthStates.delete(stateToken);
+    }
+
+    if (!stateEntry) {
+      response.status(400).send(renderGitHubOAuthPopupPage({
+        message: "GitHub sign-in session expired. Start again from the BuildingHub login button.",
+      }));
+      return;
+    }
+
+    if (oauthError) {
+      response.status(400).send(renderGitHubOAuthPopupPage({
+        message: `GitHub denied access: ${oauthError}.`,
+      }));
+      return;
+    }
+
+    if (!authCode) {
+      response.status(400).send(renderGitHubOAuthPopupPage({
+        message: "GitHub did not return an authorization code.",
+      }));
+      return;
+    }
+
+    try {
+      const redirectUri = String(stateEntry.redirectUri || "").trim();
+      if (!redirectUri) {
+        throw buildHttpError("GitHub redirect URI missing from OAuth state.", 400);
+      }
+
+      const tokens = await githubService.exchangeAuthCode({
+        code: authCode,
+        redirectUri,
+        integrationId: BUILDINGHUB_GITHUB_OAUTH_INTEGRATION_ID,
+      });
+      const publisher = normalizeBuildingHubPublisher(tokens?.profile);
+      const confirmedIds = new Set(
+        Array.isArray(settingsStore.settings.buildingAccessConfirmedIds)
+          ? settingsStore.settings.buildingAccessConfirmedIds.map(normalizeBuildingId).filter(Boolean)
+          : [],
+      );
+      confirmedIds.add("buildinghub");
+      await settingsStore.update({
+        buildingAccessConfirmedIds: [...confirmedIds].sort(),
+        buildingHubAuthProvider: "github",
+        buildingHubProfileUrl: publisher?.profileUrl || settingsStore.settings.buildingHubProfileUrl,
+      });
+
+      response.setHeader("Cache-Control", "no-store");
+      response.send(renderGitHubOAuthPopupPage({
+        status: "success",
+        message: publisher?.login
+          ? `GitHub account @${publisher.login} connected. Returning to Vibe Research.`
+          : "GitHub account connected. Returning to Vibe Research.",
+      }));
+    } catch (error) {
+      response.status(Number(error?.statusCode) || 500).send(renderGitHubOAuthPopupPage({
+        message: error?.message || "Could not complete GitHub sign-in.",
+      }));
+    }
+  };
+
+  app.get(BUILDINGHUB_GITHUB_OAUTH_START_PATH, handleBuildingHubGitHubOAuthStart);
+  app.get("/api/github/oauth/start", handleBuildingHubGitHubOAuthStart);
+
+  app.get(BUILDINGHUB_ACCOUNT_AUTH_COMPLETE_PATH, async (request, response) => {
+    const grant = String(request.query?.buildinghub_grant || request.query?.grant || "").trim();
+    const callbackPort = exposedPort || port;
+    const completionUrl = getBuildingHubAccountCompletionUrl(callbackPort);
+    if (!grant || !completionUrl) {
+      response.status(400).send(renderGitHubOAuthPopupPage({
+        message: "BuildingHub did not return a usable account grant.",
+      }));
+      return;
+    }
+
+    try {
+      const record = await buildingHubAccountService.exchangeGrant({
+        grant,
+        redirectUri: completionUrl,
+        settings: settingsStore.settings,
+      });
+      const account = normalizeBuildingHubPublisher(record?.account);
+      const confirmedIds = new Set(
+        Array.isArray(settingsStore.settings.buildingAccessConfirmedIds)
+          ? settingsStore.settings.buildingAccessConfirmedIds.map(normalizeBuildingId).filter(Boolean)
+          : [],
+      );
+      confirmedIds.add("buildinghub");
+      await settingsStore.update({
+        buildingAccessConfirmedIds: [...confirmedIds].sort(),
+        buildingHubAuthProvider: "github",
+        buildingHubProfileUrl: account?.profileUrl || settingsStore.settings.buildingHubProfileUrl,
+      });
+
+      response.setHeader("Cache-Control", "no-store");
+      response.send(renderGitHubOAuthPopupPage({
+        status: "success",
+        message: account?.login
+          ? `BuildingHub account @${account.login} connected. Returning to Vibe Research.`
+          : "BuildingHub account connected. Returning to Vibe Research.",
+      }));
+    } catch (error) {
+      response.status(Number(error?.statusCode) || 500).send(renderGitHubOAuthPopupPage({
+        message: error?.message || "Could not complete BuildingHub account login.",
+      }));
+    }
+  });
+
+  app.get(BUILDINGHUB_GITHUB_OAUTH_CALLBACK_PATH, handleBuildingHubGitHubOAuthCallback);
+  app.get("/api/github/oauth/callback", handleBuildingHubGitHubOAuthCallback);
 
   app.get("/api/google/oauth/start", (request, response) => {
     const buildingId = normalizeBuildingId(request.query?.buildingId || "");
@@ -3332,6 +3917,32 @@ export async function createVibeResearchApp({
     }
   });
 
+  const handleBuildingHubGitHubOAuthDisconnect = async (_request, response) => {
+    try {
+      await buildingHubAccountService.disconnect({ settings: settingsStore.settings });
+      await githubOAuthTokenStore.clearTokens(BUILDINGHUB_GITHUB_OAUTH_INTEGRATION_ID);
+      const confirmedIds = new Set(
+        Array.isArray(settingsStore.settings.buildingAccessConfirmedIds)
+          ? settingsStore.settings.buildingAccessConfirmedIds.map(normalizeBuildingId).filter(Boolean)
+          : [],
+      );
+      confirmedIds.delete("buildinghub");
+      await settingsStore.update({
+        buildingAccessConfirmedIds: [...confirmedIds].sort(),
+        buildingHubAuthProvider: "",
+        buildingHubProfileUrl: "",
+      });
+      response.json({ ok: true, settings: getSettingsState() });
+    } catch (error) {
+      response
+        .status(error.statusCode || 500)
+        .json({ error: error.message || "Could not disconnect GitHub account." });
+    }
+  };
+
+  app.post(BUILDINGHUB_GITHUB_OAUTH_DISCONNECT_PATH, handleBuildingHubGitHubOAuthDisconnect);
+  app.post("/api/github/oauth/disconnect", handleBuildingHubGitHubOAuthDisconnect);
+
   app.post("/api/google/oauth/:buildingId/disconnect", async (request, response) => {
     try {
       const buildingId = normalizeBuildingId(request.params?.buildingId || "");
@@ -3938,6 +4549,21 @@ export async function createVibeResearchApp({
 
   app.get("/api/sessions", (_request, response) => {
     response.json({ sessions: sessionManager.listSessions() });
+  });
+
+  app.get("/api/sessions/:sessionId/narrative", async (request, response) => {
+    try {
+      const narrative = await sessionManager.getSessionNarrative(request.params.sessionId);
+
+      if (!narrative) {
+        response.status(404).json({ error: "Session not found." });
+        return;
+      }
+
+      response.json({ narrative });
+    } catch (error) {
+      response.status(400).json({ error: error.message || "Could not read session narrative." });
+    }
   });
 
   app.get("/api/sessions/:sessionId/callback", (request, response) => {

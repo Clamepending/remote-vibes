@@ -18,6 +18,78 @@ function normalizeText(value, limit = MAX_TEXT_LENGTH) {
   return text.slice(0, Math.max(1, limit));
 }
 
+function normalizeUrl(value) {
+  const rawValue = String(value || "").trim();
+  if (!rawValue) {
+    return "";
+  }
+
+  try {
+    const url = new URL(rawValue);
+    return url.protocol === "http:" || url.protocol === "https:" ? url.toString() : "";
+  } catch {
+    return "";
+  }
+}
+
+function normalizePublisher(value = {}) {
+  if (!value || typeof value !== "object" || Array.isArray(value)) {
+    return null;
+  }
+
+  const provider = normalizeText(value.provider, 40).toLowerCase();
+  const id = normalizeText(value.id, 120);
+  const login = normalizeText(value.login || value.username, 120);
+  const name = normalizeText(value.name || value.displayName, 160);
+  const profileUrl = normalizeUrl(value.profileUrl || value.url || value.htmlUrl);
+  const avatarUrl = normalizeUrl(value.avatarUrl || value.avatar_url);
+
+  if (!provider && !id && !login && !name && !profileUrl) {
+    return null;
+  }
+
+  return {
+    provider,
+    id,
+    login,
+    name,
+    profileUrl,
+    avatarUrl,
+  };
+}
+
+function getPublisherLabel(publisher) {
+  if (!publisher) {
+    return "";
+  }
+
+  if (publisher.login) {
+    return `@${publisher.login}`;
+  }
+
+  return publisher.name || "";
+}
+
+function renderPublisherMarkdown(publisher) {
+  const label = getPublisherLabel(publisher);
+  if (!label) {
+    return "";
+  }
+
+  return publisher.profileUrl ? `[${label}](${publisher.profileUrl})` : label;
+}
+
+function renderPublisherHtml(publisher) {
+  const label = getPublisherLabel(publisher);
+  if (!label) {
+    return "";
+  }
+
+  return publisher.profileUrl
+    ? `<a href="${escapeHtml(publisher.profileUrl)}">${escapeHtml(label)}</a>`
+    : escapeHtml(label);
+}
+
 function normalizeBuildingHubId(value, fallback = "") {
   const id = String(value || fallback || "")
     .trim()
@@ -141,7 +213,9 @@ function getGitHubPagesBaseUrl(github) {
 }
 
 function getPublicUrls({ settings, github, branch, recipeId }) {
-  const configuredBaseUrl = normalizeBaseUrl(settings.buildingHubRecipeBaseUrl || settings.buildingHubCatalogUrl);
+  const configuredBaseUrl = normalizeBaseUrl(
+    settings.buildingHubRecipeBaseUrl || settings.buildingHubAppUrl || settings.buildingHubCatalogUrl,
+  );
   const pagesBaseUrl = configuredBaseUrl || getGitHubPagesBaseUrl(github);
   const recipeUrl = pagesBaseUrl ? new URL(`recipes/${recipeId}/`, pagesBaseUrl).toString() : "";
   const repositoryUrl = github?.owner && github?.repo && branch
@@ -163,9 +237,11 @@ async function readJsonIfPresent(filePath) {
 
 function renderRecipeReadme({ manifest, publicUrls }) {
   const sourceUrl = publicUrls.repositoryUrl || publicUrls.recipeUrl;
+  const publisherLine = manifest.source?.publisher ? `- Published by: ${renderPublisherMarkdown(manifest.source.publisher)}` : "";
   const links = [
     publicUrls.recipeUrl ? `- Share page: ${publicUrls.recipeUrl}` : "",
     sourceUrl ? `- Source: ${sourceUrl}` : "",
+    publisherLine,
   ].filter(Boolean).join("\n");
 
   return `# ${manifest.name}
@@ -187,6 +263,7 @@ ${links ? `## Links\n\n${links}\n` : ""}`;
 function renderRecipePage({ manifest, publicUrls }) {
   const title = `${manifest.name} - BuildingHub`;
   const description = manifest.description || DEFAULT_DESCRIPTION;
+  const publisherHtml = renderPublisherHtml(manifest.source?.publisher);
   const sourceLink = publicUrls.repositoryUrl
     ? `<a class="button secondary" href="${escapeHtml(publicUrls.repositoryUrl)}">View source</a>`
     : "";
@@ -220,6 +297,8 @@ function renderRecipePage({ manifest, publicUrls }) {
     .stat span { display: block; margin-top: 8px; color: #c9c4ba; font-size: .86rem; }
     .meta { display: flex; flex-wrap: wrap; gap: 8px; color: #e4ead0; font-size: .84rem; }
     .meta span { padding: 7px 9px; border: 1px solid rgba(247,243,234,.13); border-radius: 999px; background: rgba(247,243,234,.06); }
+    .publisher { color: #d7d1c7; font-size: .94rem; }
+    .publisher a { color: inherit; }
     .actions { display: flex; flex-wrap: wrap; gap: 10px; }
     .button { display: inline-flex; align-items: center; justify-content: center; min-height: 40px; padding: 0 14px; border: 1px solid rgba(247,243,234,.18); border-radius: 8px; background: #d4f06a; color: #111512; font-weight: 800; text-decoration: none; }
     .button.secondary { background: transparent; color: #f7f3ea; }
@@ -233,6 +312,7 @@ function renderRecipePage({ manifest, publicUrls }) {
       <span>${escapeHtml(manifest.communication?.dm?.enabled ? "agent DMs enabled" : "agent DMs disabled")}</span>
     </div>
     <h1>${escapeHtml(manifest.name)}</h1>
+    ${publisherHtml ? `<div class="publisher">Published by ${publisherHtml}</div>` : ""}
     <p>${escapeHtml(description)}</p>
     <section class="stats" aria-label="Scaffold recipe contents">
       <div class="stat"><strong>${buildingCount}</strong><span>buildings captured</span></div>
@@ -268,6 +348,36 @@ function ensurePublishableRecipe({ recipe, recipeId }) {
     error.statusCode = 400;
     throw error;
   }
+}
+
+function buildRecipeManifest({
+  recipe,
+  recipeId,
+  existingManifest = null,
+  publicUrls,
+  publisher = null,
+  sourceId = "local",
+} = {}) {
+  const normalizedPublisher = normalizePublisher(
+    publisher || existingManifest?.source?.publisher || existingManifest?.publisher,
+  );
+
+  return normalizeScaffoldRecipe({
+    ...existingManifest,
+    ...recipe,
+    id: recipeId,
+    description: normalizeText(recipe?.description || existingManifest?.description || DEFAULT_DESCRIPTION, 900)
+      || DEFAULT_DESCRIPTION,
+    source: {
+      ...(recipe?.source || {}),
+      kind: "buildinghub",
+      sourceId,
+      repositoryUrl: publicUrls.repositoryUrl,
+      recipeUrl: publicUrls.recipeUrl,
+      publishedAt: new Date().toISOString(),
+      ...(normalizedPublisher ? { publisher: normalizedPublisher } : {}),
+    },
+  });
 }
 
 async function assertNoStagedChanges(root) {
@@ -324,15 +434,94 @@ async function commitAndPush({ root, recipeId, relativePaths }) {
   };
 }
 
+async function publishHostedRecipe({
+  settings,
+  accessToken,
+  manifest,
+  fetchImpl = globalThis.fetch,
+} = {}) {
+  const appBaseUrl = normalizeBaseUrl(settings.buildingHubAppUrl);
+  if (!appBaseUrl || !accessToken) {
+    const error = new Error("Connect a hosted BuildingHub account before publishing there.");
+    error.statusCode = 400;
+    throw error;
+  }
+  if (typeof fetchImpl !== "function") {
+    const error = new Error("fetch is not available for hosted BuildingHub publishing.");
+    error.statusCode = 500;
+    throw error;
+  }
+
+  const response = await fetchImpl(new URL("/api/recipes", appBaseUrl).toString(), {
+    method: "POST",
+    headers: {
+      Accept: "application/json",
+      Authorization: `Bearer ${accessToken}`,
+      "Content-Type": "application/json",
+      "User-Agent": "vibe-research",
+    },
+    body: JSON.stringify({ recipe: manifest }),
+  });
+  const payload = JSON.parse(await response.text().catch(() => "{}"));
+  if (!response.ok) {
+    const error = new Error(payload.error || `BuildingHub recipe publish failed (${response.status}).`);
+    error.statusCode = response.status || 400;
+    throw error;
+  }
+
+  return {
+    recipeId: String(payload.recipeId || manifest.id || "").trim(),
+    recipeUrl: normalizeUrl(payload.recipeUrl || manifest.source?.recipeUrl),
+    repositoryUrl: normalizeUrl(payload.repositoryUrl || manifest.source?.repositoryUrl),
+    publisher: normalizePublisher(payload.publisher || manifest.source?.publisher),
+    commit: String(payload.commit || "").trim(),
+    commitUrl: normalizeUrl(payload.commitUrl),
+    branch: String(payload.branch || "").trim(),
+    pushed: Boolean(payload.pushed),
+    publishedAt: String(payload.publishedAt || new Date().toISOString()).trim(),
+    publishedVia: "api",
+    recordedByBuildingHub: Boolean(payload.recordedByBuildingHub),
+    sourceId: String(payload.sourceId || "hosted").trim(),
+    status: String(payload.status || "published").trim(),
+  };
+}
+
 export async function publishScaffoldRecipeToBuildingHub({
   recipe,
   settings = {},
   cwd = process.cwd(),
   env = process.env,
+  publisher = null,
+  accessToken = "",
+  fetchImpl = globalThis.fetch,
 } = {}) {
-  const root = await resolveBuildingHubCatalogRoot({ settings, cwd, env });
   const existingId = normalizeBuildingHubId(recipe?.id || recipe?.recipeId || recipe?.name);
   const recipeId = existingId || normalizeBuildingHubId(`recipe-${Date.now().toString(36)}`);
+  const hostedPublicUrls = getPublicUrls({
+    settings,
+    github: null,
+    branch: "",
+    recipeId,
+  });
+  const hostedManifest = buildRecipeManifest({
+    recipe,
+    recipeId,
+    existingManifest: null,
+    publicUrls: hostedPublicUrls,
+    publisher,
+    sourceId: "hosted",
+  });
+  ensurePublishableRecipe({ recipe: hostedManifest, recipeId });
+  if (normalizeBaseUrl(settings.buildingHubAppUrl) && String(accessToken || "").trim()) {
+    return publishHostedRecipe({
+      settings,
+      accessToken,
+      manifest: hostedManifest,
+      fetchImpl,
+    });
+  }
+
+  const root = await resolveBuildingHubCatalogRoot({ settings, cwd, env });
   const recipeDir = path.join(root, "recipes", recipeId);
   const siteRecipeDir = path.join(root, "site", "recipes", recipeId);
   const existingManifest = await readJsonIfPresent(path.join(recipeDir, "recipe.json"));
@@ -344,22 +533,16 @@ export async function publishScaffoldRecipeToBuildingHub({
     recipeId,
   });
 
-  const manifest = normalizeScaffoldRecipe({
-    ...existingManifest,
-    ...recipe,
-    id: recipeId,
-    description: normalizeText(recipe?.description || existingManifest?.description || DEFAULT_DESCRIPTION, 900)
-      || DEFAULT_DESCRIPTION,
-    source: {
-      ...(recipe?.source || {}),
-      kind: "buildinghub",
-      sourceId: "local",
-      repositoryUrl: publicUrls.repositoryUrl,
-      recipeUrl: publicUrls.recipeUrl,
-      publishedAt: new Date().toISOString(),
-    },
+  const manifest = buildRecipeManifest({
+    recipe,
+    recipeId,
+    existingManifest,
+    publicUrls,
+    publisher,
+    sourceId: "local",
   });
   ensurePublishableRecipe({ recipe: manifest, recipeId });
+  const normalizedPublisher = normalizePublisher(manifest.source?.publisher);
 
   await mkdir(recipeDir, { recursive: true });
   await mkdir(siteRecipeDir, { recursive: true });
@@ -380,11 +563,14 @@ export async function publishScaffoldRecipeToBuildingHub({
     recipeId,
     recipeUrl: publicUrls.recipeUrl || publicUrls.repositoryUrl,
     repositoryUrl: publicUrls.repositoryUrl,
+    publisher: normalizedPublisher,
     commit: gitResult.commit,
     commitUrl,
     branch: gitResult.branch,
     pushed: gitResult.pushed,
     publishedAt: new Date().toISOString(),
+    publishedVia: "git",
+    sourceId: "local",
     status: gitResult.status,
   };
 }

@@ -431,6 +431,30 @@ function normalizeRecipeSource(value = {}) {
     commit: normalizeText(source.commit || source.commitSha, 160),
     commitUrl: normalizeText(source.commitUrl, 2_000),
     publishedAt: normalizeText(source.publishedAt, 80),
+    publisher: normalizeRecipePublisher(source.publisher),
+  };
+}
+
+function normalizeRecipePublisher(value = {}) {
+  const source = isPlainObject(value) ? value : {};
+  const provider = normalizeText(source.provider, 40).toLowerCase();
+  const id = normalizeText(source.id, 120);
+  const login = normalizeText(source.login || source.username, 120);
+  const name = normalizeText(source.name || source.displayName, 160);
+  const profileUrl = normalizeText(source.profileUrl || source.url || source.htmlUrl, 2_000);
+  const avatarUrl = normalizeText(source.avatarUrl || source.avatar_url, 2_000);
+
+  if (!provider && !id && !login && !name && !profileUrl) {
+    return null;
+  }
+
+  return {
+    provider,
+    id,
+    login,
+    name,
+    profileUrl,
+    avatarUrl,
   };
 }
 
