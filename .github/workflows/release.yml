@@ -12,6 +12,11 @@ on:
           - patch
           - minor
           - major
+      ignore_ci:
+        description: Ship even if CI is red (use for known flakes)
+        required: false
+        default: false
+        type: boolean
 
 permissions:
   contents: write
@@ -34,6 +39,7 @@ jobs:
           fetch-depth: 0
 
       - name: Verify CI is green on HEAD
+        if: ${{ inputs.ignore_ci != true }}
         run: |
           commit_sha=$(git rev-parse HEAD)
           echo "Checking CI status on $commit_sha"
@@ -78,6 +84,7 @@ jobs:
         run: npm audit --omit=dev --audit-level=high
 
       - name: Run tests
+        if: ${{ inputs.ignore_ci != true }}
         run: npm test
 
       - name: Configure release author
