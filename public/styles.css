@@ -3230,6 +3230,84 @@ input[readonly][data-folder-picker-target] {
   gap: 10px;
 }
 
+.scaffold-recipes-plugin-card,
+.scaffold-recipes-saved-panel {
+  display: grid;
+  gap: 12px;
+}
+
+.scaffold-recipe-list {
+  display: grid;
+  gap: 10px;
+}
+
+.scaffold-recipe-row {
+  display: grid;
+  gap: 10px;
+  padding: 12px;
+  border: 1px solid rgba(255, 255, 255, 0.08);
+  border-radius: 16px;
+  background: rgba(255, 255, 255, 0.03);
+}
+
+.scaffold-recipe-row-copy {
+  display: grid;
+  gap: 8px;
+}
+
+.scaffold-recipe-row-head {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 8px 12px;
+}
+
+.scaffold-recipe-row-head strong {
+  font-size: 0.96rem;
+}
+
+.scaffold-recipe-row-head span {
+  color: var(--muted);
+  font-size: 0.82rem;
+}
+
+.scaffold-recipe-row-copy p {
+  margin: 0;
+}
+
+.scaffold-recipe-row-meta {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.scaffold-recipe-chip {
+  display: inline-flex;
+  align-items: center;
+  min-height: 26px;
+  padding: 0 10px;
+  border-radius: 999px;
+  background: rgba(255, 255, 255, 0.06);
+  color: rgba(244, 247, 251, 0.9);
+  font-family: "IBM Plex Mono", monospace;
+  font-size: 0.72rem;
+}
+
+.scaffold-recipe-chip.is-muted {
+  color: var(--muted);
+}
+
+.scaffold-recipe-row-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.scaffold-recipes-shortcut-panel p {
+  margin: 0;
+}
+
 .buildinghub-auth-actions {
   display: flex;
   flex-wrap: wrap;
@@ -12948,11 +13026,10 @@ body.is-reordering-file-tabs {
   display: none;
   grid-area: 1 / 1;
   min-height: 0;
-  padding: 14px;
+  padding: 0;
   background:
-    radial-gradient(circle at top right, rgba(143, 185, 255, 0.12), transparent 26%),
-    radial-gradient(circle at bottom left, rgba(242, 138, 104, 0.08), transparent 24%),
-    rgba(9, 11, 13, 0.94);
+    radial-gradient(circle at top, rgba(255, 255, 255, 0.03), transparent 28%),
+    linear-gradient(180deg, #1a1a1d 0%, #151517 52%, #131315 100%);
   z-index: 24;
 }
 
@@ -12970,128 +13047,89 @@ body.is-reordering-file-tabs {
 .rich-session-feed {
   display: grid;
   align-content: start;
-  gap: 12px;
+  gap: 16px;
   min-height: 0;
   overflow-x: hidden;
   overflow-y: auto;
-  padding-right: 6px;
-  scrollbar-color: rgba(230, 234, 240, 0.42) rgba(255, 255, 255, 0.035);
+  padding: 26px max(18px, calc((100% - 1080px) / 2)) 8px;
+  scrollbar-color: rgba(211, 214, 219, 0.24) rgba(255, 255, 255, 0.02);
   scrollbar-gutter: stable;
   scrollbar-width: thin;
 }
 
 .rich-session-feed::-webkit-scrollbar {
-  width: 13px;
+  width: 12px;
 }
 
 .rich-session-feed::-webkit-scrollbar-track {
-  background: rgba(255, 255, 255, 0.035);
+  background: rgba(255, 255, 255, 0.02);
   border-radius: 999px;
 }
 
 .rich-session-feed::-webkit-scrollbar-thumb {
-  background: linear-gradient(180deg, rgba(236, 238, 243, 0.62), rgba(150, 156, 170, 0.36));
-  border: 3px solid rgba(9, 11, 13, 0.95);
+  background: linear-gradient(180deg, rgba(236, 238, 243, 0.18), rgba(150, 156, 170, 0.14));
+  border: 3px solid rgba(18, 18, 21, 0.98);
   border-radius: 999px;
 }
 
 .rich-session-entry {
   display: grid;
-  gap: 10px;
-  padding: 14px 15px;
-  border: 1px solid rgba(255, 255, 255, 0.08);
-  border-radius: 18px;
-  background:
-    linear-gradient(180deg, rgba(255, 255, 255, 0.045), rgba(255, 255, 255, 0.014)),
-    rgba(19, 21, 24, 0.94);
-  box-shadow: 0 14px 34px rgba(0, 0, 0, 0.2);
+  gap: 6px;
+  width: min(100%, 1080px);
+  margin: 0 auto;
 }
 
 .rich-session-entry.is-overview {
-  border-color: rgba(143, 185, 255, 0.16);
-  background:
-    linear-gradient(135deg, rgba(143, 185, 255, 0.12), rgba(242, 138, 104, 0.08)),
-    rgba(18, 20, 25, 0.98);
+  gap: 4px;
+  padding: 0 6px 8px;
+  border: 0;
+  background: transparent;
+  box-shadow: none;
+  opacity: 0.52;
 }
 
 .rich-session-entry.is-assistant {
-  border-color: rgba(143, 185, 255, 0.12);
-  background:
-    linear-gradient(180deg, rgba(143, 185, 255, 0.05), rgba(255, 255, 255, 0.015)),
-    rgba(18, 21, 24, 0.94);
+  gap: 6px;
+  padding: 8px 6px 6px;
+  border: 0;
+  background: transparent;
+  box-shadow: none;
 }
 
-.rich-session-entry.is-user {
-  border-color: rgba(242, 138, 104, 0.18);
-  background:
-    linear-gradient(180deg, rgba(242, 138, 104, 0.06), rgba(255, 255, 255, 0.014)),
-    rgba(20, 18, 18, 0.96);
-}
-
-.rich-session-entry.is-tool {
-  border-color: rgba(106, 227, 198, 0.18);
-  background:
-    linear-gradient(180deg, rgba(106, 227, 198, 0.055), rgba(255, 255, 255, 0.016)),
-    rgba(10, 14, 15, 0.96);
-}
-
-.rich-session-entry.is-tool.is-error {
-  border-color: rgba(255, 127, 121, 0.22);
-}
-
+.rich-session-entry.is-user,
+.rich-session-entry.is-tool,
 .rich-session-entry.is-status,
-.rich-session-entry.is-empty {
-  border-color: rgba(255, 255, 255, 0.1);
-  background:
-    linear-gradient(180deg, rgba(255, 255, 255, 0.05), rgba(255, 255, 255, 0.016)),
-    rgba(16, 18, 21, 0.94);
+.rich-session-entry.is-empty,
+.rich-session-entry.is-system {
+  gap: 4px;
+  padding: 0 6px;
+  border: 0;
+  border-radius: 0;
+  background: transparent;
+  box-shadow: none;
 }
 
-.rich-session-entry-head {
-  display: flex;
+.rich-session-entry-kicker {
+  display: inline-flex;
   align-items: center;
-  justify-content: space-between;
-  gap: 10px;
+  gap: 7px;
   flex-wrap: wrap;
 }
 
-.rich-session-entry-badge {
+.rich-session-entry-kicker-icon {
   display: inline-flex;
   align-items: center;
-  gap: 8px;
-  padding: 6px 10px;
-  border-radius: 999px;
-  background: rgba(255, 255, 255, 0.06);
-  color: rgba(246, 248, 250, 0.88);
+  justify-content: center;
+  color: rgba(244, 244, 242, 0.44);
+}
+
+.rich-session-entry-kicker-label {
+  color: rgba(244, 244, 242, 0.5);
   font-family: "IBM Plex Mono", monospace;
-  font-size: 0.66rem;
-  letter-spacing: 0.05em;
+  font-size: 0.72rem;
+  letter-spacing: 0.04em;
   text-transform: uppercase;
-}
-
-.rich-session-entry-badge.is-overview {
-  background: rgba(143, 185, 255, 0.12);
-  color: #d7e7ff;
-}
-
-.rich-session-entry-badge.is-assistant {
-  background: rgba(143, 185, 255, 0.1);
-  color: #dce8ff;
-}
-
-.rich-session-entry-badge.is-user {
-  background: rgba(242, 138, 104, 0.14);
-  color: #ffd7c9;
-}
-
-.rich-session-entry-badge.is-tool {
-  background: rgba(106, 227, 198, 0.12);
-  color: #9df2dd;
-}
-
-.rich-session-entry-badge.is-status {
-  background: rgba(255, 255, 255, 0.08);
-  color: rgba(244, 244, 242, 0.8);
+  white-space: nowrap;
 }
 
 .rich-session-entry-icon {
@@ -13099,15 +13137,35 @@ body.is-reordering-file-tabs {
   height: 14px;
 }
 
+.rich-session-thinking-spinner {
+  width: 12px;
+  height: 12px;
+  border: 1.5px solid rgba(244, 244, 242, 0.14);
+  border-top-color: rgba(244, 244, 242, 0.44);
+  border-radius: 999px;
+  animation: rich-session-thinking-spin 0.9s linear infinite;
+}
+
+.rich-session-entry.is-tool .rich-session-entry-kicker-icon,
+.rich-session-entry.is-status .rich-session-entry-kicker-icon,
+.rich-session-entry.is-empty .rich-session-entry-kicker-icon,
+.rich-session-entry.is-system .rich-session-entry-kicker-icon,
+.rich-session-entry.is-user .rich-session-entry-kicker-icon {
+  display: none;
+}
+
 .rich-session-overview-title {
-  font-size: 1rem;
-  line-height: 1.15;
+  color: rgba(244, 244, 242, 0.88);
+  font-size: 0.98rem;
+  line-height: 1.2;
+  font-weight: 600;
 }
 
 .rich-session-overview-meta,
 .rich-session-overview-source,
 .rich-session-overview-status,
 .rich-session-entry-meta,
+.rich-session-entry-tail,
 .rich-session-composer-hint {
   color: rgba(226, 233, 239, 0.66);
   font-family: "IBM Plex Mono", monospace;
@@ -13115,21 +13173,103 @@ body.is-reordering-file-tabs {
   letter-spacing: 0.03em;
 }
 
+.rich-session-entry-meta {
+  margin-left: auto;
+  color: rgba(244, 244, 242, 0.3);
+}
+
+.rich-session-overview-meta,
+.rich-session-overview-source,
+.rich-session-overview-copy {
+  color: rgba(244, 244, 242, 0.5);
+}
+
 .rich-session-overview-copy,
 .rich-session-entry-copy {
-  color: rgba(244, 244, 242, 0.92);
-  font-size: 0.95rem;
-  line-height: 1.62;
+  color: rgba(244, 244, 242, 0.76);
+  font-size: 1rem;
+  line-height: 1.58;
   white-space: pre-wrap;
   overflow-wrap: anywhere;
 }
 
+.rich-session-entry.is-assistant .rich-session-entry-copy {
+  color: #fbfbf8;
+  font-size: clamp(1.16rem, 1.7vw, 1.42rem);
+  line-height: 1.48;
+  letter-spacing: -0.02em;
+}
+
+.rich-session-entry.is-user .rich-session-entry-copy {
+  color: rgba(244, 244, 242, 0.78);
+  font-size: 1rem;
+  line-height: 1.52;
+}
+
+.rich-session-entry.is-tool .rich-session-entry-copy,
+.rich-session-entry.is-status .rich-session-entry-copy,
+.rich-session-entry.is-empty .rich-session-entry-copy,
+.rich-session-entry.is-system .rich-session-entry-copy {
+  color: rgba(244, 244, 242, 0.44);
+  font-size: 0.95rem;
+  line-height: 1.46;
+}
+
+.rich-session-entry.is-status .rich-session-entry-copy,
+.rich-session-entry.is-empty .rich-session-entry-copy,
+.rich-session-entry.is-system .rich-session-entry-copy {
+  color: rgba(244, 244, 242, 0.4);
+}
+
+.rich-session-entry.is-thinking {
+  gap: 0;
+  padding-top: 2px;
+}
+
+.rich-session-entry.is-thinking .rich-session-entry-kicker {
+  min-height: 18px;
+}
+
+.rich-session-entry.is-tool .rich-session-entry-kicker-label,
+.rich-session-entry.is-status .rich-session-entry-kicker-label,
+.rich-session-entry.is-empty .rich-session-entry-kicker-label,
+.rich-session-entry.is-system .rich-session-entry-kicker-label,
+.rich-session-entry.is-user .rich-session-entry-kicker-label {
+  color: rgba(244, 244, 242, 0.32);
+  font-family: "Manrope", sans-serif;
+  font-size: 0.8rem;
+  font-weight: 500;
+  letter-spacing: 0;
+  text-transform: none;
+}
+
+.rich-session-entry.is-tool .rich-session-entry-meta,
+.rich-session-entry.is-status .rich-session-entry-meta,
+.rich-session-entry.is-empty .rich-session-entry-meta,
+.rich-session-entry.is-system .rich-session-entry-meta,
+.rich-session-entry.is-user .rich-session-entry-meta {
+  color: rgba(244, 244, 242, 0.18);
+}
+
+.rich-session-entry.is-overview .rich-session-overview-copy {
+  font-size: 0.8rem;
+  line-height: 1.45;
+}
+
+.rich-session-entry-tail {
+  color: rgba(244, 244, 242, 0.2);
+  font-family: "IBM Plex Mono", monospace;
+  font-size: 0.7rem;
+  letter-spacing: 0.03em;
+}
+
 .rich-session-entry-pre {
   margin: 0;
-  padding: 12px 13px;
-  border-radius: 14px;
-  background: rgba(5, 8, 10, 0.74);
-  color: #f3efe8;
+  padding: 12px 14px;
+  border-radius: 16px;
+  border: 1px solid rgba(255, 255, 255, 0.04);
+  background: rgba(10, 10, 12, 0.44);
+  color: rgba(244, 244, 242, 0.66);
   font-family: "IBM Plex Mono", monospace;
   font-size: 0.82rem;
   line-height: 1.54;
@@ -13137,46 +13277,83 @@ body.is-reordering-file-tabs {
   overflow-wrap: anywhere;
 }
 
+.rich-session-entry.is-tool .rich-session-entry-pre {
+  padding: 0;
+  border: 0;
+  border-radius: 0;
+  background: transparent;
+  color: rgba(244, 244, 242, 0.42);
+  font-family: "Manrope", sans-serif;
+  font-size: 0.95rem;
+  line-height: 1.46;
+}
+
 .rich-session-entry-pre.is-output {
+  margin-top: 2px;
+  background: rgba(10, 10, 12, 0.34);
+  color: rgba(244, 244, 242, 0.52);
+}
+
+.rich-session-entry.is-tool .rich-session-entry-pre.is-output {
   margin-top: -2px;
-  background: rgba(11, 15, 18, 0.78);
-  border: 1px solid rgba(255, 255, 255, 0.06);
+  padding-left: 14px;
+  color: rgba(244, 244, 242, 0.25);
+}
+
+.rich-session-entry.is-tool,
+.rich-session-entry.is-status,
+.rich-session-entry.is-empty,
+.rich-session-entry.is-system {
+  opacity: 0.88;
+}
+
+.rich-session-entry.is-tool.is-error {
+  opacity: 1;
+}
+
+@keyframes rich-session-thinking-spin {
+  to {
+    transform: rotate(360deg);
+  }
 }
 
 .rich-session-composer {
   display: grid;
   gap: 12px;
-  padding: 12px;
-  border: 1px solid rgba(255, 255, 255, 0.08);
-  border-radius: 20px;
-  background:
-    linear-gradient(180deg, rgba(255, 255, 255, 0.04), rgba(255, 255, 255, 0.015)),
-    rgba(15, 17, 19, 0.98);
-  box-shadow: 0 14px 34px rgba(0, 0, 0, 0.24);
+  width: min(calc(100% - 36px), 1080px);
+  margin: 0 auto 16px;
+  padding: 18px 20px 16px;
+  border: 1px solid rgba(255, 255, 255, 0.05);
+  border-radius: 32px;
+  background: linear-gradient(180deg, rgba(49, 49, 53, 0.95), rgba(39, 39, 43, 0.99));
+  box-shadow:
+    inset 0 1px 0 rgba(255, 255, 255, 0.04),
+    0 24px 54px rgba(0, 0, 0, 0.32);
 }
 
 .rich-session-input {
   width: 100%;
-  min-height: 56px;
+  min-height: 68px;
   max-height: 220px;
-  padding: 14px 15px;
-  border: 1px solid rgba(255, 255, 255, 0.08);
-  border-radius: 16px;
-  background: rgba(7, 9, 11, 0.82);
+  padding: 0;
+  border: 0;
+  border-radius: 0;
+  background: transparent;
   color: var(--text);
   font: inherit;
+  font-size: 1.02rem;
   line-height: 1.55;
   resize: none;
   outline: none;
 }
 
 .rich-session-input:focus {
-  border-color: rgba(242, 138, 104, 0.36);
-  box-shadow: 0 0 0 3px rgba(242, 138, 104, 0.12);
+  border-color: transparent;
+  box-shadow: none;
 }
 
 .rich-session-input::placeholder {
-  color: rgba(164, 162, 168, 0.78);
+  color: rgba(244, 244, 242, 0.42);
 }
 
 .rich-session-composer-foot {
@@ -13199,6 +13376,28 @@ body.is-reordering-file-tabs {
   display: inline-flex;
   align-items: center;
   gap: 8px;
+  border-radius: 999px;
+}
+
+.rich-session-composer .ghost-button.toolbar-control {
+  border-radius: 999px;
+  background: rgba(255, 255, 255, 0.045);
+  color: rgba(244, 244, 242, 0.72);
+}
+
+.rich-session-composer .ghost-button.toolbar-control:hover {
+  background: rgba(255, 255, 255, 0.075);
+}
+
+.rich-session-composer .primary-button.rich-session-send {
+  border-radius: 999px;
+  background: #f3f1ee;
+  color: #141417;
+  box-shadow: none;
+}
+
+.rich-session-composer .primary-button.rich-session-send:hover {
+  background: #ffffff;
 }
 
 .rich-session-send .vr-icon {

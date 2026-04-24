@@ -409,7 +409,7 @@ uninstall_vibe_research() {
 browser_url() {
   local host port browser_host
   host="${VIBE_RESEARCH_HOST:-${REMOTE_VIBES_HOST:-0.0.0.0}}"
-  port="${VIBE_RESEARCH_PORT:-${REMOTE_VIBES_PORT:-4123}}"
+  port="${VIBE_RESEARCH_PORT:-${REMOTE_VIBES_PORT:-4826}}"
 
   case "$host" in
     ""|0.0.0.0|127.0.0.1|localhost|::|::0|[::]|::1|[::1])

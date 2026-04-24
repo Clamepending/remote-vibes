@@ -1283,7 +1283,7 @@ function tutorialBuildingAlreadyConfigured({ tutorial, settings }) {
     return Boolean(String(settings?.walletStripeSecretKey || "").trim());
   }
   if (tutorial.id === "connect-cameras") {
-    return confirmed.includes("browser-use");
+    return Boolean(settings?.videoMemoryEnabled || confirmed.includes("videomemory"));
   }
   return false;
 }

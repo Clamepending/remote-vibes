@@ -23,7 +23,7 @@ test("TutorialRegistry loads valid tutorials sorted by order and returns bodies 
     );
     await writeFile(
       path.join(tutorialsDir, "a-two.md"),
-      "---\nid: connect-cameras\ntitle: Connect cameras\nbuildingId: browser-use\nsummary: Cameras summary.\norder: 20\n---\n\n# Cameras\n\nSecond body.\n",
+      "---\nid: connect-cameras\ntitle: Connect cameras\nbuildingId: videomemory\nsummary: Cameras summary.\norder: 20\n---\n\n# Cameras\n\nSecond body.\n",
       "utf8",
     );
     await writeFile(
@@ -49,6 +49,7 @@ test("TutorialRegistry loads valid tutorials sorted by order and returns bodies 
     const full = registry.get("connect-cameras");
     assert.ok(full);
     assert.equal(full.title, "Connect cameras");
+    assert.equal(full.buildingId, "videomemory");
     assert.match(full.body, /Second body\./);
   } finally {
     await removeTempTutorialsDir(tutorialsDir);

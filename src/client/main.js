@@ -518,6 +518,9 @@ const GUIDED_ONBOARDING_EVENT_TYPES = Object.freeze({
   buildRequestSent: "guided_onboarding_build_request_sent",
   firstDayCalendarRequest: "guided_onboarding_first_day_calendar_request",
 });
+const GUIDED_TUTORIAL_EVENT_TYPES = Object.freeze({
+  videoMemoryPermissionRequested: "guided_tutorial_videomemory_permission_requested",
+});
 const GUIDED_ONBOARDING_STEPS = Object.freeze([
   {
     id: "welcome",
@@ -609,6 +612,117 @@ const GUIDED_ONBOARDING_STEPS = Object.freeze([
     manualLabel: "Finish tutorial",
   },
 ]);
+const GUIDED_TUTORIALS = Object.freeze({
+  "connect-telegram": Object.freeze({
+    title: "Connect Telegram",
+    steps: Object.freeze([
+      {
+        id: "welcome",
+        title: "Connect Telegram",
+        body: "This walkthrough will move you one click at a time, just like onboarding.",
+        note: "Have your BotFather token ready before you start.",
+        manualAdvance: true,
+        manualLabel: "Start tutorial",
+      },
+      {
+        id: "enter-token",
+        title: "Step 1",
+        body: "Paste your BotFather token into the highlighted Telegram bot token field.",
+        note: "If you still need a bot, create one first with @BotFather in Telegram.",
+        ensureView: "plugins",
+        ensurePluginDetail: "telegram",
+      },
+      {
+        id: "enable-telegram",
+        title: "Step 2",
+        body: "Turn on enable Telegram bot if it is not already checked.",
+        note: "The install form skips this automatically because Telegram starts enabled there.",
+        ensureView: "plugins",
+        ensurePluginDetail: "telegram",
+      },
+      {
+        id: "save-telegram",
+        title: "Step 3",
+        body: "Click the highlighted save button.",
+        note: "The first time this usually says save and install, and then Vibe Research switches you into placement.",
+        ensureView: "plugins",
+        ensurePluginDetail: "telegram",
+      },
+      {
+        id: "place-telegram",
+        title: "Step 4",
+        body: "Click the highlighted spot on the map to place the Telegram building.",
+        note: "That drops Telegram into Agent Town.",
+        ensureView: "visual-interface",
+      },
+      {
+        id: "open-telegram-room",
+        title: "Step 5",
+        body: "Click the Telegram building you just placed.",
+        note: "This is the quickest way to revisit Telegram setup later.",
+        ensureView: "visual-interface",
+      },
+      {
+        id: "finish",
+        title: "Done",
+        body: "Telegram is connected. Send your bot a direct message and it should land in Agent Inbox.",
+        manualAdvance: true,
+        manualLabel: "Finish tutorial",
+      },
+    ]),
+  }),
+  "connect-cameras": Object.freeze({
+    title: "Connect Cameras",
+    steps: Object.freeze([
+      {
+        id: "welcome",
+        title: "Connect cameras",
+        body: "This walkthrough wires up VideoMemory and camera access one exact step at a time.",
+        note: "If macOS prompts for camera access, approve it.",
+        manualAdvance: true,
+        manualLabel: "Start tutorial",
+      },
+      {
+        id: "request-camera-permission",
+        title: "Step 1",
+        body: "Click enable camera permissions.",
+        note: "This should trigger the system camera permission prompt if it has not appeared yet.",
+        ensureView: "plugins",
+        ensurePluginDetail: "videomemory",
+      },
+      {
+        id: "enable-videomemory",
+        title: "Step 2",
+        body: "Turn on enable VideoMemory monitors if it is not already checked.",
+        note: "The install form skips this automatically because VideoMemory starts enabled there.",
+        ensureView: "plugins",
+        ensurePluginDetail: "videomemory",
+      },
+      {
+        id: "save-videomemory",
+        title: "Step 3",
+        body: "Click the highlighted save button.",
+        note: "The first time this usually says save and install. The Camera Room appears as soon as VideoMemory is enabled.",
+        ensureView: "plugins",
+        ensurePluginDetail: "videomemory",
+      },
+      {
+        id: "open-camera-room",
+        title: "Step 4",
+        body: "Click the highlighted Camera Room in Agent Town.",
+        note: "That is where camera monitors show up once VideoMemory is live.",
+        ensureView: "visual-interface",
+      },
+      {
+        id: "finish",
+        title: "Done",
+        body: "Your camera workflow is connected. VideoMemory can now arm monitors and wake agents from the Camera Room.",
+        manualAdvance: true,
+        manualLabel: "Finish tutorial",
+      },
+    ]),
+  }),
+});
 const SIDEBAR_DEFAULT_WIDTH = 276;
 const SIDEBAR_MIN_WIDTH = 220;
 const SIDEBAR_MAX_WIDTH = 520;
@@ -1658,6 +1772,17 @@ const state = {
     syncFrameHandle: 0,
     focusSignature: "",
   },
+  guidedTutorial: {
+    active: false,
+    tutorialId: "",
+    actionItemId: "",
+    stepIndex: 0,
+    startedAt: 0,
+    localEvents: {},
+    lastRouteRequestAt: 0,
+    syncFrameHandle: 0,
+    focusSignature: "",
+  },
   agentProfile: {
     sessionId: "",
     subagentId: "",
@@ -1713,6 +1838,16 @@ const state = {
     loaded: false,
     loading: false,
     status: null,
+  },
+  scaffoldRecipes: {
+    recipes: [],
+    loaded: false,
+    loading: false,
+    action: "",
+    status: "",
+    lastPublishedUrl: "",
+    draftName: "Current Vibe Research scaffold",
+    draftDescription: "",
   },
   videoMemoryMonitors: [],
   settings: {
@@ -4668,9 +4803,20 @@ function getRichSessionEntryIcon(kind) {
   return Bot;
 }
 
+function isRichSessionThinkingEntry(entry) {
+  if (entry?.kind !== "status") {
+    return false;
+  }
+
+  const label = String(entry?.label || "").trim();
+  const text = String(entry?.text || "").trim();
+  return /^thinking$/iu.test(label) || /(?:^|\s)is thinking(?:\.\.\.)?$/iu.test(text);
+}
+
 function renderRichSessionEntry(entry, index) {
   const kind = ["assistant", "user", "tool", "status", "system"].includes(entry?.kind) ? entry.kind : "assistant";
   const label = getRichSessionEntryLabel(entry);
+  const isThinking = isRichSessionThinkingEntry(entry);
   const icon = renderIcon(getRichSessionEntryIcon(kind), { className: "rich-session-entry-icon" });
   const body = escapeHtml(entry?.text || "");
   const metaParts = [entry?.meta || "", formatRichSessionTimestamp(entry?.timestamp)].filter(Boolean);
@@ -4678,16 +4824,42 @@ function renderRichSessionEntry(entry, index) {
   const outputPreview = entry?.outputPreview
     ? `<pre class="rich-session-entry-pre is-output">${escapeHtml(entry.outputPreview)}</pre>`
     : "";
-  const bodyHtml = kind === "tool"
+  const entryClassName = [
+    "rich-session-entry",
+    `is-${escapeHtml(kind)}`,
+    entry?.status ? `is-${escapeHtml(entry.status)}` : "",
+    isThinking ? "is-thinking" : "",
+  ].filter(Boolean).join(" ");
+  const kickerHtml = `
+    <div class="rich-session-entry-kicker">
+      ${
+        isThinking
+          ? '<span class="rich-session-thinking-spinner" aria-hidden="true"></span>'
+          : `<span class="rich-session-entry-kicker-icon">${icon}</span>`
+      }
+      <span class="rich-session-entry-kicker-label">${escapeHtml(label)}</span>
+      ${meta ? `<span class="rich-session-entry-meta">${escapeHtml(meta)}</span>` : ""}
+    </div>
+  `;
+
+  if (kind === "assistant") {
+    return `
+      <article class="${entryClassName}" data-rich-session-entry="${index}">
+        <div class="rich-session-entry-copy">${body}</div>
+        ${meta ? `<div class="rich-session-entry-tail">${escapeHtml(meta)}</div>` : ""}
+      </article>
+    `;
+  }
+
+  const bodyHtml = isThinking
+    ? ""
+    : kind === "tool"
     ? `<pre class="rich-session-entry-pre">${body}</pre>${outputPreview}`
     : `<div class="rich-session-entry-copy">${body}</div>`;
 
   return `
-    <article class="rich-session-entry is-${escapeHtml(kind)} ${entry?.status ? `is-${escapeHtml(entry.status)}` : ""}" data-rich-session-entry="${index}">
-      <div class="rich-session-entry-head">
-        <span class="rich-session-entry-badge is-${escapeHtml(kind)}">${icon}<span>${escapeHtml(label)}</span></span>
-        ${meta ? `<span class="rich-session-entry-meta">${escapeHtml(meta)}</span>` : ""}
-      </div>
+    <article class="${entryClassName}" data-rich-session-entry="${index}">
+      ${kickerHtml}
       ${bodyHtml}
     </article>
   `;
@@ -4707,9 +4879,10 @@ function renderRichSessionOverviewCard(activeSession) {
     : "Readable cards backed by Vibe Research's own native session events. Switch back to Terminal any time.";
   return `
     <article class="rich-session-entry is-overview">
-      <div class="rich-session-entry-head">
-        <span class="rich-session-entry-badge is-overview">${renderIcon(Bot, { className: "rich-session-entry-icon" })}<span>Native session</span></span>
-        <span class="rich-session-overview-status">${escapeHtml(statusLabel)}</span>
+      <div class="rich-session-entry-kicker">
+        <span class="rich-session-entry-kicker-icon">${renderIcon(Bot, { className: "rich-session-entry-icon" })}</span>
+        <span class="rich-session-entry-kicker-label">Native view</span>
+        <span class="rich-session-entry-meta rich-session-overview-status">${escapeHtml(statusLabel)}</span>
       </div>
       <strong class="rich-session-overview-title">${escapeHtml(activeSession.name || activeSession.providerLabel || "Session")}</strong>
       <div class="rich-session-overview-meta">${escapeHtml(`${activeSession.providerLabel} · ${workspaceName}`)}</div>
@@ -4732,8 +4905,9 @@ function renderRichSessionEmptyState(activeSession) {
       : "Native cards will appear here as soon as the agent starts responding.";
   return `
     <article class="rich-session-entry is-empty">
-      <div class="rich-session-entry-head">
-        <span class="rich-session-entry-badge is-status">${renderIcon(ServerCog, { className: "rich-session-entry-icon" })}<span>${escapeHtml(label)}</span></span>
+      <div class="rich-session-entry-kicker">
+        <span class="rich-session-entry-kicker-icon">${renderIcon(ServerCog, { className: "rich-session-entry-icon" })}</span>
+        <span class="rich-session-entry-kicker-label">${escapeHtml(label)}</span>
       </div>
       <div class="rich-session-entry-copy">${escapeHtml(copy)}</div>
     </article>
@@ -14857,6 +15031,153 @@ function renderBuildingHubTownGallery() {
   `;
 }
 
+function getScaffoldRecipesStatusText() {
+  if (state.scaffoldRecipes.loading) {
+    return "loading recipes...";
+  }
+  if (state.scaffoldRecipes.action === "save-current") {
+    return "saving current scaffold...";
+  }
+  if (state.scaffoldRecipes.action === "publish-current") {
+    return "publishing current scaffold...";
+  }
+  if (state.scaffoldRecipes.action.startsWith("publish:")) {
+    return "publishing scaffold...";
+  }
+  if (state.scaffoldRecipes.status) {
+    return state.scaffoldRecipes.status;
+  }
+  const count = state.scaffoldRecipes.recipes.length;
+  return count ? `${count} saved recipe${count === 1 ? "" : "s"}` : "save the current setup to start a reusable scaffold";
+}
+
+function getScaffoldRecipePublishedUrl(recipe) {
+  return normalizePluginSetupUrl(recipe?.source?.recipeUrl || recipe?.source?.url || "");
+}
+
+function renderScaffoldRecipeRows() {
+  const recipes = Array.isArray(state.scaffoldRecipes.recipes) ? state.scaffoldRecipes.recipes : [];
+  if (!recipes.length) {
+    return `<div class="browser-use-empty-inline">no saved recipes yet</div>`;
+  }
+
+  return `
+    <div class="scaffold-recipe-list">
+      ${recipes
+        .map((recipe) => {
+          const publishedUrl = getScaffoldRecipePublishedUrl(recipe);
+          const isPublishing = state.scaffoldRecipes.action === `publish:${recipe.id}`;
+          const tags = Array.isArray(recipe.tags) ? recipe.tags.filter(Boolean).slice(0, 4) : [];
+          return `
+            <article class="scaffold-recipe-row">
+              <div class="scaffold-recipe-row-copy">
+                <div class="scaffold-recipe-row-head">
+                  <strong>${escapeHtml(recipe.name || recipe.id || "Scaffold recipe")}</strong>
+                  <span>${escapeHtml(relativeTime(recipe.updatedAt || recipe.createdAt || ""))}</span>
+                </div>
+                ${
+                  recipe.description
+                    ? `<p>${escapeHtml(recipe.description)}</p>`
+                    : `<p>Portable buildings, layout, and setup settings with local bindings kept redacted.</p>`
+                }
+                <div class="scaffold-recipe-row-meta">
+                  ${
+                    tags.length
+                      ? tags.map((tag) => `<span class="scaffold-recipe-chip">#${escapeHtml(tag)}</span>`).join("")
+                      : `<span class="scaffold-recipe-chip is-muted">${escapeHtml(recipe.id || "saved recipe")}</span>`
+                  }
+                  <span class="scaffold-recipe-chip is-muted">${escapeHtml(publishedUrl ? "published" : "not published")}</span>
+                </div>
+              </div>
+              <div class="scaffold-recipe-row-actions">
+                ${
+                  publishedUrl
+                    ? `<a class="ghost-button toolbar-control" href="${escapeHtml(publishedUrl)}" target="_blank" rel="noreferrer">open</a>`
+                    : ""
+                }
+                ${
+                  isBuildingHubAuthenticated()
+                    ? `<button class="primary-button toolbar-control" type="button" data-scaffold-recipe-publish="${escapeHtml(recipe.id)}" ${isPublishing ? "disabled" : ""}>${escapeHtml(isPublishing ? "publishing..." : "publish")}</button>`
+                    : ""
+                }
+              </div>
+            </article>
+          `;
+        })
+        .join("")}
+    </div>
+  `;
+}
+
+function renderScaffoldRecipesPluginPanel() {
+  const isSavingCurrent = state.scaffoldRecipes.action === "save-current";
+  const isPublishingCurrent = state.scaffoldRecipes.action === "publish-current";
+  const isBusy = Boolean(state.scaffoldRecipes.action);
+  const providerLabel = getBuildingHubConnectedAccountLabel();
+  const lastPublishedUrl = normalizePluginSetupUrl(state.scaffoldRecipes.lastPublishedUrl);
+
+  return `
+    <aside class="mcp-import-card scaffold-recipes-plugin-card" data-scaffold-recipes-panel>
+      <span class="main-search-kind">setup snapshot</span>
+      <strong>Scaffold Recipes</strong>
+      <p>Capture the current Vibe Research setup, then publish the redacted recipe to BuildingHub without exporting secrets or machine-only values.</p>
+      <form class="settings-form scaffold-recipes-form" id="scaffold-recipes-form">
+        <label class="field-label" for="scaffold-recipes-name">recipe name</label>
+        <input
+          class="file-root-input"
+          id="scaffold-recipes-name"
+          name="name"
+          type="text"
+          value="${escapeHtml(state.scaffoldRecipes.draftName || "Current Vibe Research scaffold")}"
+          placeholder="Current Vibe Research scaffold"
+          autocomplete="off"
+          autocorrect="off"
+          autocapitalize="words"
+          spellcheck="false"
+        />
+        <label class="field-label" for="scaffold-recipes-description">description</label>
+        <input
+          class="file-root-input"
+          id="scaffold-recipes-description"
+          name="description"
+          type="text"
+          value="${escapeHtml(state.scaffoldRecipes.draftDescription || "")}"
+          placeholder="Optional short summary"
+          autocomplete="off"
+          autocorrect="on"
+          autocapitalize="sentences"
+          spellcheck="false"
+        />
+        <div class="plugin-onboarding-actions">
+          <button class="ghost-button toolbar-control" type="button" data-scaffold-recipe-save-current ${isBusy ? "disabled" : ""}>${escapeHtml(isSavingCurrent ? "saving..." : "save current")}</button>
+          <button class="primary-button settings-save-button" type="button" data-scaffold-recipe-publish="current" ${!isBuildingHubAuthenticated() || isBusy ? "disabled" : ""}>${escapeHtml(isPublishingCurrent ? "publishing..." : "publish current")}</button>
+          <button class="ghost-button toolbar-control" type="button" data-scaffold-recipes-refresh ${state.scaffoldRecipes.loading ? "disabled" : ""}>refresh</button>
+          <button class="ghost-button toolbar-control" type="button" data-open-buildinghub-catalog>BuildingHub</button>
+          ${
+            lastPublishedUrl
+              ? `<a class="ghost-button toolbar-control" href="${escapeHtml(lastPublishedUrl)}" target="_blank" rel="noreferrer">open latest publish</a>`
+              : ""
+          }
+        </div>
+        <div class="settings-status" id="scaffold-recipes-status">${escapeHtml(getScaffoldRecipesStatusText())}</div>
+      </form>
+      ${
+        isBuildingHubAuthenticated()
+          ? `<p class="mcp-import-paths">Publishing as ${escapeHtml(providerLabel || "GitHub")}.</p>`
+          : renderBuildingHubAuthGate({ compact: true })
+      }
+      <section class="plugin-onboarding scaffold-recipes-saved-panel" aria-label="Saved scaffold recipes">
+        <div class="plugin-onboarding-head">
+          <strong>Saved recipes</strong>
+          <span>${escapeHtml(state.scaffoldRecipes.loading ? "loading..." : `${state.scaffoldRecipes.recipes.length} saved`)}</span>
+        </div>
+        ${renderScaffoldRecipeRows()}
+      </section>
+      <p class="mcp-import-paths">CLI fallback: <code>vr-scaffold-recipe publish current --name "My Setup"</code></p>
+    </aside>
+  `;
+}
+
 function renderBuildingHubPluginPanel({ install = false } = {}) {
   const actionLabel = install ? "save community catalogs" : "save BuildingHub";
   const providerLabel = getBuildingHubConnectedAccountLabel();
@@ -14885,6 +15206,16 @@ function renderBuildingHubPluginPanel({ install = false } = {}) {
         </label>
         ${renderBuildingHubSourceSettings({ idPrefix: install ? "install-" : "", actionLabel })}
       </form>
+      <section class="plugin-onboarding scaffold-recipes-shortcut-panel" aria-label="Scaffold recipe publishing">
+        <div class="plugin-onboarding-head">
+          <strong>Publish setup templates</strong>
+          <span>Scaffold Recipes</span>
+        </div>
+        <p>Scaffold publishing lives in the dedicated Scaffold Recipes building so it does not get lost in the catalog settings.</p>
+        <div class="plugin-onboarding-actions">
+          <button class="ghost-button toolbar-control" type="button" data-plugin-open="scaffold-recipes">open Scaffold Recipes</button>
+        </div>
+      </section>
       ${renderBuildingHubAuthButtons({ includeLogout: true })}
       <p class="mcp-import-paths">${escapeHtml(getBuildingHubSourceSummary())}</p>
     </aside>
@@ -15272,6 +15603,8 @@ function renderVideoMemoryPluginPanel() {
 
 function renderPluginEntryView(plugin) {
   switch (String(plugin?.ui?.entryView || "").trim()) {
+    case "scaffold-recipes":
+      return renderScaffoldRecipesPluginPanel();
     case "videomemory":
       return renderVideoMemoryPluginPanel();
     default:
@@ -20406,6 +20739,10 @@ function closeTutorialOverlay() {
 async function openTutorialOverlay(tutorialId, actionItemId) {
   const id = String(tutorialId || "").trim();
   if (!id) {
+    return;
+  }
+  if (getGuidedTutorialConfig(id)) {
+    startGuidedTutorial(id, { actionItemId });
     return;
   }
   let tutorial = null;
@@ -27621,9 +27958,19 @@ function renderGuidedOnboardingOverlaySafe() {
   return typeof renderGuidedOnboardingOverlay === "function" ? renderGuidedOnboardingOverlay() : "";
 }
 
+function renderGuidedTutorialOverlaySafe() {
+  return typeof renderGuidedTutorialOverlay === "function" ? renderGuidedTutorialOverlay() : "";
+}
+
 function scheduleGuidedOnboardingSyncSafe() {
   if (typeof scheduleGuidedOnboardingSync === "function") {
     scheduleGuidedOnboardingSync();
+  }
+}
+
+function scheduleGuidedTutorialSyncSafe() {
+  if (typeof scheduleGuidedTutorialSync === "function") {
+    scheduleGuidedTutorialSync();
   }
 }
 
@@ -27654,6 +28001,24 @@ function rewindGuidedOnboardingStepSafe() {
 function skipGuidedOnboardingSafe() {
   if (typeof skipGuidedOnboarding === "function") {
     skipGuidedOnboarding();
+  }
+}
+
+function advanceGuidedTutorialStepSafe() {
+  if (typeof advanceGuidedTutorialStep === "function") {
+    advanceGuidedTutorialStep();
+  }
+}
+
+function rewindGuidedTutorialStepSafe() {
+  if (typeof rewindGuidedTutorialStep === "function") {
+    rewindGuidedTutorialStep();
+  }
+}
+
+function skipGuidedTutorialSafe() {
+  if (typeof skipGuidedTutorial === "function") {
+    skipGuidedTutorial();
   }
 }
 
@@ -28155,6 +28520,7 @@ function renderShell() {
       ${renderWorkspaceArea(activeSession)}
       ${renderFolderPickerModal()}
       ${renderGuidedOnboardingOverlaySafe()}
+      ${renderGuidedTutorialOverlaySafe()}
       ${renderSystemToasts()}
     </main>
   `;
@@ -28187,6 +28553,7 @@ function renderShell() {
 
   void refreshOpenFileTree();
   scheduleGuidedOnboardingSyncSafe();
+  scheduleGuidedTutorialSyncSafe();
 }
 
 function getGuidedOnboardingStep() {
@@ -28202,6 +28569,9 @@ function isGuidedOnboardingForced() {
 }
 
 function shouldStartGuidedOnboarding() {
+  if (state.guidedTutorial?.active) {
+    return false;
+  }
   const forced = isGuidedOnboardingForced();
   if (!forced) {
     return false;
@@ -28822,6 +29192,483 @@ function syncGuidedOnboarding() {
   syncGuidedOnboardingVisualFocus(step);
 }
 
+function getGuidedTutorialConfig(tutorialId = state.guidedTutorial.tutorialId) {
+  return GUIDED_TUTORIALS[String(tutorialId || "").trim()] || null;
+}
+
+function getGuidedTutorialSteps(tutorialId = state.guidedTutorial.tutorialId) {
+  return getGuidedTutorialConfig(tutorialId)?.steps || [];
+}
+
+function getGuidedTutorialStep() {
+  return getGuidedTutorialSteps()[state.guidedTutorial.stepIndex] || null;
+}
+
+function startGuidedTutorial(tutorialId, { actionItemId = "", render = true } = {}) {
+  const tutorial = getGuidedTutorialConfig(tutorialId);
+  if (!tutorial) {
+    return false;
+  }
+
+  closeTutorialOverlay();
+  if (state.guidedOnboarding.syncFrameHandle) {
+    window.cancelAnimationFrame(state.guidedOnboarding.syncFrameHandle);
+    state.guidedOnboarding.syncFrameHandle = 0;
+  }
+  if (state.guidedOnboarding.active) {
+    state.guidedOnboarding.active = false;
+    state.guidedOnboarding.focusSignature = "";
+    syncGuidedOnboardingPointer();
+  }
+
+  state.guidedTutorial.active = true;
+  state.guidedTutorial.tutorialId = tutorialId;
+  state.guidedTutorial.actionItemId = String(actionItemId || "").trim();
+  state.guidedTutorial.stepIndex = 0;
+  state.guidedTutorial.startedAt = Date.now();
+  state.guidedTutorial.localEvents = {};
+  state.guidedTutorial.lastRouteRequestAt = 0;
+  state.guidedTutorial.focusSignature = "";
+
+  if (render) {
+    renderShell();
+  }
+
+  return true;
+}
+
+function hasGuidedTutorialEvent(type) {
+  if (!type) {
+    return false;
+  }
+
+  return Boolean(state.guidedTutorial.localEvents?.[type]);
+}
+
+function markGuidedTutorialEvent(type) {
+  if (!type) {
+    return;
+  }
+
+  if (!state.guidedTutorial.localEvents || typeof state.guidedTutorial.localEvents !== "object") {
+    state.guidedTutorial.localEvents = {};
+  }
+  if (state.guidedTutorial.localEvents[type]) {
+    return;
+  }
+
+  state.guidedTutorial.localEvents[type] = true;
+  scheduleGuidedTutorialSyncSafe();
+}
+
+function isGuidedTutorialRouteSatisfied(step) {
+  if (step?.ensureView) {
+    if (step.ensureView === "visual-interface") {
+      if (!isVisualInterfaceView()) {
+        return false;
+      }
+    } else if (step.ensureView === "plugins") {
+      if (state.currentView !== "plugins") {
+        return false;
+      }
+
+      if (step.ensurePluginDetail) {
+        if (state.pluginDetailId !== normalizeBuildingId(step.ensurePluginDetail)) {
+          return false;
+        }
+      } else if (state.pluginDetailId) {
+        return false;
+      }
+    } else if (state.currentView !== step.ensureView) {
+      return false;
+    }
+  }
+
+  return true;
+}
+
+function requestGuidedTutorialRoute(step) {
+  if (!step || isGuidedTutorialRouteSatisfied(step)) {
+    return;
+  }
+
+  const now = Date.now();
+  if (now - state.guidedTutorial.lastRouteRequestAt < 900) {
+    return;
+  }
+  state.guidedTutorial.lastRouteRequestAt = now;
+
+  if (step.ensureView === "visual-interface") {
+    void openMainView("visual-interface");
+    return;
+  }
+
+  if (step.ensureView === "plugins") {
+    const buildingId = step.ensurePluginDetail ? normalizeBuildingId(step.ensurePluginDetail) : "";
+    void openMainView("plugins", { buildingId });
+    return;
+  }
+
+  if (step.ensureView) {
+    void openMainView(step.ensureView);
+  }
+}
+
+function getGuidedTutorialFieldValue(selectors = []) {
+  for (const selector of selectors) {
+    const node = findAgentPointerTargetBySelector(selector, { visibleOnly: true });
+    if (node instanceof HTMLInputElement || node instanceof HTMLTextAreaElement || node instanceof HTMLSelectElement) {
+      const value = String(node.value || "").trim();
+      if (value) {
+        return value;
+      }
+    }
+  }
+
+  for (const selector of selectors) {
+    if (!selector) {
+      continue;
+    }
+
+    const node = document.querySelector(selector);
+    if (node instanceof HTMLInputElement || node instanceof HTMLTextAreaElement || node instanceof HTMLSelectElement) {
+      const value = String(node.value || "").trim();
+      if (value) {
+        return value;
+      }
+    }
+  }
+
+  return "";
+}
+
+function getGuidedTutorialCheckboxState(selectors = []) {
+  for (const selector of selectors) {
+    const node = findAgentPointerTargetBySelector(selector, { visibleOnly: true });
+    if (node instanceof HTMLInputElement && node.type === "checkbox") {
+      return node.checked;
+    }
+  }
+
+  return null;
+}
+
+function isGuidedTutorialStepComplete(step) {
+  if (!step || step.manualAdvance) {
+    return false;
+  }
+
+  switch (step.id) {
+    case "enter-token":
+      return Boolean(
+        state.settings.telegramBotTokenConfigured
+        || getGuidedTutorialFieldValue(["#install-telegram-bot-token", "#telegram-bot-token"]),
+      );
+    case "enable-telegram": {
+      const checked = getGuidedTutorialCheckboxState(['input[type="checkbox"][name="telegramEnabled"]']);
+      return checked === null || checked || state.settings.telegramEnabled;
+    }
+    case "save-telegram":
+      return Boolean(
+        (state.settings.telegramEnabled && state.settings.telegramBotTokenConfigured)
+        || isPluginInstallPlacementPending("telegram")
+        || (state.visualGame.builderPlacement?.kind === "functional" && state.visualGame.builderPlacement?.pluginId === "telegram"),
+      );
+    case "place-telegram":
+      return Boolean(getAgentTownFunctionalPlacement("telegram"));
+    case "open-telegram-room":
+      return state.visualGame.selectedBuildingId === "telegram";
+    case "request-camera-permission":
+      return Boolean(
+        hasGuidedTutorialEvent(GUIDED_TUTORIAL_EVENT_TYPES.videoMemoryPermissionRequested)
+        || state.settings.videoMemoryStatus?.devicesKnown,
+      );
+    case "enable-videomemory": {
+      const checked = getGuidedTutorialCheckboxState(['input[type="checkbox"][name="videoMemoryEnabled"]']);
+      return checked === null || checked || state.settings.videoMemoryEnabled;
+    }
+    case "save-videomemory":
+      return Boolean(state.settings.videoMemoryEnabled && isVideoMemoryPluginInstalled());
+    case "open-camera-room":
+      return state.visualGame.selectedBuildingId === "videomemory";
+    default:
+      return false;
+  }
+}
+
+function getGuidedTutorialPointerTarget(step) {
+  if (!step) {
+    return "";
+  }
+
+  switch (step.id) {
+    case "enter-token":
+      return "selector-fallback:#install-telegram-bot-token||#telegram-bot-token";
+    case "enable-telegram":
+      return 'selector:input[type="checkbox"][name="telegramEnabled"]';
+    case "save-telegram":
+      return "selector:[data-communications-action]";
+    case "place-telegram":
+      return state.visualGame.builderPlacement?.cursorRect ? "placement-preview" : "selector:#visual-game-canvas";
+    case "open-telegram-room":
+      return "building:telegram";
+    case "request-camera-permission":
+      return "selector:[data-videomemory-request-camera-permission]";
+    case "enable-videomemory":
+      return 'selector:input[type="checkbox"][name="videoMemoryEnabled"]';
+    case "save-videomemory":
+      return "selector:[data-videomemory-action]";
+    case "open-camera-room":
+      return "building:videomemory";
+    default:
+      return "";
+  }
+}
+
+function getGuidedTutorialBuildingFocusRect(buildingId) {
+  return (
+    (state.visualGame.hitAreas || []).find(
+      (area) => area.kind === "building" && area.buildingId === normalizeBuildingId(buildingId),
+    )
+    || null
+  );
+}
+
+function getGuidedTutorialFocusRect(step) {
+  if (!step || !isVisualInterfaceView()) {
+    return null;
+  }
+
+  switch (step.id) {
+    case "place-telegram":
+      return state.visualGame.builderPlacement?.cursorRect || null;
+    case "open-telegram-room":
+      return getGuidedTutorialBuildingFocusRect("telegram");
+    case "open-camera-room":
+      return getGuidedTutorialBuildingFocusRect("videomemory");
+    default:
+      return null;
+  }
+}
+
+function getGuidedTutorialFocusSignature(step, rect) {
+  if (!step || !rect) {
+    return "";
+  }
+
+  return [
+    state.guidedTutorial.tutorialId,
+    step.id,
+    Math.round(Number(rect.x) || 0),
+    Math.round(Number(rect.y) || 0),
+    Math.round(Number(rect.width) || 0),
+    Math.round(Number(rect.height) || 0),
+  ].join(":");
+}
+
+function syncGuidedTutorialVisualFocus(step = getGuidedTutorialStep()) {
+  if (!state.guidedTutorial.active || !isVisualInterfaceView()) {
+    state.guidedTutorial.focusSignature = "";
+    return;
+  }
+
+  const rect = getGuidedTutorialFocusRect(step);
+  const signature = getGuidedTutorialFocusSignature(step, rect);
+  if (!signature || signature === state.guidedTutorial.focusSignature) {
+    return;
+  }
+
+  centerVisualGameCameraOnWorldRect(
+    rect,
+    step?.id === "place-telegram"
+      ? { paddingWorld: 84, maxZoom: 1.28 }
+      : { paddingWorld: 64, maxZoom: 1.55 },
+  );
+  state.guidedTutorial.focusSignature = signature;
+}
+
+function syncGuidedTutorialPointer() {
+  const step = getGuidedTutorialStep();
+  const target = state.guidedTutorial.active ? getGuidedTutorialPointerTarget(step) : "";
+  const current = state.agentPointer;
+
+  if (!target) {
+    if (current?.source === "guided-tutorial") {
+      state.agentPointer = null;
+      clearAgentPointerOverlay();
+    }
+    return;
+  }
+
+  const nextPointer = {
+    id: `guided-tutorial-${state.guidedTutorial.tutorialId}-${step.id}`,
+    source: "guided-tutorial",
+    target,
+    reason: "",
+    expiresAt: Date.now() + 60 * 60 * 1000,
+  };
+
+  if (current?.source === "guided-tutorial" && current.id === nextPointer.id && current.target === nextPointer.target) {
+    return;
+  }
+
+  clearAgentPointerOverlay();
+  state.agentPointer = nextPointer;
+  startAgentPointerOverlay();
+}
+
+function completeGuidedTutorial({ render = true, markActionItemComplete = true } = {}) {
+  const actionItemId = String(state.guidedTutorial.actionItemId || "").trim();
+  state.guidedTutorial.active = false;
+  state.guidedTutorial.tutorialId = "";
+  state.guidedTutorial.actionItemId = "";
+  state.guidedTutorial.stepIndex = 0;
+  state.guidedTutorial.startedAt = 0;
+  state.guidedTutorial.localEvents = {};
+  state.guidedTutorial.lastRouteRequestAt = 0;
+  state.guidedTutorial.focusSignature = "";
+  syncGuidedTutorialPointer();
+  if (markActionItemComplete && actionItemId) {
+    void updateAgentTownActionItemStatus(actionItemId, "completed");
+  }
+  if (render) {
+    renderShell();
+  }
+}
+
+function skipGuidedTutorial() {
+  completeGuidedTutorial({ markActionItemComplete: false });
+}
+
+function advanceGuidedTutorialStep() {
+  if (!state.guidedTutorial.active) {
+    return;
+  }
+
+  const steps = getGuidedTutorialSteps();
+  state.guidedTutorial.stepIndex += 1;
+  state.guidedTutorial.lastRouteRequestAt = 0;
+  state.guidedTutorial.focusSignature = "";
+  if (state.guidedTutorial.stepIndex >= steps.length) {
+    completeGuidedTutorial();
+    return;
+  }
+  renderShell();
+}
+
+function rewindGuidedTutorialStep() {
+  if (!state.guidedTutorial.active || state.guidedTutorial.stepIndex <= 0) {
+    return;
+  }
+
+  state.guidedTutorial.stepIndex -= 1;
+  state.guidedTutorial.lastRouteRequestAt = 0;
+  state.guidedTutorial.focusSignature = "";
+  renderShell();
+}
+
+function runGuidedTutorialAutoProgress() {
+  if (!state.guidedTutorial.active) {
+    return false;
+  }
+
+  const steps = getGuidedTutorialSteps();
+  let advanced = false;
+  let safety = 0;
+  while (safety < steps.length) {
+    safety += 1;
+    const step = getGuidedTutorialStep();
+    if (!step) {
+      completeGuidedTutorial({ render: false });
+      break;
+    }
+    if (!isGuidedTutorialStepComplete(step)) {
+      break;
+    }
+    state.guidedTutorial.stepIndex += 1;
+    state.guidedTutorial.lastRouteRequestAt = 0;
+    state.guidedTutorial.focusSignature = "";
+    advanced = true;
+  }
+
+  if (state.guidedTutorial.stepIndex >= steps.length) {
+    completeGuidedTutorial({ render: false });
+    advanced = true;
+  }
+
+  return advanced;
+}
+
+function renderGuidedTutorialOverlay() {
+  if (!state.guidedTutorial.active) {
+    return "";
+  }
+
+  const tutorial = getGuidedTutorialConfig();
+  const step = getGuidedTutorialStep();
+  if (!tutorial || !step) {
+    return "";
+  }
+
+  const index = state.guidedTutorial.stepIndex + 1;
+  const total = getGuidedTutorialSteps().length;
+  const nextLabel = step.manualLabel || "Continue";
+
+  return `
+    <section class="guided-onboarding-overlay" data-guided-tutorial-overlay>
+      <article class="guided-onboarding-bubble" aria-label="${escapeHtml(tutorial.title || "Guided tutorial")}">
+        <span class="main-search-kind">tutorial ${escapeHtml(`${index}/${total}`)}</span>
+        <strong>${escapeHtml(step.title)}</strong>
+        <p>${escapeHtml(step.body)}</p>
+        ${step.note ? `<p class="guided-onboarding-note">${escapeHtml(step.note)}</p>` : ""}
+        <div class="plugin-onboarding-actions guided-onboarding-actions">
+          ${
+            state.guidedTutorial.stepIndex > 0
+              ? `<button class="ghost-button toolbar-control" type="button" data-guided-tutorial-back>Back</button>`
+              : ""
+          }
+          ${
+            step.manualAdvance
+              ? `<button class="primary-button toolbar-control" type="button" data-guided-tutorial-next>${escapeHtml(nextLabel)}</button>`
+              : `<button class="ghost-button toolbar-control" type="button" data-guided-tutorial-next>Skip step</button>`
+          }
+          <button class="ghost-button toolbar-control" type="button" data-guided-tutorial-skip>Skip tutorial</button>
+        </div>
+      </article>
+    </section>
+  `;
+}
+
+function scheduleGuidedTutorialSync() {
+  if (state.guidedTutorial.syncFrameHandle) {
+    window.cancelAnimationFrame(state.guidedTutorial.syncFrameHandle);
+    state.guidedTutorial.syncFrameHandle = 0;
+  }
+
+  state.guidedTutorial.syncFrameHandle = window.requestAnimationFrame(() => {
+    state.guidedTutorial.syncFrameHandle = 0;
+    syncGuidedTutorial();
+  });
+}
+
+function syncGuidedTutorial() {
+  const autoAdvanced = runGuidedTutorialAutoProgress();
+  if (autoAdvanced) {
+    renderShell();
+    return;
+  }
+
+  const step = getGuidedTutorialStep();
+  if (!state.guidedTutorial.active || !step) {
+    syncGuidedTutorialPointer();
+    return;
+  }
+
+  requestGuidedTutorialRoute(step);
+  syncGuidedTutorialPointer();
+  syncGuidedTutorialVisualFocus(step);
+}
+
 function getUiNow() {
   return globalThis.performance?.now ? globalThis.performance.now() : Date.now();
 }
@@ -28968,6 +29815,17 @@ function bindSelectableRefreshEvents() {
   window.addEventListener("copy", () => {
     scheduleSelectableRefreshFlush(400);
   });
+
+  const scheduleGuidedOverlaySync = (event) => {
+    if (!isNodeInsideApp(event?.target)) {
+      return;
+    }
+    scheduleGuidedOnboardingSyncSafe();
+    scheduleGuidedTutorialSyncSafe();
+  };
+
+  document.addEventListener("input", scheduleGuidedOverlaySync, true);
+  document.addEventListener("change", scheduleGuidedOverlaySync, true);
 }
 
 function isSessionListTemporarilyProtected() {
@@ -29490,6 +30348,7 @@ function refreshPluginSearchUi() {
   bindOttoAuthForm();
   bindCommunicationsForm();
   bindVideoMemoryForm();
+  bindScaffoldRecipesPanel();
   scheduleGuidedOnboardingSyncSafe();
 }
 
@@ -30363,6 +31222,40 @@ function refreshVideoMemoryPluginUi({ force = false } = {}) {
   bindVideoMemoryForm();
 }
 
+function refreshScaffoldRecipesPluginUi({ force = false } = {}) {
+  const card = document.querySelector(".scaffold-recipes-plugin-card");
+  if (!card) {
+    return;
+  }
+
+  if (shouldDeferSelectableRefresh({ force })) {
+    deferSelectableRefresh("scaffold-recipes");
+    return;
+  }
+
+  const activeElement = document.activeElement;
+  if (activeElement instanceof HTMLElement && activeElement.closest(".scaffold-recipes-form") && !force) {
+    return;
+  }
+
+  card.outerHTML = renderScaffoldRecipesPluginPanel();
+  bindScaffoldRecipesPanel();
+}
+
+function getScaffoldRecipeDraftPayload(form) {
+  const formData = form instanceof HTMLFormElement ? new FormData(form) : new FormData();
+  const name = String(formData.get("name") || "").trim();
+  const description = String(formData.get("description") || "").trim();
+  return { name, description };
+}
+
+function updateScaffoldRecipeDraftState(form) {
+  const payload = getScaffoldRecipeDraftPayload(form);
+  state.scaffoldRecipes.draftName = payload.name || "Current Vibe Research scaffold";
+  state.scaffoldRecipes.draftDescription = payload.description;
+  return payload;
+}
+
 function bindBrowserUseForm() {
   document.querySelectorAll(".browser-use-form").forEach((formElement) => formElement.addEventListener("submit", async (event) => {
     event.preventDefault();
@@ -30475,6 +31368,7 @@ function bindVideoMemoryForm() {
 
     try {
       await requestVideoMemoryCameraPermission();
+      markGuidedTutorialEvent(GUIDED_TUTORIAL_EVENT_TYPES.videoMemoryPermissionRequested);
       target.textContent = "permission requested";
       refreshVideoMemoryPluginUi({ force: true });
     } catch (error) {
@@ -30516,6 +31410,115 @@ function bindVideoMemoryForm() {
         button.disabled = false;
         button.textContent = "save VideoMemory";
       }
+    }
+  }));
+}
+
+function bindScaffoldRecipesPanel() {
+  const panel = document.querySelector(".scaffold-recipes-plugin-card");
+  if (!panel) {
+    return;
+  }
+
+  if (!state.scaffoldRecipes.loaded && !state.scaffoldRecipes.loading) {
+    void loadScaffoldRecipes({ renderOnComplete: true });
+  }
+
+  document.querySelectorAll(".scaffold-recipes-form").forEach((formElement) => {
+    formElement.addEventListener("input", () => {
+      if (formElement instanceof HTMLFormElement) {
+        updateScaffoldRecipeDraftState(formElement);
+      }
+    });
+  });
+
+  document.querySelectorAll("[data-scaffold-recipes-refresh]").forEach((button) => button.addEventListener("click", async (event) => {
+    event.preventDefault();
+    if (!(button instanceof HTMLButtonElement)) {
+      return;
+    }
+
+    button.disabled = true;
+    try {
+      await loadScaffoldRecipes({ renderOnComplete: true });
+    } catch (error) {
+      window.alert(error.message);
+    } finally {
+      refreshScaffoldRecipesPluginUi({ force: true });
+    }
+  }));
+
+  document.querySelectorAll("[data-scaffold-recipe-save-current]").forEach((button) => button.addEventListener("click", async (event) => {
+    event.preventDefault();
+    const form = button.closest(".scaffold-recipes-form");
+    if (!(form instanceof HTMLFormElement) || !(button instanceof HTMLButtonElement)) {
+      return;
+    }
+
+    const payload = updateScaffoldRecipeDraftState(form);
+    state.scaffoldRecipes.action = "save-current";
+    state.scaffoldRecipes.status = "";
+    refreshScaffoldRecipesPluginUi({ force: true });
+
+    try {
+      const response = await fetchJson("/api/scaffold-recipes/current", {
+        method: "POST",
+        body: JSON.stringify(payload),
+      });
+      state.scaffoldRecipes.status = `Saved ${response.recipe?.name || "current scaffold"}.`;
+      await loadScaffoldRecipes({ renderOnComplete: false });
+    } catch (error) {
+      state.scaffoldRecipes.status = error.message || "Could not save the current scaffold.";
+      window.alert(error.message);
+    } finally {
+      state.scaffoldRecipes.action = "";
+      refreshScaffoldRecipesPluginUi({ force: true });
+    }
+  }));
+
+  document.querySelectorAll("[data-scaffold-recipe-publish]").forEach((button) => button.addEventListener("click", async (event) => {
+    event.preventDefault();
+    if (!(button instanceof HTMLButtonElement)) {
+      return;
+    }
+
+    const recipeId = button.getAttribute("data-scaffold-recipe-publish") || "";
+    if (!recipeId) {
+      return;
+    }
+    if (!isBuildingHubAuthenticated()) {
+      window.alert("Log in with GitHub in BuildingHub before publishing a scaffold.");
+      return;
+    }
+
+    const form = panel.querySelector(".scaffold-recipes-form");
+    const payload = recipeId === "current" && form instanceof HTMLFormElement
+      ? updateScaffoldRecipeDraftState(form)
+      : {};
+    state.scaffoldRecipes.action = recipeId === "current" ? "publish-current" : `publish:${recipeId}`;
+    state.scaffoldRecipes.status = "";
+    refreshScaffoldRecipesPluginUi({ force: true });
+
+    try {
+      const response = await fetchJson(`/api/scaffold-recipes/${encodeURIComponent(recipeId)}/publish`, {
+        method: "POST",
+        body: JSON.stringify(payload),
+      });
+      state.scaffoldRecipes.lastPublishedUrl = response.buildingHub?.recipeUrl || "";
+      state.scaffoldRecipes.status = `Published ${response.recipe?.name || recipeId} to BuildingHub.`;
+      await Promise.all([
+        loadScaffoldRecipes({ renderOnComplete: false }),
+        loadBuildingHubCatalog({ force: true, renderOnComplete: false }),
+      ]);
+      if (state.scaffoldRecipes.lastPublishedUrl) {
+        window.open(state.scaffoldRecipes.lastPublishedUrl, "_blank", "noopener,noreferrer");
+      }
+    } catch (error) {
+      state.scaffoldRecipes.status = error.message || "Could not publish the scaffold recipe.";
+      window.alert(error.message);
+    } finally {
+      state.scaffoldRecipes.action = "";
+      refreshScaffoldRecipesPluginUi({ force: true });
     }
   }));
 }
@@ -33752,6 +34755,33 @@ async function loadVideoMemoryStatus({ renderOnComplete = false } = {}) {
   }
 }
 
+async function loadScaffoldRecipes({ renderOnComplete = false } = {}) {
+  if (state.scaffoldRecipes.loading) {
+    return;
+  }
+
+  state.scaffoldRecipes.loading = true;
+  if (renderOnComplete) {
+    refreshScaffoldRecipesPluginUi({ force: true });
+  }
+
+  try {
+    const payload = await fetchJson("/api/scaffold-recipes", {
+      cache: "no-store",
+    });
+    state.scaffoldRecipes.recipes = Array.isArray(payload?.recipes) ? payload.recipes : [];
+    state.scaffoldRecipes.loaded = true;
+  } catch (error) {
+    state.scaffoldRecipes.status = error.message || "Could not load scaffold recipes.";
+    throw error;
+  } finally {
+    state.scaffoldRecipes.loading = false;
+    if (renderOnComplete) {
+      refreshScaffoldRecipesPluginUi({ force: true });
+    }
+  }
+}
+
 async function loadBuildingHubCatalog({ force = false, renderOnComplete = false } = {}) {
   if (!state.settings.buildingHubEnabled) {
     applyBuildingHubCatalog({ buildings: [], buildingHub: state.settings.buildingHubStatus || null });
@@ -34240,6 +35270,8 @@ function bindShellEvents() {
     });
   });
 
+  bindScaffoldRecipesPanel();
+
   document.querySelectorAll("[data-open-building-workspace]").forEach((button) => {
     button.addEventListener("click", (event) => {
       event.preventDefault();
@@ -34422,6 +35454,27 @@ function bindShellEvents() {
     button.addEventListener("click", (event) => {
       event.preventDefault();
       skipGuidedOnboardingSafe();
+    });
+  });
+
+  document.querySelectorAll("[data-guided-tutorial-next]").forEach((button) => {
+    button.addEventListener("click", (event) => {
+      event.preventDefault();
+      advanceGuidedTutorialStepSafe();
+    });
+  });
+
+  document.querySelectorAll("[data-guided-tutorial-back]").forEach((button) => {
+    button.addEventListener("click", (event) => {
+      event.preventDefault();
+      rewindGuidedTutorialStepSafe();
+    });
+  });
+
+  document.querySelectorAll("[data-guided-tutorial-skip]").forEach((button) => {
+    button.addEventListener("click", (event) => {
+      event.preventDefault();
+      skipGuidedTutorialSafe();
     });
   });
 
@@ -35886,6 +36939,7 @@ async function loadSettingsStatus() {
       refreshPluginSearchUi();
       refreshBrowserUsePluginUi();
       refreshCommunicationsPluginUi();
+      refreshScaffoldRecipesPluginUi();
       void loadVideoMemoryStatus({ renderOnComplete: true });
     } else if (state.currentView === "settings") {
       refreshCommunicationsPluginUi();
@@ -36888,6 +37942,10 @@ function ensureAgentPointerOverlay() {
   return overlay;
 }
 
+function isStickyAgentPointerSource(source) {
+  return source === "guided-onboarding" || source === "guided-tutorial";
+}
+
 function startAgentPointerOverlay() {
   stopAgentPointerOverlayLoop();
   const pointer = state.agentPointer;
@@ -36905,7 +37963,7 @@ function startAgentPointerOverlay() {
     const target = event.target instanceof Element ? event.target : null;
     if (!target) return;
     if (!AGENT_POINTER_AUTO_DISMISS_ELEMENT_CLICK) return;
-    if (state.agentPointer?.source === "guided-onboarding") return;
+    if (isStickyAgentPointerSource(state.agentPointer?.source)) return;
     const current = agentPointerRuntime.lastTargetElement;
     if (current && current.contains(target)) {
       void dismissAgentPointer("click");
@@ -36913,7 +37971,7 @@ function startAgentPointerOverlay() {
   };
 
   const onKeyDown = (event) => {
-    if (state.agentPointer?.source === "guided-onboarding") {
+    if (isStickyAgentPointerSource(state.agentPointer?.source)) {
       return;
     }
     if (event.key === "Escape") {
@@ -37008,7 +38066,7 @@ function clearAgentPointerOverlay() {
 
 async function dismissAgentPointer(_reason) {
   const pointer = state.agentPointer;
-  if (pointer?.source === "guided-onboarding") {
+  if (isStickyAgentPointerSource(pointer?.source)) {
     return;
   }
   state.agentPointer = null;

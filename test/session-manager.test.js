@@ -2548,3 +2548,53 @@ test("Claude live overlay drops raw key-value tool stdout fragments", async () =
     await cleanupManager(manager, workspaceDir, harness.userHomeDir);
   }
 });
+
+test("Claude live overlay drops terminal glyph fragments from the header chrome", async () => {
+  const harness = await createManager();
+  const { manager, workspaceDir, userHomeDir } = harness;
+
+  try {
+    const sessionId = "claude-glyph-overlay";
+    await writeClaudeTranscript(userHomeDir, workspaceDir, sessionId, [
+      {
+        type: "assistant",
+        timestamp: "2026-04-24T04:15:06.000Z",
+        message: {
+          role: "assistant",
+          content: [{ type: "text", text: "Hello!" }],
+        },
+      },
+    ]);
+
+    const session = manager.buildSessionRecord({
+      id: sessionId,
+      providerId: "claude",
+      providerLabel: "Claude Code",
+      name: "Claude Overlay Glyphs",
+      cwd: workspaceDir,
+      status: "running",
+      createdAt: "2026-04-24T04:15:00.000Z",
+      updatedAt: "2026-04-24T04:15:12.000Z",
+      lastPromptAt: "2026-04-24T04:15:10.000Z",
+      lastOutputAt: "2026-04-24T04:15:12.000Z",
+      buffer: "▝▜█████▛▘Opus4.7(1Mcontext)withhigheffort·ClaudeMax\n▘▘▝▝~/vibe-projects/vibe-research/user",
+      providerState: {
+        sessionId,
+      },
+    });
+    session.pty = {
+      write() {},
+      kill() {},
+    };
+    manager.sessions.set(session.id, session);
+
+    const narrative = await manager.getSessionNarrative(session.id);
+    assert.equal(narrative.providerBacked, true);
+    assert.deepEqual(
+      narrative.entries.map((entry) => entry.text),
+      ["Hello!"],
+    );
+  } finally {
+    await cleanupManager(manager, workspaceDir, harness.userHomeDir);
+  }
+});

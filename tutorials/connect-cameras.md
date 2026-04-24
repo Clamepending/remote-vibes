@@ -1,28 +1,28 @@
 ---
 id: connect-cameras
 title: Connect your cameras
-buildingId: browser-use
-summary: Give Vibe Research access to the camera so browser-use agents can capture and see the world.
+buildingId: videomemory
+summary: Give Vibe Research camera access so VideoMemory can arm monitors and wake agents from the Camera Room.
 priority: normal
 order: 20
 ---
 
 # Connect your cameras
 
-Some buildings — in particular `browser-use` — need access to the macOS camera so agents can capture screenshots or drive browser sessions that require the webcam. Grant the permission once and macOS remembers it.
+VideoMemory is the building that turns live camera inputs into wakeups for your agents. Grant camera access once, enable VideoMemory, and the Camera Room in Agent Town becomes the place to monitor devices and armed rules.
 
-## 1. Grant camera access in System Settings
+## 1. Let Vibe Research request camera access
 
-Open **System Settings → Privacy & Security → Camera**. Find Vibe Research (or the terminal / Electron host running it) in the list and flip the switch on. If the app is not in the list yet, it will be added the first time it requests access.
+Open the **Connect cameras** tutorial card in Agent Inbox and use the guided flow to click **enable camera permissions**. If macOS asks, approve the prompt. That one approval is what adds Vibe Research to the Camera list in Privacy & Security.
 
-## 2. Let the app prompt you on first use
+## 2. Save VideoMemory
 
-Start a browser-use session. macOS will show a one-time permission dialog the first time the helper tries to open the camera — click **OK**. Denying it here hides Vibe Research from the camera list, and you will need to re-enable it in System Settings.
+The tutorial then walks you to **save VideoMemory**. Once VideoMemory is enabled, the Camera Room appears in Agent Town automatically.
 
-## 3. Enable the browser-use building
+## 3. Open the Camera Room
 
-Open Agent Town and place the **browser-use** functional building, or enable it from Settings. Once the building is active, agents can request camera frames through the `browser-use` helper.
+Click the highlighted **Camera Room** building on the map. This is where active monitors and permission warnings show up.
 
 ## 4. Verify
 
-Run a short browser-use task that takes a screenshot. If the capture is black or empty, re-check the Camera toggle in Privacy & Security.
+If the room shows your devices and no permission warning, the camera setup is ready. If you still see a permission warning, open **System Settings → Privacy & Security → Camera** and re-enable the app or terminal hosting Vibe Research.

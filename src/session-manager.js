@@ -643,8 +643,13 @@ function filterProjectedOverlayEntries(entries = []) {
       }
 
       const whitespaceCount = (normalizedText.match(/\s/g) || []).length;
+      const blockGlyphCount = (String(entry.text || "").match(/[▀-▿▁-▏█▓▒░■□◼◻◾◽]/gu) || []).length;
       if ((/^[\u23fa\u23bf\u23f5]/u.test(normalizedText) || /exitcode\d+/iu.test(normalizedText))
         || (normalizedText.length > 120 && whitespaceCount < 8)) {
+        return false;
+      }
+
+      if (blockGlyphCount >= 3) {
         return false;
       }
 

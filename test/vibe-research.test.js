@@ -2226,6 +2226,653 @@ test("Telegram building detail saves through fetch and opens placement without e
   }
 });
 
+test("Telegram tutorial guides the user from token entry to the correct save control", async (t) => {
+  const executablePath = await resolveBrowserExecutablePath({ env: process.env });
+  if (!executablePath) {
+    t.skip("No local Chromium/Chrome executable is available for the Telegram guided tutorial smoke.");
+    return;
+  }
+
+  const workspaceDir = await createTempWorkspace("vibe-research-telegram-tutorial-ui-");
+  const stateDir = await createTempWorkspace("vibe-research-telegram-tutorial-state-");
+  const wikiDir = path.join(workspaceDir, "brain");
+  await mkdir(wikiDir, { recursive: true });
+  await mkdir(stateDir, { recursive: true });
+  await writeFile(
+    path.join(stateDir, "settings.json"),
+    `${JSON.stringify(
+      {
+        version: 1,
+        settings: {
+          buildingAccessConfirmedIds: [],
+          buildingHubAuthProvider: "",
+          preventSleepEnabled: false,
+          wikiGitRemoteEnabled: false,
+          wikiPath: wikiDir,
+          wikiPathConfigured: true,
+        },
+      },
+      null,
+      2,
+    )}\n`,
+    "utf8",
+  );
+
+  let telegramSettings = {};
+  const { app, baseUrl } = await startApp({
+    cwd: workspaceDir,
+    stateDir,
+    telegramServiceFactory: (settings) => {
+      telegramSettings = settings;
+      return {
+        replyToken: "test-telegram-reply-token",
+        getStatus() {
+          return {
+            allowedChatIds: String(telegramSettings.telegramAllowedChatIds || "")
+              .split(",")
+              .map((entry) => entry.trim())
+              .filter(Boolean),
+            botTokenConfigured: Boolean(telegramSettings.telegramBotToken),
+            enabled: Boolean(telegramSettings.telegramEnabled),
+            providerId: telegramSettings.telegramProviderId || "claude",
+            ready: Boolean(telegramSettings.telegramEnabled && telegramSettings.telegramBotToken),
+          };
+        },
+        restart(settings) {
+          telegramSettings = settings;
+        },
+        start() {},
+        stop() {},
+      };
+    },
+  });
+  let browser = null;
+
+  const readPointerAnchor = async (page, selector) => {
+    await page.waitForFunction((selectorValue) => {
+      const isVisible = (node) => {
+        if (!(node instanceof HTMLElement)) {
+          return false;
+        }
+        const rect = node.getBoundingClientRect();
+        if (!(rect.width > 0 && rect.height > 0)) {
+          return false;
+        }
+        const style = window.getComputedStyle(node);
+        return style.display !== "none" && style.visibility !== "hidden" && style.visibility !== "collapse";
+      };
+      const resolveTarget = (selectorText) => {
+        const selectors = String(selectorText || "")
+          .split("||")
+          .map((entry) => entry.trim())
+          .filter(Boolean);
+        for (const entry of selectors) {
+          const nodes = [...document.querySelectorAll(entry)];
+          const visibleNode = nodes.find((node) => isVisible(node));
+          if (visibleNode) {
+            return visibleNode;
+          }
+        }
+        return null;
+      };
+      const pointer = document.querySelector(".agent-pointer");
+      const target = resolveTarget(selectorValue);
+      if (!(pointer instanceof HTMLElement) || !(target instanceof HTMLElement)) {
+        return false;
+      }
+
+      const pointerRect = pointer.getBoundingClientRect();
+      const targetRect = target.getBoundingClientRect();
+      const xAligned = Math.abs((pointerRect.left + pointerRect.width / 2) - (targetRect.left + targetRect.width / 2)) <= 12;
+      if (!xAligned) {
+        return false;
+      }
+
+      return pointer.dataset.direction === "up"
+        ? pointerRect.top > targetRect.bottom
+        : pointerRect.bottom < targetRect.top;
+    }, selector, { timeout: 10_000 });
+
+    const payload = await page.evaluate((selectorValue) => {
+      const isVisible = (node) => {
+        if (!(node instanceof HTMLElement)) {
+          return false;
+        }
+        const rect = node.getBoundingClientRect();
+        if (!(rect.width > 0 && rect.height > 0)) {
+          return false;
+        }
+        const style = window.getComputedStyle(node);
+        return style.display !== "none" && style.visibility !== "hidden" && style.visibility !== "collapse";
+      };
+      const resolveTarget = (selectorText) => {
+        const selectors = String(selectorText || "")
+          .split("||")
+          .map((entry) => entry.trim())
+          .filter(Boolean);
+        for (const entry of selectors) {
+          const nodes = [...document.querySelectorAll(entry)];
+          const visibleNode = nodes.find((node) => isVisible(node));
+          if (visibleNode) {
+            return visibleNode;
+          }
+        }
+        return null;
+      };
+      const pointer = document.querySelector(".agent-pointer");
+      const target = resolveTarget(selectorValue);
+      if (!(pointer instanceof HTMLElement) || !(target instanceof HTMLElement)) {
+        return null;
+      }
+
+      const pointerRect = pointer.getBoundingClientRect();
+      const targetRect = target.getBoundingClientRect();
+      return {
+        direction: pointer.dataset.direction || "down",
+        pointerCenterX: pointerRect.left + pointerRect.width / 2,
+        pointerTop: pointerRect.top,
+        pointerBottom: pointerRect.bottom,
+        targetCenterX: targetRect.left + targetRect.width / 2,
+        targetTop: targetRect.top,
+        targetBottom: targetRect.bottom,
+      };
+    }, selector);
+
+    assert.ok(payload, `expected guided pointer and target for ${selector}`);
+    assert.ok(
+      Math.abs(payload.pointerCenterX - payload.targetCenterX) <= 12,
+      `expected guided pointer to center over ${selector}, saw ${payload.pointerCenterX} vs ${payload.targetCenterX}`,
+    );
+    if (payload.direction === "up") {
+      assert.ok(
+        payload.pointerTop > payload.targetBottom,
+        `expected guided pointer to sit below ${selector}, saw pointer top=${payload.pointerTop} target bottom=${payload.targetBottom}`,
+      );
+    } else {
+      assert.ok(
+        payload.pointerBottom < payload.targetTop,
+        `expected guided pointer to sit above ${selector}, saw pointer bottom=${payload.pointerBottom} target top=${payload.targetTop}`,
+      );
+    }
+  };
+
+  const clickCanvasCenter = async (page) => {
+    const box = await page.locator("#visual-game-canvas").boundingBox();
+    assert.ok(box, "expected the visual game canvas to be visible");
+    await page.mouse.click(box.x + box.width / 2, box.y + box.height / 2);
+  };
+
+  try {
+    browser = await chromium.launch({ executablePath, headless: true });
+    const page = await browser.newPage();
+    await page.addInitScript(() => {
+      window.localStorage.setItem("vibeResearch.agentSetupComplete.v1", "1");
+    });
+
+    await page.goto(`${baseUrl}/?view=agent-inbox`, { waitUntil: "domcontentloaded" });
+    await page.locator('[data-tutorial-id="connect-telegram"] [data-tutorial-open]').waitFor({ timeout: 10_000 });
+    await page.locator('[data-tutorial-id="connect-telegram"] [data-tutorial-open]').click();
+    await page.waitForSelector("[data-guided-tutorial-overlay]", { timeout: 10_000 });
+    await page.getByRole("button", { name: "Start tutorial" }).click();
+
+    await page.waitForFunction(() => {
+      const url = new URL(window.location.href);
+      return url.searchParams.get("view") === "plugins" && url.searchParams.get("building") === "telegram";
+    }, null, { timeout: 10_000 });
+    await page.waitForFunction(() => {
+      const overlay = document.querySelector("[data-guided-tutorial-overlay]");
+      return overlay?.textContent?.includes("Paste your BotFather token");
+    }, null, { timeout: 10_000 });
+    const telegramSetupForm = page.locator(
+      'form:has(#install-telegram-bot-token:visible), form:has(#telegram-bot-token:visible)',
+    ).first();
+    await telegramSetupForm.waitFor({ timeout: 10_000 });
+    await readPointerAnchor(page, "#install-telegram-bot-token||#telegram-bot-token");
+
+    await telegramSetupForm.locator('input[name="telegramBotToken"]').fill("123456:guided-telegram-token");
+    await page.waitForFunction(() => {
+      const overlay = document.querySelector("[data-guided-tutorial-overlay]");
+      const text = overlay?.textContent || "";
+      return text.includes("enable Telegram bot") || text.includes("highlighted save button");
+    }, null, { timeout: 10_000 });
+    const telegramOverlayText = await page.locator("[data-guided-tutorial-overlay]").textContent() || "";
+    if (telegramOverlayText.includes("enable Telegram bot")) {
+      await readPointerAnchor(page, 'input[type="checkbox"][name="telegramEnabled"]');
+      await telegramSetupForm.locator('input[type="checkbox"][name="telegramEnabled"]').check();
+      await page.waitForFunction(() => {
+        const overlay = document.querySelector("[data-guided-tutorial-overlay]");
+        return overlay?.textContent?.includes("highlighted save button");
+      }, null, { timeout: 10_000 });
+    }
+    await readPointerAnchor(page, "[data-communications-action]");
+    await telegramSetupForm.locator("[data-communications-action]").waitFor({ timeout: 10_000 });
+  } finally {
+    await browser?.close().catch(() => {});
+    await app.close();
+    await removeTempWorkspace(workspaceDir);
+    await removeTempWorkspace(stateDir);
+  }
+});
+
+test("VideoMemory tutorial guides permission and enablement steps to the correct save control", async (t) => {
+  const executablePath = await resolveBrowserExecutablePath({ env: process.env });
+  if (!executablePath) {
+    t.skip("No local Chromium/Chrome executable is available for the VideoMemory guided tutorial smoke.");
+    return;
+  }
+
+  const workspaceDir = await createTempWorkspace("vibe-research-videomemory-tutorial-ui-");
+  const stateDir = await createTempWorkspace("vibe-research-videomemory-tutorial-state-");
+  const wikiDir = path.join(workspaceDir, "brain");
+  await mkdir(wikiDir, { recursive: true });
+  await mkdir(stateDir, { recursive: true });
+  await writeFile(
+    path.join(stateDir, "settings.json"),
+    `${JSON.stringify(
+      {
+        version: 1,
+        settings: {
+          buildingAccessConfirmedIds: [],
+          buildingHubAuthProvider: "",
+          preventSleepEnabled: false,
+          wikiGitRemoteEnabled: false,
+          wikiPath: wikiDir,
+          wikiPathConfigured: true,
+        },
+      },
+      null,
+      2,
+    )}\n`,
+    "utf8",
+  );
+
+  let videoMemorySettings = {};
+  const { app, baseUrl } = await startApp({
+    cwd: workspaceDir,
+    stateDir,
+    videoMemoryServiceFactory: (settings) => {
+      videoMemorySettings = settings;
+      let serverBaseUrl = "";
+      return {
+        requestToken: "test-videomemory-request-token",
+        webhookToken: "test-videomemory-webhook-token",
+        async initialize() {},
+        getStatus() {
+          return {
+            activeCount: 0,
+            baseUrl: String(videoMemorySettings.videoMemoryBaseUrl || "http://127.0.0.1:5050"),
+            cameraPermissionIssue: false,
+            cameraPermissionIoId: "",
+            cameraPermissionMessage: "",
+            cameraPermissionMonitorId: "",
+            cameraPermissionUpdatedAt: null,
+            command: "vr-videomemory",
+            defaultProviderId: videoMemorySettings.videoMemoryProviderId || "claude",
+            deviceCount: 0,
+            devices: [],
+            devicesKnown: false,
+            enabled: Boolean(videoMemorySettings.videoMemoryEnabled),
+            lastDeviceRefreshError: "",
+            lastRefreshError: "",
+            latestEventAt: null,
+            monitorsCount: 0,
+            reason: videoMemorySettings.videoMemoryEnabled ? "" : "VideoMemory plugin is disabled.",
+            webhookToken: "test-videomemory-webhook-token",
+            webhookUrl: serverBaseUrl ? `${serverBaseUrl}/api/videomemory/webhook` : "",
+          };
+        },
+        listDevices() {
+          return [];
+        },
+        listMonitors() {
+          return [];
+        },
+        listSubagentsForSession() {
+          return [];
+        },
+        async refreshRemoteDevices() {},
+        async refreshRemoteMonitorStates() {},
+        restart(settings) {
+          videoMemorySettings = settings;
+        },
+        setServerBaseUrl(url) {
+          serverBaseUrl = String(url || "");
+        },
+        getWebhookUrl() {
+          return serverBaseUrl ? `${serverBaseUrl}/api/videomemory/webhook` : "";
+        },
+        validateCreateRequest() {
+          return true;
+        },
+        async createMonitor(input) {
+          return { id: "vm-monitor-1", status: "active", ...input };
+        },
+        async deleteMonitor() {
+          return null;
+        },
+        async handleWebhook() {
+          return { ok: true };
+        },
+      };
+    },
+  });
+  let browser = null;
+
+  const readPointerAnchor = async (page, selector) => {
+    await page.waitForFunction((selectorValue) => {
+      const isVisible = (node) => {
+        if (!(node instanceof HTMLElement)) {
+          return false;
+        }
+        const rect = node.getBoundingClientRect();
+        if (!(rect.width > 0 && rect.height > 0)) {
+          return false;
+        }
+        const style = window.getComputedStyle(node);
+        return style.display !== "none" && style.visibility !== "hidden" && style.visibility !== "collapse";
+      };
+      const resolveTarget = (selectorText) => {
+        const selectors = String(selectorText || "")
+          .split("||")
+          .map((entry) => entry.trim())
+          .filter(Boolean);
+        for (const entry of selectors) {
+          const nodes = [...document.querySelectorAll(entry)];
+          const visibleNode = nodes.find((node) => isVisible(node));
+          if (visibleNode) {
+            return visibleNode;
+          }
+        }
+        return null;
+      };
+      const pointer = document.querySelector(".agent-pointer");
+      const target = resolveTarget(selectorValue);
+      if (!(pointer instanceof HTMLElement) || !(target instanceof HTMLElement)) {
+        return false;
+      }
+
+      const pointerRect = pointer.getBoundingClientRect();
+      const targetRect = target.getBoundingClientRect();
+      const xAligned = Math.abs((pointerRect.left + pointerRect.width / 2) - (targetRect.left + targetRect.width / 2)) <= 12;
+      if (!xAligned) {
+        return false;
+      }
+
+      return pointer.dataset.direction === "up"
+        ? pointerRect.top > targetRect.bottom
+        : pointerRect.bottom < targetRect.top;
+    }, selector, { timeout: 10_000 });
+
+    const payload = await page.evaluate((selectorValue) => {
+      const isVisible = (node) => {
+        if (!(node instanceof HTMLElement)) {
+          return false;
+        }
+        const rect = node.getBoundingClientRect();
+        if (!(rect.width > 0 && rect.height > 0)) {
+          return false;
+        }
+        const style = window.getComputedStyle(node);
+        return style.display !== "none" && style.visibility !== "hidden" && style.visibility !== "collapse";
+      };
+      const resolveTarget = (selectorText) => {
+        const selectors = String(selectorText || "")
+          .split("||")
+          .map((entry) => entry.trim())
+          .filter(Boolean);
+        for (const entry of selectors) {
+          const nodes = [...document.querySelectorAll(entry)];
+          const visibleNode = nodes.find((node) => isVisible(node));
+          if (visibleNode) {
+            return visibleNode;
+          }
+        }
+        return null;
+      };
+      const pointer = document.querySelector(".agent-pointer");
+      const target = resolveTarget(selectorValue);
+      if (!(pointer instanceof HTMLElement) || !(target instanceof HTMLElement)) {
+        return null;
+      }
+
+      const pointerRect = pointer.getBoundingClientRect();
+      const targetRect = target.getBoundingClientRect();
+      return {
+        direction: pointer.dataset.direction || "down",
+        pointerCenterX: pointerRect.left + pointerRect.width / 2,
+        pointerTop: pointerRect.top,
+        pointerBottom: pointerRect.bottom,
+        targetCenterX: targetRect.left + targetRect.width / 2,
+        targetTop: targetRect.top,
+        targetBottom: targetRect.bottom,
+      };
+    }, selector);
+
+    assert.ok(payload, `expected guided pointer and target for ${selector}`);
+    assert.ok(
+      Math.abs(payload.pointerCenterX - payload.targetCenterX) <= 12,
+      `expected guided pointer to center over ${selector}, saw ${payload.pointerCenterX} vs ${payload.targetCenterX}`,
+    );
+    if (payload.direction === "up") {
+      assert.ok(
+        payload.pointerTop > payload.targetBottom,
+        `expected guided pointer to sit below ${selector}, saw pointer top=${payload.pointerTop} target bottom=${payload.targetBottom}`,
+      );
+    } else {
+      assert.ok(
+        payload.pointerBottom < payload.targetTop,
+        `expected guided pointer to sit above ${selector}, saw pointer bottom=${payload.pointerBottom} target top=${payload.targetTop}`,
+      );
+    }
+  };
+
+  const clickPointerTargetOnCanvas = async (page) => {
+    const point = await page.evaluate(() => {
+      const pointer = document.querySelector(".agent-pointer");
+      const canvas = document.querySelector("#visual-game-canvas");
+      if (!(pointer instanceof HTMLElement) || !(canvas instanceof HTMLCanvasElement)) {
+        return null;
+      }
+
+      const pointerRect = pointer.getBoundingClientRect();
+      const canvasRect = canvas.getBoundingClientRect();
+      const direction = pointer.dataset.direction || "down";
+      const clickY = direction === "up"
+        ? Math.max(canvasRect.top + 12, pointerRect.top - 46)
+        : Math.min(canvasRect.bottom - 12, pointerRect.bottom + 46);
+      return {
+        x: pointerRect.left + pointerRect.width / 2,
+        y: clickY,
+      };
+    });
+
+    assert.ok(point, "expected a pointer target on the visual game canvas");
+    await page.mouse.click(point.x, point.y);
+  };
+
+  try {
+    browser = await chromium.launch({ executablePath, headless: true });
+    const page = await browser.newPage();
+    await page.addInitScript(() => {
+      window.localStorage.setItem("vibeResearch.agentSetupComplete.v1", "1");
+      const stream = {
+        getTracks() {
+          return [{ stop() {} }];
+        },
+      };
+      Object.defineProperty(navigator, "mediaDevices", {
+        configurable: true,
+        value: {
+          getUserMedia: async () => stream,
+        },
+      });
+    });
+
+    await page.goto(`${baseUrl}/?view=agent-inbox`, { waitUntil: "domcontentloaded" });
+    await page.locator('[data-tutorial-id="connect-cameras"] [data-tutorial-open]').waitFor({ timeout: 10_000 });
+    await page.locator('[data-tutorial-id="connect-cameras"] [data-tutorial-open]').click();
+    await page.waitForSelector("[data-guided-tutorial-overlay]", { timeout: 10_000 });
+    await page.getByRole("button", { name: "Start tutorial" }).click();
+
+    await page.waitForFunction(() => {
+      const url = new URL(window.location.href);
+      return url.searchParams.get("view") === "plugins" && url.searchParams.get("building") === "videomemory";
+    }, null, { timeout: 10_000 });
+    await page.waitForFunction(() => {
+      const overlay = document.querySelector("[data-guided-tutorial-overlay]");
+      return overlay?.textContent?.includes("enable camera permissions");
+    }, null, { timeout: 10_000 });
+    const videoMemorySetupForm = page.locator(
+      'form:has(#install-videomemory-base-url:visible), form:has(#videomemory-base-url:visible)',
+    ).first();
+    await videoMemorySetupForm.waitFor({ timeout: 10_000 });
+    await readPointerAnchor(page, "[data-videomemory-request-camera-permission]");
+
+    await videoMemorySetupForm.locator("[data-videomemory-request-camera-permission]").click();
+    await page.waitForFunction(() => {
+      const overlay = document.querySelector("[data-guided-tutorial-overlay]");
+      const text = overlay?.textContent || "";
+      return text.includes("enable VideoMemory monitors") || text.includes("highlighted save button");
+    }, null, { timeout: 10_000 });
+    const videoMemoryOverlayText = await page.locator("[data-guided-tutorial-overlay]").textContent() || "";
+    if (videoMemoryOverlayText.includes("enable VideoMemory monitors")) {
+      await readPointerAnchor(page, 'input[type="checkbox"][name="videoMemoryEnabled"]');
+      await videoMemorySetupForm.locator('input[type="checkbox"][name="videoMemoryEnabled"]').check();
+      await page.waitForFunction(() => {
+        const overlay = document.querySelector("[data-guided-tutorial-overlay]");
+        return overlay?.textContent?.includes("highlighted save button");
+      }, null, { timeout: 10_000 });
+    }
+    await readPointerAnchor(page, "[data-videomemory-action]");
+    await videoMemorySetupForm.locator("[data-videomemory-action]").waitFor({ timeout: 10_000 });
+  } finally {
+    await browser?.close().catch(() => {});
+    await app.close();
+    await removeTempWorkspace(workspaceDir);
+    await removeTempWorkspace(stateDir);
+  }
+});
+
+test("VideoMemory setup endpoint enables the building and persists installed state", async () => {
+  const workspaceDir = await createTempWorkspace("vibe-research-videomemory-setup-api-");
+  const stateDir = await createTempWorkspace("vibe-research-videomemory-setup-state-");
+  const wikiDir = path.join(workspaceDir, "brain");
+  await mkdir(wikiDir, { recursive: true });
+  await mkdir(stateDir, { recursive: true });
+  await writeFile(
+    path.join(stateDir, "settings.json"),
+    `${JSON.stringify(
+      {
+        version: 1,
+        settings: {
+          preventSleepEnabled: false,
+          wikiGitRemoteEnabled: false,
+          wikiPath: wikiDir,
+          wikiPathConfigured: true,
+        },
+      },
+      null,
+      2,
+    )}\n`,
+    "utf8",
+  );
+
+  let videoMemorySettings = {};
+  const { app, baseUrl } = await startApp({
+    cwd: workspaceDir,
+    stateDir,
+    videoMemoryServiceFactory: (settings) => {
+      videoMemorySettings = settings;
+      let serverBaseUrl = "";
+      return {
+        requestToken: "test-videomemory-request-token",
+        webhookToken: "test-videomemory-webhook-token",
+        async initialize() {},
+        getStatus() {
+          return {
+            activeCount: 0,
+            baseUrl: String(videoMemorySettings.videoMemoryBaseUrl || "http://127.0.0.1:5050"),
+            cameraPermissionIssue: false,
+            cameraPermissionIoId: "",
+            cameraPermissionMessage: "",
+            cameraPermissionMonitorId: "",
+            cameraPermissionUpdatedAt: null,
+            command: "vr-videomemory",
+            defaultProviderId: videoMemorySettings.videoMemoryProviderId || "claude",
+            deviceCount: 0,
+            devices: [],
+            devicesKnown: false,
+            enabled: Boolean(videoMemorySettings.videoMemoryEnabled),
+            lastDeviceRefreshError: "",
+            lastRefreshError: "",
+            latestEventAt: null,
+            monitorsCount: 0,
+            reason: videoMemorySettings.videoMemoryEnabled ? "" : "VideoMemory plugin is disabled.",
+            webhookToken: "test-videomemory-webhook-token",
+            webhookUrl: serverBaseUrl ? `${serverBaseUrl}/api/videomemory/webhook` : "",
+          };
+        },
+        listDevices() {
+          return [];
+        },
+        listMonitors() {
+          return [];
+        },
+        listSubagentsForSession() {
+          return [];
+        },
+        async refreshRemoteDevices() {},
+        async refreshRemoteMonitorStates() {},
+        restart(settings) {
+          videoMemorySettings = settings;
+        },
+        setServerBaseUrl(url) {
+          serverBaseUrl = String(url || "");
+        },
+        getWebhookUrl() {
+          return serverBaseUrl ? `${serverBaseUrl}/api/videomemory/webhook` : "";
+        },
+        validateCreateRequest() {
+          return true;
+        },
+        async createMonitor(input) {
+          return { id: "vm-monitor-1", status: "active", ...input };
+        },
+        async deleteMonitor() {
+          return null;
+        },
+        async handleWebhook() {
+          return { ok: true };
+        },
+      };
+    },
+  });
+
+  try {
+    const response = await fetch(`${baseUrl}/api/videomemory/setup`, {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify({
+        baseUrl: "http://127.0.0.1:5050",
+        enabled: true,
+        installedPluginIds: ["videomemory"],
+        providerId: "claude",
+      }),
+    });
+    assert.equal(response.status, 200);
+    const payload = await response.json();
+    assert.equal(payload.settings.videoMemoryEnabled, true);
+    assert.equal(payload.settings.videoMemoryStatus.enabled, true);
+    assert.deepEqual(payload.settings.installedPluginIds, ["videomemory"]);
+  } finally {
+    await app.close();
+    await removeTempWorkspace(workspaceDir);
+    await removeTempWorkspace(stateDir);
+  }
+});
+
 test("Google access buildings show one friendly next step before configuration", async (t) => {
   const executablePath = await resolveBrowserExecutablePath({ env: process.env });
   if (!executablePath) {
@@ -8085,7 +8732,9 @@ test("tutorials API lists curated tutorials and serves their markdown bodies", a
     assert.ok(ids.includes("connect-cameras"));
     assert.ok(ids.includes("connect-stripe"));
     const telegram = listPayload.tutorials.find((entry) => entry.id === "connect-telegram");
+    const cameras = listPayload.tutorials.find((entry) => entry.id === "connect-cameras");
     assert.equal(telegram.buildingId, "telegram");
+    assert.equal(cameras.buildingId, "videomemory");
     assert.ok(!("body" in telegram));
 
     const detailResponse = await fetch(`${baseUrl}/api/tutorials/connect-telegram`);
@@ -8093,6 +8742,13 @@ test("tutorials API lists curated tutorials and serves their markdown bodies", a
     const detailPayload = await detailResponse.json();
     assert.equal(detailPayload.tutorial.id, "connect-telegram");
     assert.match(detailPayload.tutorial.body, /BotFather/);
+
+    const camerasDetailResponse = await fetch(`${baseUrl}/api/tutorials/connect-cameras`);
+    assert.equal(camerasDetailResponse.status, 200);
+    const camerasDetailPayload = await camerasDetailResponse.json();
+    assert.equal(camerasDetailPayload.tutorial.id, "connect-cameras");
+    assert.equal(camerasDetailPayload.tutorial.buildingId, "videomemory");
+    assert.match(camerasDetailPayload.tutorial.body, /VideoMemory/i);
 
     const missingResponse = await fetch(`${baseUrl}/api/tutorials/does-not-exist`);
     assert.equal(missingResponse.status, 404);
@@ -8165,6 +8821,33 @@ test("first run seeds tutorial action items and skips ones whose building is con
     } finally {
       await removeTempWorkspace(workspaceDirB);
       await removeTempWorkspace(stateDirB);
+    }
+
+    const workspaceDirC = await createTempWorkspace("vibe-research-tutorial-seed-c-");
+    const stateDirC = await createTempWorkspace("vibe-research-tutorial-seed-c-state-");
+    try {
+      await writeFile(
+        path.join(stateDirC, "settings.json"),
+        JSON.stringify({ videoMemoryEnabled: true }),
+        "utf8",
+      );
+      const { app: appC, baseUrl: baseUrlC } = await startApp({ cwd: workspaceDirC, stateDir: stateDirC });
+      try {
+        const stateResponse = await fetch(`${baseUrlC}/api/agent-town/state`);
+        const statePayload = await stateResponse.json();
+        const seededIds = statePayload.agentTown.actionItems
+          .map((entry) => entry.tutorialId)
+          .filter(Boolean)
+          .sort();
+        assert.ok(!seededIds.includes("connect-cameras"), "Camera tutorial should be skipped when VideoMemory is already enabled");
+        assert.ok(seededIds.includes("connect-telegram"));
+        assert.ok(seededIds.includes("connect-stripe"));
+      } finally {
+        await appC.close();
+      }
+    } finally {
+      await removeTempWorkspace(workspaceDirC);
+      await removeTempWorkspace(stateDirC);
     }
   } finally {
     for (const key of envKeysToClear) {

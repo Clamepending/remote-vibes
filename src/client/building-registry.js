@@ -844,6 +844,9 @@ const CORE_BUILDING_MANIFESTS = [
     visual: {
       shape: "library",
     },
+    ui: {
+      entryView: "scaffold-recipes",
+    },
     access: {
       label: "Local setup snapshot",
       detail: "Recipes include portable settings and local binding placeholders. Secrets, personal values, and machine paths are recorded as required bindings, not exported as values.",
