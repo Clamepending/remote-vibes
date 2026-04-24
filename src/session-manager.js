@@ -65,7 +65,7 @@ const PROVIDER_SESSION_LOOKBACK_MS = 4_000;
 const PROVIDER_SESSION_CAPTURE_RETRY_INTERVAL_MS = 5_000;
 const PROVIDER_SESSION_CAPTURE_RETRY_WINDOW_MS = 90_000;
 const CODEX_SESSION_INDEX_LIMIT = 100;
-const CODEX_SESSION_META_READ_LIMIT = 8192;
+const CODEX_SESSION_META_READ_LIMIT = 512 * 1024;
 const NATIVE_NARRATIVE_EVENT_LIMIT = 128;
 const NATIVE_NARRATIVE_TEXT_LIMIT = 4_000;
 const CLAUDE_SUBAGENT_TRANSCRIPT_READ_LIMIT = 1_000_000;
@@ -1906,9 +1906,32 @@ async function readFirstLine(filePath, byteLimit = CODEX_SESSION_META_READ_LIMIT
 
   try {
     handle = await open(filePath, "r");
-    const buffer = Buffer.alloc(byteLimit);
-    const { bytesRead } = await handle.read(buffer, 0, byteLimit, 0);
-    return buffer.toString("utf8", 0, bytesRead).split(/\r?\n/, 1)[0] || "";
+    const chunks = [];
+    let position = 0;
+
+    while (position < byteLimit) {
+      const nextChunkSize = Math.min(16 * 1024, byteLimit - position);
+      const buffer = Buffer.alloc(nextChunkSize);
+      const { bytesRead } = await handle.read(buffer, 0, nextChunkSize, position);
+      if (!bytesRead) {
+        break;
+      }
+
+      const chunk = buffer.toString("utf8", 0, bytesRead);
+      const newlineIndex = chunk.search(/\r?\n/u);
+      if (newlineIndex >= 0) {
+        chunks.push(chunk.slice(0, newlineIndex));
+        break;
+      }
+
+      chunks.push(chunk);
+      position += bytesRead;
+      if (bytesRead < nextChunkSize) {
+        break;
+      }
+    }
+
+    return chunks.join("");
   } catch {
     return "";
   } finally {

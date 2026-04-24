@@ -37,7 +37,7 @@ async function cleanupManager({ manager, workspaceDir, userHomeDir }) {
   await rm(userHomeDir, { recursive: true, force: true });
 }
 
-async function writeCodexTranscript(homeDir, { sessionId, cwd, timestamp, extraLines = [] }) {
+async function writeCodexTranscript(homeDir, { sessionId, cwd, timestamp, extraLines = [], sessionMeta = {} }) {
   const date = new Date(timestamp);
   const dayDir = path.join(
     homeDir,
@@ -57,6 +57,7 @@ async function writeCodexTranscript(homeDir, { sessionId, cwd, timestamp, extraL
         id: sessionId,
         timestamp,
         cwd,
+        ...sessionMeta,
       },
     },
     ...extraLines,
@@ -389,6 +390,58 @@ test("Session manager native narrative resolves Codex transcripts by workspace c
       [
         { kind: "user", label: "You", text: "hello codex" },
         { kind: "assistant", label: "Codex", text: "Hi from the native transcript." },
+      ],
+    );
+  } finally {
+    await cleanupManager(harness);
+  }
+});
+
+test("Session manager native narrative resolves Codex transcripts with large session meta lines", async () => {
+  const harness = await createManager();
+  const { manager, workspaceDir, userHomeDir } = harness;
+
+  try {
+    const session = manager.buildSessionRecord({
+      providerId: "codex",
+      providerLabel: "Codex",
+      name: "Codex Large Meta",
+      cwd: workspaceDir,
+      status: "running",
+      updatedAt: "2026-04-24T02:45:00.000Z",
+    });
+    manager.sessions.set(session.id, session);
+
+    await writeCodexTranscript(userHomeDir, {
+      sessionId: "019dbdde-large-meta",
+      cwd: workspaceDir,
+      timestamp: "2026-04-24T02:45:00.000Z",
+      sessionMeta: {
+        base_instructions: {
+          text: "x".repeat(24_000),
+        },
+      },
+      extraLines: [
+        {
+          timestamp: "2026-04-24T02:45:02.000Z",
+          type: "event_msg",
+          payload: {
+            type: "agent_message",
+            message: "Hello from a large session_meta line.",
+            phase: "final_answer",
+          },
+        },
+      ],
+    });
+
+    const narrative = await manager.getSessionNarrative(session.id);
+
+    assert.equal(narrative.providerBacked, true);
+    assert.equal(narrative.sourceLabel, "Codex session file");
+    assert.deepEqual(
+      narrative.entries.map((entry) => ({ kind: entry.kind, label: entry.label, text: entry.text })),
+      [
+        { kind: "assistant", label: "Codex", text: "Hello from a large session_meta line." },
       ],
     );
   } finally {
