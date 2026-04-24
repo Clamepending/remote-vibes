@@ -11,6 +11,9 @@ const DEFAULT_PROMPT_READY_IDLE_MS = 1_200;
 const DEFAULT_PROMPT_READY_TIMEOUT_MS = 45_000;
 const DEFAULT_PROMPT_RETRY_MS = 500;
 const DEFAULT_PROMPT_SUBMIT_DELAY_MS = 350;
+const DEFAULT_AUTO_REPLY_FALLBACK_MS = 120_000;
+const AUTO_REPLY_MIN_OUTPUT_CHARS = 20;
+const AUTO_REPLY_MAX_OUTPUT_CHARS = 3_500;
 const TELEGRAM_TEXT_LIMIT = 12_000;
 
 function normalizeBoolean(value, fallback = false) {
@@ -187,6 +190,7 @@ function buildTelegramPrompt({ message, replyCommand = "vr-telegram-reply" }) {
 
 export class TelegramService {
   constructor({
+    autoReplyFallbackMs = DEFAULT_AUTO_REPLY_FALLBACK_MS,
     cwd = process.cwd(),
     fetchImpl = globalThis.fetch,
     nowImpl = Date.now,
@@ -204,6 +208,7 @@ export class TelegramService {
     stateDir = "",
     systemRootPath = stateDir ? getVibeResearchSystemDir({ cwd, stateDir }) : "",
   } = {}) {
+    this.autoReplyFallbackMs = Math.max(0, Number(autoReplyFallbackMs) || 0);
     this.clearTimeout = clearTimeoutImpl;
     this.cwd = cwd;
     this.fetch = fetchImpl;
@@ -217,6 +222,8 @@ export class TelegramService {
     this.promptSubmitDelayMs = promptSubmitDelayMs;
     this.replyToken = randomUUID();
     this.sessionManager = sessionManager;
+    this.sessionIdByChatId = new Map();
+    this.pendingReplyByChat = new Map();
     this.setTimeout = setTimeoutImpl;
     this.settings = settings;
     this.stateDir = stateDir;
@@ -296,6 +303,9 @@ export class TelegramService {
     if (this.pollTimer) {
       this.clearTimeout(this.pollTimer);
       this.pollTimer = null;
+    }
+    for (const key of [...this.pendingReplyByChat.keys()]) {
+      this.clearPendingReply(key);
     }
     this.status.connected = false;
     if (this.status.lastStatus !== "disabled") {
@@ -446,6 +456,7 @@ export class TelegramService {
     }
 
     const chatId = getTelegramChatId(message);
+    const chatLabel = getTelegramChatLabel(message);
     const messageId = String(message?.message_id || "").trim();
     const sessionCwd = this.systemRootPath || this.settings.wikiPath || this.cwd;
 
@@ -457,6 +468,8 @@ export class TelegramService {
       const session = this.getOrCreateCommunicationSession({
         config,
         cwd: sessionCwd,
+        chatId,
+        chatLabel,
       });
       this.status.lastEventAt = new Date().toISOString();
       this.status.lastChatId = chatId;
@@ -466,6 +479,8 @@ export class TelegramService {
 
       const prompt = buildTelegramPrompt({ message, replyCommand: this.getReplyCommand() });
       this.queuePromptForSession(session.id, prompt, {
+        chatId,
+        messageId,
         onPromptSent: () => {
           this.status.processedCount += 1;
         },
@@ -481,34 +496,59 @@ export class TelegramService {
     }
   }
 
-  getOrCreateCommunicationSession({ config, cwd }) {
-    const sessionName = "Telegram communications";
-    const existingByStatus = this.status.lastSessionId && this.sessionManager?.getSession?.(this.status.lastSessionId);
-    if (
-      existingByStatus &&
-      existingByStatus.status !== "exited" &&
-      existingByStatus.providerId === config.providerId
-    ) {
-      return existingByStatus;
+  telegramChatKey(chatId) {
+    return String(chatId || "").trim();
+  }
+
+  buildSessionNameForChat(chatLabel, chatId) {
+    const label = compactWhitespace(chatLabel || chatId || "chat");
+    const trimmed = label.length > 60 ? `${label.slice(0, 57)}...` : label;
+    return `Telegram: ${trimmed || chatId || "chat"}`;
+  }
+
+  getOrCreateCommunicationSession({ config, cwd, chatId, chatLabel }) {
+    const key = this.telegramChatKey(chatId);
+    const desiredName = this.buildSessionNameForChat(chatLabel, chatId);
+
+    const tracked = key ? this.sessionIdByChatId.get(key) : null;
+    if (tracked) {
+      const existing = this.sessionManager?.getSession?.(tracked);
+      if (
+        existing &&
+        existing.status !== "exited" &&
+        existing.providerId === config.providerId
+      ) {
+        return existing;
+      }
+      this.sessionIdByChatId.delete(key);
     }
 
-    const existing = this.sessionManager?.listSessions?.()
-      ?.find((session) =>
-        session?.name === sessionName &&
-        session?.providerId === config.providerId &&
-        session?.status !== "exited");
-    if (existing) {
-      const liveSession = this.sessionManager?.getSession?.(existing.id) || existing;
-      this.status.lastSessionId = liveSession.id;
-      return liveSession;
+    // Fall back to scanning live sessions by name so we recover across restarts
+    // of the service while sessions remain attached to the session manager.
+    if (typeof this.sessionManager?.listSessions === "function") {
+      const existing = this.sessionManager.listSessions().find((session) =>
+        session &&
+        session.providerId === config.providerId &&
+        session.status !== "exited" &&
+        typeof session.name === "string" &&
+        session.name.startsWith("Telegram: ") &&
+        (key
+          ? session.name === desiredName
+          : session.name === "Telegram: chat")
+      );
+      if (existing) {
+        const live = this.sessionManager.getSession?.(existing.id) || existing;
+        if (key) this.sessionIdByChatId.set(key, live.id);
+        return live;
+      }
     }
 
     const session = this.sessionManager.createSession({
       providerId: config.providerId,
-      name: sessionName,
+      name: desiredName,
       cwd,
     });
-    this.status.lastSessionId = session.id;
+    if (key) this.sessionIdByChatId.set(key, session.id);
     return session;
   }
 
@@ -520,6 +560,8 @@ export class TelegramService {
   }
 
   queuePromptForSession(sessionId, prompt, {
+    chatId = "",
+    messageId = "",
     onPromptSent = null,
     providerId = "",
     source = "poll",
@@ -535,6 +577,7 @@ export class TelegramService {
       this.status.lastError = "";
       this.status.lastPromptSentAt = new Date().toISOString();
       this.status.lastStatus = source === "poll" ? "prompt-sent" : `prompt-sent-${source}`;
+      this.registerPendingReply({ chatId, messageId, sessionId, promptText: prompt, providerId });
       void Promise.resolve(onPromptSent?.()).catch((error) => {
         this.status.lastError = error.message || "Could not record Telegram message processing.";
         this.status.lastStatus = "error";
@@ -650,7 +693,106 @@ export class TelegramService {
 
     this.status.lastStatus = "replied";
     this.status.lastError = "";
+    this.markReplied(resolvedChatId);
     return reply;
+  }
+
+  registerPendingReply({ chatId, messageId, sessionId, promptText, providerId }) {
+    if (!this.autoReplyFallbackMs) return;
+    const key = this.telegramChatKey(chatId);
+    if (!key) return;
+
+    // Cancel any older pending entry for this chat — only the latest message
+    // gets the fallback in-flight.
+    this.clearPendingReply(key);
+
+    const session = this.sessionManager?.getSession?.(sessionId);
+    const bufferLengthAtPrompt = typeof session?.buffer === "string" ? session.buffer.length : 0;
+
+    const entry = {
+      bufferLengthAtPrompt,
+      chatId: key,
+      createdAt: this.now(),
+      messageId,
+      promptText: String(promptText || ""),
+      providerId: String(providerId || ""),
+      sessionId,
+      timer: null,
+    };
+    entry.timer = this.setTimeout(() => {
+      void this.performAutoReplyFallback(key);
+    }, this.autoReplyFallbackMs);
+    this.pendingReplyByChat.set(key, entry);
+  }
+
+  markReplied(chatId) {
+    const key = this.telegramChatKey(chatId);
+    if (!key) return;
+    this.clearPendingReply(key);
+  }
+
+  clearPendingReply(chatKey) {
+    const entry = this.pendingReplyByChat.get(chatKey);
+    if (!entry) return;
+    if (entry.timer) {
+      try {
+        this.clearTimeout(entry.timer);
+      } catch {
+        /* best effort */
+      }
+    }
+    this.pendingReplyByChat.delete(chatKey);
+  }
+
+  extractAutoReplyText(entry) {
+    const session = this.sessionManager?.getSession?.(entry.sessionId);
+    const buffer = typeof session?.buffer === "string" ? session.buffer : "";
+    if (!buffer) return "";
+
+    const sliced = buffer.slice(entry.bufferLengthAtPrompt || 0);
+    const stripped = normalizeTerminalText(sliced);
+    if (!stripped) return "";
+
+    // Drop any verbatim echo of the prompt we sent, so the fallback message is
+    // the agent's own output rather than the instructions we fed it.
+    const promptStripped = normalizeTerminalText(entry.promptText);
+    let cleaned = stripped;
+    if (promptStripped) {
+      const escaped = promptStripped.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+      cleaned = cleaned.replace(new RegExp(escaped, "g"), " ").replace(/\s+/g, " ").trim();
+    }
+
+    // Remove common shell-prompt chrome that leaks in from the TUI wrapper.
+    cleaned = cleaned.replace(/^[>❯›\s]+/, "").trim();
+    if (cleaned.length < AUTO_REPLY_MIN_OUTPUT_CHARS) return "";
+
+    if (cleaned.length <= AUTO_REPLY_MAX_OUTPUT_CHARS) return cleaned;
+    return cleaned.slice(cleaned.length - AUTO_REPLY_MAX_OUTPUT_CHARS);
+  }
+
+  async performAutoReplyFallback(chatKey) {
+    const entry = this.pendingReplyByChat.get(chatKey);
+    if (!entry) return;
+    this.pendingReplyByChat.delete(chatKey);
+
+    try {
+      const extracted = this.extractAutoReplyText(entry);
+      if (!extracted) {
+        this.status.lastStatus = "auto-reply-skipped-empty";
+        return;
+      }
+
+      const prefixed = `(auto-reply — Vibe Research forwarded the agent's latest output because it did not send a reply explicitly)\n\n${extracted}`;
+      await this.replyToMessage({
+        chatId: entry.chatId,
+        messageId: entry.messageId,
+        text: prefixed,
+      });
+      this.status.lastStatus = "auto-replied";
+    } catch (error) {
+      this.status.lastError = error?.message || "Auto-reply fallback failed.";
+      this.status.lastStatus = "auto-reply-error";
+    }
   }
 
   async requestTelegram({ botToken, body = {}, method }) {

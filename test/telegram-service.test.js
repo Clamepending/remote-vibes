@@ -36,7 +36,7 @@ async function flushAsyncHandlers() {
   await new Promise((resolve) => setTimeout(resolve, 20));
 }
 
-test("Telegram polling queues allowed messages into one dedicated communications session", async () => {
+test("Telegram polling queues allowed messages into a per-chat communications session", async () => {
   const stateDir = await mkdtemp(path.join(os.tmpdir(), "vibe-research-telegram-"));
   const update = {
     update_id: 44,
@@ -104,7 +104,7 @@ test("Telegram polling queues allowed messages into one dedicated communications
 
     assert.equal(sessions.length, 1);
     assert.equal(createdSessions.length, 1);
-    assert.equal(createdSessions[0].name, "Telegram communications");
+    assert.equal(createdSessions[0].name, "Telegram: Mark");
     assert.equal(createdSessions[0].providerId, "claude");
     assert.match(writes[0].input, /vr-telegram-reply' --chat-id '12345' --message-id '7'/);
     assert.match(writes[0].input, /Can you check the latest run/);
@@ -289,7 +289,7 @@ test("Telegram reuses live communications sessions and replaces exited or provid
   assert.equal(thirdSession.id, "session-2");
   assert.equal(fourthSession.id, "session-3");
   assert.equal(createdSessions.length, 3);
-  assert.equal(createdSessions[0].name, "Telegram communications");
+  assert.equal(createdSessions[0].name, "Telegram: 12345");
   assert.equal(createdSessions[2].providerId, "codex");
   assert.match(writes.map((write) => write.input).join("\n"), /first/);
   assert.match(writes.map((write) => write.input).join("\n"), /fourth/);
@@ -679,4 +679,243 @@ test("vr-telegram-reply posts through the local server token", async () => {
     await new Promise((resolve) => server.close(resolve));
     await rm(stateDir, { recursive: true, force: true });
   }
+});
+
+test("Telegram isolates sessions per chat so different chats don't share one transcript", async () => {
+  const createdSessions = [];
+  const liveSessions = new Map();
+  const service = new TelegramService({
+    autoReplyFallbackMs: 0,
+    promptDelayMs: 0,
+    sessionManager: {
+      createSession(input) {
+        const session = {
+          id: `session-${createdSessions.length + 1}`,
+          ...input,
+          buffer: "Claude Code\n❯ ",
+          createdAt: new Date(0).toISOString(),
+          lastOutputAt: new Date(0).toISOString(),
+          status: "running",
+          updatedAt: new Date(0).toISOString(),
+        };
+        createdSessions.push(session);
+        liveSessions.set(session.id, session);
+        return session;
+      },
+      getSession(sessionId) {
+        return liveSessions.get(sessionId) || null;
+      },
+      listSessions() {
+        return [...liveSessions.values()];
+      },
+      write() {
+        return true;
+      },
+    },
+    setTimeoutImpl(callback) {
+      callback();
+      return 1;
+    },
+    settings: {
+      telegramBotToken: "bot_secret",
+      telegramEnabled: true,
+      telegramProviderId: "claude",
+    },
+  });
+
+  const msg = (chat, text, messageId) => ({
+    update_id: messageId,
+    message: {
+      message_id: messageId,
+      chat,
+      from: { id: chat.id, first_name: String(chat.first_name || chat.title || chat.id) },
+      text,
+    },
+  });
+
+  const markA = await service.handleIncomingUpdate(
+    msg({ id: 111, first_name: "Mark", type: "private" }, "first from mark", 1),
+    { source: "poll" },
+  );
+  const jamieA = await service.handleIncomingUpdate(
+    msg({ id: 222, first_name: "Jamie", type: "private" }, "first from jamie", 2),
+    { source: "poll" },
+  );
+  const markB = await service.handleIncomingUpdate(
+    msg({ id: 111, first_name: "Mark", type: "private" }, "second from mark", 3),
+    { source: "poll" },
+  );
+
+  assert.equal(markA.id, "session-1");
+  assert.equal(jamieA.id, "session-2");
+  assert.equal(markB.id, "session-1");
+  assert.equal(createdSessions.length, 2);
+  assert.equal(createdSessions[0].name, "Telegram: Mark");
+  assert.equal(createdSessions[1].name, "Telegram: Jamie");
+});
+
+test("Telegram auto-reply fallback forwards the agent's latest output when it didn't reply explicitly", async () => {
+  const liveSessions = new Map();
+  const initialBuffer = "Claude Code\n❯ ";
+  const postPromptOutput = "Thinking...\nHere's a quick answer: yep, I'm alive and watching the console.\n";
+  liveSessions.set("s1", {
+    id: "s1",
+    buffer: `${initialBuffer}${postPromptOutput}`,
+    status: "running",
+  });
+
+  const service = new TelegramService({
+    autoReplyFallbackMs: 10_000,
+    fetchImpl: createFetch([{ body: { ok: true, result: { message_id: 555 } } }]),
+    sessionManager: {
+      getSession(id) { return liveSessions.get(id) || null; },
+      listSessions() { return [...liveSessions.values()]; },
+    },
+    setTimeoutImpl() { return 1; },
+    clearTimeoutImpl() {},
+    settings: {
+      telegramBotToken: "bot_secret",
+      telegramEnabled: true,
+      telegramProviderId: "claude",
+    },
+  });
+
+  // Simulate what registerPendingReply does at markPromptSent time: the prompt
+  // was just written to the TUI so bufferLengthAtPrompt captures the length
+  // before the agent starts responding.
+  service.pendingReplyByChat.set("99", {
+    bufferLengthAtPrompt: initialBuffer.length,
+    chatId: "99",
+    createdAt: Date.now(),
+    messageId: "7",
+    promptText: "(the orchestrator's instructional prompt goes here)",
+    providerId: "claude",
+    sessionId: "s1",
+    timer: null,
+  });
+
+  await service.performAutoReplyFallback("99");
+
+  const sendCalls = service.fetch.calls.filter(
+    (entry) => typeof entry.url === "string" && entry.url.includes("/sendMessage"),
+  );
+  assert.equal(sendCalls.length, 1, "expected exactly one fallback Bot API call");
+  const body = JSON.parse(sendCalls[0].options.body);
+  assert.equal(body.chat_id, "99");
+  assert.match(body.text, /auto-reply/i);
+  assert.match(body.text, /yep, I'm alive/);
+  assert.equal(body.reply_parameters?.message_id, 7);
+  assert.equal(service.pendingReplyByChat.size, 0, "entry is removed once fallback finishes");
+});
+
+test("Telegram auto-reply fallback skips when the session produced no new text", async () => {
+  const liveSessions = new Map();
+  liveSessions.set("s1", { id: "s1", buffer: "Claude Code\n❯ ", status: "running" });
+  const service = new TelegramService({
+    autoReplyFallbackMs: 10_000,
+    fetchImpl: createFetch([]),
+    sessionManager: {
+      getSession(id) { return liveSessions.get(id) || null; },
+      listSessions() { return [...liveSessions.values()]; },
+    },
+    setTimeoutImpl() { return 1; },
+    clearTimeoutImpl() {},
+    settings: {
+      telegramBotToken: "bot_secret",
+      telegramEnabled: true,
+      telegramProviderId: "claude",
+    },
+  });
+
+  service.pendingReplyByChat.set("55", {
+    bufferLengthAtPrompt: liveSessions.get("s1").buffer.length,
+    chatId: "55",
+    createdAt: Date.now(),
+    messageId: "3",
+    promptText: "",
+    providerId: "claude",
+    sessionId: "s1",
+    timer: null,
+  });
+
+  await service.performAutoReplyFallback("55");
+
+  assert.equal(service.fetch.calls.length, 0, "no Bot API call when there is no agent output");
+  assert.equal(service.status.lastStatus, "auto-reply-skipped-empty");
+});
+
+test("Telegram auto-reply fallback is canceled when the agent sends an explicit reply", async () => {
+  const liveSessions = new Map();
+  const scheduled = [];
+  const cleared = new Set();
+  const service = new TelegramService({
+    autoReplyFallbackMs: 10_000, // long enough that sync timers above don't fire it
+    fetchImpl: createFetch([{ body: { ok: true, result: { message_id: 200 } } }]),
+    promptDelayMs: 0,
+    promptReadyIdleMs: 0,
+    promptReadyTimeoutMs: 0,
+    promptRetryMs: 0,
+    promptSubmitDelayMs: 0,
+    sessionManager: {
+      createSession(input) {
+        const session = {
+          id: "session-1",
+          ...input,
+          buffer: "Claude Code\n❯ ",
+          status: "running",
+          lastOutputAt: new Date(0).toISOString(),
+          updatedAt: new Date(0).toISOString(),
+          createdAt: new Date(0).toISOString(),
+        };
+        liveSessions.set(session.id, session);
+        return session;
+      },
+      getSession(id) {
+        return liveSessions.get(id) || null;
+      },
+      listSessions() {
+        return [...liveSessions.values()];
+      },
+      write() {
+        return true;
+      },
+    },
+    setTimeoutImpl(callback, delay) {
+      // Short timers (prompt submit etc.) run synchronously; the long fallback
+      // timer is captured so we can verify it was cleared without firing.
+      if ((delay || 0) < 1000) {
+        callback();
+        return scheduled.push({ delay }) + 1000;
+      }
+      return scheduled.push({ callback, delay });
+    },
+    clearTimeoutImpl(id) {
+      cleared.add(id);
+    },
+    settings: {
+      telegramBotToken: "bot_secret",
+      telegramEnabled: true,
+      telegramProviderId: "claude",
+    },
+  });
+
+  await service.handleIncomingUpdate(
+    {
+      update_id: 11,
+      message: {
+        message_id: 11,
+        chat: { id: 42, first_name: "Ada", type: "private" },
+        from: { id: 42, first_name: "Ada" },
+        text: "hi",
+      },
+    },
+    { source: "poll" },
+  );
+
+  assert.equal(service.pendingReplyByChat.size, 1, "fallback should be armed");
+
+  await service.replyToMessage({ chatId: 42, messageId: 11, text: "hello back" });
+
+  assert.equal(service.pendingReplyByChat.size, 0, "pending entry cleared after explicit reply");
+  assert.equal(cleared.size >= 1, true, "fallback timer was cleared, not fired");
 });
