@@ -30,6 +30,8 @@ import { BrowserUseService } from "./browser-use-service.js";
 import { BUILDING_CATALOG } from "./client/building-registry.js";
 import { normalizeBuildingId } from "./client/building-sdk.js";
 import { createFolderEntry, listFolderEntries } from "./folder-browser.js";
+import { GoogleOAuthTokenStore } from "./google-oauth-token-store.js";
+import { GoogleService } from "./google-service.js";
 import { OttoAuthService } from "./ottoauth-service.js";
 import { PortAliasStore } from "./port-alias-store.js";
 import { listListeningPorts } from "./ports.js";
@@ -96,6 +98,7 @@ const GOOGLE_OAUTH_FLOWS = Object.freeze({
     scopes: Object.freeze([
       "https://www.googleapis.com/auth/calendar.readonly",
       "https://www.googleapis.com/auth/calendar.freebusy",
+      "https://www.googleapis.com/auth/calendar.events",
     ]),
     prompt: "consent",
   }),
@@ -1057,6 +1060,9 @@ export async function createVibeResearchApp({
   videoMemoryServiceFactory = null,
   walletServiceFactory = null,
   stripeFetchImpl = globalThis.fetch,
+  googleFetchImpl = globalThis.fetch,
+  googleOAuthTokenStoreFactory = null,
+  googleServiceFactory = null,
   wikiBackupServiceFactory = null,
   systemMetricsProvider = collectSystemMetrics,
   systemMetricsSampleIntervalMs = 60_000,
@@ -1082,6 +1088,19 @@ export async function createVibeResearchApp({
   const portAliasStore = new PortAliasStore({ stateDir });
   await settingsStore.initialize();
   const googleOAuthStates = new Map();
+  const googleOAuthTokenStore =
+    typeof googleOAuthTokenStoreFactory === "function"
+      ? googleOAuthTokenStoreFactory({ stateDir })
+      : new GoogleOAuthTokenStore({ stateDir });
+  await googleOAuthTokenStore.load();
+  const googleService =
+    typeof googleServiceFactory === "function"
+      ? googleServiceFactory({ tokenStore: googleOAuthTokenStore, settingsStore, fetchImpl: googleFetchImpl })
+      : new GoogleService({
+          tokenStore: googleOAuthTokenStore,
+          settingsStore,
+          fetchImpl: googleFetchImpl,
+        });
   let sessionDefaultCwd = await ensureDefaultSessionCwd(settingsStore.settings.agentSpawnPath || defaultSessionCwd, cwd);
   await mkdir(systemRootPath, { recursive: true });
   await systemMetricsHistoryStore.initialize();
@@ -1334,6 +1353,7 @@ export async function createVibeResearchApp({
       backupStatus: wikiBackupService.getStatus(),
       buildingHubStatus: buildingHubService.getStatus(),
       browserUseStatus: browserUseService.getStatus(),
+      googleOAuthStatus: googleOAuthTokenStore.getStatus(),
       ottoAuthStatus: ottoAuthService.getStatus(),
       sleepStatus: sleepPreventionService.getStatus(),
       telegramStatus: telegramService.getStatus(),
@@ -2680,6 +2700,7 @@ export async function createVibeResearchApp({
     googleOAuthStates.set(stateToken, {
       buildingId,
       createdAt: Date.now(),
+      redirectUri,
     });
 
     const authUrl = new URL("https://accounts.google.com/o/oauth2/v2/auth");
@@ -2689,7 +2710,7 @@ export async function createVibeResearchApp({
     authUrl.searchParams.set("scope", flow.scopes.join(" "));
     authUrl.searchParams.set("state", stateToken);
     authUrl.searchParams.set("include_granted_scopes", "true");
-    authUrl.searchParams.set("access_type", "online");
+    authUrl.searchParams.set("access_type", "offline");
     if (flow.prompt) {
       authUrl.searchParams.set("prompt", flow.prompt);
     }
@@ -2732,6 +2753,16 @@ export async function createVibeResearchApp({
     }
 
     try {
+      const redirectUri = String(stateEntry.redirectUri || "").trim();
+      if (!redirectUri) {
+        throw buildHttpError("Google redirect URI missing from OAuth state.", 400);
+      }
+      await googleService.exchangeAuthCode({
+        buildingId: stateEntry.buildingId,
+        code: authCode,
+        redirectUri,
+      });
+
       const confirmedIds = new Set(
         Array.isArray(settingsStore.settings.buildingAccessConfirmedIds)
           ? settingsStore.settings.buildingAccessConfirmedIds.map(normalizeBuildingId).filter(Boolean)
@@ -2748,7 +2779,8 @@ export async function createVibeResearchApp({
         message: "Google access enabled. Returning to Vibe Research.",
       }));
     } catch (error) {
-      response.status(500).send(renderGoogleOAuthPopupPage({
+      const statusCode = Number(error?.statusCode) || 500;
+      response.status(statusCode).send(renderGoogleOAuthPopupPage({
         buildingId: stateEntry.buildingId,
         message: error?.message || "Could not save Google OAuth state.",
       }));
@@ -3202,6 +3234,106 @@ export async function createVibeResearchApp({
       response.json({ ok: true, reply, settings: getSettingsState() });
     } catch (error) {
       response.status(error.statusCode || 400).json({ error: error.message || "Could not send Twilio reply." });
+    }
+  });
+
+  app.get("/api/google/calendar/events", async (request, response) => {
+    try {
+      const result = await googleService.listCalendarEvents({
+        calendarId: request.query?.calendarId ? String(request.query.calendarId) : undefined,
+        timeMin: request.query?.timeMin ? String(request.query.timeMin) : undefined,
+        timeMax: request.query?.timeMax ? String(request.query.timeMax) : undefined,
+        maxResults: request.query?.maxResults ? Number(request.query.maxResults) : undefined,
+        q: request.query?.q ? String(request.query.q) : undefined,
+      });
+      response.json(result);
+    } catch (error) {
+      response
+        .status(error.statusCode || 500)
+        .json({ error: error.message || "Could not list Google Calendar events." });
+    }
+  });
+
+  app.post("/api/google/calendar/freebusy", async (request, response) => {
+    try {
+      const result = await googleService.queryFreeBusy({
+        timeMin: request.body?.timeMin,
+        timeMax: request.body?.timeMax,
+        calendars: request.body?.calendars,
+      });
+      response.json(result);
+    } catch (error) {
+      response
+        .status(error.statusCode || 500)
+        .json({ error: error.message || "Could not query Google Calendar freeBusy." });
+    }
+  });
+
+  app.post("/api/google/calendar/events", async (request, response) => {
+    try {
+      const result = await googleService.createCalendarEvent({
+        calendarId: request.body?.calendarId,
+        event: request.body?.event,
+      });
+      response.json(result);
+    } catch (error) {
+      response
+        .status(error.statusCode || 500)
+        .json({ error: error.message || "Could not create Google Calendar event." });
+    }
+  });
+
+  app.get("/api/google/gmail/threads", async (request, response) => {
+    try {
+      const result = await googleService.searchGmailThreads({
+        q: request.query?.q ? String(request.query.q) : undefined,
+        maxResults: request.query?.maxResults ? Number(request.query.maxResults) : undefined,
+        pageToken: request.query?.pageToken ? String(request.query.pageToken) : undefined,
+      });
+      response.json(result);
+    } catch (error) {
+      response
+        .status(error.statusCode || 500)
+        .json({ error: error.message || "Could not search Gmail threads." });
+    }
+  });
+
+  app.get("/api/google/gmail/threads/:threadId", async (request, response) => {
+    try {
+      const result = await googleService.getGmailThread({
+        threadId: request.params?.threadId,
+        format: request.query?.format ? String(request.query.format) : undefined,
+      });
+      response.json(result);
+    } catch (error) {
+      response
+        .status(error.statusCode || 500)
+        .json({ error: error.message || "Could not load Gmail thread." });
+    }
+  });
+
+  app.post("/api/google/oauth/:buildingId/disconnect", async (request, response) => {
+    try {
+      const buildingId = normalizeBuildingId(request.params?.buildingId || "");
+      if (!buildingId || !GOOGLE_OAUTH_FLOWS[buildingId]) {
+        throw buildHttpError("Google OAuth is only available for supported Google buildings.", 404);
+      }
+      await googleOAuthTokenStore.clearTokens(buildingId);
+      const confirmedIds = new Set(
+        Array.isArray(settingsStore.settings.buildingAccessConfirmedIds)
+          ? settingsStore.settings.buildingAccessConfirmedIds.map(normalizeBuildingId).filter(Boolean)
+          : [],
+      );
+      if (confirmedIds.delete(buildingId)) {
+        await settingsStore.update({
+          buildingAccessConfirmedIds: [...confirmedIds].sort(),
+        });
+      }
+      response.json({ ok: true, settings: getSettingsState() });
+    } catch (error) {
+      response
+        .status(error.statusCode || 500)
+        .json({ error: error.message || "Could not disconnect Google building." });
     }
   });
 

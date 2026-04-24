@@ -1958,7 +1958,26 @@ test("Google access buildings show one friendly next step before configuration",
 test("Google OAuth callback confirms access only after consent redirect", async () => {
   const workspaceDir = await createTempWorkspace("vibe-research-google-calendar-oauth-workspace-");
   const stateDir = await createTempWorkspace("vibe-research-google-calendar-oauth-state-");
-  const { app, baseUrl } = await startApp({ cwd: workspaceDir, stateDir });
+  const googleFetchCalls = [];
+  const googleFetchImpl = async (url, options = {}) => {
+    googleFetchCalls.push({ url: String(url), options });
+    const body = JSON.stringify({
+      access_token: `fake-access-${googleFetchCalls.length}`,
+      refresh_token: `fake-refresh-${googleFetchCalls.length}`,
+      expires_in: 3600,
+      scope: "https://www.googleapis.com/auth/calendar.readonly",
+      token_type: "Bearer",
+    });
+    return new Response(body, {
+      status: 200,
+      headers: { "Content-Type": "application/json" },
+    });
+  };
+  const { app, baseUrl } = await startApp({
+    cwd: workspaceDir,
+    stateDir,
+    googleFetchImpl,
+  });
 
   try {
     const clientId = "test-google-client-id.apps.googleusercontent.com";
@@ -1967,6 +1986,7 @@ test("Google OAuth callback confirms access only after consent redirect", async 
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({
         googleOAuthClientId: clientId,
+        googleOAuthClientSecret: "test-google-client-secret",
       }),
     });
     assert.equal(settingsResponse.status, 200);
@@ -1974,7 +1994,7 @@ test("Google OAuth callback confirms access only after consent redirect", async 
     const oauthFlows = [
       {
         buildingId: "google-calendar",
-        scopePatterns: [/calendar\.readonly/, /calendar\.freebusy/],
+        scopePatterns: [/calendar\.readonly/, /calendar\.freebusy/, /calendar\.events/],
       },
       {
         buildingId: "google-drive",
@@ -1999,7 +2019,7 @@ test("Google OAuth callback confirms access only after consent redirect", async 
       assert.equal(googleUrl.searchParams.get("client_id"), clientId);
       assert.equal(googleUrl.searchParams.get("redirect_uri"), `${baseUrl}/api/google/oauth/callback`);
       assert.equal(googleUrl.searchParams.get("response_type"), "code");
-      assert.equal(googleUrl.searchParams.get("access_type"), "online");
+      assert.equal(googleUrl.searchParams.get("access_type"), "offline");
       assert.equal(googleUrl.searchParams.get("prompt"), "consent");
       for (const scopePattern of oauthFlow.scopePatterns) {
         assert.match(googleUrl.searchParams.get("scope") || "", scopePattern);
@@ -2007,11 +2027,25 @@ test("Google OAuth callback confirms access only after consent redirect", async 
       const stateToken = googleUrl.searchParams.get("state");
       assert.ok(stateToken);
 
+      const callsBefore = googleFetchCalls.length;
       const callbackResponse = await fetch(
         `${baseUrl}/api/google/oauth/callback?state=${encodeURIComponent(stateToken)}&code=test-auth-code`,
       );
       assert.equal(callbackResponse.status, 200);
       assert.match(await callbackResponse.text(), /Google access enabled/i);
+
+      assert.equal(googleFetchCalls.length, callsBefore + 1);
+      const tokenCall = googleFetchCalls[callsBefore];
+      assert.equal(tokenCall.url, "https://oauth2.googleapis.com/token");
+      const exchangeBody = new URLSearchParams(tokenCall.options.body);
+      assert.equal(exchangeBody.get("grant_type"), "authorization_code");
+      assert.equal(exchangeBody.get("code"), "test-auth-code");
+      assert.equal(exchangeBody.get("client_id"), clientId);
+      assert.equal(exchangeBody.get("client_secret"), "test-google-client-secret");
+      assert.equal(
+        exchangeBody.get("redirect_uri"),
+        `${baseUrl}/api/google/oauth/callback`,
+      );
 
       const updatedSettingsResponse = await fetch(`${baseUrl}/api/settings`);
       assert.equal(updatedSettingsResponse.status, 200);
@@ -2019,6 +2053,10 @@ test("Google OAuth callback confirms access only after consent redirect", async 
       assert.ok(
         Array.isArray(updatedSettings.settings?.buildingAccessConfirmedIds)
         && updatedSettings.settings.buildingAccessConfirmedIds.includes(oauthFlow.buildingId),
+      );
+      assert.ok(
+        updatedSettings.settings?.googleOAuthStatus?.[oauthFlow.buildingId]?.configured,
+        `expected googleOAuthStatus to reflect ${oauthFlow.buildingId} configured`,
       );
     }
   } finally {
