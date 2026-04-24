@@ -11,8 +11,8 @@ Export and import an Agent Town bundle for reproducibility.
 
 Usage:
   vr-agent-town export [--out PATH] [--pretty]
-  vr-agent-town import <path> [--dry-run] [--json]
-  vr-agent-town diff <path>
+  vr-agent-town import <path|url> [--dry-run] [--json]
+  vr-agent-town diff <path|url>
 
 Options:
   --out PATH         Write the exported bundle to PATH (default: stdout).
@@ -20,6 +20,9 @@ Options:
   --dry-run          Validate without applying changes; prints the report.
   --json             Print the API response as JSON.
   -h, --help         Show this help.
+
+The <path|url> positional accepts a local file path or an http(s) URL
+pointing to a bundle JSON document.
 
 Environment:
   VIBE_RESEARCH_AGENT_TOWN_API   Overrides server discovery.
@@ -142,15 +145,28 @@ function formatReport(result) {
     .map(([key, value]) => `${key}=${value}`)
     .join("  ");
   if (countParts) lines.push(`  counts: ${countParts}`);
-  if (Array.isArray(report.missingPlugins) && report.missingPlugins.length > 0) {
-    const ids = report.missingPlugins.map((entry) => entry?.id || entry).filter(Boolean).join(", ");
-    lines.push(`  missing plugins: ${ids}`);
+  if (Array.isArray(report.plugins) && report.plugins.length > 0) {
+    const available = report.plugins.filter((p) => p.available);
+    const unavailable = report.plugins.filter((p) => !p.available);
+    if (available.length > 0) {
+      const labels = available
+        .map((p) => (p.version ? `${p.id}@${p.version}` : p.id))
+        .join(", ");
+      lines.push(`  plugins (available): ${labels}`);
+    }
+    if (unavailable.length > 0) {
+      const labels = unavailable.map((p) => p.id).join(", ");
+      lines.push(`  plugins (missing from hub): ${labels}`);
+    }
   }
   if (Array.isArray(report.missingEnv) && report.missingEnv.length > 0) {
     lines.push(`  missing env: ${report.missingEnv.join(", ")}`);
   }
   if (report.validation && report.validation.ok === false) {
     lines.push(`  validation issues: ${(report.validation.issues || []).join("; ")}`);
+  }
+  if (report.rollbackSnapshotName) {
+    lines.push(`  rollback snapshot: "${report.rollbackSnapshotName}"`);
   }
   if (Array.isArray(report.warnings) && report.warnings.length > 0) {
     for (const warning of report.warnings) {
@@ -162,15 +178,20 @@ function formatReport(result) {
 
 async function runImport(api, options, { dryRun }) {
   if (!options.positional) {
-    throw new Error("provide a bundle path.");
+    throw new Error("provide a bundle path or URL.");
   }
-  const bundlePath = path.resolve(process.cwd(), options.positional);
-  const raw = await readFile(bundlePath, "utf8");
-  const bundle = JSON.parse(raw);
+  const payload = { dryRun };
+  if (/^https?:\/\//i.test(options.positional)) {
+    payload.url = options.positional;
+  } else {
+    const bundlePath = path.resolve(process.cwd(), options.positional);
+    const raw = await readFile(bundlePath, "utf8");
+    payload.bundle = JSON.parse(raw);
+  }
   const result = await fetchJsonOrThrow(`${api}/bundle/import`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ bundle, dryRun }),
+    body: JSON.stringify(payload),
   });
   if (options.json) {
     process.stdout.write(`${JSON.stringify(result, null, 2)}\n`);

@@ -1747,6 +1747,76 @@ export async function createVibeResearchApp({
   }
 
   const AGENT_TOWN_BUNDLE_VERSION = 1;
+  const AGENT_TOWN_BUNDLE_MAX_BYTES = 4 * 1024 * 1024;
+
+  async function fetchBundleFromUrl(urlText) {
+    let url;
+    try {
+      url = new URL(urlText);
+    } catch {
+      const error = new Error("Bundle URL is invalid.");
+      error.statusCode = 400;
+      throw error;
+    }
+    if (url.protocol !== "http:" && url.protocol !== "https:") {
+      const error = new Error("Bundle URL must use http or https.");
+      error.statusCode = 400;
+      throw error;
+    }
+    const response = await fetch(url, { headers: { Accept: "application/json" } });
+    if (!response.ok) {
+      const error = new Error(`Could not fetch bundle: ${response.status} ${response.statusText}`.trim());
+      error.statusCode = response.status >= 400 && response.status < 500 ? response.status : 502;
+      throw error;
+    }
+    const contentLength = Number(response.headers.get("content-length"));
+    if (Number.isFinite(contentLength) && contentLength > AGENT_TOWN_BUNDLE_MAX_BYTES) {
+      const error = new Error("Bundle exceeds maximum allowed size.");
+      error.statusCode = 413;
+      throw error;
+    }
+    const text = await response.text();
+    if (text.length > AGENT_TOWN_BUNDLE_MAX_BYTES) {
+      const error = new Error("Bundle exceeds maximum allowed size.");
+      error.statusCode = 413;
+      throw error;
+    }
+    let parsed;
+    try {
+      parsed = JSON.parse(text);
+    } catch {
+      const error = new Error("Bundle response was not valid JSON.");
+      error.statusCode = 400;
+      throw error;
+    }
+    return parsed?.bundle || parsed;
+  }
+
+  function describePluginById(pluginId, { hubBuildings = null } = {}) {
+    if (!pluginId) return null;
+    const hub = hubBuildings || (buildingHubService?.listBuildings ? buildingHubService.listBuildings() : []);
+    const hubEntry = hub.find((entry) => entry?.id === pluginId);
+    if (hubEntry) {
+      return {
+        id: pluginId,
+        source: hubEntry.source || "buildinghub",
+        version: hubEntry.version || "",
+        repositoryUrl: hubEntry.buildingHub?.repositoryUrl || hubEntry.repositoryUrl || "",
+        sourceId: hubEntry.buildingHub?.sourceId || "",
+      };
+    }
+    const coreEntry = BUILDING_CATALOG.find((entry) => entry?.id === pluginId);
+    if (coreEntry) {
+      return {
+        id: pluginId,
+        source: coreEntry.source || "vibe-research",
+        version: "",
+        repositoryUrl: "",
+        sourceId: "",
+      };
+    }
+    return { id: pluginId, source: "unknown", version: "", repositoryUrl: "", sourceId: "" };
+  }
 
   async function composeAgentTownBundle() {
     const town = agentTownStore.exportTownSection();
@@ -1754,11 +1824,22 @@ export async function createVibeResearchApp({
     const settings = settingsStore.settings || {};
     const app = await getAppMetadata();
 
-    const installedPlugins = Array.isArray(settings.installedPluginIds)
-      ? settings.installedPluginIds.map((id) => ({ id }))
-      : [];
+    if (buildingHubService?.refresh) {
+      try {
+        await buildingHubService.refresh();
+      } catch {}
+    }
+    const hubBuildings = buildingHubService?.listBuildings ? buildingHubService.listBuildings() : [];
 
+    const installedIds = new Set(Array.isArray(settings.installedPluginIds) ? settings.installedPluginIds : []);
     const functionalIds = Object.keys(town.layout?.functional || {});
+    for (const id of functionalIds) {
+      if (id) installedIds.add(id);
+    }
+    const installedPlugins = [...installedIds]
+      .map((id) => describePluginById(id, { hubBuildings }))
+      .filter(Boolean);
+
     const envSet = new Set();
     for (const pluginId of functionalIds) {
       if (!pluginId) continue;
@@ -1835,14 +1916,34 @@ export async function createVibeResearchApp({
     const townSection = bundle.town || {};
     const validation = await agentTownStore.validateLayout({ layout: townSection.layout || {} });
 
-    const currentSettings = settingsStore.settings || {};
-    const currentPluginIds = new Set(
-      Array.isArray(currentSettings.installedPluginIds) ? currentSettings.installedPluginIds : [],
-    );
-    const bundlePlugins = Array.isArray(bundle.plugins?.installed) ? bundle.plugins.installed : [];
-    const missingPlugins = bundlePlugins
-      .map((entry) => (typeof entry === "string" ? { id: entry } : entry || {}))
-      .filter((entry) => entry.id && !currentPluginIds.has(entry.id));
+    if (buildingHubService?.refresh) {
+      try {
+        await buildingHubService.refresh();
+      } catch {}
+    }
+    const hubBuildings = buildingHubService?.listBuildings ? buildingHubService.listBuildings() : [];
+    const hubIds = new Set(hubBuildings.map((entry) => entry?.id).filter(Boolean));
+    const coreIds = new Set(BUILDING_CATALOG.map((entry) => entry?.id).filter(Boolean));
+
+    const bundlePlugins = Array.isArray(bundle.plugins?.installed)
+      ? bundle.plugins.installed.map((entry) => (typeof entry === "string" ? { id: entry } : entry || {}))
+      : [];
+    const layoutFunctionalIds = Object.keys((townSection.layout || {}).functional || {});
+    for (const pluginId of layoutFunctionalIds) {
+      if (!pluginId) continue;
+      if (!bundlePlugins.some((entry) => entry.id === pluginId)) {
+        bundlePlugins.push({ id: pluginId });
+      }
+    }
+
+    const enrichedPlugins = bundlePlugins
+      .filter((entry) => entry && entry.id)
+      .map((entry) => ({
+        ...entry,
+        available: hubIds.has(entry.id) || coreIds.has(entry.id),
+      }));
+
+    const unavailablePlugins = enrichedPlugins.filter((entry) => !entry.available);
 
     const requiredEnv = Array.isArray(bundle.env?.required) ? bundle.env.required : [];
     const missingEnv = requiredEnv.filter((name) => {
@@ -1856,15 +1957,17 @@ export async function createVibeResearchApp({
     const report = {
       validation,
       counts: {
-        functional: Object.keys((townSection.layout || {}).functional || {}).length,
+        functional: layoutFunctionalIds.length,
         decorations: Array.isArray((townSection.layout || {}).decorations)
           ? (townSection.layout || {}).decorations.length
           : 0,
         layoutSnapshots: bundleSnapshots.length,
         automations: automations.length,
-        installedPlugins: bundlePlugins.length,
+        installedPlugins: enrichedPlugins.length,
       },
-      missingPlugins,
+      plugins: enrichedPlugins,
+      unavailablePlugins,
+      missingPlugins: unavailablePlugins,
       missingEnv,
       warnings: [],
     };
@@ -1876,6 +1979,17 @@ export async function createVibeResearchApp({
 
     if (dryRun) {
       return { applied: false, dryRun: true, report };
+    }
+
+    const rollbackName = `Pre-import ${new Date().toISOString()}`;
+    try {
+      await agentTownStore.createLayoutSnapshot({
+        name: rollbackName,
+        layout: agentTownStore.getState().layout,
+      });
+      report.rollbackSnapshotName = rollbackName;
+    } catch (error) {
+      report.warnings.push(`Pre-import snapshot skipped: ${error.message || error}`);
     }
 
     await agentTownStore.importTownSection(
@@ -1905,10 +2019,11 @@ export async function createVibeResearchApp({
     if (Array.isArray(bundle.automations)) {
       settingsPatch.agentAutomations = bundle.automations;
     }
-    if (Array.isArray(bundle.plugins?.installed)) {
-      settingsPatch.installedPluginIds = bundle.plugins.installed
-        .map((entry) => (typeof entry === "string" ? entry : entry?.id))
-        .filter(Boolean);
+    const installablePluginIds = enrichedPlugins
+      .filter((entry) => entry.available)
+      .map((entry) => entry.id);
+    if (installablePluginIds.length > 0 || Array.isArray(bundle.plugins?.installed)) {
+      settingsPatch.installedPluginIds = installablePluginIds;
     }
     if (Object.keys(settingsPatch).length > 0) {
       try {
@@ -2931,8 +3046,14 @@ export async function createVibeResearchApp({
   app.post("/api/agent-town/bundle/import", async (request, response) => {
     try {
       const body = request.body || {};
-      const bundle = body.bundle || body;
       const dryRun = body.dryRun === true;
+      let bundle = body.bundle;
+      if (!bundle && typeof body.url === "string" && body.url.trim()) {
+        bundle = await fetchBundleFromUrl(body.url.trim());
+      }
+      if (!bundle) {
+        bundle = body;
+      }
       const result = await applyAgentTownBundle(bundle, { dryRun });
       response.status(result.applied || dryRun ? 200 : 400).json(result);
     } catch (error) {
