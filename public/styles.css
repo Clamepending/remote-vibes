@@ -5800,6 +5800,12 @@ textarea.setup-target-highlight {
   color: rgba(232, 236, 241, 0.82);
 }
 
+.videomemory-install-state.is-error {
+  border-color: rgba(255, 155, 114, 0.35);
+  background: rgba(255, 155, 114, 0.11);
+  color: rgba(255, 239, 228, 0.94);
+}
+
 .videomemory-install-state strong,
 .videomemory-install-state em {
   display: block;

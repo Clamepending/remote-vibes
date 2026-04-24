@@ -422,6 +422,44 @@ test("VideoMemory refreshes device inventory for status", async () => {
   }
 });
 
+test("VideoMemory refreshes grouped camera device inventory", async () => {
+  const stateDir = await mkdtemp(path.join(os.tmpdir(), "vr-videomemory-grouped-devices-"));
+  const fetchImpl = createFetch([
+    {
+      body: {
+        devices: {
+          camera: [
+            { io_id: "0", name: "USB camera", source: "local" },
+            { io_id: "net0", name: "Phone camera", source: "network" },
+          ],
+        },
+      },
+    },
+  ]);
+  const service = new VideoMemoryService({
+    fetchImpl,
+    remoteDeviceRefreshIntervalMs: 0,
+    sessionManager: createSessionManager(),
+    settings: {
+      videoMemoryBaseUrl: "http://127.0.0.1:5050",
+      videoMemoryEnabled: true,
+    },
+    stateDir,
+  });
+
+  try {
+    await service.initialize();
+    await service.refreshRemoteDevices({ force: true });
+
+    const status = service.getStatus();
+    assert.equal(status.deviceCount, 2);
+    assert.deepEqual(status.devices.map((device) => device.ioId), ["0", "net0"]);
+    assert.deepEqual(status.devices.map((device) => device.name), ["USB camera", "Phone camera"]);
+  } finally {
+    await rm(stateDir, { recursive: true, force: true });
+  }
+});
+
 test("VideoMemory waits for Claude readiness and confirms workspace trust", async () => {
   const stateDir = await mkdtemp(path.join(os.tmpdir(), "rv-videomemory-claude-ready-"));
   const fetchImpl = createFetch([{ body: { task_id: "8" } }]);

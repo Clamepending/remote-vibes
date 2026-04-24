@@ -2673,7 +2673,11 @@ test("VideoMemory tutorial guides permission and enablement steps to the correct
         listSubagentsForSession() {
           return [];
         },
-        async refreshRemoteDevices() {},
+        async refreshRemoteDevices(options = {}) {
+          if (options.force) {
+            videoMemoryDeviceRefreshCount += 1;
+          }
+        },
         async refreshRemoteMonitorStates() {},
         restart(settings) {
           videoMemorySettings = settings;
@@ -2921,6 +2925,7 @@ test("VideoMemory setup endpoint enables the building and persists installed sta
   );
 
   let videoMemorySettings = {};
+  let videoMemoryDeviceRefreshCount = 0;
   const { app, baseUrl } = await startApp({
     cwd: workspaceDir,
     stateDir,
@@ -2964,7 +2969,11 @@ test("VideoMemory setup endpoint enables the building and persists installed sta
         listSubagentsForSession() {
           return [];
         },
-        async refreshRemoteDevices() {},
+        async refreshRemoteDevices(options = {}) {
+          if (options.force) {
+            videoMemoryDeviceRefreshCount += 1;
+          }
+        },
         async refreshRemoteMonitorStates() {},
         restart(settings) {
           videoMemorySettings = settings;
@@ -3009,6 +3018,7 @@ test("VideoMemory setup endpoint enables the building and persists installed sta
     assert.equal(payload.settings.videoMemoryEnabled, true);
     assert.equal(payload.settings.videoMemoryStatus.enabled, true);
     assert.deepEqual(payload.settings.installedPluginIds, ["videomemory"]);
+    assert.equal(videoMemoryDeviceRefreshCount, 1);
   } finally {
     await app.close();
     await removeTempWorkspace(workspaceDir);
@@ -9187,6 +9197,7 @@ test("tutorials API lists curated tutorials and serves their markdown bodies", a
     assert.equal(camerasDetailPayload.tutorial.id, "connect-cameras");
     assert.equal(camerasDetailPayload.tutorial.buildingId, "videomemory");
     assert.match(camerasDetailPayload.tutorial.body, /VideoMemory/i);
+    assert.match(camerasDetailPayload.tutorial.body, /note the time when you see a hand/i);
 
     const missingResponse = await fetch(`${baseUrl}/api/tutorials/does-not-exist`);
     assert.equal(missingResponse.status, 404);

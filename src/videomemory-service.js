@@ -254,6 +254,13 @@ function extractDeviceList(payload) {
       if (Array.isArray(root[key])) {
         return root[key];
       }
+
+      if (root[key] && typeof root[key] === "object") {
+        const groupedDevices = Object.values(root[key]).flatMap((value) => (Array.isArray(value) ? value : []));
+        if (groupedDevices.length > 0) {
+          return groupedDevices;
+        }
+      }
     }
   }
 

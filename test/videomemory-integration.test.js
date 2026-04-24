@@ -144,8 +144,9 @@ test("Vibe Research creates VideoMemory monitors and wakes provider-agnostic ses
     const createMonitorPayload = await createMonitorResponse.json();
     assert.equal(createMonitorPayload.monitor.taskId, "vm-task-1");
     assert.equal(createMonitorPayload.monitor.sessionId, session.id);
-    assert.equal(fakeVideoMemory.calls[0].url, "/api/tasks");
-    assert.deepEqual(fakeVideoMemory.calls[0].body, {
+    const createTaskCall = fakeVideoMemory.calls.find((call) => call.url === "/api/tasks");
+    assert.ok(createTaskCall, "expected Vibe Research to create a VideoMemory task");
+    assert.deepEqual(createTaskCall.body, {
       bot_id: "vibe-research",
       io_id: "net0",
       save_note_frames: true,

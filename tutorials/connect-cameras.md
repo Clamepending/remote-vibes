@@ -26,3 +26,7 @@ Click the highlighted **Camera Room** building on the map. This is where active 
 ## 4. Verify
 
 If the room shows your devices and no permission warning, the camera setup is ready. If you still see a permission warning, open **System Settings → Privacy & Security → Camera** and re-enable the app or terminal hosting Vibe Research.
+
+## 5. Try a small monitor
+
+Tell an agent: **note the time when you see a hand in the camera**. That small watch is a good first VideoMemory check because it should create a clear camera event and wake an agent with the time it happened.

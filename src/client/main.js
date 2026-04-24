@@ -715,6 +715,14 @@ const GUIDED_TUTORIALS = Object.freeze({
         ensureView: "visual-interface",
       },
       {
+        id: "try-hand-monitor",
+        title: "Step 5",
+        body: "Tell an agent: note the time when you see a hand in the camera.",
+        note: "That is a small first monitor to prove VideoMemory can turn a camera event into an agent wakeup.",
+        manualAdvance: true,
+        manualLabel: "I have the example",
+      },
+      {
         id: "finish",
         title: "Done",
         body: "Your camera workflow is connected. VideoMemory can now arm monitors and wake agents from the Camera Room.",
@@ -7212,6 +7220,11 @@ function getVideoMemoryStatusText() {
     return state.settings.videoMemoryBaseUrl ? "configured but disabled" : "not configured";
   }
 
+  const runtimeError = getVideoMemoryRuntimeError();
+  if (runtimeError) {
+    return runtimeError;
+  }
+
   if (hasVideoMemoryCameraPermissionIssue()) {
     return "camera permission blocked";
   }
@@ -7246,6 +7259,11 @@ function getVideoMemoryCameraDeviceCount() {
   return devices.length ? devices.length : null;
 }
 
+function getVideoMemoryRuntimeError() {
+  const status = state.settings.videoMemoryStatus || {};
+  return normalizeText(status.lastDeviceRefreshError || status.lastRefreshError || "", 180);
+}
+
 function getVideoMemoryPermissionMonitor() {
   const monitors = Array.isArray(state.videoMemoryMonitors) ? state.videoMemoryMonitors : [];
   return monitors.find((monitor) => monitor.needsCameraPermission) || null;
@@ -7269,18 +7287,24 @@ function getVideoMemoryCameraPermissionMessage() {
 function renderVideoMemoryInstallState() {
   const installed = isVideoMemoryPluginInstalled();
   const enabled = Boolean(state.settings.videoMemoryEnabled);
+  const runtimeError = enabled ? getVideoMemoryRuntimeError() : "";
   const title = installed
-    ? enabled
+    ? runtimeError
+      ? "VideoMemory building installed but not reachable"
+      : enabled
       ? "VideoMemory building installed"
       : "VideoMemory building installed but disabled"
     : "VideoMemory building not installed";
-  const detail = enabled
+  const detail = runtimeError
+    ? runtimeError
+    : enabled
     ? "Camera monitors can wake coding agents."
     : "Enable VideoMemory monitors to arm camera wakeups.";
+  const stateClass = runtimeError ? "is-error" : installed ? "is-installed" : "is-missing";
 
   return `
-    <div class="videomemory-install-state ${installed ? "is-installed" : "is-missing"}">
-      <span class="session-activity-dot ${enabled ? "working" : "read"}" aria-hidden="true"></span>
+    <div class="videomemory-install-state ${stateClass}" ${runtimeError ? "role=\"alert\"" : ""}>
+      <span class="session-activity-dot ${enabled && !runtimeError ? "working" : "read"}" aria-hidden="true"></span>
       <div>
         <strong>${escapeHtml(title)}</strong>
         <em>${escapeHtml(detail)}</em>
@@ -14510,6 +14534,13 @@ function getPluginRuntimeIssue(plugin) {
     if (state.settings.videoMemoryEnabled && status.lastRefreshError) {
       return {
         detail: status.lastRefreshError,
+        label: "needs attention",
+      };
+    }
+    const runtimeError = getVideoMemoryRuntimeError();
+    if (state.settings.videoMemoryEnabled && runtimeError) {
+      return {
+        detail: runtimeError,
         label: "needs attention",
       };
     }
@@ -30888,6 +30919,8 @@ function isGuidedTutorialStepComplete(step) {
       return Boolean(state.settings.videoMemoryEnabled && isVideoMemoryPluginInstalled());
     case "open-camera-room":
       return state.visualGame.selectedBuildingId === "videomemory";
+    case "try-hand-monitor":
+      return false;
     case "quest-open-builder":
       return isVisualInterfaceView() && isAgentTownBuilderOpen();
     case "quest-pick-cosmetic":
@@ -30947,6 +30980,8 @@ function getGuidedTutorialPointerTarget(step) {
       return "selector:[data-videomemory-action]";
     case "open-camera-room":
       return "building:videomemory";
+    case "try-hand-monitor":
+      return "selector:[data-guided-tutorial-next]";
     case "quest-open-builder":
       return "selector:[data-agent-town-builder-toggle]";
     case "quest-pick-cosmetic":

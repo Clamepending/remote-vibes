@@ -4132,6 +4132,7 @@ export async function createVibeResearchApp({
         videoMemoryProviderId: request.body?.providerId ?? request.body?.videoMemoryProviderId,
       });
       await applyRuntimeSettings(settingsStore.settings, { backupReason: false });
+      await videoMemoryService.refreshRemoteDevices({ force: true });
 
       response.json({
         monitors: videoMemoryService.listMonitors(),
