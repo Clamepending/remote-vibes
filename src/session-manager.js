@@ -662,6 +662,33 @@ function filterProjectedOverlayEntries(entries = []) {
       return false;
     }
 
+    // Codex TUI chrome that leaks through PTY-projection. Sources:
+    // - codex-rs/tui/src/status_indicator_widget.rs (spinner + status header)
+    // - codex-rs/tui/src/status/helpers.rs (token formatter)
+    // - codex-rs/tui/tooltips.txt + tooltips.rs (the rotating Tip: lines)
+    // - codex-rs/tui/src/chatwidget.rs (gerund status text from reasoning)
+    // - codex-rs/tui/src/chatwidget/status_surfaces.rs (status verbs)
+    // The proper fix for Codex is to stop scraping PTY altogether and
+    // adopt `codex exec --json` (codex-rs/exec/src/cli.rs) — that's
+    // tracked separately. For now strip the worst offenders.
+    if (
+      // Spinner glyph + gerund/past + ellipsis: "✶ Ruminating…", "• Working...", "* Tempering…"
+      /^[\s•◦✶✻✦✧✩\*]+\S+(?:ing|ed)…/iu.test(normalizedText)
+      // Bare status-verb headers with the Codex spinner format: "Ruminating…", "Tempering… (5s · ↓ 66 tokens)"
+      || /^[\s•◦✶✻✦✧✩\*]*(?:Ruminating|Tempering|Pondering|Working|Waiting|Undoing|Thinking|Starting|Ready)\b.*…/iu.test(normalizedText)
+      // Token / elapsed counter + interrupt hint
+      || /\([\d\s.smh]+(?:·|•)\s*esc\s+to\s+interrupt\)/iu.test(normalizedText)
+      || /[↓↑]\s*[\d.]+\s*(?:K|M|B|T)?\s*tokens?\b/iu.test(normalizedText)
+      // Tooltips — remote-driven, prefix-only match
+      || /^\s*(?:\*New\*\s*)?Tip:\s/iu.test(normalizedText)
+      // Lines that are JUST Braille spinner frames
+      || /^[\s⠋⠙⠹⠸⠼⠴⠦⠧⠇⠏]+$/u.test(normalizedText)
+      // Esc-to-interrupt hint, even when not in parens
+      || /\besc\s+to\s+interrupt\b/iu.test(normalizedText)
+    ) {
+      return false;
+    }
+
     // Filter the verbose provider launch command echoed by the shell when we
     // boot a Codex or Claude session. The buffer parser otherwise splits the
     // wrapped command into multiple short "assistant" entries that escape the
