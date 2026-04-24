@@ -1679,6 +1679,9 @@ const agentTownDogNamePreference = loadAgentTownDogNamePreference();
 const agentSetupCompletePreference = loadAgentSetupCompletePreference();
 const agentSetupPendingPreference = loadAgentSetupPendingPreference();
 const guidedOnboardingCompletedPreference = loadGuidedOnboardingCompletedPreference();
+const BUILDINGHUB_DEFAULT_TAB = "buildings";
+const BUILDINGHUB_TAB_IDS = new Set(["buildings", "scaffolds", "themes"]);
+const BUILDINGHUB_CATALOG_HIDDEN_PLUGIN_IDS = new Set(["buildinghub", "scaffold-recipes"]);
 
 const state = {
   providers: [],
@@ -1706,6 +1709,7 @@ const state = {
   pluginOnboardingOpenId: "",
   pendingPluginSetupFocus: null,
   buildingHubAdvancedOpen: false,
+  buildingHubTab: BUILDINGHUB_DEFAULT_TAB,
   brainSetupCloneUrl: "",
   brainSetupClonePath: "",
   brainSetupCloning: false,
@@ -2136,6 +2140,10 @@ function getRouteState() {
   const root = normalizeWorkspaceRoot(url.searchParams.get("root") || "");
   const path = normalizeFileTreePath(url.searchParams.get("path") || "");
   const buildingId = normalizeBuildingId(url.searchParams.get("building") || "");
+  const buildingHubTab = normalizeBuildingHubTab(
+    url.searchParams.get("buildinghubTab")
+      || (buildingId === "scaffold-recipes" ? "scaffolds" : BUILDINGHUB_DEFAULT_TAB),
+  );
 
   if (explicitView === "knowledge-base" || explicitView === "library") {
     return {
@@ -2180,6 +2188,7 @@ function getRouteState() {
       path: "",
       notePath: "",
       buildingId: explicitView === "plugins" ? buildingId : "",
+      buildingHubTab: explicitView === "plugins" ? buildingHubTab : BUILDINGHUB_DEFAULT_TAB,
     };
   }
 
@@ -2198,6 +2207,7 @@ function getRouteState() {
     path,
     notePath: "",
     buildingId: "",
+    buildingHubTab: BUILDINGHUB_DEFAULT_TAB,
   };
 }
 
@@ -8671,6 +8681,7 @@ function updateRoute({
   filePath = state.openFileRelativePath,
   root = state.filesRoot,
   buildingId = state.pluginDetailId,
+  buildingHubTab = state.buildingHubTab,
 } = {}) {
   const url = new URL(window.location.href);
   const normalizedRoot = normalizeWorkspaceRoot(root);
@@ -8693,12 +8704,14 @@ function updateRoute({
 
     url.searchParams.delete("path");
     url.searchParams.delete("building");
+    url.searchParams.delete("buildinghubTab");
     url.hash = "";
   } else if (view === "agent-prompt") {
     url.searchParams.set("view", "occupations");
     url.searchParams.delete("note");
     url.searchParams.delete("path");
     url.searchParams.delete("building");
+    url.searchParams.delete("buildinghubTab");
     url.hash = "";
   } else if (ROUTED_MAIN_VIEWS.has(view)) {
     url.searchParams.set("view", view);
@@ -8711,14 +8724,22 @@ function updateRoute({
       } else {
         url.searchParams.delete("building");
       }
+      const normalizedBuildingHubTab = normalizeBuildingHubTab(buildingHubTab);
+      if (!normalizedBuildingId && normalizedBuildingHubTab !== BUILDINGHUB_DEFAULT_TAB) {
+        url.searchParams.set("buildinghubTab", normalizedBuildingHubTab);
+      } else {
+        url.searchParams.delete("buildinghubTab");
+      }
     } else {
       url.searchParams.delete("building");
+      url.searchParams.delete("buildinghubTab");
     }
     url.hash = "";
   } else if (view === "file") {
     url.searchParams.set("view", "file");
     url.searchParams.delete("note");
     url.searchParams.delete("building");
+    url.searchParams.delete("buildinghubTab");
     const normalizedFilePath = normalizeFileTreePath(filePath);
 
     if (normalizedFilePath) {
@@ -8733,6 +8754,7 @@ function updateRoute({
     url.searchParams.delete("note");
     url.searchParams.delete("path");
     url.searchParams.delete("building");
+    url.searchParams.delete("buildinghubTab");
     url.hash = "";
   }
 
@@ -13307,15 +13329,38 @@ function renderSearchView() {
   `;
 }
 
-function getFilteredPlugins() {
+function normalizeBuildingHubTab(value) {
+  const normalizedValue = String(value || "").trim().toLowerCase();
+  return BUILDINGHUB_TAB_IDS.has(normalizedValue) ? normalizedValue : BUILDINGHUB_DEFAULT_TAB;
+}
+
+function getBuildingHubRouteTabForPluginId(pluginId) {
+  switch (normalizeBuildingId(pluginId)) {
+    case "scaffold-recipes":
+      return "scaffolds";
+    case "buildinghub":
+      return BUILDINGHUB_DEFAULT_TAB;
+    default:
+      return "";
+  }
+}
+
+function getFilteredPlugins({ includeUtilityEntries = true } = {}) {
   const query = String(state.pluginSearchQuery || "").trim().toLowerCase();
   return PLUGIN_CATALOG.filter((plugin) => {
+    if (!includeUtilityEntries && BUILDINGHUB_CATALOG_HIDDEN_PLUGIN_IDS.has(getPluginId(plugin))) {
+      return false;
+    }
     const issue = getPluginBuildingIssue(plugin);
     return searchMatches(
       [plugin.name, plugin.category, plugin.description, getPluginStatusLabel(plugin), issue?.label, issue?.detail, plugin.source],
       query,
     );
   });
+}
+
+function getBuildingHubCatalogPlugins() {
+  return getFilteredPlugins({ includeUtilityEntries: false });
 }
 
 function getPluginId(plugin) {
@@ -13337,11 +13382,13 @@ function openPluginDetail(pluginId) {
     return false;
   }
 
-  if (getPluginId(plugin) === "buildinghub") {
+  const buildingHubTab = getBuildingHubRouteTabForPluginId(getPluginId(plugin));
+  if (buildingHubTab) {
     state.currentView = "plugins";
     state.pluginDetailId = "";
     state.pluginOnboardingOpenId = "";
-    updateRoute({ view: "plugins", buildingId: "" });
+    state.buildingHubTab = buildingHubTab;
+    updateRoute({ view: "plugins", buildingId: "", buildingHubTab });
     closeMobileSidebar();
     renderShell();
     return true;
@@ -13359,7 +13406,8 @@ function openPluginDetail(pluginId) {
 function closePluginDetail() {
   state.pluginDetailId = "";
   state.pluginOnboardingOpenId = "";
-  setCurrentView("plugins");
+  state.buildingHubTab = BUILDINGHUB_DEFAULT_TAB;
+  setCurrentView("plugins", { buildingHubTab: BUILDINGHUB_DEFAULT_TAB });
   renderShell();
 }
 
@@ -14584,8 +14632,7 @@ function renderPluginBuilding(plugin, { issue = getPluginBuildingIssue(plugin) }
   `;
 }
 
-function renderPluginCards() {
-  const plugins = getFilteredPlugins();
+function renderPluginCards(plugins = getFilteredPlugins()) {
 
   if (!plugins.length) {
     return `<div class="blank-state">no buildings match "${escapeHtml(state.pluginSearchQuery)}"</div>`;
@@ -14983,6 +15030,91 @@ function renderBuildingHubCatalogControls() {
   `;
 }
 
+function renderBuildingHubCatalogTabs() {
+  const tabs = [
+    { id: "buildings", label: "Buildings", icon: Plug },
+    { id: "scaffolds", label: "Scaffolds", icon: FileText },
+    { id: "themes", label: "Themes", icon: Palette },
+  ];
+
+  return `
+    <div class="buildinghub-catalog-tabs" role="tablist" aria-label="BuildingHub sections">
+      ${tabs
+        .map((tab) => {
+          const active = state.buildingHubTab === tab.id;
+          return `
+            <button
+              class="buildinghub-catalog-tab ${active ? "is-active" : ""}"
+              type="button"
+              role="tab"
+              aria-selected="${active ? "true" : "false"}"
+              data-buildinghub-tab="${escapeHtml(tab.id)}"
+            >
+              ${renderIcon(tab.icon)}
+              <span>${escapeHtml(tab.label)}</span>
+            </button>
+          `;
+        })
+        .join("")}
+    </div>
+  `;
+}
+
+function renderBuildingHubCatalogLead() {
+  if (state.buildingHubTab === "buildings") {
+    return `
+      <div class="main-search-shell">
+        <span class="main-search-icon" aria-hidden="true">${renderIcon(Plug)}</span>
+        <input
+          id="plugin-search-input"
+          class="main-search-input"
+          type="search"
+          value="${escapeHtml(state.pluginSearchQuery)}"
+          placeholder="Search building catalog"
+          autocomplete="off"
+          autocorrect="off"
+          autocapitalize="none"
+          spellcheck="false"
+        />
+        <span class="main-search-count" data-plugin-search-count>${escapeHtml(`${getBuildingHubCatalogPlugins().length} shown`)}</span>
+      </div>
+    `;
+  }
+
+  if (state.buildingHubTab === "scaffolds") {
+    return `
+      <div class="buildinghub-catalog-tab-summary">
+        <strong>Scaffold recipes</strong>
+        <span>save and publish reusable Vibe Research setups</span>
+      </div>
+    `;
+  }
+
+  return `
+    <div class="buildinghub-catalog-tab-summary">
+      <strong>Town themes</strong>
+      <span>switch skins and browse saved Agent Town bases</span>
+    </div>
+  `;
+}
+
+function renderBuildingHubCatalogTabPanel() {
+  if (state.buildingHubTab === "scaffolds") {
+    return renderScaffoldRecipesPluginPanel();
+  }
+
+  if (state.buildingHubTab === "themes") {
+    return `
+      <div class="buildinghub-catalog-themes-panel">
+        ${renderBuildingHubThemeCatalogPanel()}
+        ${renderBuildingHubTownGallery()}
+      </div>
+    `;
+  }
+
+  return `<section class="plugin-grid plugin-store-grid" id="plugin-results" data-plugin-results>${renderPluginCards(getBuildingHubCatalogPlugins())}</section>`;
+}
+
 function getTownShareSummaryText(townShare) {
   const summary = townShare?.layoutSummary || {};
   const parts = [
@@ -15173,7 +15305,7 @@ function renderScaffoldRecipesPluginPanel() {
           <button class="ghost-button toolbar-control" type="button" data-scaffold-recipe-save-current ${isBusy ? "disabled" : ""}>${escapeHtml(isSavingCurrent ? "saving..." : "save current")}</button>
           <button class="primary-button settings-save-button" type="button" data-scaffold-recipe-publish="current" ${!isBuildingHubAuthenticated() || isBusy ? "disabled" : ""}>${escapeHtml(isPublishingCurrent ? "publishing..." : "publish current")}</button>
           <button class="ghost-button toolbar-control" type="button" data-scaffold-recipes-refresh ${state.scaffoldRecipes.loading ? "disabled" : ""}>refresh</button>
-          <button class="ghost-button toolbar-control" type="button" data-open-buildinghub-catalog>BuildingHub</button>
+          <button class="ghost-button toolbar-control" type="button" data-open-buildinghub-tab="buildings">Buildings</button>
           ${
             lastPublishedUrl
               ? `<a class="ghost-button toolbar-control" href="${escapeHtml(lastPublishedUrl)}" target="_blank" rel="noreferrer">open latest publish</a>`
@@ -15230,11 +15362,11 @@ function renderBuildingHubPluginPanel({ install = false } = {}) {
       <section class="plugin-onboarding scaffold-recipes-shortcut-panel" aria-label="Scaffold recipe publishing">
         <div class="plugin-onboarding-head">
           <strong>Publish setup templates</strong>
-          <span>Scaffold Recipes</span>
+          <span>BuildingHub -> Scaffolds</span>
         </div>
-        <p>Scaffold publishing lives in the dedicated Scaffold Recipes building so it does not get lost in the catalog settings.</p>
+        <p>Scaffold publishing now lives inside the BuildingHub Scaffolds tab instead of a separate building detail.</p>
         <div class="plugin-onboarding-actions">
-          <button class="ghost-button toolbar-control" type="button" data-plugin-open="scaffold-recipes">open Scaffold Recipes</button>
+          <button class="ghost-button toolbar-control" type="button" data-open-buildinghub-tab="scaffolds">open Scaffolds tab</button>
         </div>
       </section>
       ${renderBuildingHubAuthButtons({ includeLogout: true })}
@@ -15698,27 +15830,14 @@ function renderPluginsView() {
         </div>
       </div>
       <div class="buildinghub-catalog-toolbar">
-        <div class="main-search-shell">
-          <span class="main-search-icon" aria-hidden="true">${renderIcon(Plug)}</span>
-          <input
-            id="plugin-search-input"
-            class="main-search-input"
-            type="search"
-            value="${escapeHtml(state.pluginSearchQuery)}"
-            placeholder="Search building catalog"
-            autocomplete="off"
-            autocorrect="off"
-            autocapitalize="none"
-            spellcheck="false"
-          />
-          <span class="main-search-count" data-plugin-search-count>${escapeHtml(`${getFilteredPlugins().length} shown`)}</span>
+        <div class="buildinghub-catalog-toolbar-main">
+          ${renderBuildingHubCatalogLead()}
+          ${renderBuildingHubCatalogControls()}
         </div>
-        ${renderBuildingHubCatalogControls()}
+        ${renderBuildingHubCatalogTabs()}
       </div>
-      ${renderBuildingHubTownGallery()}
-      <div class="plugins-layout">
-        ${renderBuildingHubThemeCatalogPanel()}
-        <section class="plugin-grid plugin-store-grid" id="plugin-results" data-plugin-results>${renderPluginCards()}</section>
+      <div class="plugins-layout buildinghub-catalog-panel">
+        ${renderBuildingHubCatalogTabPanel()}
       </div>
     </section>
   `;
@@ -19831,11 +19950,12 @@ async function openBuildingWorkspace(buildingId, workspaceView) {
   await openMainView(nextView, { buildingWorkspaceId: normalizedBuildingId });
 }
 
-async function openBuildingHubCatalogView() {
+async function openBuildingHubCatalogView({ tab = BUILDINGHUB_DEFAULT_TAB } = {}) {
   clearVisualGameSelection({ render: false });
   closeAgentTownBuilder({ render: false });
   state.pluginDetailId = "";
-  await openMainView("plugins");
+  state.buildingHubTab = normalizeBuildingHubTab(tab);
+  await openMainView("plugins", { buildingHubTab: state.buildingHubTab });
 }
 
 function normalizeAgentTownBuilderTab(tab) {
@@ -29849,6 +29969,10 @@ function flushDeferredSelectableRefreshes({ force = false } = {}) {
   if (refreshes.has("videomemory")) {
     refreshVideoMemoryPluginUi({ force: true });
   }
+
+  if (refreshes.has("scaffold-recipes")) {
+    refreshScaffoldRecipesPluginUi({ force: true });
+  }
 }
 
 function bindSelectableRefreshEvents() {
@@ -30382,7 +30506,7 @@ function refreshGlobalSearchUi() {
 
 function refreshPluginSearchUi() {
   document.querySelectorAll("[data-plugin-search-count]").forEach((count) => {
-    count.textContent = `${getFilteredPlugins().length} shown`;
+    count.textContent = `${getBuildingHubCatalogPlugins().length} shown`;
   });
 
   const resultContainers = document.querySelectorAll("[data-plugin-results]");
@@ -30391,9 +30515,10 @@ function refreshPluginSearchUi() {
   }
 
   resultContainers.forEach((results) => {
-    results.innerHTML = renderPluginCards();
+    results.innerHTML = renderPluginCards(getBuildingHubCatalogPlugins());
   });
   bindPluginCardEvents();
+  bindBuildingHubCatalogControls();
   bindBrowserUseForm();
   bindOttoAuthForm();
   bindCommunicationsForm();
@@ -30403,6 +30528,18 @@ function refreshPluginSearchUi() {
 }
 
 function bindBuildingHubCatalogControls() {
+  document.querySelectorAll("[data-buildinghub-tab]").forEach((button) => {
+    button.addEventListener("click", () => {
+      const nextTab = normalizeBuildingHubTab(button.getAttribute("data-buildinghub-tab") || "");
+      if (state.buildingHubTab === nextTab) {
+        return;
+      }
+      state.buildingHubTab = nextTab;
+      updateRoute({ view: "plugins", buildingId: "", buildingHubTab: nextTab });
+      renderShell();
+    });
+  });
+
   document.querySelectorAll("[data-buildinghub-advanced-toggle]").forEach((button) => {
     button.addEventListener("click", () => {
       state.buildingHubAdvancedOpen = !state.buildingHubAdvancedOpen;
@@ -34452,8 +34589,13 @@ function syncViewFromLocation() {
   const route = getRouteState();
   const previousView = state.currentView;
   state.currentView = route.view;
+  state.buildingHubTab = route.view === "plugins"
+    ? normalizeBuildingHubTab(route.buildingHubTab)
+    : BUILDINGHUB_DEFAULT_TAB;
   state.pluginDetailId =
-    route.view === "plugins" && normalizeBuildingId(route.buildingId) !== "buildinghub" && getPluginById(route.buildingId)
+    route.view === "plugins"
+      && !getBuildingHubRouteTabForPluginId(route.buildingId)
+      && getPluginById(route.buildingId)
       ? normalizeBuildingId(route.buildingId)
       : "";
 
@@ -34476,6 +34618,7 @@ function isVisualGameTerminalOpen() {
 function setCurrentView(nextView, {
   notePath = state.knowledgeBase.selectedNotePath,
   buildingId = "",
+  buildingHubTab = state.buildingHubTab,
   buildingWorkspaceId = "",
 } = {}) {
   if (nextView === "swarm") {
@@ -34489,6 +34632,7 @@ function setCurrentView(nextView, {
   if (nextView === "knowledge-base") {
     state.currentView = "knowledge-base";
     state.pluginDetailId = "";
+    state.buildingHubTab = BUILDINGHUB_DEFAULT_TAB;
     if (previousView !== "knowledge-base") {
       requestKnowledgeBaseGraphReplay();
     }
@@ -34499,26 +34643,32 @@ function setCurrentView(nextView, {
   if (nextView === "agent-prompt") {
     state.currentView = "agent-prompt";
     state.pluginDetailId = "";
+    state.buildingHubTab = BUILDINGHUB_DEFAULT_TAB;
     updateRoute({ view: "agent-prompt" });
     return;
   }
 
   if (ROUTED_MAIN_VIEWS.has(nextView)) {
     state.currentView = nextView;
+    const normalizedBuildingHubTab = normalizeBuildingHubTab(
+      getBuildingHubRouteTabForPluginId(buildingId) || buildingHubTab,
+    );
     state.pluginDetailId =
-      nextView === "plugins" && normalizeBuildingId(buildingId) !== "buildinghub" && getPluginById(buildingId)
+      nextView === "plugins" && !getBuildingHubRouteTabForPluginId(buildingId) && getPluginById(buildingId)
         ? normalizeBuildingId(buildingId)
         : "";
-    updateRoute({ view: nextView, buildingId: state.pluginDetailId });
+    state.buildingHubTab = nextView === "plugins" ? normalizedBuildingHubTab : BUILDINGHUB_DEFAULT_TAB;
+    updateRoute({ view: nextView, buildingId: state.pluginDetailId, buildingHubTab: state.buildingHubTab });
     return;
   }
 
   state.currentView = "shell";
   state.pluginDetailId = "";
+  state.buildingHubTab = BUILDINGHUB_DEFAULT_TAB;
   updateRoute({ view: state.currentView });
 }
 
-async function openMainView(nextView, { buildingId = "", buildingWorkspaceId = "" } = {}) {
+async function openMainView(nextView, { buildingId = "", buildingHubTab = state.buildingHubTab, buildingWorkspaceId = "" } = {}) {
   state.workspaceEmpty = false;
   if (nextView === "knowledge-base") {
     setCurrentView("knowledge-base", { buildingWorkspaceId });
@@ -34548,7 +34698,7 @@ async function openMainView(nextView, { buildingId = "", buildingWorkspaceId = "
   }
 
   if (ROUTED_MAIN_VIEWS.has(nextView)) {
-    setCurrentView(nextView, { buildingId });
+    setCurrentView(nextView, { buildingId, buildingHubTab });
     closeMobileSidebar();
     renderShell();
 
@@ -35319,6 +35469,15 @@ function bindShellEvents() {
     button.addEventListener("click", (event) => {
       event.preventDefault();
       void openBuildingHubCatalogView();
+    });
+  });
+
+  document.querySelectorAll("[data-open-buildinghub-tab]").forEach((button) => {
+    button.addEventListener("click", (event) => {
+      event.preventDefault();
+      void openBuildingHubCatalogView({
+        tab: button.getAttribute("data-open-buildinghub-tab") || BUILDINGHUB_DEFAULT_TAB,
+      });
     });
   });
 

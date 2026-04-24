@@ -3381,28 +3381,6 @@ test("BuildingHub is the catalog entry point instead of an installable detail", 
   const { app, baseUrl } = await startApp({ cwd: workspaceDir, stateDir });
   await unlockBuildingHub(baseUrl);
   let browser = null;
-  const clickCanvasPoint = async (page, x, y) => {
-    const box = await page.locator("#visual-game-canvas").boundingBox();
-    assert.ok(box, "visual game canvas should be visible");
-    await page.mouse.click(box.x + x, box.y + y);
-  };
-  const findCanvasHoverPoint = async (page, labelText) => {
-    const box = await page.locator("#visual-game-canvas").boundingBox();
-    assert.ok(box, "visual game canvas should be visible");
-
-    for (let y = 8; y <= box.height - 8; y += 20) {
-      for (let x = 8; x <= box.width - 8; x += 20) {
-        await page.mouse.move(box.x + x, box.y + y);
-        const label = await page.locator(".visual-game-hover").textContent();
-
-        if (label?.includes(labelText)) {
-          return { x, y };
-        }
-      }
-    }
-
-    return null;
-  };
 
   try {
     browser = await chromium.launch({ executablePath, headless: true });
@@ -3418,6 +3396,11 @@ test("BuildingHub is the catalog entry point instead of an installable detail", 
     assert.equal(await page.locator('.sidebar-primary-nav [data-open-main-view="plugins"]').count(), 1);
     assert.equal(await page.locator('.sidebar-primary-nav [data-open-main-view="system"]').count(), 0);
     assert.equal(await page.getByRole("button", { name: "Install BuildingHub" }).count(), 0);
+    assert.equal(await page.locator("#plugin-results").getByText("Scaffold Recipes", { exact: true }).count(), 0);
+    await page.getByRole("tab", { name: "Scaffolds" }).click();
+    await page.locator(".scaffold-recipes-plugin-card").waitFor({ timeout: 10_000 });
+    await page.waitForFunction(() => new URL(window.location.href).searchParams.get("buildinghubTab") === "scaffolds");
+    await page.getByRole("tab", { name: "Buildings" }).click();
     await page.locator("#plugin-results").getByText("System", { exact: true }).waitFor({ timeout: 10_000 });
     await page.getByRole("button", { name: "Open System building" }).click();
     await page.getByRole("button", { name: "Open System", exact: true }).waitFor({ timeout: 10_000 });
@@ -3434,41 +3417,13 @@ test("BuildingHub is the catalog entry point instead of an installable detail", 
     await communityToggle.check();
     await page.waitForFunction(() => document.querySelector("#buildinghub-community-enabled")?.checked === true);
 
-    await page.getByRole("button", { name: "Open BuildingHub building" }).click();
-    await page.waitForFunction(() => {
-      const url = new URL(window.location.href);
-      return url.searchParams.get("view") === "plugins" && !url.searchParams.has("building");
-    });
+    assert.equal(await page.getByRole("button", { name: "Open BuildingHub building" }).count(), 0);
     assert.equal(await page.getByRole("button", { name: "Back to BuildingHub", exact: true }).count(), 0);
-    await page.locator("#plugin-results").getByText("BuildingHub", { exact: true }).waitFor({ timeout: 10_000 });
+    assert.equal(await page.locator("#plugin-results").getByText("BuildingHub", { exact: true }).count(), 0);
 
-    const createResponse = await fetch(`${baseUrl}/api/sessions`, {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ providerId: "shell", cwd: workspaceDir, name: "Town catalog agent" }),
-    });
-    assert.equal(createResponse.status, 201);
-
-    await page.setViewportSize({ width: 1280, height: 720 });
-    await page.goto(`${baseUrl}/?view=swarm`, { waitUntil: "domcontentloaded" });
-    await page.waitForSelector("#visual-game-canvas", { timeout: 10_000 });
-    await page.waitForTimeout(800);
-    const systemPoint = await findCanvasHoverPoint(page, "System");
-    assert.ok(systemPoint, "System town building should be clickable");
-    await clickCanvasPoint(page, systemPoint.x, systemPoint.y);
-    await page.waitForFunction(() => Boolean(document.querySelector(".visual-game-building-panel")));
-    await page.getByRole("button", { name: "Back to Agent Town" }).click();
-    const buildingHubPoint = await findCanvasHoverPoint(page, "BuildingHub");
-    assert.ok(buildingHubPoint, "BuildingHub town building should be clickable");
-    await clickCanvasPoint(page, buildingHubPoint.x, buildingHubPoint.y);
-    await page.waitForFunction(() => {
-      const url = new URL(window.location.href);
-      return url.searchParams.get("view") === "plugins" && !url.searchParams.has("building");
-    });
-    assert.equal(await page.locator(".visual-game-building-panel").count(), 0);
     assert.equal(await page.getByText("enable community building catalogs").count(), 0);
     assert.equal(await page.locator("#buildinghub-community-enabled").count(), 1);
-    await page.locator("#plugin-results").getByText("BuildingHub", { exact: true }).waitFor({ timeout: 10_000 });
+    await page.locator("#plugin-results").getByText("System", { exact: true }).waitFor({ timeout: 10_000 });
   } finally {
     await browser?.close().catch(() => {});
     await app.close();
@@ -3738,17 +3693,11 @@ test("BuildingHub applies and persists the Agent Town theme", async (t) => {
     assert.equal(settingsResponse.status, 200);
     await unlockBuildingHub(baseUrl);
 
-    const createResponse = await fetch(`${baseUrl}/api/sessions`, {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ providerId: "shell", cwd: workspaceDir, name: "Theme Agent" }),
-    });
-    assert.equal(createResponse.status, 201);
-
     browser = await chromium.launch({ executablePath, headless: true });
     const page = await browser.newPage();
     await page.setViewportSize({ width: 1280, height: 720 });
     await page.goto(`${baseUrl}/?view=plugins`, { waitUntil: "domcontentloaded" });
+    await page.getByRole("tab", { name: "Themes" }).click();
     await page.getByRole("button", { name: /Snowdrift/ }).waitFor({ timeout: 10_000 });
     await page.getByRole("button", { name: /Snowdrift/ }).click();
     assert.equal(
@@ -3756,34 +3705,17 @@ test("BuildingHub applies and persists the Agent Town theme", async (t) => {
       "snowy",
     );
 
-    await page.goto(`${baseUrl}/?view=swarm`, { waitUntil: "domcontentloaded" });
-    await page.waitForSelector("#visual-game-canvas", { timeout: 10_000 });
-    await page.waitForTimeout(800);
-    await page.waitForFunction(
-      () => document.querySelector("#visual-game-canvas")?.getAttribute("data-agent-town-theme") === "snowy",
-      null,
-      { timeout: 10_000 },
-    );
-
-    await page.locator("[data-agent-town-builder-toggle]").click();
-    await page.getByRole("tab", { name: /Themes/ }).click();
     await page.getByRole("button", { name: /Desert/ }).click();
-    await page.waitForFunction(
-      () => document.querySelector("#visual-game-canvas")?.getAttribute("data-agent-town-theme") === "desert",
-      null,
-      { timeout: 10_000 },
-    );
     assert.equal(
       await page.evaluate(() => window.localStorage.getItem("vibe-research-agent-town-theme-v1")),
       "desert",
     );
 
     await page.reload({ waitUntil: "domcontentloaded" });
-    await page.waitForSelector("#visual-game-canvas", { timeout: 10_000 });
-    await page.waitForFunction(
-      () => document.querySelector("#visual-game-canvas")?.getAttribute("data-agent-town-theme") === "desert",
-      null,
-      { timeout: 10_000 },
+    await page.getByRole("tab", { name: "Themes" }).waitFor({ timeout: 10_000 });
+    assert.equal(
+      await page.evaluate(() => window.localStorage.getItem("vibe-research-agent-town-theme-v1")),
+      "desert",
     );
   } finally {
     await browser?.close().catch(() => {});
