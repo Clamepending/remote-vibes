@@ -223,7 +223,7 @@ Do not leave contradictory notes side by side without explanation.
 - Use absolute paths when talking to the user
 - Qualitative results are encouraged. Link clearly labeled images in the experiment markdown.
 
-<!-- vibe-research:building-guides-protocol:v2 -->
+<!-- vibe-research:building-guides-protocol:v3 -->
 
 ## Building Guides
 
@@ -240,11 +240,18 @@ Vibe Research generates agent-readable manuals for every Building in the catalog
 
 Use the local Agent Town API when coordinating UI tutorial steps or checking whether the human completed a town action.
 
-- Read `$VIBE_RESEARCH_AGENT_TOWN_API/state` to inspect the mirrored town layout, action items, events, and signals.
+- Situational awareness baseline: if `VIBE_RESEARCH_*` environment variables are present, treat the session as running inside Vibe Research with Agent Town and Library support enabled.
+- Before answering questions like "where are you?", "do you see a canvas?", or "do you see Agent Town?", run a fresh state check with `curl -s "$VIBE_RESEARCH_AGENT_TOWN_API/state"`. Treat that response as the source of truth for visibility and status.
+- Never claim that Agent Town or the canvas is unavailable unless you checked the state endpoint in the current turn and the response proves it, or the endpoint request failed.
+- If the state endpoint is missing or unreachable, report that explicitly and include the command/error observed instead of guessing.
+- Read `$VIBE_RESEARCH_AGENT_TOWN_API/state` to inspect the mirrored town layout, action items, events, signals, active highlight, and the computed `onboardingPhase` (`fresh` | `placing` | `active` | `seasoned`). When `onboardingPhase` is `fresh` or `isNewUser` is true, treat the session as first-run.
+- The `quests` array in state is ordered; exactly one is `status: "active"` at a time. Guide onboarding one quest at a time and wait for the matching predicate before moving on.
 - Create tiny user-facing action items with `POST $VIBE_RESEARCH_AGENT_TOWN_API/action-items`.
 - Use action item metadata when it matters: `kind` (`action`, `approval`, `review`, `setup`), `priority` (`low`, `normal`, `high`, `urgent`), `sourceSessionId`, `target`, and `capabilityIds`.
+- Point the user at a specific building with `POST $VIBE_RESEARCH_AGENT_TOWN_API/highlight` body `{ buildingId | itemId | coordinates:{x,y}, durationMs, reason, sourceSessionId }`; the client pulses it until `expiresAt`. `DELETE /highlight` clears it early.
 - Publish images you want the human to see with `vr-agent-canvas --image <path> --title <short title>` or `POST $VIBE_RESEARCH_AGENT_TOWN_API/canvases` using `sourceSessionId`, `title`, `caption`, and `imagePath`; the latest canvas appears under the agent profile.
 - Wait for UI predicates with `POST $VIBE_RESEARCH_AGENT_TOWN_API/wait` instead of asking the human to report completion when a predicate can prove it.
-- Treat a wait response with `satisfied: true` as authoritative completion: acknowledge the action, then move to the next bite-sized step without asking the human to confirm again.
-- Supported predicates include `first_building_placed`, `cosmetic_building_placed`, `functional_building_placed`, `agent_clicked`, `automation_created`, `library_note_saved`, and `action_item_completed`.
+- Treat a wait response with `satisfied: true` as authoritative completion: acknowledge the action, then move to the next bite-sized step without asking the human to confirm again. The response includes `sourceSessionId` so you can tell which session triggered the change.
+- Supported predicates: `first_building_placed`, `cosmetic_building_placed` (optionally scoped with `itemId`), `functional_building_placed` (optionally scoped with `pluginId`), `agent_clicked`, `automation_created`, `library_note_saved`, `workspace_selected`, `action_item_completed` (optionally scoped with `actionItemId`), `action_item_dismissed`, and `onboarding_complete`.
+- Mark the tutorial finished with `POST $VIBE_RESEARCH_AGENT_TOWN_API/events` `{ type: "onboarding_complete", sourceSessionId }` once the user has placed a functional building, saved a library note, and seen the agent canvas.
 - Prefer one bite-sized action item plus one wait at a time; avoid turning onboarding into a long checklist.
