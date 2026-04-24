@@ -17,7 +17,7 @@ test("managed prompts tell terminal agents how to find building guides", async (
     const state = await store.getState();
     assert.match(state.prompt, /vibe-research:building-guides-protocol:v3/);
     assert.match(state.prompt, /\$VIBE_RESEARCH_BUILDING_GUIDES_INDEX/);
-    assert.match(state.prompt, /Codex, Claude Code, OpenClaw, and shell agents/);
+    assert.match(state.prompt, /Codex, Claude Code, and shell agents/);
     assert.match(state.prompt, /## Agent Town State/);
     assert.match(state.prompt, /\$VIBE_RESEARCH_AGENT_TOWN_API\/state/);
     assert.match(state.prompt, /Situational awareness baseline/);
@@ -27,7 +27,7 @@ test("managed prompts tell terminal agents how to find building guides", async (
     assert.match(state.prompt, /satisfied: true/);
     assert.match(state.prompt, /first_building_placed/);
 
-    for (const filename of ["AGENTS.md", "CLAUDE.md", "GEMINI.md"]) {
+    for (const filename of ["AGENTS.md", "CLAUDE.md"]) {
       const contents = await readFile(path.join(cwd, filename), "utf8");
       assert.match(contents, /vibe-research:managed-agent-prompt/);
       assert.match(contents, /## Building Guides/);

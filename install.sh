@@ -1466,7 +1466,6 @@ restore_managed_prompt_file() {
 restore_managed_prompt_files() {
   restore_managed_prompt_file AGENTS.md
   restore_managed_prompt_file CLAUDE.md
-  restore_managed_prompt_file GEMINI.md
 }
 
 restore_installer_generated_files() {

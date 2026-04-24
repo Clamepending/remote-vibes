@@ -3974,7 +3974,7 @@ test("occupations api creates Library scaffold and managed instruction files", a
       statePayload.agentPrompt.presets.map((preset) => preset.id),
       ["researcher", "custom", "engineer"],
     );
-    assert.equal(statePayload.agentPrompt.targets.length, 3);
+    assert.equal(statePayload.agentPrompt.targets.length, 2);
     assert.ok(statePayload.agentPrompt.targets.every((target) => target.status !== "conflict"));
 
     const managedAgents = await readFile(path.join(workspaceDir, "AGENTS.md"), "utf8");
@@ -4185,10 +4185,10 @@ test("existing prompt files are upgraded with the current built-in Library proto
     assert.match(savedPrompt, /Crystallization And Supersession/);
     assert.doesNotMatch(savedPrompt, /Agent Mailboxes/);
 
-    const managedGemini = await readFile(path.join(workspaceDir, "GEMINI.md"), "utf8");
-    assert.match(managedGemini, /Treat links as traversal hints, not decoration/);
-    assert.doesNotMatch(managedGemini, /Agent Mailboxes/);
-    assert.doesNotMatch(managedGemini, /reply_to/);
+    const managedClaude = await readFile(path.join(workspaceDir, "CLAUDE.md"), "utf8");
+    assert.match(managedClaude, /Treat links as traversal hints, not decoration/);
+    assert.doesNotMatch(managedClaude, /Agent Mailboxes/);
+    assert.doesNotMatch(managedClaude, /reply_to/);
   } finally {
     await app.close();
     await removeTempWorkspace(workspaceDir);
@@ -4267,7 +4267,7 @@ Old guidance.
     "utf8",
   );
   await Promise.all(
-    ["AGENTS.md", "CLAUDE.md", "GEMINI.md"].map((filename) =>
+    ["AGENTS.md", "CLAUDE.md"].map((filename) =>
       writeFile(
         path.join(workspaceDir, filename),
         "<!-- remote-vibes:managed-agent-prompt -->\n# Legacy Managed Prompt\n",

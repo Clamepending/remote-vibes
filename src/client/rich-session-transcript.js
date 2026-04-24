@@ -23,7 +23,7 @@ const RICH_SESSION_TOOL_NAMES = new Set([
   "Write",
 ]);
 
-const RICH_SESSION_PROVIDER_COMMAND_PATTERN = String.raw`(?:claude|codex|gemini|openclaw|opencode)`;
+const RICH_SESSION_PROVIDER_COMMAND_PATTERN = String.raw`(?:claude|codex)`;
 const RICH_SESSION_PROVIDER_BINARY_PATTERN = String.raw`(?:${RICH_SESSION_PROVIDER_COMMAND_PATTERN})(?:\.(?:bat|cmd|exe|ps1|sh))?`;
 const RICH_SESSION_PROVIDER_LAUNCH_COMMAND_RE = new RegExp(
   String.raw`(?:^|['"\s;&|])(?:[^'"\s]*[\\/])*(?:${RICH_SESSION_PROVIDER_BINARY_PATTERN})(?=$|['"\s;&|])`,
@@ -252,7 +252,7 @@ function isRichSessionStartupMetadataLine(line) {
   }
 
   return (
-    /^(?:>_\s+)?(?:OpenAI Codex|Claude Code|Gemini CLI|OpenClaw|OpenCode)\b/iu.test(stripped)
+    /^(?:>_\s+)?(?:OpenAI Codex|Claude Code)\b/iu.test(stripped)
     || /^gpt-[\w.-]+(?:\s+\w+)?\s+·\s+~?\//iu.test(stripped)
     || /^(?:model|directory|cwd|workspace):\s+/iu.test(stripped)
     || /^Tip:\s+Try the Codex App\b/iu.test(stripped)
@@ -343,7 +343,7 @@ function isRichSessionStartupNoiseBlock(block) {
     || /Try the Codex App\./iu.test(normalizedBlock)
     || /Do you trust the contents of this directory\?/iu.test(normalizedBlock)
     || /Press enter to continue/iu.test(normalizedBlock)
-    || /(?:OpenAI Codex|Claude Code|Gemini CLI|OpenClaw|OpenCode)/iu.test(normalizedBlock)
+    || /(?:OpenAI Codex|Claude Code)/iu.test(normalizedBlock)
     || (
       /^gpt-[\w.-]+(?:\s+\w+)?\s+·\s+~?\//iu.test(normalizedBlock)
       && /\b(?:model|directory|cwd|workspace):\b/iu.test(normalizedBlock)

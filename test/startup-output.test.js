@@ -59,7 +59,6 @@ test("buildStartupOutput names the selected provider in the getting-started step
     providers: [
       { id: "claude", label: "Claude Code", available: true },
       { id: "codex", label: "Codex", available: true },
-      { id: "gemini", label: "Gemini CLI", available: false },
     ],
   });
 

@@ -25,7 +25,7 @@ const PROVIDER_USAGE_WINDOWS = [
     targetRunMs: 40 * HOUR_MS,
   },
 ];
-const PROVIDER_USAGE_ORDER = ["claude", "codex", "gemini", "opencode"];
+const PROVIDER_USAGE_ORDER = ["claude", "codex"];
 const RUN_BUCKETS = [
   { key: "lt30s", label: "<30s", minMs: 0, maxMs: 30 * 1000 },
   { key: "30s-2m", label: "30s-2m", minMs: 30 * 1000, maxMs: 2 * 60 * 1000 },

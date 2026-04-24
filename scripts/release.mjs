@@ -100,7 +100,7 @@ if (!allowNonMain && currentBranch !== "main") {
   fail(`Releases should be cut from main. Current branch is "${currentBranch || "detached"}".`);
 }
 
-const ignoredDirtyPaths = new Set(["AGENTS.md", "CLAUDE.md", "GEMINI.md"]);
+const ignoredDirtyPaths = new Set(["AGENTS.md", "CLAUDE.md"]);
 const dirtyTrackedLines = run("git", ["status", "--porcelain", "--untracked-files=no"], { capture: true })
   .split("\n")
   .filter(Boolean);

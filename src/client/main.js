@@ -17472,7 +17472,7 @@ function isVisualGameLiveSubagent(subagent) {
 }
 
 function isClaudeCodeProviderAgent(agent) {
-  return ["claude", "claude-ollama"].includes(String(agent?.providerId || "").toLowerCase());
+  return String(agent?.providerId || "").toLowerCase() === "claude";
 }
 
 function isOpenClawProviderId(providerId) {
@@ -20841,21 +20841,17 @@ function getAgentTownRoadBaseBounds(roadId) {
 }
 
 function getAgentTownProviderDisplayLabel(provider) {
-  if (provider?.id === "ml-intern") {
-    return "HF Intern";
-  }
-
   return provider?.label || provider?.defaultName || "Agent";
 }
 
 function getAgentTownProviderPriority(provider) {
-  const priority = ["claude", "claude-ollama", "codex", "openclaw", "ml-intern", "opencode", "gemini"];
+  const priority = ["claude", "codex"];
   const index = priority.indexOf(provider?.id || "");
   return index >= 0 ? index : priority.length;
 }
 
 function getAgentTownProviderDormPalette(providerId) {
-  const normalizedProviderId = providerId === "claude-ollama" ? "claude" : providerId;
+  const normalizedProviderId = providerId;
   const palettes = {
     claude: {
       floor: "#8a5a3e",
@@ -20877,37 +20873,6 @@ function getAgentTownProviderDormPalette(providerId) {
       floorPatternColor: "#d8fff6",
       floorPatternAlpha: 0.46,
     },
-    openclaw: {
-      floor: "#8f3f2e",
-      wall: "#5b2b34",
-      trim: "#331821",
-      blanket: "#ff8f55",
-      pillow: "#ffe0be",
-      floorPattern: "openclaw",
-      floorPatternColor: "#ffd0b4",
-      floorPatternAlpha: 0.5,
-    },
-    "ml-intern": {
-      floor: "#8b6b2d",
-      wall: "#6a4a22",
-      trim: "#3c2a13",
-      blanket: "#f0c84f",
-      pillow: "#fff0a8",
-    },
-    opencode: {
-      floor: "#444873",
-      wall: "#303556",
-      trim: "#20243a",
-      blanket: "#a4adff",
-      pillow: "#e4e7ff",
-    },
-    gemini: {
-      floor: "#2c6288",
-      wall: "#254867",
-      trim: "#172c42",
-      blanket: "#8ec7ff",
-      pillow: "#d8eeff",
-    },
   };
 
   return palettes[normalizedProviderId] || {
@@ -20920,7 +20885,7 @@ function getAgentTownProviderDormPalette(providerId) {
 }
 
 function getVisualGameProviderAgentPalette(providerId) {
-  const normalizedProviderId = providerId === "claude-ollama" ? "claude" : providerId;
+  const normalizedProviderId = providerId;
   const palettes = {
     claude: {
       hat: "#b65d3d",
@@ -20941,46 +20906,6 @@ function getVisualGameProviderAgentPalette(providerId) {
       trim: "#d8fff6",
       pants: "#173f3a",
       boots: "#102923",
-    },
-    openclaw: {
-      hat: "#d94f31",
-      brim: "#7f2d24",
-      hair: "#241918",
-      skin: "#f2a276",
-      coat: "#e6522c",
-      trim: "#ffd0b4",
-      pants: "#362128",
-      boots: "#2f1815",
-    },
-    "ml-intern": {
-      hat: "#b78a24",
-      brim: "#6c4d13",
-      hair: "#4a2b21",
-      skin: "#f1b895",
-      coat: "#f0c84f",
-      trim: "#fff0a8",
-      pants: "#3f3420",
-      boots: "#5f4018",
-    },
-    opencode: {
-      hat: "#575ec0",
-      brim: "#30356e",
-      hair: "#18151d",
-      skin: "#d99f7a",
-      coat: "#7c84e8",
-      trim: "#e4e7ff",
-      pants: "#282945",
-      boots: "#23233a",
-    },
-    gemini: {
-      hat: "#347fbd",
-      brim: "#1d4f7c",
-      hair: "#33231c",
-      skin: "#e2aa7e",
-      coat: "#4aa6e8",
-      trim: "#d8eeff",
-      pants: "#203549",
-      boots: "#17283a",
     },
   };
 
@@ -27351,7 +27276,7 @@ function renderAgentPromptView() {
         <button class="icon-button hidden-desktop" type="button" id="open-sidebar" aria-label="Open sidebar" ${tooltipAttributes("Open sidebar")}>${renderIcon(Menu)}</button>
         <div class="dashboard-copy">
           <strong>Occupations</strong>
-          <div class="terminal-meta">shared instruction sets injected into Codex, Claude, OpenClaw, Gemini, and OpenCode sessions</div>
+          <div class="terminal-meta">shared instruction sets injected into Codex and Claude Code sessions</div>
         </div>
         <div class="dashboard-actions">
           <button class="icon-button toolbar-control refresh-icon-button" type="button" id="refresh-agent-prompt" aria-label="Reload occupations from disk" ${tooltipAttributes("Reload occupations from disk")}>${renderIcon(RefreshCw)}</button>
@@ -27752,7 +27677,7 @@ function renderAgentSetupProviderCards() {
     return `
       <div class="agent-setup-empty">
         <strong>No coding agents were found.</strong>
-        <span>Refresh detection after installing Claude Code, Codex, OpenClaw, Gemini, OpenCode, or ML Intern.</span>
+        <span>Refresh detection after installing Claude Code or Codex.</span>
       </div>
     `;
   }

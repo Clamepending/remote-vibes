@@ -544,7 +544,7 @@ const CORE_BUILDING_MANIFESTS = [
       useCases: [
         "Run a registered benchmark dataset against a named agent and model.",
         "Run a local Harbor task or dataset to test an agent in a containerized sandbox.",
-        "Compare CLI agents such as Codex, Claude Code, Gemini CLI, OpenHands, or a custom Harbor agent import.",
+        "Compare CLI agents such as Codex, Claude Code, OpenHands, or a custom Harbor agent import.",
         "Generate rollouts, trajectories, or rewards for eval, prompt optimization, SFT, or RL workflows.",
         "Create reproducible evidence for an agent-evaluation result before admitting it into project memory.",
         "Scale an eval across cloud sandboxes after checking quota, credentials, and cost approval.",
@@ -605,13 +605,13 @@ const CORE_BUILDING_MANIFESTS = [
     },
     access: {
       label: "Managed prompts",
-      detail: "Uses the local Occupations prompt store and syncs managed instructions into AGENTS.md, CLAUDE.md, and GEMINI.md so Codex, Claude, OpenClaw, Gemini, and OpenCode sessions receive the same role guidance.",
+      detail: "Uses the local Occupations prompt store and syncs managed instructions into AGENTS.md and CLAUDE.md so Codex and Claude Code sessions receive the same role guidance.",
     },
     agentGuide: {
       summary: "Use Occupations when an agent needs to inspect or explain the shared role prompt that will be injected into new sessions.",
       useCases: [
         "Check which occupation is selected before starting a new agent.",
-        "Inspect the managed prompt source and synced AGENTS.md, CLAUDE.md, and GEMINI.md files.",
+        "Inspect the managed prompt source and synced AGENTS.md and CLAUDE.md files.",
         "Diagnose prompt sync conflicts without writing secrets or credentials into managed instruction files.",
       ],
       commands: [
@@ -626,12 +626,12 @@ const CORE_BUILDING_MANIFESTS = [
       variables: [
         { label: "Selected occupation", value: "Researcher, Engineer, or Custom", required: true },
         { label: "Prompt source", value: ".vibe-research/agent-prompt.md", required: true },
-        { label: "Managed files", value: "AGENTS.md, CLAUDE.md, GEMINI.md", required: true },
+        { label: "Managed files", value: "AGENTS.md, CLAUDE.md", required: true },
       ],
       steps: [
         { title: "Choose an occupation", detail: "Pick the role prompt that should shape newly launched agents.", completeWhen: { type: "installed" } },
         { title: "Edit custom guidance", detail: "Use the custom occupation when the built-in researcher or engineer prompt needs project-specific instructions." },
-        { title: "Review managed files", detail: "Check conflicts before overwriting AGENTS.md, CLAUDE.md, or GEMINI.md." },
+        { title: "Review managed files", detail: "Check conflicts before overwriting AGENTS.md or CLAUDE.md." },
       ],
     },
   },
