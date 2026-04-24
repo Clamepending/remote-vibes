@@ -1152,15 +1152,15 @@ const CORE_BUILDING_MANIFESTS = [
       specialTownPlace: true,
     },
     agentGuide: {
-      summary: "Use VideoMemory when the human asks you to watch a camera or video stream for some condition and wake you (or a fresh session) when it happens. Examples: 'watch the FaceTime camera for a black dog', 'ping me when someone walks up to the front door', 'let me know when the 3D print finishes'.",
+      summary: "Use VideoMemory when the human asks you to watch a live camera or video stream for some condition and react when it happens — either waking your own session with the details or spawning a fresh session. It handles the video-watching and fires a webhook back into Vibe Research when the condition is met.",
       useCases: [
-        "Create a monitor with `vr-videomemory create` — by default it wakes the caller session, so just run it from your own session.",
-        "List cameras/inputs with `vr-videomemory devices` and match the human's description (e.g. 'FaceTime') to an ioId before creating the monitor.",
-        "Check whether camera permission or service URL setup is blocking monitors before troubleshooting further.",
+        "Turn a natural-language 'watch for X' request into an armed monitor; by default `vr-videomemory create` wakes the caller session.",
+        "Pick the right camera/input for a monitor by matching the human's description to a reported device.",
+        "Diagnose why a monitor never fires (camera permission, service URL, disabled plugin) before blaming the condition.",
         "Record monitor IDs, task URLs, and artifact paths in the Library when they matter.",
       ],
       commands: [
-        { label: "List cameras", command: "vr-videomemory devices", detail: "List ioIds reported by the VideoMemory server so you can pick the right --io-id." },
+        { label: "List cameras", command: "vr-videomemory devices", detail: "Prints the ioIds and names the VideoMemory server is reporting so you can pick the right --io-id for a monitor." },
         { label: "Start a monitor", command: "vr-videomemory create --io-id <ioId> --trigger \"<natural-language condition>\" --action \"<what to do on wake>\"", detail: "Defaults to waking the current session; add --new-session to spawn a fresh one instead." },
         { label: "List active monitors", command: "vr-videomemory list", detail: "See armed monitors and their wake targets." },
         { label: "Read VideoMemory guide", command: "sed -n '1,220p' \"$VIBE_RESEARCH_BUILDING_GUIDES_DIR/videomemory.md\"", detail: "Review setup and camera permission expectations first." },
