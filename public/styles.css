@@ -7395,6 +7395,65 @@ button.visual-agent-tile:focus-visible,
   border-left: 0;
 }
 
+.quest-hint.is-sidebar {
+  display: flex;
+  align-items: flex-start;
+  align-self: stretch;
+  margin: 6px 8px 10px;
+  animation: quest-hint-bob-vertical 1.4s ease-in-out infinite;
+}
+
+.quest-hint.is-sidebar .quest-hint-arrow {
+  margin: -2px 0 0 10px;
+  border-left: 9px solid transparent;
+  border-right: 9px solid transparent;
+  border-top: 12px solid #f0b73d;
+  border-bottom: 0;
+  align-self: flex-end;
+}
+
+.toolbar-canvas-action {
+  display: inline-flex;
+  align-items: center;
+  gap: 0;
+  position: relative;
+}
+
+.icon-button.is-quest-hint {
+  position: relative;
+  border-color: rgba(255, 207, 87, 0.85);
+  box-shadow:
+    0 0 0 3px rgba(255, 207, 87, 0.32),
+    0 0 18px rgba(255, 207, 87, 0.45);
+  animation: quest-hint-button-pulse 1.4s ease-in-out infinite;
+}
+
+@keyframes quest-hint-button-pulse {
+  0%, 100% {
+    box-shadow:
+      0 0 0 3px rgba(255, 207, 87, 0.28),
+      0 0 14px rgba(255, 207, 87, 0.38);
+  }
+  50% {
+    box-shadow:
+      0 0 0 6px rgba(255, 207, 87, 0.5),
+      0 0 22px rgba(255, 207, 87, 0.6);
+  }
+}
+
+.agent-canvas-host.is-attention {
+  animation: agent-canvas-attention 1.6s ease-in-out;
+}
+
+@keyframes agent-canvas-attention {
+  0%, 100% {
+    filter: none;
+  }
+  35% {
+    filter: drop-shadow(0 0 14px rgba(255, 207, 87, 0.7));
+  }
+}
+
 .quest-hint.is-block {
   display: flex;
   align-self: flex-start;

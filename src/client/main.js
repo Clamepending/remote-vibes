@@ -11886,6 +11886,24 @@ function renderAgentCanvasPanel(session, selection = state.agentProfile) {
   `;
 }
 
+function handleViewAgentCanvasClick() {
+  clearQuestHintFor("chat-canvas-button", { render: false });
+  const session = state.sessions.find((entry) => entry.id === state.activeSessionId) || null;
+  const canvas = getAgentCanvasForSession(session);
+  if (canvas) {
+    const host = document.querySelector("[data-agent-canvas-host]");
+    host?.scrollIntoView({ behavior: "smooth", block: "nearest" });
+    host?.classList.add("is-attention");
+    window.setTimeout(() => host?.classList.remove("is-attention"), 1600);
+    renderShell();
+    return;
+  }
+  window.alert(
+    "No canvas yet for this agent. Ask the agent to publish one with: vr-agent-canvas --image <path> --title \"<short title>\" --caption \"<what changed>\"",
+  );
+  renderShell();
+}
+
 function renderAgentCanvasHost(session) {
   return `
     <aside
@@ -12529,13 +12547,14 @@ function renderSessionSubagentCard(subagent, session) {
 
 function renderSessionCards() {
   const groups = getSessionProjectGroups();
+  const sidebarHint = renderQuestHintBubble("sidebar-session", { className: "is-sidebar" });
   if (!groups.length) {
-    return `<div class="blank-state">no sessions</div>`;
+    return `${sidebarHint}<div class="blank-state">no sessions yet — use the + button above to start one</div>`;
   }
 
   ensureSessionProjectDefaults(groups);
 
-  return groups
+  return `${sidebarHint}` + groups
     .map((group) => {
       const expanded = state.sessionProjectExpanded.has(group.key);
       const active = group.sessions.some((session) => session.id === state.activeSessionId);
@@ -15993,7 +16012,7 @@ const QUEST_ALERT_HINTS = new Map([
   ["quest-place-functional-building", { anchor: "builder-fab", label: "Open the builder to place a functional building" }],
   ["quest-save-library-note", { anchor: "knowledge-base", label: "Open or create a note, then save it to finish this quest" }],
   ["quest-create-automation", { anchor: "automation-create", label: "Fill in the form, then create your first automation" }],
-  ["quest-publish-agent-canvas", { anchor: "agent-inbox", label: "Have an agent run vr-agent-canvas to publish a visual" }],
+  ["quest-publish-agent-canvas", { anchor: "sidebar-session", label: "Open an agent (or start one) — they publish canvases from inside their chat" }],
 ]);
 
 function renderAgentTownAlertCard(alert) {
@@ -27591,6 +27610,10 @@ function renderTerminalPanel(activeSession) {
           }
           <div class="toolbar-actions">
             ${renderShellSurfaceToggle(activeSession)}
+            <div class="toolbar-canvas-action">
+              ${activeSession ? renderQuestHintBubble("chat-canvas-button", { className: "is-leading" }) : ""}
+              <button class="icon-button ${getQuestHintForAnchor("chat-canvas-button") ? "is-quest-hint" : ""}" type="button" id="view-agent-canvas" aria-label="${escapeHtml(getAgentCanvasForSession(activeSession) ? "View agent canvas" : "How to publish a canvas")}" ${tooltipAttributes(getAgentCanvasForSession(activeSession) ? "View canvas" : "Publish a canvas")} ${activeSession ? "" : "disabled"}>${renderIcon(ImageIcon)}</button>
+            </div>
             <button class="icon-button" type="button" id="refresh-sessions" aria-label="Refresh sessions" ${tooltipAttributes("Refresh sessions")}>${renderIcon(RefreshCw)}</button>
           </div>
         </div>
@@ -30145,6 +30168,10 @@ function bindSessionEvents() {
 
       if (hasSelectedDocumentTextWithin(element)) {
         return;
+      }
+
+      if (state.questHint?.anchor === "sidebar-session") {
+        setQuestHint("chat-canvas-button", "Click here to see the canvas your agent publishes");
       }
 
       const nextSessionId = element.getAttribute("data-session-id");
@@ -35353,6 +35380,9 @@ function bindShellEvents() {
   document.querySelectorAll("[data-start-new-agent]").forEach((button) => {
     button.addEventListener("click", async (event) => {
       event.preventDefault();
+      if (state.questHint?.anchor === "sidebar-session") {
+        setQuestHint("chat-canvas-button", "Click here to see the canvas your agent publishes");
+      }
       await startNewAgentFromUi({
         openInTown: button.getAttribute("data-start-new-agent") === "town",
       });
@@ -35725,6 +35755,11 @@ function bindShellEvents() {
   });
 
   document.querySelector("#refresh-sessions")?.addEventListener("click", () => loadSessions());
+
+  document.querySelector("#view-agent-canvas")?.addEventListener("click", (event) => {
+    event.preventDefault();
+    handleViewAgentCanvasClick();
+  });
   document.querySelector("#refresh-agent-prompt")?.addEventListener("click", async () => {
     const textarea = document.querySelector("#agent-prompt-textarea");
     const hasUnsavedChanges =
