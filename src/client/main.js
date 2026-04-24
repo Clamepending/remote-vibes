@@ -470,8 +470,102 @@ const WORKSPACE_GROUPS_STORAGE_KEY = "vibe-research-workspace-groups-v1";
 const AGENT_TOWN_LAYOUT_STORAGE_KEY = "vibe-research-agent-town-layout-v1";
 const AGENT_TOWN_THEME_STORAGE_KEY = "vibe-research-agent-town-theme-v1";
 const AGENT_TOWN_DOG_NAME_STORAGE_KEY = "vibe-research-agent-town-dog-name-v1";
+const GUIDED_ONBOARDING_STORAGE_KEY = "vibe-research-guided-onboarding-v2";
 const AGENT_TOWN_DOG_NAME_DEFAULT = "Dog";
 const AGENT_TOWN_DOG_NAME_MAX_LENGTH = 14;
+const GUIDED_ONBOARDING_EVENT_TYPES = Object.freeze({
+  helloSent: "guided_onboarding_hello_sent",
+  helloResponse: "guided_onboarding_hello_response",
+  buildRequestSent: "guided_onboarding_build_request_sent",
+  firstDayCalendarRequest: "guided_onboarding_first_day_calendar_request",
+});
+const GUIDED_ONBOARDING_STEPS = Object.freeze([
+  {
+    id: "welcome",
+    title: "Welcome to our agent village!",
+    body: "This walkthrough is deterministic: one fixed path, one step at a time.",
+    note: "Follow the arrow and instruction text exactly.",
+    manualAdvance: true,
+    manualLabel: "Start tutorial",
+  },
+  {
+    id: "click-agent",
+    title: "Step 1",
+    body: "Tap an agent on the map to talk to it.",
+    ensureView: "visual-interface",
+  },
+  {
+    id: "say-hello",
+    title: "Step 2",
+    body: "Say hello in the textbox and press Enter.",
+    ensureView: "visual-interface",
+  },
+  {
+    id: "say-build-first-building",
+    title: "Step 3",
+    body: "After the response, type lets build our first building.",
+    ensureView: "visual-interface",
+  },
+  {
+    id: "open-buildinghub",
+    title: "Step 4",
+    body: "Go to BuilderHub from the wrench button.",
+    ensureView: "visual-interface",
+  },
+  {
+    id: "search-google-calendar",
+    title: "Step 5",
+    body: "Search for Google Calendar.",
+    ensureView: "visual-interface",
+    requireBuilderOpen: true,
+    requireBuilderTab: "functional",
+    autoOpenBuilder: true,
+  },
+  {
+    id: "install-google-calendar",
+    title: "Step 6",
+    body: "Click Install on Google Calendar.",
+    ensureView: "visual-interface",
+    requireBuilderOpen: true,
+    requireBuilderTab: "functional",
+    autoOpenBuilder: true,
+  },
+  {
+    id: "place-google-calendar",
+    title: "Step 7",
+    body: "Place the building on the map.",
+    ensureView: "visual-interface",
+    requireBuilderOpen: true,
+    requireBuilderTab: "functional",
+    autoOpenBuilder: true,
+  },
+  {
+    id: "signin-google-calendar",
+    title: "Step 8",
+    body: "Click Press setup to finish Google Calendar access.",
+    ensureView: "plugins",
+    ensurePluginDetail: "google-calendar",
+  },
+  {
+    id: "tap-agent-again",
+    title: "Step 9",
+    body: "Congratulations! Tap an agent again.",
+    ensureView: "visual-interface",
+  },
+  {
+    id: "first-event",
+    title: "Step 10",
+    body: "Ask it to add an event commemorating your first day on vibe-research.",
+    ensureView: "visual-interface",
+  },
+  {
+    id: "finish",
+    title: "Done",
+    body: "To add more services like Gmail, camera tools, Drive, iMessage, and Telegram: install the building, place it, then run setup.",
+    manualAdvance: true,
+    manualLabel: "Finish tutorial",
+  },
+]);
 const SIDEBAR_DEFAULT_WIDTH = 276;
 const SIDEBAR_MIN_WIDTH = 220;
 const SIDEBAR_MAX_WIDTH = 520;
@@ -10542,10 +10636,10 @@ function renderAgentCanvasPanel(session, selection = state.agentProfile) {
             : ""
         }
       </div>
-      <div class="agent-canvas-stage">
+      <div class="agent-canvas-stage" data-agent-canvas-stage data-agent-canvas-stage-id="${escapeHtml(canvas.id)}" style="${getAgentCanvasTransformStyle(canvas.id)}">
         ${
           imageSrc
-            ? `<img src="${escapeHtml(imageSrc)}" alt="${escapeHtml(canvas.alt || title)}" loading="lazy" decoding="async" />`
+            ? `<img src="${escapeHtml(imageSrc)}" alt="${escapeHtml(canvas.alt || title)}" loading="lazy" decoding="async" draggable="false" />`
             : `<div class="blank-state">empty canvas</div>`
         }
       </div>
@@ -10597,6 +10691,7 @@ function refreshAgentCanvasUi() {
       host.setAttribute("data-agent-canvas-signature", signature);
       host.innerHTML = renderAgentCanvasPanel(session);
       bindAgentCanvasWindowDrag(host);
+      bindAgentCanvasStageEvents(host);
       if (!signature) {
         clearAgentCanvasFloatingPosition(host);
       }
@@ -10636,6 +10731,185 @@ function setAgentCanvasFloatingPosition(host, boundaryRect, hostRect, clientX, c
   const top = clamp(clientY - boundaryRect.top - offsetY, edge, maxTop);
   host.style.setProperty("--agent-canvas-window-left", `${Math.round(left)}px`);
   host.style.setProperty("--agent-canvas-window-top", `${Math.round(top)}px`);
+}
+
+const AGENT_CANVAS_MIN_ZOOM = 1;
+const AGENT_CANVAS_MAX_ZOOM = 8;
+const agentCanvasTransforms = new Map();
+
+function getAgentCanvasTransform(canvasId) {
+  const id = String(canvasId || "");
+  const cached = agentCanvasTransforms.get(id);
+  if (cached) {
+    return cached;
+  }
+
+  const entry = { zoom: 1, offsetX: 0, offsetY: 0 };
+  if (id) {
+    agentCanvasTransforms.set(id, entry);
+  }
+  return entry;
+}
+
+function setAgentCanvasTransform(canvasId, { zoom, offsetX, offsetY } = {}) {
+  const id = String(canvasId || "");
+  if (!id) {
+    return { zoom: 1, offsetX: 0, offsetY: 0 };
+  }
+
+  const current = getAgentCanvasTransform(id);
+  const nextZoomRaw = Number.isFinite(Number(zoom)) ? Number(zoom) : current.zoom;
+  const nextZoom = clamp(nextZoomRaw, AGENT_CANVAS_MIN_ZOOM, AGENT_CANVAS_MAX_ZOOM);
+  const resetPan = nextZoom <= AGENT_CANVAS_MIN_ZOOM + 0.001;
+  const next = {
+    zoom: nextZoom,
+    offsetX: resetPan ? 0 : (Number.isFinite(Number(offsetX)) ? Number(offsetX) : current.offsetX),
+    offsetY: resetPan ? 0 : (Number.isFinite(Number(offsetY)) ? Number(offsetY) : current.offsetY),
+  };
+  agentCanvasTransforms.set(id, next);
+  return next;
+}
+
+function getAgentCanvasTransformStyle(canvasId) {
+  const { zoom, offsetX, offsetY } = getAgentCanvasTransform(canvasId);
+  return `--agent-canvas-zoom:${zoom};--agent-canvas-x:${offsetX}px;--agent-canvas-y:${offsetY}px;`;
+}
+
+function applyAgentCanvasTransformToStage(stage) {
+  if (!(stage instanceof HTMLElement)) {
+    return;
+  }
+
+  const canvasId = stage.getAttribute("data-agent-canvas-stage-id") || "";
+  const { zoom, offsetX, offsetY } = getAgentCanvasTransform(canvasId);
+  stage.style.setProperty("--agent-canvas-zoom", String(zoom));
+  stage.style.setProperty("--agent-canvas-x", `${offsetX}px`);
+  stage.style.setProperty("--agent-canvas-y", `${offsetY}px`);
+}
+
+function zoomAgentCanvasAt(stage, nextZoom, anchorClientPoint) {
+  if (!(stage instanceof HTMLElement)) {
+    return;
+  }
+
+  const canvasId = stage.getAttribute("data-agent-canvas-stage-id") || "";
+  const clampedZoom = clamp(nextZoom, AGENT_CANVAS_MIN_ZOOM, AGENT_CANVAS_MAX_ZOOM);
+  const current = getAgentCanvasTransform(canvasId);
+  if (clampedZoom <= AGENT_CANVAS_MIN_ZOOM + 0.001) {
+    setAgentCanvasTransform(canvasId, { zoom: clampedZoom, offsetX: 0, offsetY: 0 });
+    applyAgentCanvasTransformToStage(stage);
+    return;
+  }
+
+  const rect = stage.getBoundingClientRect();
+  const anchorX = (anchorClientPoint?.clientX ?? (rect.left + rect.width / 2)) - rect.left - rect.width / 2;
+  const anchorY = (anchorClientPoint?.clientY ?? (rect.top + rect.height / 2)) - rect.top - rect.height / 2;
+  const ratio = clampedZoom / current.zoom;
+  setAgentCanvasTransform(canvasId, {
+    zoom: clampedZoom,
+    offsetX: anchorX - (anchorX - current.offsetX) * ratio,
+    offsetY: anchorY - (anchorY - current.offsetY) * ratio,
+  });
+  applyAgentCanvasTransformToStage(stage);
+}
+
+function bindAgentCanvasStageEvents(root = document) {
+  root.querySelectorAll?.("[data-agent-canvas-stage]").forEach((stage) => {
+    if (!(stage instanceof HTMLElement) || stage.dataset.agentCanvasStageBound === "true") {
+      return;
+    }
+
+    stage.dataset.agentCanvasStageBound = "true";
+    applyAgentCanvasTransformToStage(stage);
+
+    stage.addEventListener(
+      "wheel",
+      (event) => {
+        if (!stage.querySelector("img")) {
+          return;
+        }
+
+        event.preventDefault();
+        event.stopPropagation();
+        const canvasId = stage.getAttribute("data-agent-canvas-stage-id") || "";
+        const current = getAgentCanvasTransform(canvasId);
+        const multiplier = event.deltaY > 0 ? 1 / 1.12 : 1.12;
+        zoomAgentCanvasAt(stage, current.zoom * multiplier, {
+          clientX: event.clientX,
+          clientY: event.clientY,
+        });
+      },
+      { passive: false },
+    );
+
+    stage.addEventListener("pointerdown", (event) => {
+      if (event.button !== 0 || !stage.querySelector("img")) {
+        return;
+      }
+
+      event.preventDefault();
+      event.stopPropagation();
+      const canvasId = stage.getAttribute("data-agent-canvas-stage-id") || "";
+      const start = getAgentCanvasTransform(canvasId);
+      const dragState = {
+        pointerId: event.pointerId,
+        clientX: event.clientX,
+        clientY: event.clientY,
+        offsetX: start.offsetX,
+        offsetY: start.offsetY,
+        canvasId,
+      };
+      stage.dataset.dragging = JSON.stringify(dragState);
+      stage.classList.add("is-panning");
+      stage.setPointerCapture?.(event.pointerId);
+    });
+
+    stage.addEventListener("pointermove", (event) => {
+      if (!stage.dataset.dragging) {
+        return;
+      }
+
+      let dragState;
+      try {
+        dragState = JSON.parse(stage.dataset.dragging);
+      } catch {
+        dragState = null;
+      }
+
+      if (!dragState || dragState.pointerId !== event.pointerId) {
+        return;
+      }
+
+      setAgentCanvasTransform(dragState.canvasId, {
+        offsetX: dragState.offsetX + event.clientX - dragState.clientX,
+        offsetY: dragState.offsetY + event.clientY - dragState.clientY,
+      });
+      applyAgentCanvasTransformToStage(stage);
+    });
+
+    const endPan = (event) => {
+      if (stage.dataset.dragging) {
+        stage.releasePointerCapture?.(event.pointerId);
+      }
+      stage.dataset.dragging = "";
+      stage.classList.remove("is-panning");
+    };
+
+    stage.addEventListener("pointerup", endPan);
+    stage.addEventListener("pointercancel", endPan);
+    stage.addEventListener("lostpointercapture", () => {
+      stage.dataset.dragging = "";
+      stage.classList.remove("is-panning");
+    });
+
+    stage.addEventListener("dblclick", (event) => {
+      event.preventDefault();
+      event.stopPropagation();
+      const canvasId = stage.getAttribute("data-agent-canvas-stage-id") || "";
+      setAgentCanvasTransform(canvasId, { zoom: 1, offsetX: 0, offsetY: 0 });
+      applyAgentCanvasTransformToStage(stage);
+    });
+  });
 }
 
 function bindAgentCanvasWindowDrag(root = document) {
@@ -31658,6 +31932,7 @@ function bindShellEvents() {
   ensureSessionProviderPickerGlobalListeners();
   bindSessionProviderPicker();
   bindAgentCanvasWindowDrag();
+  bindAgentCanvasStageEvents();
   bindFolderPickerDragEvents();
   bindLayoutResizeEvents();
   bindWorkspaceTabEvents();
