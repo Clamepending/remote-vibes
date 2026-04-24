@@ -68,9 +68,16 @@ function installerPath() {
   return path.join(sourceRootDir(), "install.sh");
 }
 
+let bundledSecrets = { GOOGLE_OAUTH_CLIENT_ID: "", GOOGLE_OAUTH_CLIENT_SECRET: "" };
+try {
+  bundledSecrets = { ...bundledSecrets, ...require("./bundled-secrets.cjs") };
+} catch {
+  // Optional file — if missing, fall back to BYO OAuth behavior.
+}
+
 function desktopEnv(extra = {}) {
   const workspaceDir = isMacAppStoreBuild ? path.join(app.getPath("userData"), "workspace") : path.join(os.homedir(), "vibe-projects");
-  return {
+  const env = {
     ...process.env,
     VIBE_RESEARCH_HOME: installedAppDir(),
     REMOTE_VIBES_HOME: installedAppDir(),
@@ -83,6 +90,15 @@ function desktopEnv(extra = {}) {
     REMOTE_VIBES_OPEN_BROWSER: "0",
     ...extra,
   };
+  // Only inject defaults when the user has not supplied their own — lets
+  // power users override via their shell env.
+  if (!env.VIBE_RESEARCH_GOOGLE_OAUTH_CLIENT_ID && bundledSecrets.GOOGLE_OAUTH_CLIENT_ID) {
+    env.VIBE_RESEARCH_GOOGLE_OAUTH_CLIENT_ID = bundledSecrets.GOOGLE_OAUTH_CLIENT_ID;
+  }
+  if (!env.VIBE_RESEARCH_GOOGLE_OAUTH_CLIENT_SECRET && bundledSecrets.GOOGLE_OAUTH_CLIENT_SECRET) {
+    env.VIBE_RESEARCH_GOOGLE_OAUTH_CLIENT_SECRET = bundledSecrets.GOOGLE_OAUTH_CLIENT_SECRET;
+  }
+  return env;
 }
 
 function sendStatus(payload) {

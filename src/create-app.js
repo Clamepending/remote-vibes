@@ -2665,14 +2665,15 @@ export async function createVibeResearchApp({
       return;
     }
 
-    const origin = getRequestOrigin(request);
-    if (!origin) {
+    const callbackPort = exposedPort || port;
+    if (!callbackPort) {
       response.status(500).send(renderGoogleOAuthPopupPage({
         buildingId,
         message: "Could not determine callback URL for Google OAuth.",
       }));
       return;
     }
+    const redirectUri = `http://127.0.0.1:${callbackPort}/api/google/oauth/callback`;
 
     pruneGoogleOAuthStates();
     const stateToken = randomUUID();
@@ -2683,7 +2684,7 @@ export async function createVibeResearchApp({
 
     const authUrl = new URL("https://accounts.google.com/o/oauth2/v2/auth");
     authUrl.searchParams.set("client_id", clientId);
-    authUrl.searchParams.set("redirect_uri", `${origin}/api/google/oauth/callback`);
+    authUrl.searchParams.set("redirect_uri", redirectUri);
     authUrl.searchParams.set("response_type", "code");
     authUrl.searchParams.set("scope", flow.scopes.join(" "));
     authUrl.searchParams.set("state", stateToken);

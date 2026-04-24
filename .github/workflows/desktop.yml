@@ -32,6 +32,21 @@ jobs:
       - name: Install desktop dependencies
         run: npm --prefix desktop ci
 
+      - name: Bake Google OAuth defaults into the desktop build
+        if: env.GOOGLE_OAUTH_CLIENT_ID != ''
+        run: |
+          node - <<'NODE'
+          const fs = require("node:fs");
+          const path = require("node:path");
+          const target = path.join("desktop", "src", "bundled-secrets.cjs");
+          const body = `module.exports = {\n  GOOGLE_OAUTH_CLIENT_ID: ${JSON.stringify(process.env.GOOGLE_OAUTH_CLIENT_ID || "")},\n  GOOGLE_OAUTH_CLIENT_SECRET: ${JSON.stringify(process.env.GOOGLE_OAUTH_CLIENT_SECRET || "")},\n};\n`;
+          fs.writeFileSync(target, body);
+          console.log("wrote " + target);
+          NODE
+        env:
+          GOOGLE_OAUTH_CLIENT_ID: ${{ secrets.GOOGLE_OAUTH_CLIENT_ID }}
+          GOOGLE_OAUTH_CLIENT_SECRET: ${{ secrets.GOOGLE_OAUTH_CLIENT_SECRET }}
+
       - name: Require signing and notarization secrets for release tags
         if: startsWith(github.ref, 'refs/tags/v')
         run: |
