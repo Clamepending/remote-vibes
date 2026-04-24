@@ -57,6 +57,65 @@ async function createTempWorkspace(prefix) {
   return mkdtemp(path.join(os.tmpdir(), prefix));
 }
 
+async function writeCodexNativeTranscript(homeDir, { sessionId, cwd, assistantText, timestamp = "2026-04-24T03:39:35.952Z" }) {
+  const date = new Date(timestamp);
+  const dayDir = path.join(
+    homeDir,
+    ".codex",
+    "sessions",
+    String(date.getFullYear()).padStart(4, "0"),
+    String(date.getMonth() + 1).padStart(2, "0"),
+    String(date.getDate()).padStart(2, "0"),
+  );
+  await mkdir(dayDir, { recursive: true });
+  const fileName = `rollout-${timestamp.replaceAll(":", "-")}-${sessionId}.jsonl`;
+  const lines = [
+    {
+      timestamp,
+      type: "session_meta",
+      payload: {
+        id: sessionId,
+        timestamp,
+        cwd,
+      },
+    },
+    {
+      timestamp,
+      type: "response_item",
+      payload: {
+        type: "message",
+        role: "assistant",
+        content: [{ type: "output_text", text: assistantText }],
+      },
+    },
+  ];
+  await writeFile(path.join(dayDir, fileName), `${lines.map((line) => JSON.stringify(line)).join("\n")}\n`, "utf8");
+}
+
+async function writeClaudeNativeTranscript(homeDir, { sessionId, cwd, assistantText, timestamp = "2026-04-24T04:10:00.000Z" }) {
+  const projectDir = path.join(homeDir, ".claude", "projects", path.resolve(cwd).replaceAll(path.sep, "-"));
+  await mkdir(projectDir, { recursive: true });
+  const lines = [
+    {
+      type: "assistant",
+      timestamp,
+      message: {
+        role: "assistant",
+        content: [{ type: "text", text: assistantText }],
+      },
+    },
+  ];
+  await writeFile(path.join(projectDir, `${sessionId}.jsonl`), `${lines.map((line) => JSON.stringify(line)).join("\n")}\n`, "utf8");
+}
+
+function getNativeSessionTestProviders() {
+  return [
+    { id: "claude", label: "Claude Code", available: true, command: "/bin/sh", launchCommand: "/bin/sh", defaultName: "Claude" },
+    { id: "codex", label: "Codex", available: true, command: "/bin/sh", launchCommand: "/bin/sh", defaultName: "Codex" },
+    { id: "shell", label: "Vanilla Shell", available: true, command: null, launchCommand: null, defaultName: "Shell" },
+  ];
+}
+
 async function unlockBuildingHub(baseUrl, provider = "github") {
   const response = await fetch(`${baseUrl}/api/settings`, {
     method: "PATCH",
@@ -6400,6 +6459,220 @@ test("library markdown viewer renders image, GIF, and video media links", async 
     await browser?.close().catch(() => {});
     await app.close();
     await removeTempWorkspace(workspaceDir);
+  }
+});
+
+test("native Codex session view renders markdown tables, code blocks, and symbols", async (t) => {
+  const executablePath = await resolveBrowserExecutablePath({ env: process.env });
+  if (!executablePath) {
+    t.skip("No local Chromium/Chrome executable is available for the native Codex markdown smoke.");
+    return;
+  }
+
+  const workspaceDir = await createTempWorkspace("vibe-research-native-codex-markdown-");
+  const userHomeDir = await createTempWorkspace("vibe-research-native-codex-home-");
+  const previousHome = process.env.HOME;
+  process.env.HOME = userHomeDir;
+
+  let app;
+  let browser;
+  let baseUrl = "";
+
+  try {
+    ({ app, baseUrl } = await startApp({
+      cwd: workspaceDir,
+      providers: getNativeSessionTestProviders(),
+    }));
+
+    const wikiDir = path.join(workspaceDir, "brain");
+    await mkdir(wikiDir, { recursive: true });
+    const settingsResponse = await fetch(`${baseUrl}/api/settings`, {
+      method: "PATCH",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ wikiPath: wikiDir }),
+    });
+    assert.equal(settingsResponse.status, 200);
+
+    const createResponse = await fetch(`${baseUrl}/api/sessions`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        providerId: "codex",
+        cwd: workspaceDir,
+        name: "Native Codex Markdown",
+      }),
+    });
+    assert.equal(createResponse.status, 201);
+    const { session } = await createResponse.json();
+
+    await writeCodexNativeTranscript(userHomeDir, {
+      sessionId: session.id,
+      cwd: workspaceDir,
+      assistantText: [
+        "## Codex Card",
+        "",
+        "Symbols: >= <= -> ∑ and ≤ ≥ → stay visible.",
+        "",
+        "| Column | Value |",
+        "| --- | --- |",
+        "| provider | codex |",
+        "| inline | `render()` |",
+        "",
+        "```js",
+        "console.log(\"codex\");",
+        "```",
+      ].join("\n"),
+    });
+
+    browser = await chromium.launch({ executablePath, headless: true });
+    const page = await browser.newPage();
+    await page.goto(baseUrl, { waitUntil: "domcontentloaded" });
+    await page.locator("#toggle-shell-surface-native").click();
+    await page.waitForSelector(".rich-session-entry.is-assistant .knowledge-base-table", { timeout: 10_000 });
+
+    const rendered = await page.evaluate(() => {
+      const assistant = document.querySelector(".rich-session-entry.is-assistant");
+      const table = assistant?.querySelector(".knowledge-base-table");
+      const inlineCode = Array.from(assistant?.querySelectorAll("code") || []).find((node) => !node.closest("pre"));
+      return {
+        heading: assistant?.querySelector("h2")?.textContent?.trim() || "",
+        text: assistant?.textContent || "",
+        headers: Array.from(table?.querySelectorAll("thead th") || [], (cell) => cell.textContent.trim()),
+        rows: Array.from(table?.querySelectorAll("tbody tr") || [], (row) =>
+          Array.from(row.querySelectorAll("td"), (cell) => cell.textContent.trim()),
+        ),
+        inlineCode: inlineCode?.textContent || "",
+        codeBlock: assistant?.querySelector(".knowledge-base-code")?.textContent || "",
+      };
+    });
+
+    assert.equal(rendered.heading, "Codex Card");
+    assert.deepEqual(rendered.headers, ["Column", "Value"]);
+    assert.deepEqual(rendered.rows, [
+      ["provider", "codex"],
+      ["inline", "render()"],
+    ]);
+    assert.equal(rendered.inlineCode, "render()");
+    assert.match(rendered.codeBlock, /console\.log\("codex"\);/);
+    assert.match(rendered.text, /Symbols: >= <= -> ∑ and ≤ ≥ → stay visible\./);
+    assert.doesNotMatch(rendered.text, /\|\s*---\s*\|/);
+  } finally {
+    if (previousHome === undefined) {
+      delete process.env.HOME;
+    } else {
+      process.env.HOME = previousHome;
+    }
+    await browser?.close().catch(() => {});
+    await app?.close();
+    await removeTempWorkspace(workspaceDir);
+    await removeTempWorkspace(userHomeDir);
+  }
+});
+
+test("native Claude session view renders markdown tables, code blocks, and symbols", async (t) => {
+  const executablePath = await resolveBrowserExecutablePath({ env: process.env });
+  if (!executablePath) {
+    t.skip("No local Chromium/Chrome executable is available for the native Claude markdown smoke.");
+    return;
+  }
+
+  const workspaceDir = await createTempWorkspace("vibe-research-native-claude-markdown-");
+  const userHomeDir = await createTempWorkspace("vibe-research-native-claude-home-");
+  const previousHome = process.env.HOME;
+  process.env.HOME = userHomeDir;
+
+  let app;
+  let browser;
+  let baseUrl = "";
+
+  try {
+    ({ app, baseUrl } = await startApp({
+      cwd: workspaceDir,
+      providers: getNativeSessionTestProviders(),
+    }));
+
+    const wikiDir = path.join(workspaceDir, "brain");
+    await mkdir(wikiDir, { recursive: true });
+    const settingsResponse = await fetch(`${baseUrl}/api/settings`, {
+      method: "PATCH",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ wikiPath: wikiDir }),
+    });
+    assert.equal(settingsResponse.status, 200);
+
+    const createResponse = await fetch(`${baseUrl}/api/sessions`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        providerId: "claude",
+        cwd: workspaceDir,
+        name: "Native Claude Markdown",
+      }),
+    });
+    assert.equal(createResponse.status, 201);
+    const { session } = await createResponse.json();
+
+    await writeClaudeNativeTranscript(userHomeDir, {
+      sessionId: session.id,
+      cwd: workspaceDir,
+      assistantText: [
+        "## Claude Card",
+        "",
+        "Symbols: >= <= -> ∑ and ≤ ≥ → stay visible.",
+        "",
+        "| Column | Value |",
+        "| --- | --- |",
+        "| provider | claude |",
+        "| inline | `render()` |",
+        "",
+        "```js",
+        "console.log(\"claude\");",
+        "```",
+      ].join("\n"),
+    });
+
+    browser = await chromium.launch({ executablePath, headless: true });
+    const page = await browser.newPage();
+    await page.goto(baseUrl, { waitUntil: "domcontentloaded" });
+    await page.locator("#toggle-shell-surface-native").click();
+    await page.waitForSelector(".rich-session-entry.is-assistant .knowledge-base-table", { timeout: 10_000 });
+
+    const rendered = await page.evaluate(() => {
+      const assistant = document.querySelector(".rich-session-entry.is-assistant");
+      const table = assistant?.querySelector(".knowledge-base-table");
+      const inlineCode = Array.from(assistant?.querySelectorAll("code") || []).find((node) => !node.closest("pre"));
+      return {
+        heading: assistant?.querySelector("h2")?.textContent?.trim() || "",
+        text: assistant?.textContent || "",
+        headers: Array.from(table?.querySelectorAll("thead th") || [], (cell) => cell.textContent.trim()),
+        rows: Array.from(table?.querySelectorAll("tbody tr") || [], (row) =>
+          Array.from(row.querySelectorAll("td"), (cell) => cell.textContent.trim()),
+        ),
+        inlineCode: inlineCode?.textContent || "",
+        codeBlock: assistant?.querySelector(".knowledge-base-code")?.textContent || "",
+      };
+    });
+
+    assert.equal(rendered.heading, "Claude Card");
+    assert.deepEqual(rendered.headers, ["Column", "Value"]);
+    assert.deepEqual(rendered.rows, [
+      ["provider", "claude"],
+      ["inline", "render()"],
+    ]);
+    assert.equal(rendered.inlineCode, "render()");
+    assert.match(rendered.codeBlock, /console\.log\("claude"\);/);
+    assert.match(rendered.text, /Symbols: >= <= -> ∑ and ≤ ≥ → stay visible\./);
+    assert.doesNotMatch(rendered.text, /\|\s*---\s*\|/);
+  } finally {
+    if (previousHome === undefined) {
+      delete process.env.HOME;
+    } else {
+      process.env.HOME = previousHome;
+    }
+    await browser?.close().catch(() => {});
+    await app?.close();
+    await removeTempWorkspace(workspaceDir);
+    await removeTempWorkspace(userHomeDir);
   }
 });
 

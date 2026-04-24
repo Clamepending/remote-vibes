@@ -4824,6 +4824,42 @@ function isRichSessionThinkingEntry(entry) {
   return /^thinking$/iu.test(label) || /(?:^|\s)is thinking(?:\.\.\.)?$/iu.test(text);
 }
 
+function isRichSessionMarkdownContent(text) {
+  const normalized = String(text || "").replace(/\r\n/g, "\n");
+  if (!normalized.trim()) {
+    return false;
+  }
+
+  const lines = normalized.split("\n");
+  if (
+    lines.some((line, index) => (
+      /^```/.test(line.trim())
+      || /^#{1,6}\s+/.test(line)
+      || /^>\s?/.test(line)
+      || /^\s*(?:[-*+]\s+|\d+\.\s+)/.test(line)
+      || /^([-*_]){3,}\s*$/.test(line.trim())
+      || isMarkdownTableStart(lines, index)
+    ))
+  ) {
+    return true;
+  }
+
+  return /`[^`]+`|\*\*[^*]+\*\*|~~[^~]+~~|!\[[^\]]*\]\([^)]+\)|\[[^\]]+\]\([^)]+\)|\[\[[^\]]+\]\]/u.test(normalized);
+}
+
+function renderRichSessionAssistantBody(text) {
+  const normalized = String(text || "");
+  if (!isRichSessionMarkdownContent(normalized)) {
+    return `<div class="rich-session-entry-copy">${escapeHtml(normalized)}</div>`;
+  }
+
+  return `
+    <div class="rich-session-entry-markdown knowledge-base-markdown">
+      ${renderKnowledgeBaseMarkdown(normalized, "")}
+    </div>
+  `;
+}
+
 function renderRichSessionEntry(entry, index) {
   const kind = ["assistant", "user", "tool", "status", "system"].includes(entry?.kind) ? entry.kind : "assistant";
   const label = getRichSessionEntryLabel(entry);
@@ -4856,7 +4892,7 @@ function renderRichSessionEntry(entry, index) {
   if (kind === "assistant") {
     return `
       <article class="${entryClassName}" data-rich-session-entry="${index}">
-        <div class="rich-session-entry-copy">${body}</div>
+        ${renderRichSessionAssistantBody(entry?.text || "")}
         ${meta ? `<div class="rich-session-entry-tail">${escapeHtml(meta)}</div>` : ""}
       </article>
     `;
