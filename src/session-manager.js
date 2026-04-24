@@ -30,6 +30,7 @@ import {
   classifyPromptEntry,
   loadProviderBackedNarrative,
 } from "./session-native-narrative.js";
+import { ClaudeStreamSession } from "./claude-stream-session.js";
 import { SessionStore } from "./session-store.js";
 import { getLegacyWorkspaceStateDir, getVibeResearchStateDir, getVibeResearchSystemDir } from "./state-paths.js";
 
@@ -144,6 +145,15 @@ function isClaudeOllamaProviderId(providerId) {
 function isClaudeProviderId(providerId) {
   const normalizedProviderId = String(providerId || "").trim().toLowerCase();
   return normalizedProviderId === "claude" || normalizedProviderId === CLAUDE_OLLAMA_PROVIDER_ID;
+}
+
+function isClaudeStreamModeEnabled(env = process.env) {
+  const value = String(
+    env?.VIBE_RESEARCH_CLAUDE_STREAM_MODE
+      || env?.REMOTE_VIBES_CLAUDE_STREAM_MODE
+      || "",
+  ).trim();
+  return /^(?:1|true|on|yes)$/i.test(value);
 }
 
 function getClaudeOllamaBaseUrl(env = process.env) {
@@ -2661,6 +2671,20 @@ export class SessionManager {
       return null;
     }
 
+    if (session.streamMode || session.streamSession) {
+      const streamEntries = Array.isArray(session.streamEntries) ? session.streamEntries.slice(-maxEntries) : [];
+      const nativeEntries = this.getNativeNarrativeEntries(session, { maxEntries, includePlaceholder: streamEntries.length === 0 });
+      const merged = mergeNarrativeEntries(nativeEntries, streamEntries, maxEntries);
+      return {
+        providerId: session.providerId,
+        providerLabel: session.providerLabel,
+        providerBacked: true,
+        sourceLabel: "Claude stream-mode JSONL",
+        updatedAt: session.lastOutputAt || session.updatedAt || session.createdAt,
+        entries: merged,
+      };
+    }
+
     const serializedSession = this.serializeSession(session);
     const nativeEntries = this.getNativeNarrativeEntries(session, { maxEntries, includePlaceholder: false });
     const recentInputTexts = getRecentNarrativeInputTexts(nativeEntries);
@@ -3197,6 +3221,8 @@ export class SessionManager {
       autoRenameEnabled: shouldAutoRenameFromPrompt(provider, normalizedName || provider.defaultName, !normalizedName),
     });
 
+    session.streamMode = isClaudeStreamModeEnabled(this.env) && isClaudeProviderId(provider.id);
+
     this.sessions.set(session.id, session);
     this.pushNativeNarrativeEntry(session, {
       kind: "status",
@@ -3393,6 +3419,15 @@ export class SessionManager {
 
     this.killPersistentTerminal(session);
 
+    if (session.streamSession) {
+      try {
+        session.streamSession.close();
+      } catch (error) {
+        console.warn("[vibe-research] error closing claude stream session", error);
+      }
+      session.streamSession = null;
+    }
+
     if (session.status !== "exited" && session.pty) {
       session.pty.kill();
     }
@@ -3430,7 +3465,15 @@ export class SessionManager {
   write(sessionId, input) {
     const session = this.sessions.get(sessionId);
 
-    if (!session || session.status === "exited" || !session.pty) {
+    if (!session || session.status === "exited") {
+      return false;
+    }
+
+    if (session.streamSession) {
+      return this.writeToClaudeStreamSession(session, input);
+    }
+
+    if (!session.pty) {
       return false;
     }
 
@@ -3439,6 +3482,47 @@ export class SessionManager {
     }
 
     return this.performSessionWrite(session, input);
+  }
+
+  writeToClaudeStreamSession(session, input) {
+    if (!session?.streamSession) {
+      return false;
+    }
+    session.streamInputBuffer = `${session.streamInputBuffer || ""}${String(input ?? "")}`;
+    const lines = session.streamInputBuffer.split(/\r\n?|\n/);
+    session.streamInputBuffer = lines.pop() ?? "";
+    let sentAny = false;
+    for (const rawLine of lines) {
+      const line = rawLine.trim();
+      if (!line) {
+        continue;
+      }
+      try {
+        session.streamSession.send(line);
+        this.pushNativeNarrativeEntry(session, {
+          kind: "user",
+          label: "You",
+          text: line,
+          timestamp: new Date().toISOString(),
+        });
+        session.lastPromptAt = new Date().toISOString();
+        sentAny = true;
+      } catch (error) {
+        this.pushNativeNarrativeEntry(session, {
+          kind: "status",
+          label: "Error",
+          text: `Failed to send to stream: ${error.message}`,
+          timestamp: new Date().toISOString(),
+          meta: "stream-mode",
+        });
+      }
+    }
+    if (sentAny) {
+      session.updatedAt = new Date().toISOString();
+      this.scheduleSessionMetaBroadcast(session, { immediate: true });
+      this.schedulePersist();
+    }
+    return sentAny;
   }
 
   resize(sessionId, cols, rows) {
@@ -3711,6 +3795,7 @@ export class SessionManager {
       activityCompletedAt: session.activityCompletedAt,
       backgroundActivity,
       subagents,
+      streamMode: Boolean(session.streamMode),
     };
   }
 
@@ -3740,6 +3825,7 @@ export class SessionManager {
     providerState = null,
     autoRenameEnabled = false,
     occupationId = this.occupationId,
+    streamMode = false,
   }) {
     return {
       id,
@@ -3799,6 +3885,10 @@ export class SessionManager {
       providerCapturePromise: null,
       providerCaptureRetryTimer: null,
       skipExitHandling: false,
+      streamMode: Boolean(streamMode),
+      streamSession: null,
+      streamInputBuffer: "",
+      streamEntries: [],
     };
   }
 
@@ -4602,6 +4692,11 @@ export class SessionManager {
   }
 
   startSession(session, provider, { restored = false } = {}) {
+    if (session.streamMode) {
+      this.startClaudeStreamSession(session, provider, { restored });
+      return;
+    }
+
     const sessionCwd = resolveCwd(session.cwd, this.cwd);
     session.cwd = sessionCwd;
     const sessionEnv = this.buildSessionEnvironment(session, provider.id);
@@ -4793,6 +4888,125 @@ export class SessionManager {
     }
   }
 
+  startClaudeStreamSession(session, provider, { restored = false } = {}) {
+    const sessionCwd = resolveCwd(session.cwd, this.cwd);
+    session.cwd = sessionCwd;
+    const sessionEnv = this.buildSessionEnvironment(session, provider.id);
+    writeProviderCredentialEnvFile(sessionEnv);
+
+    if (restored) {
+      // Stream-mode child processes don't survive a server restart. Mark the
+      // session exited and let the user start a new one.
+      session.status = "exited";
+      session.exitCode = null;
+      session.exitSignal = null;
+      session.streamSession = null;
+      session.restoreOnStartup = false;
+      session.updatedAt = new Date().toISOString();
+      this.pushNativeNarrativeEntry(session, {
+        kind: "status",
+        label: "Stream",
+        text: "Stream-mode sessions don't survive server restarts. Start a new agent to continue.",
+        timestamp: session.updatedAt,
+        meta: "stream-mode",
+      });
+      this.scheduleSessionMetaBroadcast(session, { immediate: true });
+      return;
+    }
+
+    const claudeBin = getManagedProviderLaunchCommand(provider) || provider.launchCommand;
+    if (!claudeBin) {
+      session.status = "exited";
+      this.pushNativeNarrativeEntry(session, {
+        kind: "status",
+        label: "Error",
+        text: `Cannot find Claude launch binary for stream mode (${provider.label}).`,
+        timestamp: new Date().toISOString(),
+        meta: "stream-mode",
+      });
+      return;
+    }
+
+    const streamSession = new ClaudeStreamSession({
+      sessionId: session.id,
+      cwd: sessionCwd,
+      env: sessionEnv,
+      claudeBin,
+    });
+
+    session.streamSession = streamSession;
+    session.streamInputBuffer = "";
+    session.streamEntries = [];
+    session.status = "running";
+    session.exitCode = null;
+    session.exitSignal = null;
+    session.restoreOnStartup = true;
+    session.activityInputBuffer = "";
+    session.nativeNarrativeInputBuffer = "";
+    session.providerReadyNotified = true;
+    session.updatedAt = new Date().toISOString();
+    session.lastOutputAt = session.updatedAt;
+
+    this.pushNativeNarrativeEntry(session, {
+      kind: "status",
+      label: "Stream",
+      text: `Stream mode active for ${provider.label}. Replies stream from JSONL events instead of a PTY.`,
+      timestamp: session.updatedAt,
+      meta: "stream-mode",
+    });
+
+    streamSession.on("event", () => {
+      session.lastOutputAt = new Date().toISOString();
+      session.updatedAt = session.lastOutputAt;
+    });
+
+    streamSession.on("entries", (entries) => {
+      session.streamEntries = Array.isArray(entries) ? entries : [];
+      this.scheduleSessionMetaBroadcast(session);
+    });
+
+    streamSession.on("turn-complete", () => {
+      this.scheduleSessionMetaBroadcast(session, { immediate: true });
+      this.schedulePersist();
+    });
+
+    streamSession.on("stderr", (chunk) => {
+      const text = String(chunk || "").trim();
+      if (text) {
+        console.warn(`[vibe-research] claude stream stderr (${session.id}):`, text);
+      }
+    });
+
+    streamSession.on("error", (error) => {
+      this.pushNativeNarrativeEntry(session, {
+        kind: "status",
+        label: "Error",
+        text: `Claude stream error: ${error.message}`,
+        timestamp: new Date().toISOString(),
+        meta: "stream-mode",
+      });
+      this.scheduleSessionMetaBroadcast(session, { immediate: true });
+    });
+
+    streamSession.on("exit", ({ code, signal }) => {
+      session.status = "exited";
+      session.exitCode = code;
+      session.exitSignal = signal;
+      session.streamSession = null;
+      this.pushNativeNarrativeEntry(session, {
+        kind: "status",
+        label: "Exited",
+        text: `Stream session exited (code=${code ?? "n/a"}, signal=${signal || "n/a"}).`,
+        timestamp: new Date().toISOString(),
+        meta: "stream-mode",
+      });
+      this.scheduleSessionMetaBroadcast(session, { immediate: true });
+      this.schedulePersist({ immediate: true });
+    });
+
+    streamSession.start();
+  }
+
   restoreSession(snapshot) {
     const session = this.buildSessionRecord({
       id: snapshot.id || randomUUID(),
@@ -4819,6 +5033,7 @@ export class SessionManager {
       restoreOnStartup: Boolean(snapshot.restoreOnStartup),
       providerState: snapshot.providerState || null,
       occupationId: snapshot.occupationId || snapshot.promptId || this.occupationId,
+      streamMode: Boolean(snapshot.streamMode),
     });
 
     this.sessions.set(session.id, session);

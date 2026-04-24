@@ -103,13 +103,25 @@ A "stream-mode" Claude session would:
   the class. Confirmed multi-turn works against a real Claude install
   without any PTY involvement.
 
-**Phase 2 — opt-in stream-mode session in the server.**
-- Add `VIBE_RESEARCH_CLAUDE_STREAM_MODE=1` env flag.
-- Wire `ClaudeStreamSession` into `src/session-manager.js` so that when the
-  flag is on AND the provider is Claude Code AND the user is already
-  authenticated, new sessions use the stream class. Reuse the existing
-  rich-session UI — entries are already in the right shape.
-- Existing sessions and unauthenticated starts keep using PTY.
+**Phase 2 — opt-in stream-mode session in the server (done).**
+- `VIBE_RESEARCH_CLAUDE_STREAM_MODE=1` env flag honored at session
+  creation. When set, `SessionManager.createSession` marks the new Claude
+  session as `streamMode: true` and `startSession` routes to a new
+  `startClaudeStreamSession` method that spawns `ClaudeStreamSession`
+  instead of a PTY.
+- Input from the existing `/ws` channel is line-buffered and forwarded as
+  JSON user turns — the rich-session composer already sends `text\r`, so
+  no client change is needed.
+- `getSessionNarrative` short-circuits the transcript-file lookup for
+  stream sessions and returns `streamSession.entries` directly, merged
+  with native status/user entries.
+- Stream sessions don't survive server restarts (the child dies). On
+  restore they're marked exited with a "start a new agent" status entry.
+- Smoke-tested end-to-end: create Claude session → send "Reply CHARLIE" →
+  narrative endpoint returns the assistant entry. No PTY, no projection
+  fallback in the loop.
+- Existing PTY sessions are untouched; the flag only affects newly
+  created Claude sessions while the env var is set.
 
 **Phase 3 — hide the xterm tab for stream-mode sessions.**
 - Default the workspace view to rich-session for stream-mode sessions.
