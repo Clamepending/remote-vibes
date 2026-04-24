@@ -13795,6 +13795,39 @@ body.is-reordering-file-tabs {
   opacity: 1;
 }
 
+/* Pending assistant placeholder — explicit "thinking" text alongside the
+   spinner kicker so the user can never miss the loading state. */
+.rich-session-entry.is-pending .is-pending-copy {
+  color: rgba(244, 244, 242, 0.55);
+  font-size: 0.95rem;
+  font-style: italic;
+  letter-spacing: 0.01em;
+}
+
+/* Prominent error banner. Status entries with status="error" get a red
+   outlined card so auth/sign-in failures aren't easy to miss. */
+.rich-session-entry.is-status.is-error,
+.rich-session-entry.is-system.is-error {
+  padding: 10px 14px;
+  border: 1px solid rgba(255, 121, 109, 0.45);
+  border-radius: 10px;
+  background: rgba(255, 121, 109, 0.08);
+  opacity: 1;
+}
+
+.rich-session-entry.is-status.is-error .rich-session-entry-kicker-label,
+.rich-session-entry.is-system.is-error .rich-session-entry-kicker-label {
+  color: rgba(255, 159, 149, 0.95);
+  font-weight: 600;
+  letter-spacing: 0.02em;
+  text-transform: none;
+}
+
+.rich-session-entry.is-status.is-error .rich-session-entry-copy,
+.rich-session-entry.is-system.is-error .rich-session-entry-copy {
+  color: rgba(255, 220, 215, 0.92);
+}
+
 @keyframes rich-session-thinking-spin {
   to {
     transform: rotate(360deg);

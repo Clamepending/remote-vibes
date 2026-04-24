@@ -4911,9 +4911,15 @@ function renderRichSessionEntry(entry, index) {
 
   if (kind === "assistant") {
     if (isAssistantPending) {
+      // Pending placeholder. Show the spinner kicker AND an explicit
+      // "<provider> is thinking..." line so the user sees the loading
+      // state clearly even when polling lag swallows the empty kicker
+      // alone. The entry mutates into the streamed reply on first delta.
+      const providerLabel = (entry?.label || label || "Assistant").trim();
       return `
         <article class="${entryClassName}" data-rich-session-entry="${index}">
           ${kickerHtml}
+          <div class="rich-session-entry-copy is-pending-copy">${escapeHtml(`${providerLabel} is thinking…`)}</div>
         </article>
       `;
     }

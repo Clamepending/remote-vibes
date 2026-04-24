@@ -202,16 +202,30 @@ export class CodexStreamSession extends EventEmitter {
       this._pendingThinking = false;
     } else if (event?.type === "turn.failed" || event?.type === "error") {
       this._pendingThinking = false;
-      const message = event.error?.message || event.message || "Codex turn failed";
+      const rawMessage = event.error?.message || event.message || "Codex turn failed";
+      const isAuthFailure = /401\s*Unauthorized|Missing\s+bearer|not\s*authenticated|please\s+sign\s+in|codex\s+login/iu.test(rawMessage);
+      // Codex retries 5 times on 401 before giving up — that's a multi-second
+      // hang for the user. As soon as we see the first auth failure, surface
+      // it prominently and kill the child so retries don't pile up.
+      const message = isAuthFailure
+        ? "Codex is not signed in. Run `codex login` in a terminal, then try again."
+        : rawMessage;
       this._appendEntry({
         id: `codex-error-${turnIndex}-${randomUUID()}`,
         kind: "status",
-        label: "Error",
+        label: isAuthFailure ? "Sign in required" : "Error",
         text: message,
         timestamp: stamp,
-        meta: "codex-error",
+        meta: isAuthFailure ? "codex-auth-required" : "codex-error",
         status: "error",
       });
+      if (isAuthFailure && this._activeChild) {
+        try {
+          this._activeChild.kill("SIGTERM");
+        } catch {
+          // child already exited
+        }
+      }
     }
 
     this._refreshEntries();
