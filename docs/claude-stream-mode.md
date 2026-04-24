@@ -1,7 +1,8 @@
 # Claude Code stream-json mode (migration sketch)
 
-Status: design + Phase 1 building block. No client-facing runtime changes
-yet — the existing PTY path is still what every Claude session uses.
+Status: stream mode is the default for Claude. The PTY path remains
+reachable as an opt-out (`VIBE_RESEARCH_CLAUDE_STREAM_MODE=0`) and is
+still the only path for Codex.
 
 ## Why
 
@@ -103,10 +104,9 @@ A "stream-mode" Claude session would:
   the class. Confirmed multi-turn works against a real Claude install
   without any PTY involvement.
 
-**Phase 2 — opt-in stream-mode session in the server (done).**
-- `VIBE_RESEARCH_CLAUDE_STREAM_MODE=1` env flag honored at session
-  creation. When set, `SessionManager.createSession` marks the new Claude
-  session as `streamMode: true` and `startSession` routes to a new
+**Phase 2 — opt-in stream-mode session in the server (done, then promoted).**
+- `SessionManager.createSession` marks new Claude sessions as
+  `streamMode: true` and `startSession` routes to a new
   `startClaudeStreamSession` method that spawns `ClaudeStreamSession`
   instead of a PTY.
 - Input from the existing `/ws` channel is line-buffered and forwarded as
@@ -117,28 +117,42 @@ A "stream-mode" Claude session would:
   with native status/user entries.
 - Stream sessions don't survive server restarts (the child dies). On
   restore they're marked exited with a "start a new agent" status entry.
-- Smoke-tested end-to-end: create Claude session → send "Reply CHARLIE" →
-  narrative endpoint returns the assistant entry. No PTY, no projection
-  fallback in the loop.
-- Existing PTY sessions are untouched; the flag only affects newly
-  created Claude sessions while the env var is set.
+- `ClaudeStreamSession` stamps each entry with arrival time when Claude's
+  event JSON omits a `timestamp`, so chronology in the merged narrative
+  matches what the user actually saw.
 
-**Phase 3 — hide the xterm tab for stream-mode sessions.**
-- Default the workspace view to rich-session for stream-mode sessions.
-- Optional debug pane to view raw stdout.
+**Phase 3 — UI cleanup for stream sessions (done).**
+- Stream-mode sessions never show the xterm tab. The shell-surface
+  toggle is hidden, `getShellSurfaceMode` is locked to `"native"`, and
+  the rich-session composer is the only input surface for these sessions.
+- The legacy "switch to Terminal any time" copy in the rich-session
+  overview still applies to PTY sessions but is irrelevant here.
 
-**Phase 4 — own the auth + trust handoff.**
+**Phase 4 — promote to default (done).**
+- `VIBE_RESEARCH_CLAUDE_STREAM_MODE` flipped from opt-in to opt-out.
+  Empty / unset → stream mode on. Set to `0`/`false`/`off`/`no` to fall
+  back to the legacy PTY surface (debug only).
+- Codex still uses PTY (Phase 6 below).
+- The projected-narrative fallback (`filterProjectedOverlayEntries`,
+  the `length > 4000` cap, the "is this a wrapped shell command echo?"
+  pattern matching) is no longer in the hot path for Claude. It still
+  runs for Codex sessions until upstream ships a stream-json mode.
+
+**Phase 5 — own the auth + trust handoff (deferred).**
 - Detect `not authenticated` exit and show our own login overlay.
-- Pre-write workspace trust to `~/.claude/settings.json` so no prompt fires.
+- Pre-write workspace trust to `~/.claude/settings.json` so no prompt
+  fires. Today, an unauthenticated Claude install will fail silently in
+  stream mode (the child exits non-zero). Set
+  `VIBE_RESEARCH_CLAUDE_STREAM_MODE=0` to drop back to PTY for the
+  in-app login dance until this lands.
 
-**Phase 5 — flip the default + remove the projection fallback for Claude.**
-- Once Phase 2–4 cover the path the user normally hits, default the flag on.
-- Keep PTY mode reachable per-session for debugging.
-
-**Phase 6 — Codex.**
-- Codex doesn't ship a stream JSON I/O mode today. Keep PTY for Codex until
-  upstream adds one (or we contribute it). The Codex projection path stays,
-  but with Claude removed it's a much smaller surface to keep working.
+**Phase 6 — Codex (deferred).**
+- Codex doesn't ship a stream JSON I/O mode today. Keep PTY for Codex
+  until upstream adds one (or we contribute it). The Codex projection
+  path stays, but with Claude removed it's a much smaller surface to
+  keep working. Recent fix: `stripAnsiAndControlText` now substitutes a
+  space for cursor-movement CSI sequences so Codex TUI text doesn't
+  collapse into "Hello!Whatwouldyouliketoworkon?".
 
 ## Try it
 

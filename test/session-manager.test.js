@@ -7,6 +7,13 @@ import { chmod, mkdir, mkdtemp, readFile, realpath, rm, symlink, writeFile } fro
 import { promisify } from "node:util";
 import { SessionManager } from "../src/session-manager.js";
 
+// Stream mode for Claude is the runtime default but bypasses PTY/tmux
+// entirely. The legacy session-manager tests exercise the PTY+tmux path
+// (provider-launch wrappers, persistent terminals, transcript projection,
+// etc.) and need an explicit opt-out so a default-on flag doesn't reroute
+// them into the stream code path.
+process.env.VIBE_RESEARCH_CLAUDE_STREAM_MODE = "0";
+
 const execFileAsync = promisify(execFile);
 
 const fakeAgentProviders = [

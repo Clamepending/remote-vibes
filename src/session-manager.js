@@ -148,12 +148,18 @@ function isClaudeProviderId(providerId) {
 }
 
 function isClaudeStreamModeEnabled(env = process.env) {
+  // Stream mode is the default UI for Claude sessions. The env var only acts
+  // as an opt-out: explicitly set it to 0/false/off/no to fall back to the
+  // legacy PTY+TUI surface (mostly useful for debugging the migration).
   const value = String(
     env?.VIBE_RESEARCH_CLAUDE_STREAM_MODE
-      || env?.REMOTE_VIBES_CLAUDE_STREAM_MODE
-      || "",
+      ?? env?.REMOTE_VIBES_CLAUDE_STREAM_MODE
+      ?? "",
   ).trim();
-  return /^(?:1|true|on|yes)$/i.test(value);
+  if (!value) {
+    return true;
+  }
+  return !/^(?:0|false|off|no)$/i.test(value);
 }
 
 function getClaudeOllamaBaseUrl(env = process.env) {

@@ -4583,7 +4583,17 @@ function isRichSessionSurfaceSupported(session = getActiveSession()) {
   return Boolean(session && isRichSessionProviderId(session.providerId));
 }
 
+function isStreamSessionUiSession(session = getActiveSession()) {
+  return Boolean(session && session.streamMode);
+}
+
 function getShellSurfaceMode(session = getActiveSession()) {
+  if (isStreamSessionUiSession(session)) {
+    // Stream-mode sessions don't have a real PTY surface, so the rich-session
+    // view is the only thing to show. Force native and ignore any stale
+    // "terminal" preference from before the session was created.
+    return "native";
+  }
   return isRichSessionSurfaceSupported(session)
     ? (state.shellSurfaceMode === "terminal" ? "terminal" : "native")
     : "terminal";
@@ -5150,6 +5160,10 @@ function setShellSurfaceMode(mode) {
 
 function renderShellSurfaceToggle(activeSession) {
   if (!isRichSessionSurfaceSupported(activeSession)) {
+    return "";
+  }
+  if (isStreamSessionUiSession(activeSession)) {
+    // Stream-mode sessions have no PTY, so there's nothing to toggle to.
     return "";
   }
 

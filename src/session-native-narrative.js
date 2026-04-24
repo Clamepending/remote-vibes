@@ -19,12 +19,19 @@ function normalizeText(value) {
 }
 
 function stripAnsiAndControlText(value) {
+  // OSC sequences are pure metadata (titles, hyperlinks) — drop entirely.
+  // CSI sequences include cursor-movement (e.g. ESC[5C = move 5 right) which
+  // visually creates gaps between glyphs in the terminal. If we drop them
+  // outright, words rendered with cursor positioning collapse together
+  // ("Hello! What would you like to work on?" -> "Hello!Whatwouldyouliketoworkon?"
+  // — Codex hits this hard). Substitute a single space so the projection
+  // preserves at least the visible gap; downstream collapses runs anyway.
   return String(value ?? "")
     .replace(/\u001b\][^\u0007]*(?:\u0007|\u001b\\)/g, "")
-    .replace(/\u001b\[[0-9;?]*[ -/]*[@-~]/g, "")
+    .replace(/\u001b\[[0-9;?]*[ -/]*[@-~]/g, " ")
     .replace(/\u001b[()][0-9A-Za-z]/g, "")
     .replace(/\u001b[@-_]/g, "")
-    .replace(/\u009b[0-9;?]*[ -/]*[@-~]/g, "");
+    .replace(/\u009b[0-9;?]*[ -/]*[@-~]/g, " ");
 }
 
 function truncateText(value, maxLength = MAX_TEXT_LENGTH) {
