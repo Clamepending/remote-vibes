@@ -4616,6 +4616,32 @@ function getRichSessionActiveMonitors(session) {
       tooltip: "Background tasks running for this session",
     });
   }
+  // Surface in-flight tool calls from the live stream (Codex marks
+  // command_execution as status="running" until completed; Claude
+  // synthesized tool entries can do the same). Provider-rich pills like
+  // "running Bash · /opt/homebrew/bin/bash -lc 'ls -la'" tell the user
+  // exactly what the agent is doing right now.
+  const narrative = getRichSessionNarrative(session.id);
+  const entries = Array.isArray(narrative?.entries) ? narrative.entries : [];
+  const seenToolKeys = new Set();
+  for (const entry of entries) {
+    if (!entry || entry.kind !== "tool") {
+      continue;
+    }
+    const isRunning = entry.status === "running" || entry.meta === "running";
+    if (!isRunning) {
+      continue;
+    }
+    const label = String(entry.label || "Tool").trim();
+    const text = String(entry.text || "").replace(/\s+/g, " ").trim();
+    const summary = text ? `${label}: ${text.slice(0, 64)}` : label;
+    if (seenToolKeys.has(summary)) continue;
+    seenToolKeys.add(summary);
+    out.push({
+      label: `running ${label}`,
+      tooltip: summary,
+    });
+  }
   return out;
 }
 
