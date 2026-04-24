@@ -52,7 +52,7 @@ import { TailscaleServeManager } from "./tailscale-serve.js";
 import { TelegramService } from "./telegram-service.js";
 import { TwilioService } from "./twilio-service.js";
 import { UpdateManager } from "./update-manager.js";
-import { VideoMemoryService } from "./videomemory-service.js";
+import { loadVideoMemoryRuntime } from "./videomemory-service-loader.js";
 import { WalletService } from "./wallet-service.js";
 import { WikiBackupService } from "./wiki-backup.js";
 import { detectProviders, getDefaultProviderId } from "./providers.js";
@@ -1200,6 +1200,8 @@ export async function createVibeResearchApp({
           systemRootPath,
           walletService,
         });
+  const videoMemoryRuntime =
+    typeof videoMemoryServiceFactory === "function" ? null : await loadVideoMemoryRuntime({ env: serverEnv });
   videoMemoryService =
     typeof videoMemoryServiceFactory === "function"
       ? videoMemoryServiceFactory(settingsStore.settings, {
@@ -1209,7 +1211,7 @@ export async function createVibeResearchApp({
           stateDir,
           systemRootPath,
         })
-      : new VideoMemoryService({
+      : new videoMemoryRuntime.VideoMemoryService({
           defaultProviderId,
           sessionManager,
           settings: settingsStore.settings,
