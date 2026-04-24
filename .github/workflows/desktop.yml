@@ -83,7 +83,7 @@ jobs:
           APPLE_APP_SPECIFIC_PASSWORD: ${{ secrets.APPLE_APP_SPECIFIC_PASSWORD }}
           APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
 
-      - name: Require Mac App Store secrets for release tags
+      - name: Detect Mac App Store secrets
         if: env.RELEASE_MODE == 'true'
         run: |
           missing=()
@@ -94,9 +94,10 @@ jobs:
           done
 
           if [ "${#missing[@]}" -gt 0 ]; then
-            printf 'Missing required Mac App Store secret(s): %s\n' "${missing[*]}" >&2
-            printf 'Required: MACOS_APPSTORE_CSC_LINK, MACOS_APPSTORE_CSC_KEY_PASSWORD, MAS_PROVISIONING_PROFILE_BASE64, APPLE_ID, APPLE_APP_SPECIFIC_PASSWORD, APPLE_TEAM_ID\n' >&2
-            exit 1
+            echo "::warning::Mac App Store build skipped; missing secret(s): ${missing[*]}. Signed DMG/zip will still publish."
+            echo "MAS_ENABLED=false" >> "$GITHUB_ENV"
+          else
+            echo "MAS_ENABLED=true" >> "$GITHUB_ENV"
           fi
         env:
           MAS_CSC_LINK: ${{ secrets.MACOS_APPSTORE_CSC_LINK }}
@@ -107,7 +108,7 @@ jobs:
           APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
 
       - name: Prepare Mac App Store provisioning profile
-        if: env.RELEASE_MODE == 'true'
+        if: env.RELEASE_MODE == 'true' && env.MAS_ENABLED == 'true'
         run: |
           profile_path="$RUNNER_TEMP/vibe-research-mas.provisionprofile"
           python3 - <<'PY'
@@ -140,7 +141,7 @@ jobs:
           APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
 
       - name: Build Mac App Store package
-        if: env.RELEASE_MODE == 'true'
+        if: env.RELEASE_MODE == 'true' && env.MAS_ENABLED == 'true'
         run: |
           npm --prefix desktop run dist:mas -- --config.mas.provisioningProfile="$MAS_PROVISIONING_PROFILE"
         env:
@@ -150,7 +151,7 @@ jobs:
           MAS_PROVISIONING_PROFILE: ${{ env.MAS_PROVISIONING_PROFILE }}
 
       - name: Upload Mac App Store package to App Store Connect
-        if: env.RELEASE_MODE == 'true'
+        if: env.RELEASE_MODE == 'true' && env.MAS_ENABLED == 'true'
         run: |
           pkg_file="$(ls -1 desktop/dist/*.pkg | head -n 1)"
           if [ -z "$pkg_file" ]; then
