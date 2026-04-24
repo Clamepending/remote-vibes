@@ -33,6 +33,29 @@ jobs:
         with:
           fetch-depth: 0
 
+      - name: Verify CI is green on HEAD
+        run: |
+          commit_sha=$(git rev-parse HEAD)
+          echo "Checking CI status on $commit_sha"
+          # Look for the CI workflow's "Test" check on this commit and require success.
+          conclusion=$(gh api "repos/${GITHUB_REPOSITORY}/commits/${commit_sha}/check-runs?per_page=100" \
+            --jq '[.check_runs[] | select(.name == "Test")] | sort_by(.started_at) | last | .conclusion // "missing"')
+          echo "Latest Test check conclusion: ${conclusion}"
+          if [ "$conclusion" = "success" ]; then
+            echo "CI is green ✓"
+            exit 0
+          fi
+          if [ "$conclusion" = "missing" ]; then
+            echo "::error::No CI run found on ${commit_sha}. Push a trivial commit so CI runs, then retry."
+          elif [ "$conclusion" = "null" ] || [ -z "$conclusion" ]; then
+            echo "::error::CI on ${commit_sha} is still in progress. Wait for it to finish before cutting a release."
+          else
+            echo "::error::CI on ${commit_sha} is ${conclusion}. Fix main and get CI green before cutting a release."
+          fi
+          exit 1
+        env:
+          GH_TOKEN: ${{ github.token }}
+
       - name: Set up Node
         uses: actions/setup-node@v6
         with:
