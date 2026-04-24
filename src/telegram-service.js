@@ -513,7 +513,10 @@ export class TelegramService {
   }
 
   getReplyCommand() {
-    return path.join(this.cwd, "bin", "vr-telegram-reply");
+    // The Vibe Research helper bin dir (where vr-telegram-reply lives) is prepended
+    // to each session's PATH by the session manager, so the bare command resolves
+    // regardless of what directory the server was launched from.
+    return "vr-telegram-reply";
   }
 
   queuePromptForSession(sessionId, prompt, {

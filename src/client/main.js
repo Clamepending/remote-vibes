@@ -13297,6 +13297,87 @@ function handleTerminalDocumentPaste(event) {
   pasteTextIntoTerminal(clipboardText);
 }
 
+function isDesktopRuntime() {
+  return typeof window !== "undefined" && typeof window.vibeDesktop?.clipboard?.readText === "function";
+}
+
+function installDesktopPasteFallback() {
+  // The packaged macOS desktop app occasionally drops Cmd+V for non-terminal
+  // form inputs (password boxes, text fields) even with the Edit menu's paste
+  // role wired up. Detect the key combo ourselves and insert the OS clipboard
+  // text into the focused input. Only runs inside the Electron desktop (guarded
+  // by the vibeDesktop preload) so browser behavior is untouched.
+  if (!isDesktopRuntime()) {
+    return;
+  }
+
+  document.addEventListener(
+    "keydown",
+    (event) => {
+      if (event.defaultPrevented) return;
+      const key = String(event.key || "").toLowerCase();
+      if (key !== "v") return;
+      if (!(event.metaKey || event.ctrlKey)) return;
+      if (event.altKey || event.shiftKey) return;
+
+      const target = event.target;
+      if (!(target instanceof HTMLElement)) return;
+
+      // Ignore terminal/xterm — it has its own paste path.
+      if (isNodeInsideTerminalSurface(target)) return;
+
+      const isInputLike =
+        target instanceof HTMLInputElement ||
+        target instanceof HTMLTextAreaElement ||
+        target.isContentEditable;
+      if (!isInputLike) return;
+
+      let clipboardText = "";
+      try {
+        clipboardText = String(window.vibeDesktop?.clipboard?.readText?.() || "");
+      } catch {
+        return;
+      }
+      if (!clipboardText) return;
+
+      event.preventDefault();
+
+      if (target instanceof HTMLInputElement || target instanceof HTMLTextAreaElement) {
+        const start = target.selectionStart ?? target.value.length;
+        const end = target.selectionEnd ?? target.value.length;
+        const before = target.value.slice(0, start);
+        const after = target.value.slice(end);
+        target.value = `${before}${clipboardText}${after}`;
+        const caret = before.length + clipboardText.length;
+        try {
+          target.setSelectionRange(caret, caret);
+        } catch {
+          /* some input types (e.g. number) don't support selectionRange */
+        }
+        target.dispatchEvent(new Event("input", { bubbles: true }));
+        target.dispatchEvent(new Event("change", { bubbles: true }));
+        return;
+      }
+
+      if (target.isContentEditable) {
+        const selection = document.getSelection?.();
+        if (selection && selection.rangeCount > 0) {
+          const range = selection.getRangeAt(0);
+          range.deleteContents();
+          range.insertNode(document.createTextNode(clipboardText));
+          range.collapse(false);
+          selection.removeAllRanges();
+          selection.addRange(range);
+        } else {
+          target.textContent = `${target.textContent || ""}${clipboardText}`;
+        }
+        target.dispatchEvent(new Event("input", { bubbles: true }));
+      }
+    },
+    { capture: true },
+  );
+}
+
 function handleTerminalDocumentCopy(event) {
   if (event.defaultPrevented || !shouldHandleTerminalClipboardEvent(event.target) || !state.terminal?.hasSelection?.()) {
     return;
@@ -30660,6 +30741,7 @@ function bindSelectableRefreshEvents() {
 
   document.addEventListener("paste", handleTerminalDocumentPaste);
   document.addEventListener("copy", handleTerminalDocumentCopy);
+  installDesktopPasteFallback();
 
   window.addEventListener("copy", () => {
     scheduleSelectableRefreshFlush(400);

@@ -1003,7 +1003,8 @@ export class AgentMailService {
   }
 
   getReplyCommand() {
-    return path.join(this.cwd, "bin", "vr-agentmail-reply");
+    // Session PATH already includes Vibe Research's helper bin dir.
+    return "vr-agentmail-reply";
   }
 
   queuePromptForSession(sessionId, prompt, {

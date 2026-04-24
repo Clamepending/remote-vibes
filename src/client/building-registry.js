@@ -1149,7 +1149,6 @@ const CORE_BUILDING_MANIFESTS = [
     },
     visual: {
       shape: "camera",
-      specialTownPlace: true,
     },
     agentGuide: {
       summary: "Use VideoMemory when the human asks you to watch a live camera or video stream for some condition and react when it happens — either waking your own session with the details or spawning a fresh session. It handles the video-watching and fires a webhook back into Vibe Research when the condition is met.",

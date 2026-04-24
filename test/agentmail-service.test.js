@@ -144,7 +144,7 @@ test("AgentMail WebSocket listener subscribes and queues incoming email into an 
   assert.match(createdSessions[0].name, /^email: Can you help/);
   assert.equal(writes.length, 2);
   assert.equal(writes[0].sessionId, "session-1");
-  assert.match(writes[0].input, /bin\/vr-agentmail-reply' --inbox-id 'agent@example.com'/);
+  assert.match(writes[0].input, /vr-agentmail-reply' --inbox-id 'agent@example.com'/);
   assert.match(writes[0].input, /Hello from email/);
   assert.doesNotMatch(writes[0].input, /\r$/);
   assert.deepEqual(writes[1], { input: "\r", sessionId: "session-1" });
