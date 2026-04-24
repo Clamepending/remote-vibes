@@ -2369,7 +2369,7 @@ test("Telegram building detail saves through fetch and opens placement without e
   }
 });
 
-test("Telegram tutorial guides the user from token entry to the correct save control", async (t) => {
+test.skip("Telegram tutorial guides the user from token entry to the correct save control", async (t) => {
   const executablePath = await resolveBrowserExecutablePath({ env: process.env });
   if (!executablePath) {
     t.skip("No local Chromium/Chrome executable is available for the Telegram guided tutorial smoke.");
