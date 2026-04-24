@@ -55,7 +55,6 @@ import { collectSystemMetrics } from "./system-metrics.js";
 import { SystemMetricsHistoryStore } from "./system-metrics-history.js";
 import { TailscaleServeManager } from "./tailscale-serve.js";
 import { TelegramService } from "./telegram-service.js";
-import { TutorialRegistry } from "./tutorial-registry.js";
 import { TwilioService } from "./twilio-service.js";
 import { UpdateManager } from "./update-manager.js";
 import { loadVideoMemoryRuntime } from "./videomemory-service-loader.js";
