@@ -13372,6 +13372,11 @@ function renderPluginWorkspaceAction(plugin) {
 }
 
 function renderPluginDetailSettings(plugin) {
+  const entryView = renderPluginEntryView(plugin);
+  if (entryView) {
+    return entryView;
+  }
+
   const issue = getPluginBuildingIssue(plugin);
   if (issue) {
     return renderPluginNextSetupAction(plugin, issue, {
@@ -14146,6 +14151,28 @@ function renderVideoMemoryPluginPanel() {
       </div>
       <p class="mcp-import-paths">Tool: <code>vr-videomemory create --io-id net0 --trigger "..." --action "..."</code></p>
     </aside>
+  `;
+}
+
+function renderPluginEntryView(plugin) {
+  switch (String(plugin?.ui?.entryView || "").trim()) {
+    case "videomemory":
+      return renderVideoMemoryPluginPanel();
+    default:
+      return "";
+  }
+}
+
+function renderVisualGamePluginEntryView(plugin) {
+  const entryView = renderPluginEntryView(plugin);
+  if (!entryView) {
+    return "";
+  }
+
+  return `
+    <div class="visual-building-panel-scroll visual-building-plugin-panel visual-building-plugin-panel-entry">
+      ${entryView}
+    </div>
   `;
 }
 
@@ -17326,6 +17353,11 @@ function renderDoghouseBuildingPanel(plugin) {
 }
 
 function renderVisualGamePluginBuildingPanel(plugin) {
+  const entryView = renderVisualGamePluginEntryView(plugin);
+  if (entryView) {
+    return entryView;
+  }
+
   const issue = getPluginBuildingIssue(plugin);
   if (issue) {
     const nextStep = renderPluginNextSetupAction(plugin, issue, { minimal: true });

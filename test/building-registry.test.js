@@ -211,6 +211,12 @@ test("building registry exposes core building manifests", () => {
   assert.equal(ottoAuth.onboarding.setupSelector, ".ottoauth-plugin-card");
   assert.ok(AGENT_TOWN_SPECIAL_BUILDING_IDS.has("ottoauth"));
 
+  const videoMemory = BUILDING_CATALOG.find((building) => building.id === "videomemory");
+  assert.equal(videoMemory.ui.entryView, "videomemory");
+  assert.equal(videoMemory.ui.mode, "panel");
+  assert.equal(videoMemory.visual.shape, "camera");
+  assert.ok(AGENT_TOWN_SPECIAL_BUILDING_IDS.has("videomemory"));
+
   const rentAHuman = BUILDING_CATALOG.find((building) => building.id === "rentahuman");
   assert.equal(rentAHuman.category, "Commerce");
   assert.equal(rentAHuman.status, "MCP-ready");

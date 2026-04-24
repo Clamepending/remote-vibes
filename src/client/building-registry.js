@@ -1103,6 +1103,11 @@ const CORE_BUILDING_MANIFESTS = [
     },
     status: "setup available",
     source: "vibe-research",
+    ui: {
+      entryView: "videomemory",
+      mode: "panel",
+      workspaceView: "",
+    },
     visual: {
       shape: "camera",
       specialTownPlace: true,
