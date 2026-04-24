@@ -560,6 +560,22 @@ function mergeNarrativeEntries(localEntries = [], providerEntries = [], maxEntri
     ...providerEntries.map((entry, index) => ({ ...entry, __origin: "provider", __index: index })),
   ]
     .sort((left, right) => {
+      // Prefer session-wide insertion sequence numbers (OpenCode pattern):
+      // wall-clock timestamps from Claude's stream events bleed across turns
+      // and aren't a reliable sort key. We fall back to timestamp/origin/index
+      // for legacy entries that don't carry a seq.
+      const leftSeq = Number.isFinite(Number(left.seq)) ? Number(left.seq) : null;
+      const rightSeq = Number.isFinite(Number(right.seq)) ? Number(right.seq) : null;
+      if (leftSeq != null && rightSeq != null && leftSeq !== rightSeq) {
+        return leftSeq - rightSeq;
+      }
+      if (leftSeq != null && rightSeq == null) {
+        return -1;
+      }
+      if (leftSeq == null && rightSeq != null) {
+        return 1;
+      }
+
       const leftTime = parseSessionTimestamp(left.timestamp, 0);
       const rightTime = parseSessionTimestamp(right.timestamp, 0);
 
@@ -3515,33 +3531,16 @@ export class SessionManager {
       });
       session.lastPromptAt = userTimestamp;
 
-      // Push a real Thinking entry right after the user message so it sorts
-      // immediately below the prompt. We track its id and the stream session
-      // is responsible for clearing it once Claude starts replying THIS turn.
-      // We snapshot the current stream-entry count so the entries handler can
-      // tell when a NEW assistant/tool entry has arrived for this turn rather
-      // than seeing leftover entries from prior turns and clearing too soon.
-      this._clearStreamThinkingEntry(session);
-      const thinkingId = `claude-thinking-${randomUUID()}`;
-      const thinkingTimestamp = new Date(Date.parse(userTimestamp) + 1).toISOString();
-      this.pushNativeNarrativeEntry(session, {
-        id: thinkingId,
-        kind: "status",
-        label: "Thinking",
-        text: "Claude is thinking...",
-        timestamp: thinkingTimestamp,
-        meta: "stream-thinking",
-      });
-      session.streamThinkingEntryId = thinkingId;
-      session.streamThinkingBaselineCount = Array.isArray(session.streamEntries)
-        ? session.streamEntries.length
-        : 0;
+      // No separate Thinking push anymore. The stream session synthesizes an
+      // empty-text "claude-pending-assistant" entry between system:status
+      // and the first text-delta of the new turn; the renderer turns that
+      // empty assistant entry into the Thinking spinner. Same DOM node then
+      // mutates into the streaming reply, so there is no race to clear.
 
       try {
         session.streamSession.send(line);
         sentAny = true;
       } catch (error) {
-        this._clearStreamThinkingEntry(session);
         this.pushNativeNarrativeEntry(session, {
           kind: "status",
           label: "Error",
@@ -3559,14 +3558,6 @@ export class SessionManager {
     return sentAny;
   }
 
-  _clearStreamThinkingEntry(session) {
-    if (!session?.streamThinkingEntryId) {
-      return;
-    }
-    this.removeNativeNarrativeEntry(session, session.streamThinkingEntryId);
-    session.streamThinkingEntryId = null;
-    session.streamThinkingBaselineCount = 0;
-  }
 
   resize(sessionId, cols, rows) {
     const session = this.sessions.get(sessionId);
@@ -3932,8 +3923,12 @@ export class SessionManager {
       streamSession: null,
       streamInputBuffer: "",
       streamEntries: [],
-      streamThinkingEntryId: null,
-      streamThinkingBaselineCount: 0,
+      // OpenCode-inspired: insertion-order sequence numbers are the only sort
+      // key. Wall-clock timestamps from Claude's stream events bleed across
+      // turns (a tool_use_result event's timestamp infects every subsequent
+      // assistant entry's `updatedAt`). Sequence numbers don't have that
+      // problem — first observation wins and they're stable across re-parses.
+      entrySeqCounter: 0,
     };
   }
 
@@ -3960,6 +3955,10 @@ export class SessionManager {
       return false;
     }
 
+    if (typeof session.entrySeqCounter !== "number") {
+      session.entrySeqCounter = 0;
+    }
+    const seq = ++session.entrySeqCounter;
     const normalizedEntry = {
       id: String(entry.id || randomUUID()),
       kind: String(entry.kind || "status"),
@@ -3969,6 +3968,7 @@ export class SessionManager {
       status: entry.status || null,
       meta: entry.meta || null,
       outputPreview: normalizeNarrativeEventText(entry.outputPreview || "", 2_200),
+      seq,
     };
 
     const previousEntry = session.nativeNarrativeEntries[session.nativeNarrativeEntries.length - 1] || null;
@@ -4990,6 +4990,13 @@ export class SessionManager {
       cwd: sessionCwd,
       env: sessionEnv,
       claudeBin,
+      allocateSeq: () => {
+        if (typeof session.entrySeqCounter !== "number") {
+          session.entrySeqCounter = 0;
+        }
+        session.entrySeqCounter += 1;
+        return session.entrySeqCounter;
+      },
     });
 
     session.streamSession = streamSession;
@@ -5020,26 +5027,13 @@ export class SessionManager {
 
     streamSession.on("entries", (entries) => {
       session.streamEntries = Array.isArray(entries) ? entries : [];
-      // Clear Thinking only when stream entries have grown PAST the count
-      // we snapshotted at thinking-push time. Stream entries persist across
-      // turns (the underlying transcriptLines accumulate), so a simple
-      // "any assistant entry?" check sees the previous turn's reply and
-      // wipes Thinking before the new turn even begins.
-      if (
-        session.streamThinkingEntryId
-        && session.streamEntries.length > (session.streamThinkingBaselineCount || 0)
-      ) {
-        this._clearStreamThinkingEntry(session);
-      }
       // Immediate broadcast: rich-session entries are the user's primary view
       // for stream sessions, so we always want the client refresh to fire as
-      // soon as a Thinking signal or token delta lands. The throttled path
-      // adds noticeable lag on the very first reply of every turn.
+      // soon as a Thinking signal or token delta lands.
       this.scheduleSessionMetaBroadcast(session, { immediate: true });
     });
 
     streamSession.on("turn-complete", () => {
-      this._clearStreamThinkingEntry(session);
       this.scheduleSessionMetaBroadcast(session, { immediate: true });
       this.schedulePersist();
     });
@@ -5067,7 +5061,6 @@ export class SessionManager {
       session.exitCode = code;
       session.exitSignal = signal;
       session.streamSession = null;
-      this._clearStreamThinkingEntry(session);
       this.pushNativeNarrativeEntry(session, {
         kind: "status",
         label: "Exited",

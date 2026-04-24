@@ -4877,9 +4877,14 @@ function renderRichSessionAssistantBody(text) {
 function renderRichSessionEntry(entry, index) {
   const kind = ["assistant", "user", "tool", "status", "system"].includes(entry?.kind) ? entry.kind : "assistant";
   const label = getRichSessionEntryLabel(entry);
-  const isThinking = isRichSessionThinkingEntry(entry);
+  const text = String(entry?.text || "");
+  // OpenCode pattern: an assistant entry with no text yet IS the thinking
+  // indicator. The same DOM node mutates into the streaming reply when the
+  // first delta lands, so there is no separate spinner to clear.
+  const isAssistantPending = kind === "assistant" && !text.trim();
+  const isThinking = isAssistantPending || isRichSessionThinkingEntry(entry);
   const icon = renderIcon(getRichSessionEntryIcon(kind), { className: "rich-session-entry-icon" });
-  const body = escapeHtml(entry?.text || "");
+  const body = escapeHtml(text);
   const metaParts = [entry?.meta || "", formatRichSessionTimestamp(entry?.timestamp)].filter(Boolean);
   const meta = metaParts.join(" · ");
   const outputPreview = entry?.outputPreview
@@ -4890,6 +4895,7 @@ function renderRichSessionEntry(entry, index) {
     `is-${escapeHtml(kind)}`,
     entry?.status ? `is-${escapeHtml(entry.status)}` : "",
     isThinking ? "is-thinking" : "",
+    isAssistantPending ? "is-pending" : "",
   ].filter(Boolean).join(" ");
   const kickerHtml = `
     <div class="rich-session-entry-kicker">
@@ -4904,9 +4910,16 @@ function renderRichSessionEntry(entry, index) {
   `;
 
   if (kind === "assistant") {
+    if (isAssistantPending) {
+      return `
+        <article class="${entryClassName}" data-rich-session-entry="${index}">
+          ${kickerHtml}
+        </article>
+      `;
+    }
     return `
       <article class="${entryClassName}" data-rich-session-entry="${index}">
-        ${renderRichSessionAssistantBody(entry?.text || "")}
+        ${renderRichSessionAssistantBody(text)}
         ${meta ? `<div class="rich-session-entry-tail">${escapeHtml(meta)}</div>` : ""}
       </article>
     `;

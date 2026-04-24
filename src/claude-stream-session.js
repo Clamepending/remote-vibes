@@ -33,6 +33,7 @@ export class ClaudeStreamSession extends EventEmitter {
     extraArgs = [],
     env = process.env,
     maxEntries = DEFAULT_MAX_ENTRIES,
+    allocateSeq = null,
   } = {}) {
     super();
     this.sessionId = sessionId;
@@ -42,6 +43,12 @@ export class ClaudeStreamSession extends EventEmitter {
     this.extraArgs = Array.isArray(extraArgs) ? extraArgs : [];
     this.env = env;
     this.maxEntries = Math.max(1, Number(maxEntries) || DEFAULT_MAX_ENTRIES);
+    // Caller-provided monotonic sequence allocator. Each new stream-entry
+    // id gets one seq the first time we see it. The owner (SessionManager)
+    // shares the counter with native entry pushes so we get a single
+    // session-wide insertion order — that's the OpenCode pattern.
+    this._allocateSeq = typeof allocateSeq === "function" ? allocateSeq : (() => 0);
+    this._entrySeqs = new Map();
     this.status = "starting";
     this.exitCode = null;
     this.exitSignal = null;
@@ -225,20 +232,16 @@ export class ClaudeStreamSession extends EventEmitter {
     const narrative = this.getNarrative();
     const rawEntriesAll = Array.isArray(narrative?.entries) ? narrative.entries : [];
     // Drop claude's own "Thinking" entries (extractClaudeThinkingText output).
-    // SessionManager already pushes a real native Thinking placeholder right
-    // after the user message and clears it as soon as the response starts,
-    // so the live spinner is the single source of truth. Letting claude's
-    // post-hoc thinking content through means a permanent Thinking row sits
-    // above each completed reply.
+    // The Thinking indicator is now the empty-text state of the assistant
+    // entry itself (OpenCode-inspired) so we don't need a parallel row.
     const rawEntries = rawEntriesAll.filter(
       (entry) => !(entry?.kind === "status" && /^thinking$/iu.test(String(entry?.label || ""))),
     );
-    // ALWAYS use our own first-observation cache for raw-entry timestamps.
-    // Claude's transcript parser propagates `payload.timestamp` from the
-    // sparse user/tool_result events to every subsequent entry's
-    // `updatedAt`, which means the poem reply on turn 4 inherits the
-    // tool_result timestamp from turn 2 and ends up stamped earlier than
-    // its own user prompt. Stamping at first observation closes that hole.
+    // Stamp each raw entry with our first-observation timestamp AND a
+    // session-wide monotonic sequence number. The sequence number is the
+    // sort key the merger uses (see mergeNarrativeEntries) — wall-clock
+    // timestamps from Claude's stream events bleed across turns and aren't
+    // safe for ordering.
     const stampedRaw = rawEntries.map((entry, index) => {
       const cacheKey = entry?.id || `raw-${index}`;
       let cachedStamp = this._entryStamps.get(cacheKey);
@@ -246,7 +249,12 @@ export class ClaudeStreamSession extends EventEmitter {
         cachedStamp = stamp;
         this._entryStamps.set(cacheKey, cachedStamp);
       }
-      return { ...entry, timestamp: cachedStamp };
+      let seq = this._entrySeqs.get(cacheKey);
+      if (seq == null) {
+        seq = this._allocateSeq();
+        this._entrySeqs.set(cacheKey, seq);
+      }
+      return { ...entry, timestamp: cachedStamp, seq };
     });
     const synthesizedEntries = this._synthesizePartialEntries(stamp);
     this.entries = [...stampedRaw, ...synthesizedEntries];
@@ -305,27 +313,55 @@ export class ClaudeStreamSession extends EventEmitter {
     if (event.type === "result") {
       this._partialByMessage.clear();
       this._pendingThinking = false;
+      // Invalidate the per-turn placeholder cache so the next turn gets a
+      // fresh seq for its own waiting-placeholder. Without this the second
+      // turn would re-use the first turn's seq and sort to the wrong spot.
+      this._entrySeqs.delete("claude-pending-assistant");
+      this._entryStamps.delete("claude-pending-assistant");
     }
   }
 
   _synthesizePartialEntries(stamp) {
-    // Thinking is now managed by SessionManager as a real native entry —
-    // pushed right after the user message, removed when the stream emits the
-    // first assistant or tool response. The stream session only synthesizes
-    // partial assistant text deltas.
+    // OpenCode pattern: the Thinking indicator is the empty-text state of
+    // the assistant entry itself. While we're waiting on the first text
+    // delta we emit an assistant entry with empty text; the renderer shows
+    // it as a spinner. Once deltas arrive, the same id mutates into the
+    // streaming text. When the canonical `assistant` event lands the
+    // partial slot is cleared and the parser's entry takes over (with the
+    // same seq cached against its id, so position is stable).
     const synthesized = [];
     for (const [messageId, partialText] of this._partialByMessage) {
-      const text = String(partialText || "").trim();
-      if (!text) {
-        continue;
+      const cacheKey = `claude-partial-${messageId}`;
+      let seq = this._entrySeqs.get(cacheKey);
+      if (seq == null) {
+        seq = this._allocateSeq();
+        this._entrySeqs.set(cacheKey, seq);
       }
       synthesized.push({
-        id: `claude-partial-${messageId}`,
+        id: cacheKey,
         kind: "assistant",
         label: "Claude Code",
-        text: partialText,
+        text: String(partialText || ""),
         timestamp: stamp,
         meta: "streaming",
+        seq,
+      });
+    }
+    if (this._pendingThinking && this._partialByMessage.size === 0) {
+      const cacheKey = "claude-pending-assistant";
+      let seq = this._entrySeqs.get(cacheKey);
+      if (seq == null) {
+        seq = this._allocateSeq();
+        this._entrySeqs.set(cacheKey, seq);
+      }
+      synthesized.push({
+        id: cacheKey,
+        kind: "assistant",
+        label: "Claude Code",
+        text: "",
+        timestamp: stamp,
+        meta: "pending",
+        seq,
       });
     }
     return synthesized;
