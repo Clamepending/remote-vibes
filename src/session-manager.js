@@ -150,31 +150,31 @@ function isClaudeProviderId(providerId) {
 }
 
 function isClaudeStreamModeEnabled(env = process.env) {
-  // Stream mode is the default UI for Claude sessions. The env var only acts
-  // as an opt-out: explicitly set it to 0/false/off/no to fall back to the
-  // legacy PTY+TUI surface (mostly useful for debugging the migration).
+  // Stream mode is opt-in for Claude sessions. By default we use the PTY+TUI
+  // surface so the xterm chat view shows the unaltered Claude CLI. Set
+  // VIBE_RESEARCH_CLAUDE_STREAM_MODE=1 to opt into the JSONL stream surface.
   const value = String(
     env?.VIBE_RESEARCH_CLAUDE_STREAM_MODE
       ?? env?.REMOTE_VIBES_CLAUDE_STREAM_MODE
       ?? "",
   ).trim();
   if (!value) {
-    return true;
+    return false;
   }
   return !/^(?:0|false|off|no)$/i.test(value);
 }
 
 function isCodexStreamModeEnabled(env = process.env) {
-  // Same opt-out semantics as Claude: stream mode (codex exec --json) is
-  // the default for new Codex sessions. Set VIBE_RESEARCH_CODEX_STREAM_MODE=0
-  // to fall back to the legacy PTY+TUI surface.
+  // Same opt-in semantics as Claude: PTY+TUI is the default so new Codex
+  // sessions render the raw CLI in xterm. Set VIBE_RESEARCH_CODEX_STREAM_MODE=1
+  // to opt into the codex exec --json stream surface.
   const value = String(
     env?.VIBE_RESEARCH_CODEX_STREAM_MODE
       ?? env?.REMOTE_VIBES_CODEX_STREAM_MODE
       ?? "",
   ).trim();
   if (!value) {
-    return true;
+    return false;
   }
   return !/^(?:0|false|off|no)$/i.test(value);
 }
