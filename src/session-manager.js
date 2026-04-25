@@ -34,6 +34,7 @@ import { ClaudeStreamSession } from "./claude-stream-session.js";
 import { CodexStreamSession } from "./codex-stream-session.js";
 import { SessionStore } from "./session-store.js";
 import { getLegacyWorkspaceStateDir, getVibeResearchStateDir, getVibeResearchSystemDir } from "./state-paths.js";
+import { WorkspaceStore } from "./workspace-store.js";
 
 const MAX_BUFFER_LENGTH = 2_000_000;
 const STARTUP_DELAY_MS = 180;
@@ -1218,6 +1219,14 @@ export function resolveCwd(inputCwd, fallbackCwd) {
   }
 
   return nextCwd;
+}
+
+function tryResolveCwd(inputCwd, fallbackCwd = "") {
+  try {
+    return resolveCwd(inputCwd, fallbackCwd);
+  } catch {
+    return "";
+  }
 }
 
 function buildPersistedExitMessage(message) {
@@ -2596,6 +2605,11 @@ export class SessionManager {
       enabled: persistSessions,
       stateDir,
     });
+    this.workspaceStore = new WorkspaceStore({
+      enabled: persistSessions,
+      stateDir,
+      defaultWorkspaceRoot: this.cwd,
+    });
     this.sessions = new Map();
     this.persistTimer = null;
     this.persistPromise = Promise.resolve();
@@ -2617,6 +2631,8 @@ export class SessionManager {
 
   setDefaultCwd(cwd) {
     this.cwd = resolveCwd(cwd, this.cwd);
+    this.workspaceStore.defaultWorkspaceRoot = this.cwd;
+    this.workspaceStore.ensureWorkspace(this.cwd, { id: "default", kind: "default", opened: true });
     this.systemRootPath = path.resolve(this.cwd, this.systemRootPath);
   }
 
@@ -2648,13 +2664,88 @@ export class SessionManager {
     this.occupationId = normalizeSessionOccupationId(occupationId, this.occupationId);
   }
 
+  registerSessionWorkspace(cwd, { workspaceId = "", label = "", kind = "workspace", opened = false } = {}) {
+    const resolvedCwd = resolveCwd(cwd, this.cwd);
+    const workspace = this.workspaceStore.ensureWorkspace(resolvedCwd, {
+      id: workspaceId,
+      label,
+      kind,
+      opened,
+    });
+    return {
+      cwd: resolvedCwd,
+      workspaceId: workspace.id,
+      launchContext: {
+        kind: "workspace",
+        relativePath: ".",
+      },
+      lastResolvedCwd: resolvedCwd,
+      lastResolvedAt: new Date().toISOString(),
+    };
+  }
+
+  repairSessionWorkspace(session, { markBlocked = false } = {}) {
+    const resolution = this.workspaceStore.resolveSessionCwd(session, this.cwd);
+    const now = new Date().toISOString();
+
+    if (!resolution.cwd) {
+      if (markBlocked) {
+        this.markSessionRestoreFailure(
+          session,
+          `could not restore the session: Working directory does not exist: ${resolution.missingCwd || session.cwd || this.cwd}`,
+        );
+      }
+      return { ...resolution, repaired: false };
+    }
+
+    if (resolution.workspace?.id) {
+      session.workspaceId = resolution.workspace.id;
+    }
+    session.launchContext = {
+      kind: "workspace",
+      relativePath: ".",
+      ...(session.launchContext && typeof session.launchContext === "object" ? session.launchContext : {}),
+    };
+    session.lastResolvedCwd = resolution.cwd;
+    session.lastResolvedAt = now;
+
+    if (session.cwd !== resolution.cwd) {
+      const previousCwd = session.cwd;
+      session.cwd = resolution.cwd;
+      session.updatedAt = now;
+      session.workspaceRepair = {
+        repairedAt: now,
+        previousCwd,
+        reason: resolution.reason || "workspace-registry",
+      };
+      this.pushNativeNarrativeEntry(session, {
+        kind: "status",
+        label: "Workspace repaired",
+        text: previousCwd
+          ? `Repaired missing working directory ${previousCwd}; using ${resolution.cwd}.`
+          : `Resolved working directory to ${resolution.cwd}.`,
+        timestamp: now,
+        meta: resolution.reason || "workspace-registry",
+      });
+      this.pushOutput(
+        session,
+        `\r\n\u001b[1;36m[vibe-research]\u001b[0m repaired working directory: ${previousCwd || "(empty)"} -> ${resolution.cwd}\r\n`,
+      );
+      return { ...resolution, repaired: true };
+    }
+
+    return resolution;
+  }
+
   async initialize() {
+    await this.workspaceStore.load();
     const persistedSessions = await this.sessionStore.load();
 
     for (const snapshot of persistedSessions) {
       this.restoreSession(snapshot);
     }
 
+    await this.workspaceStore.save();
     await this.flushPersistedSessions();
   }
 
@@ -2669,7 +2760,7 @@ export class SessionManager {
     const projectPaths = new Set();
 
     for (const session of this.sessions.values()) {
-      const sessionCwd = resolveCwd(session.cwd, this.cwd);
+      const sessionCwd = tryResolveCwd(session.cwd, this.cwd);
       if (sessionCwd) {
         projectPaths.add(sessionCwd);
       }
@@ -2711,11 +2802,11 @@ export class SessionManager {
 
   async buildSwarmGraph(cwd, { focusSession = null } = {}) {
     const git = await collectGitSwarmInfo(cwd);
-    const focusCwd = resolveCwd(cwd, this.cwd);
+    const focusCwd = tryResolveCwd(cwd, this.cwd) || this.cwd;
     const focusForkParentId = focusSession?.providerState?.forkedFromSessionId || null;
     const relatedSessions = Array.from(this.sessions.values())
       .filter((session) => {
-        const sessionCwd = resolveCwd(session.cwd, this.cwd);
+        const sessionCwd = tryResolveCwd(session.cwd, this.cwd);
 
         if (focusSession) {
           return (
@@ -3397,8 +3488,13 @@ export class SessionManager {
 
     const normalizedName = normalizeSessionName(name);
     const createdAt = new Date().toISOString();
+    const workspaceState = this.registerSessionWorkspace(cwd || this.cwd, { opened: true });
     const session = this.buildSessionRecord({
-      cwd: resolveCwd(cwd, this.cwd),
+      cwd: workspaceState.cwd,
+      workspaceId: workspaceState.workspaceId,
+      launchContext: workspaceState.launchContext,
+      lastResolvedCwd: workspaceState.lastResolvedCwd,
+      lastResolvedAt: workspaceState.lastResolvedAt,
       name: normalizedName || this.makeDefaultName(provider),
       providerId: provider.id,
       providerLabel: provider.label,
@@ -3418,6 +3514,9 @@ export class SessionManager {
     }
 
     this.sessions.set(session.id, session);
+    void this.workspaceStore.save().catch((error) => {
+      console.warn("[vibe-research] failed to persist workspaces", error);
+    });
     this.pushNativeNarrativeEntry(session, {
       kind: "status",
       label: "Starting",
@@ -3533,6 +3632,10 @@ export class SessionManager {
     const sharesProviderMemory = Boolean(forkProviderState?.sessionId);
     const forkSession = this.buildSessionRecord({
       cwd: sourceSession.cwd,
+      workspaceId: sourceSession.workspaceId,
+      launchContext: sourceSession.launchContext,
+      lastResolvedCwd: sourceSession.lastResolvedCwd || sourceSession.cwd,
+      lastResolvedAt: sourceSession.lastResolvedAt,
       name: this.makeForkName(sourceSession.name),
       providerId: sourceSession.providerId,
       providerLabel: sourceSession.providerLabel,
@@ -3987,6 +4090,11 @@ export class SessionManager {
       providerLabel: session.providerLabel,
       name: session.name,
       cwd: session.cwd,
+      workspaceId: session.workspaceId || "",
+      launchContext: session.launchContext || { kind: "workspace", relativePath: "." },
+      lastResolvedCwd: session.lastResolvedCwd || session.cwd,
+      lastResolvedAt: session.lastResolvedAt || null,
+      workspaceRepair: session.workspaceRepair || null,
       shell: session.shell,
       createdAt: session.createdAt,
       updatedAt: session.updatedAt,
@@ -4034,6 +4142,11 @@ export class SessionManager {
     nativeNarrativeInputBuffer = "",
     restoreOnStartup = false,
     providerState = null,
+    workspaceId = "",
+    launchContext = null,
+    lastResolvedCwd = "",
+    lastResolvedAt = null,
+    workspaceRepair = null,
     autoRenameEnabled = false,
     occupationId = this.occupationId,
     streamMode = false,
@@ -4085,6 +4198,13 @@ export class SessionManager {
       restoreOnStartup,
       providerState:
         providerState && typeof providerState === "object" ? { ...providerState } : null,
+      workspaceId: String(workspaceId || ""),
+      launchContext: launchContext && typeof launchContext === "object"
+        ? { ...launchContext }
+        : { kind: "workspace", relativePath: "." },
+      lastResolvedCwd: String(lastResolvedCwd || cwd || ""),
+      lastResolvedAt,
+      workspaceRepair: workspaceRepair && typeof workspaceRepair === "object" ? { ...workspaceRepair } : null,
       autoRenameEnabled: Boolean(autoRenameEnabled),
       autoRenameBuffer: "",
       activityInputBuffer: "",
@@ -4939,6 +5059,11 @@ export class SessionManager {
   }
 
   startSession(session, provider, { restored = false } = {}) {
+    const workspaceResolution = this.repairSessionWorkspace(session, { markBlocked: true });
+    if (!workspaceResolution.cwd) {
+      throw new Error(`Working directory does not exist: ${workspaceResolution.missingCwd || session.cwd || this.cwd}`);
+    }
+
     if (session.streamMode) {
       if (isClaudeProviderId(provider.id)) {
         this.startClaudeStreamSession(session, provider, { restored });
@@ -5430,13 +5555,19 @@ export class SessionManager {
       nativeNarrativeInputBuffer: snapshot.nativeNarrativeInputBuffer || "",
       restoreOnStartup: Boolean(snapshot.restoreOnStartup),
       providerState: snapshot.providerState || null,
+      workspaceId: snapshot.workspaceId || "",
+      launchContext: snapshot.launchContext || null,
+      lastResolvedCwd: snapshot.lastResolvedCwd || "",
+      lastResolvedAt: snapshot.lastResolvedAt || null,
+      workspaceRepair: snapshot.workspaceRepair || null,
       occupationId: snapshot.occupationId || snapshot.promptId || this.occupationId,
       streamMode: Boolean(snapshot.streamMode),
     });
 
     this.sessions.set(session.id, session);
+    const workspaceResolution = this.repairSessionWorkspace(session, { markBlocked: true });
 
-    const revivePersistentTerminal = this.shouldRevivePersistentTerminal(session);
+    const revivePersistentTerminal = workspaceResolution.cwd ? this.shouldRevivePersistentTerminal(session) : false;
 
     if (!session.restoreOnStartup && !revivePersistentTerminal) {
       return;

@@ -789,6 +789,7 @@ test("state is available without authentication", async () => {
   } finally {
     await app.close();
     await removeTempWorkspace(workspaceDir);
+    await rm(volatileRoot, { recursive: true, force: true });
   }
 });
 
@@ -9216,6 +9217,71 @@ test("persisted sessions with missing workspaces stay visible and show restore f
 
     websocket.close();
     await once(websocket, "close");
+  } finally {
+    await app.close();
+    await removeTempWorkspace(workspaceDir);
+  }
+});
+
+test("persisted sessions with deleted volatile worktree cwd migrate to the default workspace", async () => {
+  const workspaceDir = await createTempWorkspace("vibe-research-volatile-cwd-");
+  const volatileRoot = await mkdtemp(path.join("/private/tmp", "vibe-research-markdown-fix-"));
+  const volatileCwd = path.join(volatileRoot, "vibe-research", "user");
+  const persistedSessionId = "persisted-volatile-cwd";
+  const createdAt = new Date().toISOString();
+
+  await mkdir(volatileCwd, { recursive: true });
+  await writePersistedSessions(workspaceDir, [
+    {
+      id: persistedSessionId,
+      providerId: "shell",
+      providerLabel: "Vanilla Shell",
+      name: "Deleted Temp Worktree",
+      cwd: volatileCwd,
+      shell: process.env.SHELL || "/bin/zsh",
+      createdAt,
+      updatedAt: createdAt,
+      lastOutputAt: createdAt,
+      status: "running",
+      exitCode: null,
+      exitSignal: null,
+      cols: 90,
+      rows: 24,
+      buffer: "previous volatile transcript\r\n",
+      restoreOnStartup: true,
+    },
+  ]);
+  await rm(volatileRoot, { recursive: true, force: true });
+
+  const { app, baseUrl } = await startApp({
+    cwd: workspaceDir,
+    persistSessions: true,
+  });
+
+  try {
+    const sessionsResponse = await fetch(`${baseUrl}/api/sessions`);
+    assert.equal(sessionsResponse.status, 200);
+    const sessionsPayload = await sessionsResponse.json();
+    const session = sessionsPayload.sessions.find((entry) => entry.id === persistedSessionId);
+
+    assert.ok(session, "expected repaired volatile session to stay visible");
+    assert.equal(await realpath(session.cwd), await realpath(path.join(workspaceDir, "vibe-research", "user")));
+    assert.equal(session.workspaceId, "default");
+    assert.equal(session.workspaceRepair?.reason, "volatile-cwd-missing");
+
+    const persistedPayload = JSON.parse(await readFile(path.join(workspaceDir, ".vibe-research", "sessions.json"), "utf8"));
+    const persistedSession = persistedPayload.sessions.find((entry) => entry.id === persistedSessionId);
+    assert.equal(await realpath(persistedSession.cwd), await realpath(path.join(workspaceDir, "vibe-research", "user")));
+    assert.equal(persistedSession.workspaceId, "default");
+
+    const workspacePayload = JSON.parse(await readFile(path.join(workspaceDir, ".vibe-research", "workspaces.json"), "utf8"));
+    const expectedAgentDir = await realpath(path.join(workspaceDir, "vibe-research", "user"));
+    let foundDefaultWorkspace = false;
+    for (const entry of workspacePayload.workspaces) {
+      if (entry.id !== "default") continue;
+      foundDefaultWorkspace = (await realpath(entry.root)) === expectedAgentDir;
+    }
+    assert.ok(foundDefaultWorkspace);
   } finally {
     await app.close();
     await removeTempWorkspace(workspaceDir);
