@@ -2091,6 +2091,7 @@ const state = {
     error: "",
     data: null,
   },
+  swarmGraphSilentRefreshKey: "",
   visualGame: {
     frameHandle: 0,
     simulationFrameHandle: 0,
@@ -24300,6 +24301,11 @@ async function handleVisualGameHit(hit) {
   }
 
   if (hit.kind === "session" && hit.sessionId) {
+    const nextSession = state.sessions.find((session) => session.id === hit.sessionId);
+    if (!nextSession) {
+      void loadSessions();
+      return;
+    }
     markSessionRead(hit.sessionId, { refresh: false });
     state.activeSessionId = hit.sessionId;
     state.visualGame.selectedSessionId = hit.sessionId;
@@ -24311,14 +24317,11 @@ async function handleVisualGameHit(hit) {
       subagentId: hit.subagentId || hit.agentId || "",
       browserUseSessionId: hit.browserUseSessionId || "",
     });
-    const nextSession = state.sessions.find((session) => session.id === hit.sessionId);
     void recordAgentTownEvent("agent_clicked", {
-      label: hit.label || nextSession?.name || "agent",
+      label: hit.label || nextSession.name || "agent",
       metadata: { sessionId: hit.sessionId },
     });
-    if (nextSession) {
-      expandSessionProject(nextSession.cwd);
-    }
+    expandSessionProject(nextSession.cwd);
     renderShell();
     connectToSession(state.activeSessionId);
     closeMobileSidebar();
@@ -37029,6 +37032,50 @@ async function openSwarmProjectGraph(projectCwd, { fallbackSessionId = "", proje
   renderShell();
 }
 
+async function refreshSwarmGraphSilently() {
+  const { sessionId, projectCwd } = state.swarmGraph;
+  if (!sessionId && !projectCwd) {
+    return;
+  }
+
+  const requestKey = `${sessionId || ""}|${projectCwd || ""}`;
+  if (state.swarmGraphSilentRefreshKey === requestKey) {
+    return;
+  }
+  state.swarmGraphSilentRefreshKey = requestKey;
+
+  try {
+    let payload;
+    if (projectCwd) {
+      const params = new URLSearchParams({ cwd: projectCwd });
+      try {
+        payload = await fetchJson(`/api/projects/swarm?${params.toString()}`, { cache: "no-store" });
+      } catch (error) {
+        const fallbackId = state.swarmGraph.projectFallbackSessionId;
+        if (error.status !== 404 || !fallbackId) {
+          return;
+        }
+        payload = await fetchJson(`/api/sessions/${encodeURIComponent(fallbackId)}/swarm`, { cache: "no-store" });
+      }
+    } else {
+      payload = await fetchJson(`/api/sessions/${encodeURIComponent(sessionId)}/swarm`, { cache: "no-store" });
+    }
+
+    if (state.swarmGraph.sessionId === sessionId && state.swarmGraph.projectCwd === projectCwd) {
+      state.swarmGraph = { ...state.swarmGraph, data: payload.graph, error: "" };
+      if (isVisualInterfaceView()) {
+        renderShell();
+      }
+    }
+  } catch {
+    // Silent refresh — leave existing data in place on failure.
+  } finally {
+    if (state.swarmGraphSilentRefreshKey === requestKey) {
+      state.swarmGraphSilentRefreshKey = "";
+    }
+  }
+}
+
 async function loadBrowserUseSession(browserUseSessionId, { silent = false } = {}) {
   if (!browserUseSessionId) {
     return;
@@ -39251,6 +39298,9 @@ async function loadSessions() {
 
     if (state.currentView !== "shell") {
       if (isVisualInterfaceView() && (sessionIdsChanged || visualSelectionPruned)) {
+        if (sessionIdsChanged) {
+          void refreshSwarmGraphSilently();
+        }
         renderShell();
         return;
       }
