@@ -7461,6 +7461,8 @@ function renderVideoMemoryInstallState() {
   const installed = isVideoMemoryPluginInstalled();
   const enabled = Boolean(state.settings.videoMemoryEnabled);
   const runtimeError = enabled ? getVideoMemoryRuntimeError() : "";
+  const baseUrl = String(state.settings.videoMemoryBaseUrl || "").trim();
+  const launchCommand = String(state.settings.videoMemoryLaunchCommand || "").trim();
   const title = installed
     ? runtimeError
       ? "VideoMemory building installed but not reachable"
@@ -7468,8 +7470,14 @@ function renderVideoMemoryInstallState() {
       ? "VideoMemory building installed"
       : "VideoMemory building installed but disabled"
     : "VideoMemory building not installed";
+  // Vibe Research is only a client of the standalone VideoMemory backend. When
+  // we can't reach it, the raw fetch error ("fetch failed") is opaque — append
+  // a hint so the user knows to either start the server themselves or set a
+  // launch command.
   const detail = runtimeError
-    ? runtimeError
+    ? launchCommand
+      ? `${runtimeError} · server not responding at ${baseUrl || "the configured URL"}.`
+      : `${runtimeError} · start the VideoMemory server at ${baseUrl || "the configured URL"} or set a launch command below.`
     : enabled
     ? "Camera monitors can wake coding agents."
     : "Enable VideoMemory monitors to arm camera wakeups.";
@@ -17493,6 +17501,16 @@ function renderVideoMemoryPluginPanel() {
   const webhookUrl = status.webhookUrl || "";
   const webhookToken = status.webhookToken || "";
   const standaloneUrl = resolveVideoMemoryOpenUrl();
+  // The "Open VideoMemory" link points at the standalone VideoMemory backend
+  // (e.g. http://127.0.0.1:5050). Vibe Research is only a client of that
+  // backend, so when the URL is unreachable the link 404s with "site can't be
+  // reached". Hide it until either the backend has answered at least once
+  // (devicesKnown) or the user has armed a monitor — the install-state banner
+  // already reports the failure with `getVideoMemoryRuntimeError()`.
+  const runtimeError = state.settings.videoMemoryEnabled ? getVideoMemoryRuntimeError() : "";
+  const showStandaloneLink = Boolean(
+    standaloneUrl && !runtimeError && (status.devicesKnown || Number(status.monitorsCount || 0) > 0),
+  );
 
   return `
     <aside class="mcp-import-card videomemory-plugin-card">
@@ -17500,7 +17518,7 @@ function renderVideoMemoryPluginPanel() {
       <h3>VideoMemory</h3>
       <p>Vibe Research can route VideoMemory task events into any coding-agent session and show armed monitors in the camera room.</p>
       ${
-        standaloneUrl
+        showStandaloneLink
           ? `<a class="primary-button videomemory-open-standalone" href="${escapeHtml(standaloneUrl)}" target="_blank" rel="noreferrer">
               <span>Open VideoMemory</span>
               <span class="videomemory-open-standalone-host">${escapeHtml(standaloneUrl.replace(/^https?:\/\//, ""))}</span>

@@ -1149,6 +1149,11 @@ const CORE_BUILDING_MANIFESTS = [
     },
     visual: {
       shape: "camera",
+      // VideoMemory has a dedicated Camera Room slot in Agent Town. Marking it
+      // as a special town place stops it from also appearing as a generic
+      // placeable plugin building — otherwise the user sees two buildings
+      // (the auto-placed Camera Room and a duplicate VideoMemory tile).
+      specialTownPlace: true,
     },
     agentGuide: {
       summary: "Use VideoMemory when the human asks you to watch a live camera or video stream for some condition and react when it happens — either waking your own session with the details or spawning a fresh session. It handles the video-watching and fires a webhook back into Vibe Research when the condition is met.",
