@@ -6,7 +6,7 @@ import { promisify } from "node:util";
 const execFileAsync = promisify(execFileCallback);
 const DEFAULT_CACHE_MS = 5 * 60 * 1000;
 const DEFAULT_TIMEOUT_MS = 8_000;
-const DEFAULT_UPDATE_CHANNEL = "release";
+const DEFAULT_UPDATE_CHANNEL = "branch";
 const MANAGED_PROMPT_MARKER = "<!-- vibe-research:managed-agent-prompt -->";
 const LEGACY_MANAGED_PROMPT_MARKER = "<!-- remote-vibes:managed-agent-prompt -->";
 const MANAGED_PROMPT_MARKERS = [MANAGED_PROMPT_MARKER, LEGACY_MANAGED_PROMPT_MARKER];

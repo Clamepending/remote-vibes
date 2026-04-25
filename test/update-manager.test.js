@@ -298,6 +298,7 @@ test("UpdateManager falls back to the static release channel when GitHub Release
       cwd: checkoutDir,
       stateDir: path.join(tempRoot, "state"),
       cacheMs: 0,
+      channel: "release",
       fetch: async (url) => {
         if (url === githubLatestUrl) {
           return {
@@ -361,6 +362,7 @@ test("UpdateManager ignores stale release-channel tags when remote semver tags a
       cwd: checkoutDir,
       stateDir: path.join(tempRoot, "state"),
       cacheMs: 0,
+      channel: "release",
       fetch: async (url) => {
         if (url === githubLatestUrl) {
           return {
@@ -442,6 +444,7 @@ test("UpdateManager prefers GitHub Releases and schedules a tag checkout", async
       cwd: checkoutDir,
       stateDir: path.join(tempRoot, "state"),
       cacheMs: 0,
+      channel: "release",
       port: 49124,
       fetch: async (url) => {
         if (url === releaseChannelUrl) {
@@ -524,6 +527,7 @@ test("UpdateManager falls back to remote version tags for detached release check
       cwd: checkoutDir,
       stateDir: path.join(tempRoot, "state"),
       cacheMs: 0,
+      channel: "release",
       port: 49125,
       fetch: async (url) => ({
         ok: false,
@@ -596,6 +600,7 @@ test("UpdateManager does not offer stale release-channel downgrades for newer re
       cwd: checkoutDir,
       stateDir: path.join(tempRoot, "state"),
       cacheMs: 0,
+      channel: "release",
       fetch: async (url) => {
         if (url === githubLatestUrl) {
           return {
@@ -677,6 +682,7 @@ test("UpdateManager does not offer to downgrade branch checkouts ahead of the la
       cwd: checkoutDir,
       stateDir: path.join(tempRoot, "state"),
       cacheMs: 0,
+      channel: "release",
       fetch: async (url) => {
         if (url === releaseChannelUrl) {
           return {
