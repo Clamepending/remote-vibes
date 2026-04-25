@@ -17489,7 +17489,7 @@ function renderVideoMemoryLaunchControls() {
           data-videomemory-install-server
         >install &amp; launch VideoMemory server</button>
         <span class="videomemory-launch-install-hint">
-          clones github.com/Clamepending/videomemory into ~/videomemory if missing, installs uv if missing, then starts it on the URL above
+          installs git/uv if missing, clones github.com/Clamepending/videomemory into ~/videomemory if missing, then starts it on the URL above
         </span>
       </div>
     </fieldset>
@@ -33834,6 +33834,7 @@ function bindVideoMemoryForm() {
       });
       applySettingsState(payload.settings);
       const installedParts = [];
+      if (payload.gitInstalled) installedParts.push("git");
       if (payload.cloned) installedParts.push("server");
       if (payload.uvInstalled) installedParts.push("uv");
       target.textContent = installedParts.length

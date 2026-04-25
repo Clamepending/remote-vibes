@@ -4808,8 +4808,51 @@ export async function createVibeResearchApp({
         return false;
       }
     }
+    async function detectGitOnPath() {
+      try {
+        await execFileAsync("git", ["--version"]);
+        return true;
+      } catch {
+        return false;
+      }
+    }
 
     try {
+      // We need git to clone the repo and to run uv (uv resolves the project's
+      // git deps). On macOS the canonical install is via the Xcode Command
+      // Line Tools, which `xcode-select --install` triggers as a system
+      // dialog. We can't fully suppress the dialog, but we can fire it and
+      // poll for completion so the rest of the flow stays automatic.
+      let gitInstalled = false;
+      if (!(await detectGitOnPath())) {
+        if (process.platform === "darwin") {
+          try {
+            await execFileAsync("xcode-select", ["--install"], { timeout: 10_000 });
+          } catch {
+            // xcode-select --install exits non-zero if CLT is already installed
+            // or the dialog is already open — both fine; the poll below is the
+            // real check.
+          }
+          const deadline = Date.now() + 10 * 60 * 1000;
+          while (Date.now() < deadline) {
+            await new Promise((resolve) => setTimeout(resolve, 5_000));
+            if (await detectGitOnPath()) {
+              gitInstalled = true;
+              break;
+            }
+          }
+          if (!gitInstalled) {
+            throw new Error(
+              "git is not installed. The Xcode Command Line Tools installer was opened — finish that dialog and click install again.",
+            );
+          }
+        } else {
+          throw new Error(
+            "git is not installed. Install it with your package manager (e.g. `sudo apt-get install git` or `sudo dnf install git`), then click install again.",
+          );
+        }
+      }
+
       const startScript = path.join(installRoot, "start.sh");
       let cloned = false;
       try {
@@ -4871,6 +4914,7 @@ export async function createVibeResearchApp({
         installPath: installRoot,
         cloned,
         uvInstalled,
+        gitInstalled,
         repoUrl,
         settings: getSettingsState(),
         videoMemory: videoMemoryService.getStatus(),
