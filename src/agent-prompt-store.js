@@ -46,7 +46,7 @@ const PROMPT_PRESETS = [
   {
     id: CUSTOM_PROMPT_ID,
     label: "Custom",
-    description: "Your editable occupation. Selecting it sets the system prompt for new agents.",
+    description: "Your editable prompt. Selecting it sets the system prompt for new agents.",
     editable: true,
   },
   {

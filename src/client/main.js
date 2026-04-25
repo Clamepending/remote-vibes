@@ -297,24 +297,24 @@ const RICH_SESSION_RENDER_LIMIT = 240_000;
 const RICH_SESSION_MAX_BLOCKS = 72;
 const RICH_SESSION_RECENT_INPUT_LIMIT = 16;
 const TERMINAL_THEME = {
-  background: "#090b0d",
-  foreground: "#f3efe8",
-  cursor: "#6ae3c6",
-  black: "#111315",
-  red: "#ff7f79",
-  green: "#6ae3c6",
-  yellow: "#f0c674",
-  blue: "#8fb9ff",
-  magenta: "#d3a6ff",
-  cyan: "#7fe0d4",
-  white: "#f3efe8",
-  brightBlack: "#6a7176",
-  brightRed: "#ff9f99",
-  brightGreen: "#8ff1d8",
-  brightYellow: "#f6d58e",
-  brightBlue: "#add0ff",
-  brightMagenta: "#e2c2ff",
-  brightCyan: "#a6efe6",
+  background: "#000000",
+  foreground: "#e5e5e5",
+  cursor: "#e5e5e5",
+  black: "#000000",
+  red: "#cd3131",
+  green: "#0dbc79",
+  yellow: "#e5e510",
+  blue: "#2472c8",
+  magenta: "#bc3fbc",
+  cyan: "#11a8cd",
+  white: "#e5e5e5",
+  brightBlack: "#666666",
+  brightRed: "#f14c4c",
+  brightGreen: "#23d18b",
+  brightYellow: "#f5f543",
+  brightBlue: "#3b8eea",
+  brightMagenta: "#d670d6",
+  brightCyan: "#29b8db",
   brightWhite: "#ffffff",
 };
 const TERMINAL_TRANSCRIPT_BASIC_COLOR_NAMES = [
@@ -2337,7 +2337,7 @@ const state = {
   terminalTranscriptRenderFrame: null,
   terminalTranscriptScrollToBottom: false,
   terminalTranscriptVisible: false,
-  shellSurfaceMode: "native",
+  shellSurfaceMode: "terminal",
   nativeSessionNarratives: {},
   nativeSessionNarrativeErrors: {},
   nativeSessionNarrativeLoading: {},
@@ -4956,7 +4956,7 @@ function getShellSurfaceMode(session = getActiveSession()) {
     return "native";
   }
   return isRichSessionSurfaceSupported(session)
-    ? (state.shellSurfaceMode === "terminal" ? "terminal" : "native")
+    ? (state.shellSurfaceMode === "native" ? "native" : "terminal")
     : "terminal";
 }
 
@@ -7733,7 +7733,7 @@ Use this map for the bite-sized walkthrough, but do not dump it all at once:
 3. First building: create an Agent Town action item with predicate "first_building_placed", href "?view=swarm", sourceSessionId "$VIBE_RESEARCH_SESSION_ID" when available, and a short title like "Place your first building"; then wait on "first_building_placed" while guiding me to place one cosmetic building or install/place one functional building. Explain cosmetic versus functional only when it matters for that action.
 4. Agents: click an agent in Agent Town to open that agent's session and talk to them.
 5. Automations: open the Campanile/Automations building, choose a daily 9am schedule, and write a task prompt; give this concrete example: "Every morning at 9am, look through the Library and send me a summary of the day in my Agent Inbox."
-6. Occupations: the system prompts/roles that shape new agents.
+6. Prompts: the system prompts/roles that shape new agents.
 7. Settings: credentials, runtime defaults, local access, and app configuration.
 8. Toolshed and BuildingHub: how new buildings are drafted, validated, and shared.
 9. Telegram and Phone/iMessage: optional communication bridges I can connect later.
@@ -10320,6 +10320,15 @@ function replayKnowledgeBaseGraphUnfold({ forceSimulation = false } = {}) {
 function scheduleKnowledgeBaseGraphFrame() {
   const layout = state.knowledgeBase.graphLayout;
 
+  if (state.currentView !== "knowledge-base") {
+    if (layout.frameHandle) {
+      window.cancelAnimationFrame(layout.frameHandle);
+      layout.frameHandle = 0;
+    }
+    layout.running = false;
+    return;
+  }
+
   if (layout.frameHandle || !layout.running) {
     return;
   }
@@ -10328,6 +10337,11 @@ function scheduleKnowledgeBaseGraphFrame() {
     layout.frameHandle = 0;
 
     if (!layout.running || !layout.nodes.length) {
+      return;
+    }
+
+    if (state.currentView !== "knowledge-base") {
+      layout.running = false;
       return;
     }
 
@@ -12416,7 +12430,7 @@ function getAgentProfileForSession(session, selection = state.agentProfile) {
     const toolUseCount = Number(subagent.toolUseCount);
     const messageCount = Number(subagent.messageCount);
     const facts = [
-      { label: "occupation", value: subagent.agentType || getOccupationDisplayLabel(session.occupationId) },
+      { label: "prompt", value: subagent.agentType || getOccupationDisplayLabel(session.occupationId) },
       { label: "status", value: statusText, statusClass: status.className, statusTitle: status.title },
       { label: "project", value: projectLabel },
       { label: "parent", value: session.name || session.providerLabel || "Agent" },
@@ -12446,7 +12460,7 @@ function getAgentProfileForSession(session, selection = state.agentProfile) {
   const subagents = Array.isArray(session.subagents) ? session.subagents : [];
   const workingSubagentCount = subagents.filter((entry) => entry?.status === "working").length;
   const facts = [
-    { label: "occupation", value: getOccupationDisplayLabel(session.occupationId || state.agentPromptSelectedId) },
+    { label: "prompt", value: getOccupationDisplayLabel(session.occupationId || state.agentPromptSelectedId) },
     { label: "status", value: statusText, statusClass: status.className, statusTitle: status.title },
     { label: "provider", value: session.providerLabel || session.providerId || "agent" },
     { label: "project", value: projectLabel },
@@ -13513,29 +13527,12 @@ function getCommunitySidebarItems() {
 
 function renderSidebarNav() {
   const wikiLabel = state.settings.wikiRelativeRoot || state.agentPromptWikiRoot || "wiki";
-  const profileUrl = getBuildingHubProfileUrl();
-  const authProviderLabel = getBuildingHubConnectedAccountLabel();
-  const profileMeta = profileUrl
-    ? `${authProviderLabel || "BuilderHub"} profile`
-    : isBuildingHubAuthenticated()
-      ? "add profile URL in BuildingHub"
-      : "log in to BuilderHub";
-  const profileHref = profileUrl || getMainViewUrl("plugins");
-  const profileLinkAttrs = profileUrl
-    ? 'target="_blank" rel="noreferrer"'
-    : 'data-open-main-view="plugins"';
   const primaryItems = [
     {
       view: "visual-interface",
       icon: MapIcon,
       label: "Map",
       meta: "town",
-    },
-    {
-      view: "agent-inbox",
-      icon: Inbox,
-      label: "Agent Inbox",
-      meta: getAgentInboxNavMeta(),
     },
     {
       view: "settings",
@@ -13554,7 +13551,7 @@ function renderSidebarNav() {
     {
       view: "agent-prompt",
       icon: FilePenLine,
-      label: "Occupations",
+      label: "Prompts",
       meta: getAgentPromptTargetSummary(),
     },
   ];
@@ -13603,19 +13600,6 @@ function renderSidebarNav() {
           ${renderSessionProviderPicker()}
         </form>
         ${primaryItems.map(renderItem).join("")}
-        <a
-          class="sidebar-nav-item"
-          href="${escapeHtml(profileHref)}"
-          ${profileLinkAttrs}
-          aria-label="Open BuilderHub profile"
-          ${tooltipAttributes("BuilderHub profile", "right")}
-        >
-          <span class="sidebar-nav-icon" aria-hidden="true">${renderIcon(Plug)}</span>
-          <span class="sidebar-nav-copy">
-            <span class="sidebar-nav-label">BuilderHub profile</span>
-            <span class="sidebar-nav-meta">${escapeHtml(profileMeta)}</span>
-          </span>
-        </a>
       </nav>
       <nav class="sidebar-nav sidebar-workspace-nav" aria-label="Workspace views">
         ${workspaceItems.map(renderItem).join("")}
@@ -20696,10 +20680,10 @@ function renderToolshedBuildingPanel() {
       attrs: `data-visual-building-open="system"`,
     },
     {
-      label: "Occupations",
+      label: "Prompts",
       meta: "agent roles",
       icon: FilePenLine,
-      detail: "Occupations are the prompts that shape new agents, such as researcher, engineer, or a custom guide.",
+      detail: "Prompts shape new agents, such as researcher, engineer, or a custom guide.",
       attrs: `data-open-main-view="agent-prompt"`,
     },
     {
@@ -29066,7 +29050,7 @@ function getWorkspaceViewTabConfig(view) {
   const configs = {
     shell: { label: "Terminal", meta: "shell", icon: Bot },
     "knowledge-base": { label: "Library", meta: "notes", icon: BookOpen },
-    "agent-prompt": { label: "Occupations", meta: "prompts", icon: FilePenLine },
+    "agent-prompt": { label: "Prompts", meta: "prompts", icon: FilePenLine },
     "agent-inbox": { label: "Agent Inbox", meta: "attention", icon: Inbox },
     search: { label: "Search", meta: "global", icon: Search },
     plugins: { label: "BuildingHub", meta: "catalog", icon: Plug },
@@ -29953,7 +29937,7 @@ function renderAgentPromptView() {
   const selectedPreset = getSelectedAgentPromptPreset();
   const presetDescription =
     selectedPreset?.description ||
-    (state.agentPromptEditable ? "custom occupation selected" : "built-in occupation selected");
+    (state.agentPromptEditable ? "custom prompt selected" : "built-in prompt selected");
   const editorAttributes = `
               spellcheck="false"
               autocapitalize="none"
@@ -29966,11 +29950,11 @@ function renderAgentPromptView() {
       <div class="dashboard-toolbar">
         <button class="icon-button hidden-desktop" type="button" id="open-sidebar" aria-label="Open sidebar" ${tooltipAttributes("Open sidebar")}>${renderIcon(Menu)}</button>
         <div class="dashboard-copy">
-          <strong>Occupations</strong>
+          <strong>Prompts</strong>
           <div class="terminal-meta">shared instruction sets injected into Codex and Claude Code sessions</div>
         </div>
         <div class="dashboard-actions">
-          <button class="icon-button toolbar-control refresh-icon-button" type="button" id="refresh-agent-prompt" aria-label="Reload occupations from disk" ${tooltipAttributes("Reload occupations from disk")}>${renderIcon(RefreshCw)}</button>
+          <button class="icon-button toolbar-control refresh-icon-button" type="button" id="refresh-agent-prompt" aria-label="Reload prompts from disk" ${tooltipAttributes("Reload prompts from disk")}>${renderIcon(RefreshCw)}</button>
         </div>
       </div>
       <div class="dashboard-range agent-prompt-summary">
@@ -29982,11 +29966,11 @@ function renderAgentPromptView() {
         <form class="agent-prompt-editor-card" id="agent-prompt-form">
           <div class="agent-prompt-card-head">
             <div>
-              <strong>Occupation</strong>
+              <strong>Prompt</strong>
               <div class="knowledge-base-panel-meta">${escapeHtml(presetDescription)}</div>
             </div>
             <div class="agent-prompt-controls">
-              <div class="agent-prompt-preset-bar" role="radiogroup" aria-label="Occupation">
+              <div class="agent-prompt-preset-bar" role="radiogroup" aria-label="Prompt">
                 ${renderAgentPromptPresetBar()}
               </div>
               <button class="primary-button toolbar-control" type="submit" ${state.agentPromptEditable ? "" : "disabled"}>save custom</button>
@@ -29994,7 +29978,7 @@ function renderAgentPromptView() {
           </div>
           <div class="agent-prompt-meta-row">
             <span>Library root: ${escapeHtml(state.agentPromptWikiRoot)}</span>
-            <span>${state.agentPromptEditable ? `custom source: ${escapeHtml(state.agentPromptCustomPath || ".vibe-research/custom-agent-prompt.md")}` : "built-in occupation"}</span>
+            <span>${state.agentPromptEditable ? `custom source: ${escapeHtml(state.agentPromptCustomPath || ".vibe-research/custom-agent-prompt.md")}` : "built-in prompt"}</span>
           </div>
           ${renderLineNumberEditor({
             id: "agent-prompt-textarea",
@@ -30009,7 +29993,7 @@ function renderAgentPromptView() {
           <div class="agent-prompt-card-head">
             <div>
               <strong>Managed Files</strong>
-              <div class="knowledge-base-panel-meta">where occupations are synced for agents</div>
+              <div class="knowledge-base-panel-meta">where prompts are synced for agents</div>
             </div>
           </div>
           <div class="agent-prompt-target-list" id="agent-prompt-targets">${renderAgentPromptTargets()}</div>
@@ -30626,7 +30610,7 @@ function renderShell() {
 
   const viewTitles = {
     "knowledge-base": "Library · Vibe Research",
-    "agent-prompt": "Occupations · Vibe Research",
+    "agent-prompt": "Prompts · Vibe Research",
     search: "Search · Vibe Research",
     plugins: "BuildingHub · Vibe Research",
     settings: "Settings · Vibe Research",
@@ -38346,7 +38330,7 @@ function bindShellEvents() {
     const hasUnsavedChanges =
       state.agentPromptEditable && textarea instanceof HTMLTextAreaElement && textarea.value !== state.agentPrompt;
 
-    if (hasUnsavedChanges && !window.confirm("You have unsaved edits in Occupations. Reload from disk and discard them?")) {
+    if (hasUnsavedChanges && !window.confirm("You have unsaved edits in Prompts. Reload from disk and discard them?")) {
       return;
     }
 
@@ -38370,7 +38354,7 @@ function bindShellEvents() {
       const hasUnsavedChanges =
         state.agentPromptEditable && textarea instanceof HTMLTextAreaElement && textarea.value !== state.agentPrompt;
 
-      if (hasUnsavedChanges && !window.confirm("You have unsaved custom occupation edits. Switch occupations and discard them?")) {
+      if (hasUnsavedChanges && !window.confirm("You have unsaved custom prompt edits. Switch prompts and discard them?")) {
         return;
       }
 

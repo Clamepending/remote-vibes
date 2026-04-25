@@ -247,7 +247,7 @@ const CORE_BUILDING_MANIFESTS = [
         { label: "Publish path", value: "GitHub PR to BuildingHub", required: false },
       ],
       steps: [
-        { title: "Read the map", detail: "Understand buildings, Library memory, settings, occupations, automations, and communications before adding new surfaces." },
+        { title: "Read the map", detail: "Understand buildings, Library memory, settings, prompts, automations, and communications before adding new surfaces." },
         { title: "Draft a manifest", detail: "Copy a BuildingHub template or add a first-party manifest with a stable id, setup variables, and Agent Town visual shape." },
         { title: "Validate and publish", detail: "Run the catalog validator, rebuild registry.json, and open a reviewed BuildingHub pull request when the building is community-safe." },
       ],
@@ -585,7 +585,7 @@ const CORE_BUILDING_MANIFESTS = [
   },
   {
     id: "occupations",
-    name: "Occupations",
+    name: "Prompts",
     category: "Vibe Research",
     description: "Edit the school of system prompt roles that shape new agents before they start work.",
     icon: School,
@@ -605,32 +605,32 @@ const CORE_BUILDING_MANIFESTS = [
     },
     access: {
       label: "Managed prompts",
-      detail: "Uses the local Occupations prompt store and syncs managed instructions into AGENTS.md and CLAUDE.md so Codex and Claude Code sessions receive the same role guidance.",
+      detail: "Uses the local Prompts store and syncs managed instructions into AGENTS.md and CLAUDE.md so Codex and Claude Code sessions receive the same role guidance.",
     },
     agentGuide: {
-      summary: "Use Occupations when an agent needs to inspect or explain the shared role prompt that will be injected into new sessions.",
+      summary: "Use Prompts when an agent needs to inspect or explain the shared role prompt that will be injected into new sessions.",
       useCases: [
-        "Check which occupation is selected before starting a new agent.",
+        "Check which prompt is selected before starting a new agent.",
         "Inspect the managed prompt source and synced AGENTS.md and CLAUDE.md files.",
         "Diagnose prompt sync conflicts without writing secrets or credentials into managed instruction files.",
       ],
       commands: [
-        { label: "Read current occupation", command: "curl -s http://127.0.0.1:${VIBE_RESEARCH_PORT:-4826}/api/agent-prompt -H 'X-Vibe-Research-API: 1'", detail: "Shows the selected occupation, source path, and managed target files." },
+        { label: "Read current prompt", command: "curl -s http://127.0.0.1:${VIBE_RESEARCH_PORT:-4826}/api/agent-prompt -H 'X-Vibe-Research-API: 1'", detail: "Shows the selected prompt, source path, and managed target files." },
         { label: "Open prompt source", command: "sed -n '1,220p' \"$VIBE_RESEARCH_AGENT_PROMPT_PATH\"", detail: "Read the active prompt file from the agent environment when available." },
       ],
       env: [
-        { name: "VIBE_RESEARCH_AGENT_PROMPT_PATH", detail: "Path to the active Occupations prompt file for this session." },
+        { name: "VIBE_RESEARCH_AGENT_PROMPT_PATH", detail: "Path to the active prompt file for this session." },
       ],
     },
     onboarding: {
       variables: [
-        { label: "Selected occupation", value: "Researcher, Engineer, or Custom", required: true },
+        { label: "Selected prompt", value: "Researcher, Engineer, or Custom", required: true },
         { label: "Prompt source", value: ".vibe-research/agent-prompt.md", required: true },
         { label: "Managed files", value: "AGENTS.md, CLAUDE.md", required: true },
       ],
       steps: [
-        { title: "Choose an occupation", detail: "Pick the role prompt that should shape newly launched agents.", completeWhen: { type: "installed" } },
-        { title: "Edit custom guidance", detail: "Use the custom occupation when the built-in researcher or engineer prompt needs project-specific instructions." },
+        { title: "Choose a prompt", detail: "Pick the role prompt that should shape newly launched agents.", completeWhen: { type: "installed" } },
+        { title: "Edit custom guidance", detail: "Use the custom prompt when the built-in researcher or engineer prompt needs project-specific instructions." },
         { title: "Review managed files", detail: "Check conflicts before overwriting AGENTS.md or CLAUDE.md." },
       ],
     },
