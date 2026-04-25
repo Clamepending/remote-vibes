@@ -766,8 +766,8 @@ test("state is available without authentication", async () => {
     assert.equal(state.settings.preventSleepEnabled, true);
     assert.equal(state.settings.sleepPrevention.enabled, true);
     assert.equal(state.settings.sleepPrevention.lastStatus, "unsupported");
-    assert.equal(state.settings.wikiGitBackupEnabled, true);
-    assert.equal(state.settings.wikiGitRemoteEnabled, true);
+    assert.equal(state.settings.wikiGitBackupEnabled, false);
+    assert.equal(state.settings.wikiGitRemoteEnabled, false);
     assert.equal(state.settings.wikiGitRemoteBranch, "main");
     assert.equal(state.settings.wikiGitRemoteName, "origin");
     assert.equal(state.settings.wikiGitRemoteUrl, "");
@@ -782,7 +782,7 @@ test("state is available without authentication", async () => {
     assert.equal(state.settings.wikiPathConfigured, false);
     assert.deepEqual(state.settings.agentAutomations, []);
     assert.deepEqual(state.settings.installedPluginIds, []);
-    assert.equal(state.settings.wikiBackup.enabled, true);
+    assert.equal(state.settings.wikiBackup.enabled, false);
 
     const gpuResponse = await fetch(`${baseUrl}/api/gpu`);
     assert.equal(gpuResponse.status, 404);
@@ -7121,12 +7121,28 @@ test("Library backup endpoint initializes git and commits Library changes", asyn
   const wikiDir = getWorkspaceLibraryDir(workspaceDir);
 
   try {
+    // The Library git backup is opt-in by default. Enable it first and wait
+    // for the settings-triggered run to finish so manual backups don't race
+    // with the auto-run kicked off by applyRuntimeSettings.
+    const enableResponse = await fetch(`${baseUrl}/api/settings`, {
+      method: "PATCH",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ wikiGitBackupEnabled: true }),
+    });
+    assert.equal(enableResponse.status, 200);
+    await waitForWikiBackupRun(baseUrl);
+
     const firstBackupResponse = await fetch(`${baseUrl}/api/wiki/backup`, {
       method: "POST",
     });
     assert.equal(firstBackupResponse.status, 200);
     const firstBackupPayload = await firstBackupResponse.json();
-    assert.equal(firstBackupPayload.backup.lastStatus, "committed");
+    // The auto-backup from PATCH may have already committed everything, so
+    // the first manual backup can be either a fresh commit or a clean no-op.
+    assert.ok(
+      ["committed", "clean"].includes(firstBackupPayload.backup.lastStatus),
+      `unexpected lastStatus ${firstBackupPayload.backup.lastStatus}`,
+    );
     assert.match(firstBackupPayload.backup.lastCommit, /^[0-9a-f]+$/);
 
     await writeFile(path.join(wikiDir, "log.md"), "# Library Log\n\n- new note\n", "utf8");
@@ -7161,6 +7177,7 @@ test("Library backup endpoint can push to a configured private remote", async ()
         "Content-Type": "application/json",
       },
       body: JSON.stringify({
+        wikiGitBackupEnabled: true,
         wikiGitRemoteBranch: "main",
         wikiGitRemoteEnabled: true,
         wikiGitRemoteUrl: remoteDir,
