@@ -1056,8 +1056,7 @@ body.is-reordering-workspace-tabs {
   right: -16px;
 }
 
-.app-shell.is-sidebar-collapsed .sidebar-body,
-.app-shell.is-sidebar-collapsed .sidebar-footer {
+.app-shell.is-sidebar-collapsed .sidebar-body {
   display: none;
 }
 
@@ -1157,23 +1156,6 @@ body.is-resizing-layout iframe {
 
 .sidebar-mobile-actions {
   display: none;
-}
-
-.sidebar-footer {
-  margin-top: auto;
-  position: sticky;
-  bottom: 0;
-  display: grid;
-  gap: 10px;
-  padding-top: 12px;
-  padding-bottom: 4px;
-  background: linear-gradient(180deg, rgba(33, 31, 36, 0), rgba(33, 31, 36, 0.98) 38%);
-}
-
-.sidebar-footer-actions {
-  display: grid;
-  grid-template-columns: minmax(0, 1fr);
-  gap: 10px;
 }
 
 .icon-button,
@@ -1344,18 +1326,6 @@ body.is-resizing-layout iframe {
   border-radius: 16px;
   background: rgba(255, 127, 121, 0.12);
   color: #ffb1ac;
-  font-family: "IBM Plex Mono", monospace;
-  font-size: 0.78rem;
-  letter-spacing: 0.04em;
-  text-transform: uppercase;
-}
-
-.relaunch-button {
-  min-height: 46px;
-  border: 1px solid rgba(127, 208, 255, 0.2);
-  border-radius: 16px;
-  background: rgba(108, 178, 255, 0.12);
-  color: #b9d7ff;
   font-family: "IBM Plex Mono", monospace;
   font-size: 0.78rem;
   letter-spacing: 0.04em;
@@ -14732,8 +14702,7 @@ select:disabled {
     padding-left: 12px;
   }
 
-  .app-shell.is-sidebar-collapsed .sidebar-body,
-  .app-shell.is-sidebar-collapsed .sidebar-footer {
+  .app-shell.is-sidebar-collapsed .sidebar-body {
     display: grid;
   }
 

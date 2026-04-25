@@ -6695,26 +6695,6 @@ function sleep(ms) {
   });
 }
 
-async function waitForAppRecovery({ attempts = 40, delayMs = 500 } = {}) {
-  const recoveryUrl = new URL("/api/state", window.location.origin);
-
-  for (let attempt = 0; attempt < attempts; attempt += 1) {
-    await sleep(delayMs);
-    recoveryUrl.searchParams.set("ts", String(Date.now()));
-
-    try {
-      const response = await fetch(recoveryUrl.toString(), { cache: "no-store" });
-      if (response.ok) {
-        return true;
-      }
-    } catch {
-      // Keep waiting for the relaunched server.
-    }
-  }
-
-  return false;
-}
-
 function getAppBaseUrl() {
   return state.preferredBaseUrl || window.location.origin;
 }
@@ -30733,11 +30713,6 @@ function renderShell() {
           }
         </div>
 
-        <div class="sidebar-footer">
-          <div class="sidebar-footer-actions">
-            <button class="ghost-button relaunch-button" type="button" id="relaunch-app">relaunch</button>
-          </div>
-        </div>
         ${renderSidebarResizeHandle()}
       </aside>
 
@@ -38583,41 +38558,6 @@ function bindShellEvents() {
   document.querySelector("#open-sidebar")?.addEventListener("click", () => setMobileSidebar("left"));
   document.querySelector("#close-left-sidebar")?.addEventListener("click", () => closeMobileSidebar());
   document.querySelector("[data-sidebar-scrim]")?.addEventListener("click", () => closeMobileSidebar());
-  document.querySelector("#relaunch-app")?.addEventListener("click", async (event) => {
-    const button = event.currentTarget;
-    if (!(button instanceof HTMLButtonElement)) {
-      return;
-    }
-
-    if (!window.confirm("Relaunch Vibe Research on this laptop? Live sessions will be restored if persistence is enabled.")) {
-      return;
-    }
-
-    const terminateButton = document.querySelector("#terminate-app");
-    if (terminateButton instanceof HTMLButtonElement) {
-      terminateButton.disabled = true;
-    }
-
-    button.disabled = true;
-    button.textContent = "relaunching...";
-
-    try {
-      await fetchJson("/api/relaunch", { method: "POST" });
-      closeWebsocket();
-      const recovered = await waitForAppRecovery();
-      if (!recovered) {
-        throw new Error("Vibe Research did not come back yet. Try refreshing in a moment.");
-      }
-      window.location.reload();
-    } catch (error) {
-      button.disabled = false;
-      button.textContent = "relaunch";
-      if (terminateButton instanceof HTMLButtonElement) {
-        terminateButton.disabled = false;
-      }
-      window.alert(error.message);
-    }
-  });
   document.querySelector("#terminate-app")?.addEventListener("click", async (event) => {
     const button = event.currentTarget;
     if (!(button instanceof HTMLButtonElement)) {
