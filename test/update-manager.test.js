@@ -278,6 +278,7 @@ test("UpdateManager schedules a detached pull and restart for clean updates", as
     assert.match(spawnCalls[0].args[1], /git reset --hard HEAD/);
     assert.match(spawnCalls[0].args[1], /git clean -fd/);
     assert.match(spawnCalls[0].args[1], /git pull --ff-only 'origin' 'main'/);
+    assert.match(spawnCalls[0].args[1], /npm run build/);
     assert.match(spawnCalls[0].args[1], /http:\/\/127\.0\.0\.1:49123\/api\/terminate/);
     assert.equal(spawnCalls[0].options.detached, true);
     assert.equal(spawnCalls[0].options.env.VIBE_RESEARCH_STATE_DIR, path.join(tempRoot, "state"));
@@ -503,6 +504,7 @@ test("UpdateManager prefers GitHub Releases and schedules a tag checkout", async
       /git fetch --force --depth 1 'https:\/\/github\.com\/Clamepending\/vibe-research\.git' 'refs\/tags\/v2\.0\.0:refs\/tags\/v2\.0\.0'/,
     );
     assert.match(spawnCalls[0].args[1], /git checkout --detach 'refs\/tags\/v2\.0\.0'/);
+    assert.match(spawnCalls[0].args[1], /npm run build/);
   } finally {
     await rm(tempRoot, { recursive: true, force: true });
   }

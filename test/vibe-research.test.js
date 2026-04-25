@@ -3585,6 +3585,73 @@ test("BuildingHub is the catalog entry point instead of an installable detail", 
   }
 });
 
+test("sidebar main view links route on the current app origin", async (t) => {
+  const executablePath = await resolveBrowserExecutablePath({ env: process.env });
+  if (!executablePath) {
+    t.skip("No local Chromium/Chrome executable is available for the sidebar navigation smoke.");
+    return;
+  }
+
+  const workspaceDir = await createTempWorkspace("vibe-research-sidebar-route-ui-");
+  const stateDir = await createTempWorkspace("vibe-research-sidebar-route-state-");
+  const wikiDir = getWorkspaceLibraryDir(workspaceDir);
+  await mkdir(wikiDir, { recursive: true });
+  await writeFile(
+    path.join(stateDir, "settings.json"),
+    `${JSON.stringify(
+      {
+        version: 1,
+        settings: {
+          preventSleepEnabled: false,
+          wikiGitRemoteEnabled: false,
+          wikiPath: wikiDir,
+          wikiPathConfigured: true,
+        },
+      },
+      null,
+      2,
+    )}\n`,
+    "utf8",
+  );
+  const { app, baseUrl } = await startApp({ cwd: workspaceDir, stateDir });
+  let browser = null;
+
+  try {
+    const createResponse = await fetch(`${baseUrl}/api/sessions`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ providerId: "shell", cwd: workspaceDir, name: "Sidebar Agent" }),
+    });
+    assert.equal(createResponse.status, 201);
+
+    browser = await chromium.launch({ executablePath, headless: true });
+    const page = await browser.newPage();
+    await page.setViewportSize({ width: 1280, height: 720 });
+    await page.goto(`${baseUrl}/?root=${encodeURIComponent(workspaceDir)}&view=swarm`, {
+      waitUntil: "domcontentloaded",
+    });
+    await page.waitForSelector("#visual-game-canvas", { timeout: 10_000 });
+
+    const settingsLink = page.locator('nav[aria-label="Main views"] [data-open-main-view="settings"]');
+    assert.equal(await settingsLink.count(), 1);
+    assert.ok((await settingsLink.getAttribute("href"))?.startsWith(`${baseUrl}/`));
+    await settingsLink.click();
+    await page.waitForFunction(() => document.title.startsWith("Settings"), null, { timeout: 10_000 });
+    assert.equal(new URL(page.url()).searchParams.get("view"), "settings");
+
+    const mapLink = page.locator('nav[aria-label="Main views"] [data-open-main-view="visual-interface"]');
+    assert.equal(await mapLink.count(), 1);
+    await mapLink.click();
+    await page.waitForSelector("#visual-game-canvas", { timeout: 10_000 });
+    assert.equal(new URL(page.url()).searchParams.get("view"), "visual-interface");
+  } finally {
+    await browser?.close().catch(() => {});
+    await app.close();
+    await removeTempWorkspace(workspaceDir);
+    await removeTempWorkspace(stateDir);
+  }
+});
+
 test("Agent Town share opens and copies a BuildingHub town link", async (t) => {
   const executablePath = await resolveBrowserExecutablePath({ env: process.env });
   if (!executablePath) {

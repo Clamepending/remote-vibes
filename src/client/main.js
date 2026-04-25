@@ -2517,6 +2517,16 @@ function escapeHtml(value) {
     .replaceAll('"', "&quot;");
 }
 
+function normalizeText(value, maxLength = Number.POSITIVE_INFINITY) {
+  const text = String(value ?? "").replace(/\s+/g, " ").trim();
+  if (!Number.isFinite(maxLength) || maxLength <= 0 || text.length <= maxLength) {
+    return text;
+  }
+
+  const sliceLength = Math.max(1, maxLength - 3);
+  return `${text.slice(0, sliceLength).trimEnd()}...`;
+}
+
 function renderIconAttributes(attributes = {}) {
   return Object.entries(attributes)
     .map(([key, value]) => `${escapeHtml(key)}="${escapeHtml(value)}"`)
@@ -6709,8 +6719,17 @@ function getAppBaseUrl() {
   return state.preferredBaseUrl || window.location.origin;
 }
 
+function getAppNavigationUrl() {
+  const url = new URL(`${window.location.origin}/`);
+  const root = normalizeWorkspaceRoot(state.filesRoot || state.filesRootOverride || state.defaultCwd || "");
+  if (root) {
+    url.searchParams.set("root", root);
+  }
+  return url;
+}
+
 function getKnowledgeBaseUrl(notePath = "") {
-  const url = new URL(`${getAppBaseUrl()}/`);
+  const url = getAppNavigationUrl();
   url.searchParams.set("view", "library");
 
   const normalizedNotePath = normalizeFileTreePath(notePath);
@@ -6722,7 +6741,7 @@ function getKnowledgeBaseUrl(notePath = "") {
 }
 
 function getAgentPromptUrl() {
-  const url = new URL(`${getAppBaseUrl()}/`);
+  const url = getAppNavigationUrl();
   url.searchParams.set("view", "occupations");
   return url.toString();
 }
@@ -6736,7 +6755,7 @@ function getMainViewUrl(view) {
     return getAgentPromptUrl();
   }
 
-  const url = new URL(`${getAppBaseUrl()}/`);
+  const url = getAppNavigationUrl();
   if (ROUTED_MAIN_VIEWS.has(view)) {
     url.searchParams.set("view", view);
   }
@@ -37755,9 +37774,34 @@ function bindShellEvents() {
   bindLayoutResizeEvents();
   bindWorkspaceTabEvents();
 
+  if (!app.dataset.mainViewNavigationBound) {
+    app.dataset.mainViewNavigationBound = "true";
+    app.addEventListener(
+      "click",
+      (event) => {
+        const target = event.target;
+        if (!(target instanceof Element)) {
+          return;
+        }
+
+        const link = target.closest("[data-open-main-view]");
+        if (!link || !app.contains(link)) {
+          return;
+        }
+
+        event.preventDefault();
+        event.stopPropagation();
+        const nextView = link.getAttribute("data-open-main-view") || "shell";
+        void openMainView(nextView);
+      },
+      true,
+    );
+  }
+
   document.querySelectorAll("[data-open-main-view]").forEach((link) => {
     link.addEventListener("click", (event) => {
       event.preventDefault();
+      event.stopPropagation();
       const nextView = link.getAttribute("data-open-main-view") || "shell";
       void openMainView(nextView);
     });

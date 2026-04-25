@@ -988,6 +988,7 @@ body.is-reordering-workspace-tabs {
   display: grid;
   grid-template-rows: auto minmax(0, 1fr) auto;
   position: relative;
+  z-index: 20;
   padding: 14px 12px;
   background:
     radial-gradient(circle at 18% 0%, rgba(255, 255, 255, 0.035), transparent 30%),

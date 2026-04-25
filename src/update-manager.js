@@ -947,7 +947,9 @@ for file in ${managedPromptFiles}; do
 done
 reset_checkout_changes
 ${updateCommand}
-echo "[vibe-research-update] update pulled; stopping current server"
+echo "[vibe-research-update] update pulled; rebuilding client assets"
+npm run build
+echo "[vibe-research-update] client assets rebuilt; stopping current server"
 curl -fsS -X POST ${terminateUrl} >/dev/null 2>&1 || true
 for attempt in $(seq 1 100); do
   if ! curl -fsS ${stateUrl} >/dev/null 2>&1; then
