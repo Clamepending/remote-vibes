@@ -4836,6 +4836,8 @@ export async function createVibeResearchApp({
     }
   }
 
+  sessionManager.setBroadcast(broadcastToAllClients);
+
   function resolveSessionForPath(absolutePath) {
     let best = null;
     let bestLength = -1;

@@ -2482,6 +2482,7 @@ export class SessionManager {
     this.persistTimer = null;
     this.persistPromise = Promise.resolve();
     this.isShuttingDown = false;
+    this.broadcastAll = null;
     this.agentRunTracker = agentRunStore
       ? new AgentRunTracker({
           store: agentRunStore,
@@ -2505,6 +2506,10 @@ export class SessionManager {
     this.env = env && typeof env === "object" ? { ...env } : { ...process.env };
     this.tmuxAvailable = null;
     this.tmuxEnvironmentArgsAvailable = null;
+  }
+
+  setBroadcast(broadcast) {
+    this.broadcastAll = typeof broadcast === "function" ? broadcast : null;
   }
 
   setSystemRootPath(systemRootPath) {
@@ -3478,6 +3483,8 @@ export class SessionManager {
       client.send(JSON.stringify({ type: "session-deleted", sessionId }));
       client.close();
     }
+
+    this.broadcastAll?.({ type: "session-deleted", sessionId });
 
     session.skipExitHandling = true;
     session.restoreOnStartup = false;
