@@ -10594,6 +10594,60 @@ button.visual-town-building:focus-visible {
   color: rgba(244, 244, 242, 0.5);
 }
 
+.paper-project-toolbar {
+  display: flex;
+  align-items: baseline;
+  gap: 12px;
+  flex-wrap: wrap;
+  padding: 10px 14px;
+  border-radius: 12px;
+  background: rgba(244, 244, 242, 0.04);
+  border: 1px solid rgba(244, 244, 242, 0.12);
+  font-size: 0.85rem;
+  margin-bottom: 12px;
+}
+
+.paper-project-toolbar-label {
+  font-family: "IBM Plex Mono", monospace;
+  font-size: 0.72rem;
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+  color: rgba(244, 244, 242, 0.55);
+}
+
+.paper-project-toolbar-name {
+  font-family: "IBM Plex Mono", monospace;
+  font-size: 0.9rem;
+  color: rgba(244, 244, 242, 0.95);
+}
+
+.paper-project-toolbar-sessions {
+  flex: 1;
+  color: rgba(244, 244, 242, 0.6);
+  font-size: 0.82rem;
+}
+
+.paper-project-toolbar-spawn {
+  appearance: none;
+  border: 1px solid rgba(110, 168, 254, 0.5);
+  background: rgba(110, 168, 254, 0.12);
+  color: rgba(110, 168, 254, 0.98);
+  border-radius: 999px;
+  padding: 5px 14px;
+  font-family: "IBM Plex Mono", monospace;
+  font-size: 0.78rem;
+  cursor: pointer;
+}
+
+.paper-project-toolbar-spawn:hover:not(:disabled) {
+  background: rgba(110, 168, 254, 0.22);
+}
+
+.paper-project-toolbar-spawn:disabled {
+  opacity: 0.45;
+  cursor: default;
+}
+
 .paper-quote-floater {
   position: fixed;
   z-index: 9999;

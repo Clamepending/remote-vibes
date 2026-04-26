@@ -10486,6 +10486,61 @@ function isPaperMarkdownPath(currentPath) {
   return typeof currentPath === "string" && /(?:^|\/)paper\.md$/i.test(currentPath.trim());
 }
 
+function getProjectRelativePathFromNotePath(notePath) {
+  const match = String(notePath || "").match(/^(projects\/[^/]+)\/[^/]+$/i);
+  return match ? match[1] : null;
+}
+
+function getProjectAbsoluteCwdForNotePath(notePath) {
+  const projectRel = getProjectRelativePathFromNotePath(notePath);
+  if (!projectRel) return "";
+  const wikiPath = state?.settings?.wikiPath || "";
+  if (!wikiPath) return "";
+  const trimmed = wikiPath.replace(/[/\\]+$/, "");
+  return `${trimmed}/${projectRel}`;
+}
+
+function getSessionsForProjectCwd(absoluteProjectCwd) {
+  if (!absoluteProjectCwd) return [];
+  const target = normalizeWorkspaceRoot(absoluteProjectCwd);
+  if (!target) return [];
+  return (state.sessions || []).filter((session) => {
+    const sessionCwd = normalizeWorkspaceRoot(session?.cwd || "");
+    return sessionCwd && sessionCwd === target;
+  });
+}
+
+function renderPaperProjectToolbar(currentPath) {
+  const projectRel = getProjectRelativePathFromNotePath(currentPath);
+  if (!projectRel) return "";
+  const absoluteCwd = getProjectAbsoluteCwdForNotePath(currentPath);
+  const projectName = projectRel.split("/").pop() || projectRel;
+  const sessionsHere = getSessionsForProjectCwd(absoluteCwd);
+  const sessionsLabel = sessionsHere.length === 0
+    ? "no agents running in this folder"
+    : `${sessionsHere.length} agent${sessionsHere.length === 1 ? "" : "s"} in this folder`;
+  const disabled = absoluteCwd ? "" : "disabled";
+  const tooltip = absoluteCwd
+    ? `spawn an agent with cwd = ${absoluteCwd}`
+    : "library path not configured";
+
+  return `
+    <div class="paper-project-toolbar" data-project-rel="${escapeHtml(projectRel)}">
+      <span class="paper-project-toolbar-label">project</span>
+      <span class="paper-project-toolbar-name">${escapeHtml(projectName)}</span>
+      <span class="paper-project-toolbar-sessions">${escapeHtml(sessionsLabel)}</span>
+      <button
+        class="paper-project-toolbar-spawn"
+        type="button"
+        data-paper-spawn-agent
+        data-project-cwd="${escapeHtml(absoluteCwd)}"
+        title="${escapeHtml(tooltip)}"
+        ${disabled}
+      >open agent in this folder</button>
+    </div>
+  `;
+}
+
 function getPaperLastSeenStorageKey(currentPath) {
   return `vr-paper-last-seen:${currentPath || "unknown"}`;
 }
@@ -10734,6 +10789,11 @@ function renderKnowledgeBaseMarkdown(markdown, currentPath) {
       prefixHtml = renderPaperSinceLastUpdateBanner(extracted.banner, currentPath);
       source = extracted.body;
     }
+  }
+
+  const toolbarHtml = renderPaperProjectToolbar(currentPath);
+  if (toolbarHtml) {
+    prefixHtml = toolbarHtml + prefixHtml;
   }
 
   const lines = source.replace(/\r\n/g, "\n").split("\n");
@@ -34375,6 +34435,29 @@ function bindPaperSinceLastUpdateEvents() {
         writePaperLastSeenBullet(paperPath, raw);
       }
       renderShell();
+    });
+  });
+
+  document.querySelectorAll("[data-paper-spawn-agent]").forEach((button) => {
+    if (!(button instanceof HTMLButtonElement)) return;
+    if (button.dataset.paperSpawnBound === "true") return;
+    button.dataset.paperSpawnBound = "true";
+    button.addEventListener("click", async () => {
+      const cwd = button.dataset.projectCwd || "";
+      if (!cwd) {
+        window.alert("library path is not configured; cannot spawn agent in project folder");
+        return;
+      }
+      button.disabled = true;
+      const original = button.textContent;
+      button.textContent = "spawning…";
+      try {
+        await createSessionInFolder(cwd, {});
+      } catch (error) {
+        window.alert(error?.message || "failed to spawn agent");
+        button.textContent = original;
+        button.disabled = false;
+      }
     });
   });
 }
