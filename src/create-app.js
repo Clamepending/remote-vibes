@@ -8,7 +8,7 @@ import { fileURLToPath } from "node:url";
 import { promisify } from "node:util";
 import express from "express";
 import { rateLimit } from "express-rate-limit";
-import { WebSocketServer } from "ws";
+import { WebSocket as NodeWebSocket, WebSocketServer } from "ws";
 import {
   buildPortUrlFromBase,
   getTailscaleDnsNameFromStatus,
@@ -3109,6 +3109,50 @@ export async function createVibeResearchApp({
     const force = request.query.force === "1" || request.query.force === "true";
     const update = await updateManager.getStatus({ force });
     response.json({ update });
+  });
+
+  // Diagnostic: open a WebSocket from the server back to its OWN /ws endpoint
+  // and report what happened. Lets us isolate "WS is broken everywhere" from
+  // "WS is broken when going through Tailscale serve". Pass ?sessionId=...
+  // to also exercise sessionManager.attachClient. No auth required because
+  // the same loopback endpoint is reachable to anyone who can hit /api.
+  app.get("/api/debug/ws-selftest", async (request, response) => {
+    const sessionId = String(request.query.sessionId || "selftest-no-session");
+    const targetPort = exposedPort || port;
+    const targetUrl = `ws://127.0.0.1:${targetPort}/ws?sessionId=${encodeURIComponent(sessionId)}`;
+    const startedAt = Date.now();
+    const events = [];
+    let ws;
+    try {
+      ws = new NodeWebSocket(targetUrl);
+    } catch (error) {
+      response.json({ targetUrl, ctorError: error.message, events });
+      return;
+    }
+    const finish = (verdict) => {
+      try { ws.terminate?.(); } catch {}
+      response.json({
+        targetUrl,
+        verdict,
+        elapsedMs: Date.now() - startedAt,
+        clientsConnected: websocketServer.clients.size,
+        upgradeListeners: server.listenerCount("upgrade"),
+        events,
+      });
+    };
+    ws.on("open", () => events.push({ at: Date.now() - startedAt, ev: "open" }));
+    ws.on("message", (data) => {
+      events.push({ at: Date.now() - startedAt, ev: "message", size: Buffer.isBuffer(data) ? data.length : String(data).length });
+      if (events.filter((e) => e.ev === "message").length >= 1) finish("ok-got-message");
+    });
+    ws.on("error", (error) => events.push({ at: Date.now() - startedAt, ev: "error", message: error?.message }));
+    ws.on("close", (code, reason) => {
+      events.push({ at: Date.now() - startedAt, ev: "close", code, reason: reason?.toString?.() });
+      if (!events.some((e) => e.ev === "message")) finish("closed-without-message");
+    });
+    setTimeout(() => {
+      if (ws.readyState !== NodeWebSocket.CLOSED) finish("timeout-7s");
+    }, 7000);
   });
 
   app.post("/api/update/apply", async (_request, response) => {
