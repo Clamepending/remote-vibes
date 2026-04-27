@@ -2335,6 +2335,7 @@ const state = {
   pendingTerminalScrollToBottom: false,
   terminalOutputFrame: null,
   terminalSelectionDeferStartedAt: 0,
+  pendingSnapshot: null,
   terminalTranscriptRaw: "",
   terminalTranscriptRenderFrame: null,
   terminalTranscriptScrollToBottom: false,
@@ -6031,6 +6032,7 @@ function clearPendingTerminalOutput() {
   state.pendingTerminalOutput = "";
   state.pendingTerminalScrollToBottom = false;
   state.terminalSelectionDeferStartedAt = 0;
+  state.pendingSnapshot = null;
 }
 
 function flushPendingTerminalOutput() {
@@ -6090,6 +6092,23 @@ function flushPendingTerminalOutput() {
 
     syncTerminalScrollState();
   });
+}
+
+function finalizePendingSnapshot(sessionId) {
+  const pending = state.pendingSnapshot;
+  if (!pending || pending.sessionId !== sessionId) {
+    return;
+  }
+  state.pendingSnapshot = null;
+  const deferred = pending.deferredOutputs || [];
+  if (deferred.length > 0) {
+    const merged = deferred.join("");
+    trackGuidedOnboardingOutputSafe(merged, sessionId);
+    queueTerminalOutput(merged, { scrollToBottom: true });
+    scheduleRichSessionNarrativeRefresh(sessionId);
+  } else if (state.terminal) {
+    state.terminal.scrollToBottom();
+  }
 }
 
 function queueTerminalOutput(chunk, { mirrorTranscript = true, scrollToBottom = false } = {}) {
@@ -39304,6 +39323,9 @@ function connectToSession(sessionId) {
     const payload = JSON.parse(event.data);
 
     if (payload.type === "snapshot") {
+      // Legacy single-frame snapshot. New servers send snapshot-start/chunk/end
+      // instead so the browser stays responsive while history streams in.
+      state.pendingSnapshot = null;
       setTerminalTranscriptHistory(payload.data || "", { scrollToBottom: true });
       queueTerminalOutput(payload.data || "", { mirrorTranscript: false, scrollToBottom: true });
       updateSession(payload.session);
@@ -39311,7 +39333,64 @@ function connectToSession(sessionId) {
       return;
     }
 
+    if (payload.type === "snapshot-start") {
+      // Start a chunked snapshot replay. Clear transcript history, buffer any
+      // live `output` messages that arrive while the snapshot streams in, and
+      // let each chunk paint on its own animation frame so keystrokes/scroll
+      // events can interleave between chunks instead of waiting for the full
+      // 2 MB blob to JSON.parse + ANSI-parse on the main thread.
+      state.pendingSnapshot = {
+        sessionId,
+        chunkCount: Number(payload.chunkCount) || 0,
+        receivedChunks: 0,
+        deferredOutputs: [],
+      };
+      setTerminalTranscriptHistory("", { scrollToBottom: true });
+      updateSession(payload.session);
+      scheduleRichSessionNarrativeRefresh(sessionId, { immediate: true });
+      if (state.pendingSnapshot.chunkCount === 0) {
+        // Empty session — nothing to replay, but still drain in case a stray
+        // output raced in between snapshot-start and snapshot-end.
+        finalizePendingSnapshot(sessionId);
+      }
+      return;
+    }
+
+    if (payload.type === "snapshot-chunk") {
+      if (!state.pendingSnapshot || state.pendingSnapshot.sessionId !== sessionId) {
+        // Defensive: chunk arrived without a matching start (e.g. switched
+        // sessions mid-stream). Treat as live output so we don't drop bytes.
+        queueTerminalOutput(payload.data || "", { scrollToBottom: true });
+        return;
+      }
+      const data = payload.data || "";
+      // mirrorTranscript:true so the transcript overlay accumulates the full
+      // replay text via appendTerminalTranscriptOutput (which is sliced to
+      // TERMINAL_TRANSCRIPT_RAW_LIMIT). queueTerminalOutput's internal rAF
+      // batching coalesces multiple chunks landing in the same frame into one
+      // xterm.write — which is exactly the behavior we want.
+      queueTerminalOutput(data, { mirrorTranscript: true, scrollToBottom: true });
+      state.pendingSnapshot.receivedChunks += 1;
+      return;
+    }
+
+    if (payload.type === "snapshot-end") {
+      if (state.pendingSnapshot && state.pendingSnapshot.sessionId === sessionId) {
+        finalizePendingSnapshot(sessionId);
+      }
+      return;
+    }
+
     if (payload.type === "output") {
+      // While a snapshot is mid-flight, defer live output so the terminal sees
+      // history first, then new bytes — otherwise live output can interleave
+      // between historical chunks and produce visual glitches as cursor moves
+      // from the live data confuse the still-arriving history's escape codes.
+      if (state.pendingSnapshot && state.pendingSnapshot.sessionId === sessionId) {
+        state.pendingSnapshot.deferredOutputs.push(payload.data || "");
+        scheduleRichSessionNarrativeRefresh(sessionId);
+        return;
+      }
       trackGuidedOnboardingOutputSafe(payload.data || "", sessionId);
       queueTerminalOutput(payload.data || "");
       scheduleRichSessionNarrativeRefresh(sessionId);
