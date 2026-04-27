@@ -93,7 +93,10 @@ const PERSISTENT_TERMINAL_PROVIDER_IDS = new Set([
 const IDLE_TERMINAL_COMMANDS = new Set(["bash", "csh", "dash", "fish", "ksh", "login", "sh", "tcsh", "zsh"]);
 const PROVIDER_CREDENTIAL_ENV_KEYS = ["ANTHROPIC_API_KEY", "CLAUDE_API_KEY", "OPENAI_API_KEY", "HF_TOKEN"];
 const TMUX_SESSION_ENV_KEYS = new Set([
+  "CLICOLOR",
   "CODEX_HOME",
+  "COLORTERM",
+  "FORCE_COLOR",
   "HOME",
   "LANG",
   "LC_ALL",
@@ -105,6 +108,7 @@ const TMUX_SESSION_ENV_KEYS = new Set([
   "PATH",
   "RAYON_NUM_THREADS",
   "SHELL",
+  "TERM",
   "USER",
   "VECLIB_MAXIMUM_THREADS",
 ]);
@@ -1119,7 +1123,7 @@ export function buildSessionEnv(
   const buildingGuidesDir = getBuildingAgentGuidesDir(resolvedSystemRootPath);
   const buildingGuidesIndex = getBuildingAgentGuideIndexPath(resolvedSystemRootPath);
   const agentDir = path.join(commsDir, "agents", sessionId);
-  const { NO_COLOR: _noColor, ...colorCapableEnv } = env;
+  const { NO_COLOR: _noColor, FORCE_COLOR: _forceColor, ...colorCapableEnv } = env;
   const providerSpecificEnv = buildProviderSpecificSessionEnv(providerId, colorCapableEnv);
 
   return {
@@ -1128,9 +1132,11 @@ export function buildSessionEnv(
     ...providerSpecificEnv,
     CLICOLOR: "1",
     COLORTERM: "truecolor",
+    FORCE_COLOR: "3",
     LANG: "en_US.UTF-8",
     LC_ALL: "en_US.UTF-8",
     PATH: prependPathEntries(env.PATH, preferredCliBinDirs),
+    TERM: "xterm-256color",
     PWCLI: "vr-playwright",
     VIBE_RESEARCH_APP_ROOT: appRootDir,
     VIBE_RESEARCH_BROWSER_COMMAND: "vr-playwright",
