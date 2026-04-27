@@ -1,6 +1,7 @@
 import { Terminal } from "xterm";
 import { FitAddon } from "@xterm/addon-fit";
 import { CanvasAddon } from "xterm-addon-canvas";
+import { WebglAddon } from "xterm-addon-webgl";
 import {
   AppWindow,
   BookOpen,
@@ -2372,6 +2373,7 @@ const state = {
   systemToastDismissedKeys: new Set(),
   terminalInteractionCleanup: null,
   canvasAddon: null,
+  webglAddon: null,
   terminalShowJumpToBottom: false,
   lastVisualViewportHeight: 0,
   mobileKeyboardSettlingUntil: 0,
@@ -3842,6 +3844,11 @@ function syncViewportMetrics() {
 function getTerminalDisplayProfile(mount) {
   const width = mount?.clientWidth ?? window.innerWidth;
 
+  // smoothScrollDuration is intentionally 0 at every breakpoint: any non-zero
+  // value tweens each scroll line over that many milliseconds, which on
+  // continuous trackpad scrolling stacks into a visible "molasses" lag.
+  // VS Code defaults to 0 for the same reason and only enables tweening for
+  // physical mouse wheels behind an opt-in setting.
   if (width <= 420) {
     return {
       fontSize: 12,
@@ -3856,7 +3863,7 @@ function getTerminalDisplayProfile(mount) {
       fontSize: 13,
       lineHeight: 1.12,
       scrollSensitivity: 1.28,
-      smoothScrollDuration: 30,
+      smoothScrollDuration: 0,
     };
   }
 
@@ -3864,7 +3871,7 @@ function getTerminalDisplayProfile(mount) {
     fontSize: 14,
     lineHeight: 1.18,
     scrollSensitivity: 1.35,
-    smoothScrollDuration: 60,
+    smoothScrollDuration: 0,
   };
 }
 
@@ -5888,10 +5895,14 @@ function routeTerminalTranscriptWheel(event) {
     return false;
   }
 
-  event.preventDefault();
-  event.stopPropagation();
-  event.stopImmediatePropagation?.();
-
+  // Note: this listener is now registered as passive (so the browser can scroll
+  // on the compositor thread without waiting for JS — the previous non-passive
+  // capture listener was the primary cause of the "scroll feels laggy" report).
+  // preventDefault/stopPropagation on a passive listener are no-ops, so we just
+  // route the JS-driven scroll for the transcript-overlay case and let the
+  // native wheel reach xterm in parallel; xterm's wheel is also passive and the
+  // overlay sits on top with `pointer-events: none` on the mount, so the two
+  // paths don't fight in practice.
   return scrollTerminalTranscriptByDelta(getTerminalWheelDeltaY(event));
 }
 
@@ -38738,6 +38749,15 @@ function disposeTerminal() {
   state.terminalResizeObserver?.disconnect();
   state.terminalResizeObserver = null;
 
+  if (state.webglAddon) {
+    try {
+      state.webglAddon.dispose();
+    } catch (error) {
+      console.warn("[vibe-research] webgl renderer disposal failed", error);
+    }
+    state.webglAddon = null;
+  }
+
   if (state.canvasAddon) {
     try {
       state.canvasAddon.dispose();
@@ -38801,6 +38821,48 @@ function loadCanvasRenderer() {
     state.canvasAddon = canvasAddon;
   } catch (error) {
     console.warn("[vibe-research] canvas renderer unavailable", error);
+  }
+}
+
+// WebGL renderer is dramatically faster than the default DOM renderer for
+// streaming output and for scrolling — VS Code uses it by default for the
+// integrated terminal. We try WebGL first; on context-loss or load failure
+// we dispose, which transparently drops xterm back to its DOM renderer so
+// the terminal keeps working (just slower) instead of going blank.
+function loadGpuRenderer() {
+  if (!state.terminal) {
+    return;
+  }
+
+  // Tear down any prior WebGL addon so we don't leak GL contexts on remount.
+  if (state.webglAddon) {
+    try {
+      state.webglAddon.dispose();
+    } catch (error) {
+      console.warn("[vibe-research] webgl renderer disposal failed", error);
+    }
+    state.webglAddon = null;
+  }
+
+  try {
+    const webglAddon = new WebglAddon();
+    webglAddon.onContextLoss?.(() => {
+      console.info("[vibe-research] webgl context lost — falling back to DOM renderer");
+      try {
+        webglAddon.dispose();
+      } catch {
+        // Already disposed; ignore.
+      }
+      if (state.webglAddon === webglAddon) {
+        state.webglAddon = null;
+      }
+    });
+    state.terminal.loadAddon(webglAddon);
+    state.webglAddon = webglAddon;
+    return;
+  } catch (error) {
+    console.warn("[vibe-research] webgl renderer unavailable, staying on DOM renderer", error);
+    state.webglAddon = null;
   }
 }
 
@@ -39024,14 +39086,22 @@ function setupTerminalInteractions(mount) {
   };
 
   mount.addEventListener("pointerdown", handlePointerDown);
-  mount.addEventListener("wheel", handleTranscriptFallbackWheel, { capture: true, passive: false });
+  // PASSIVE wheel listener — non-passive capture-phase wheel listeners on the
+  // terminal mount were the primary cause of the "scroll feels extremely
+  // laggy" report. With passive: true the browser can scroll on the
+  // compositor thread without waiting for JS, matching VS Code's terminal
+  // feel. The handler still runs for state-routing in the transcript-overlay
+  // case; preventDefault is silently ignored which is fine — the overlay is
+  // its own scroll container and the mount has pointer-events: none while
+  // the overlay is up, so the two scroll surfaces don't fight in practice.
+  mount.addEventListener("wheel", handleTranscriptFallbackWheel, { capture: true, passive: true });
   mount.addEventListener("keydown", handleKeyboardScroll, { capture: true });
   mount.addEventListener("paste", handlePaste, { capture: true });
   mount.addEventListener("dragenter", handleDragEnter);
   mount.addEventListener("dragover", handleDragOver);
   mount.addEventListener("dragleave", handleDragLeave);
   mount.addEventListener("drop", handleDrop);
-  transcriptViewport?.addEventListener("wheel", handleTranscriptFallbackWheel, { capture: true, passive: false });
+  transcriptViewport?.addEventListener("wheel", handleTranscriptFallbackWheel, { capture: true, passive: true });
   transcriptViewport?.addEventListener("keydown", handleKeyboardScroll, { capture: true });
   transcriptViewport?.addEventListener("click", handleTranscriptClick);
   viewport.addEventListener("scroll", handleViewportScroll, { passive: true });
@@ -39131,7 +39201,10 @@ function mountTerminal() {
   configureTerminalTextarea(state.terminal.textarea);
   resetTerminalTextarea();
   applyTerminalDisplayProfile(mount);
-  loadCanvasRenderer();
+  // WebGL first (VS Code-style GPU rendering); falls back to DOM on failure.
+  // Canvas renderer is intentionally skipped — its addon has the viewport-
+  // disposal crash that originally drove `shouldUseCanvasRenderer === false`.
+  loadGpuRenderer();
   setupTerminalInteractions(mount);
   renderTerminalTranscriptHistory({ scrollToBottom: true });
   fitTerminalSoon();
