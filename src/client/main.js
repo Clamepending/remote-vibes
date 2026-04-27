@@ -3787,9 +3787,28 @@ function bindLineNumberEditors(root = document) {
 }
 
 function shouldUseCanvasRenderer() {
-  // The canvas addon can leave xterm viewport timers pointed at a disposed renderer
-  // when Vibe Research swaps the terminal for another main view.
-  return false;
+  // The canvas addon used to leave xterm viewport timers pointed at a disposed
+  // renderer when the user swapped main views, throwing "Cannot read properties
+  // of undefined (reading 'dimensions')" from Viewport. That's now defended
+  // two ways: (1) disposeTerminal disposes the canvas addon BEFORE the
+  // terminal so xterm tears down the renderer-aware timers in the right
+  // order, and (2) installTerminalDisposalGuard swallows the specific
+  // viewport error globally if it still races. With both in place, the
+  // canvas renderer is the right default — the DOM renderer's per-cell
+  // <span> recycling shows visibly unstyled rows on fast scroll, and
+  // canvas runs ~5-10x faster on rendering hot paths.
+  if (typeof document === "undefined") {
+    return false;
+  }
+  // Quick capability check: a 2D canvas context is universally available in
+  // every browser we ship to, but if it ever isn't we fall back rather than
+  // booting into a blank renderer like the prior WebGL attempt did.
+  try {
+    const probe = document.createElement("canvas");
+    return Boolean(probe.getContext && probe.getContext("2d"));
+  } catch {
+    return false;
+  }
 }
 
 function isKnownTerminalDisposalError(error) {
@@ -38823,13 +38842,61 @@ function loadCanvasRenderer() {
 
   state.canvasAddon = null;
 
+  let canvasAddon;
   try {
-    const canvasAddon = new CanvasAddon();
+    canvasAddon = new CanvasAddon();
     state.terminal.loadAddon(canvasAddon);
     state.canvasAddon = canvasAddon;
   } catch (error) {
     console.warn("[vibe-research] canvas renderer unavailable", error);
+    return;
   }
+
+  // Belt-and-suspenders render-test: a few frames after the canvas addon
+  // takes over, sample a pixel inside the terminal mount. If the canvas
+  // never painted anything (the failure mode we hit with WebGL on some
+  // browser/GPU combos — the addon constructed cleanly but rendered black),
+  // dispose it and let xterm fall back to the DOM renderer. We prefer a
+  // visible-but-slow terminal over an invisible-and-fast one.
+  window.setTimeout(() => {
+    if (!state.canvasAddon || state.canvasAddon !== canvasAddon || !state.terminal) {
+      return;
+    }
+    try {
+      const root = state.terminal.element;
+      const canvases = root?.querySelectorAll?.("canvas") || [];
+      if (canvases.length === 0) {
+        return; // nothing to verify; trust the addon
+      }
+      let painted = false;
+      for (const canvas of canvases) {
+        if (!canvas.width || !canvas.height) continue;
+        const context = canvas.getContext("2d");
+        if (!context) continue;
+        const sampleSize = Math.min(32, canvas.width, canvas.height);
+        const x = Math.max(0, Math.floor(canvas.width / 2) - Math.floor(sampleSize / 2));
+        const y = Math.max(0, Math.floor(canvas.height / 2) - Math.floor(sampleSize / 2));
+        const imageData = context.getImageData(x, y, sampleSize, sampleSize);
+        for (let i = 3; i < imageData.data.length; i += 4) {
+          if (imageData.data[i] > 0) {
+            painted = true;
+            break;
+          }
+        }
+        if (painted) break;
+      }
+      if (!painted) {
+        console.warn("[vibe-research] canvas renderer painted blank; falling back to DOM");
+        try { state.canvasAddon.dispose(); } catch {}
+        state.canvasAddon = null;
+        try { state.terminal.refresh(0, state.terminal.rows - 1); } catch {}
+      }
+    } catch (error) {
+      // Sampling can fail in cross-origin or paranoid security contexts.
+      // Don't tear down a working renderer over a sampling failure.
+      console.warn("[vibe-research] canvas renderer self-test skipped", error);
+    }
+  }, 350);
 }
 
 function setupTerminalInteractions(mount) {
@@ -39167,13 +39234,13 @@ function mountTerminal() {
   configureTerminalTextarea(state.terminal.textarea);
   resetTerminalTextarea();
   applyTerminalDisplayProfile(mount);
-  // WebGL renderer was tried here but observed to render nothing in some
-  // browser/GPU combos (the addon constructed and loaded without throwing
-  // but the canvas painted black). Until we add a more robust feature-detect
-  // — or migrate to @xterm/xterm@^5.5 + @xterm/addon-webgl@^0.18 which
-  // handles context init more defensively — leave xterm on its DOM renderer.
-  // The other scroll-perf wins (passive wheel listeners, smoothScrollDuration=0)
-  // are independent of the renderer choice and stay.
+  // Canvas renderer (xterm-addon-canvas) is the default. It's ~5-10x faster
+  // than the DOM renderer for scroll and avoids the visibly-unstyled-rows
+  // artifact users see when the DOM renderer recycles row spans during fast
+  // scrolling. loadCanvasRenderer self-tests by sampling a pixel a few
+  // frames in and falls back to the DOM renderer if the canvas painted
+  // blank — the failure mode the prior WebGL attempt hit on some
+  // browser/GPU combos.
   loadCanvasRenderer();
   setupTerminalInteractions(mount);
   renderTerminalTranscriptHistory({ scrollToBottom: true });
