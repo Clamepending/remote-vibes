@@ -2238,6 +2238,7 @@ const state = {
     loading: false,
     error: "",
     position: null,
+    sessionOpenInTown: false,
   },
   sessionProjectExpanded: new Set(),
   sessionProjectInteractionSeen: false,
@@ -7259,7 +7260,24 @@ async function startNewAgentInDefaultFolder({ openInTown = false } = {}) {
 
 async function startNewAgentFromUi({ openInTown = false } = {}) {
   try {
-    await startNewAgentInDefaultFolder({ openInTown });
+    const providerId = getSelectedSessionProviderId();
+    const provider = getProviderById(providerId);
+    const isFirstSessionOnboarding =
+      !hasNonInstallerAgentSession() && providerId !== "shell" && provider?.available !== false;
+    if (isFirstSessionOnboarding) {
+      await startNewAgentInDefaultFolder({ openInTown });
+      return;
+    }
+
+    const wikiPath = state?.settings?.wikiPath || "";
+    const projectsRoot = wikiPath
+      ? `${wikiPath.replace(/\/+$/, "")}/projects`
+      : "";
+    const initialPath =
+      projectsRoot || getAgentSpawnPath() || state.defaultCwd || "/";
+
+    state.folderPicker.sessionOpenInTown = !!openInTown;
+    await loadFolderPicker(initialPath, { target: "session" });
   } catch (error) {
     window.alert(error.message);
   }
@@ -7435,6 +7453,8 @@ async function applyFolderPickerSelection() {
     const providerId = getSelectedSessionProviderId();
     const provider = getProviderById(providerId);
     const shouldRunFirstSessionOnboarding = !hasNonInstallerAgentSession() && providerId !== "shell" && provider?.available !== false;
+    const requestedOpenInTown = !!state.folderPicker.sessionOpenInTown;
+    state.folderPicker.sessionOpenInTown = false;
     await createSessionInFolder(selectedPath, {
       providerId,
       name: shouldRunFirstSessionOnboarding ? "Onboarding guide" : "",
@@ -7442,7 +7462,7 @@ async function applyFolderPickerSelection() {
         ? getFirstSessionOnboardingPrompt({ cwd: selectedPath, providerId })
         : "",
       initialPromptDelayMs: 1400,
-      openInTown: shouldRunFirstSessionOnboarding,
+      openInTown: requestedOpenInTown || shouldRunFirstSessionOnboarding,
     });
     return;
   }
