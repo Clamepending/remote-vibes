@@ -10510,6 +10510,21 @@ function getSessionsForProjectCwd(absoluteProjectCwd) {
   });
 }
 
+function getProjectPaperNotePathForCwd(cwd) {
+  const sessionCwd = normalizeWorkspaceRoot(cwd || "");
+  if (!sessionCwd) return "";
+  const wikiPath = state?.settings?.wikiPath || "";
+  if (!wikiPath) return "";
+  const wikiRoot = normalizeWorkspaceRoot(wikiPath);
+  if (!wikiRoot) return "";
+  const prefix = wikiRoot === "/" ? "/" : `${wikiRoot}/`;
+  if (!sessionCwd.startsWith(prefix)) return "";
+  const rel = sessionCwd.slice(prefix.length);
+  const match = rel.match(/^projects\/([^/]+)(?:\/.*)?$/i);
+  if (!match) return "";
+  return `projects/${match[1]}/paper.md`;
+}
+
 function renderPaperProjectToolbar(currentPath) {
   const projectRel = getProjectRelativePathFromNotePath(currentPath);
   if (!projectRel) return "";
@@ -13189,6 +13204,17 @@ function renderSessionCards() {
       const expanded = state.sessionProjectExpanded.has(group.key);
       const active = group.sessions.some((session) => session.id === state.activeSessionId);
       const graphSessionId = group.sessions[0]?.id || "";
+      const paperNotePath = getProjectPaperNotePathForCwd(group.cwd);
+      const paperButtonHtml = paperNotePath
+        ? `
+            <button
+              class="session-project-paper"
+              type="button"
+              data-open-paper-for-project="${escapeHtml(paperNotePath)}"
+              aria-label="Open paper for ${escapeHtml(group.name)}"
+              ${tooltipAttributes("Open project paper")}
+            >${renderIcon(FileText)}</button>`
+        : "";
       return `
         <section class="session-project ${expanded ? "is-expanded" : ""} ${active ? "has-active-session" : ""}" data-session-project="${escapeHtml(group.key)}">
           <div class="session-project-head">
@@ -13216,7 +13242,7 @@ function renderSessionCards() {
               ${tooltipAttributes("Repo graph")}
             >
               ${renderIcon(Waypoints)}
-            </button>
+            </button>${paperButtonHtml}
             <button
               class="session-project-new"
               type="button"
@@ -32053,6 +32079,21 @@ function bindSessionEvents() {
       const fallbackSessionId = button.getAttribute("data-swarm-project-fallback-session") || "";
       const projectName = button.getAttribute("data-swarm-project-name") || "";
       void openSwarmProjectGraph(projectCwd, { fallbackSessionId, projectName });
+    });
+  });
+
+  document.querySelectorAll("[data-open-paper-for-project]").forEach((button) => {
+    button.addEventListener("click", async (event) => {
+      event.preventDefault();
+      event.stopPropagation();
+      const notePath = button.getAttribute("data-open-paper-for-project") || "";
+      if (!notePath) return;
+      setCurrentView("knowledge-base", { notePath });
+      closeMobileSidebar();
+      if (!state.knowledgeBase.notes.length && !state.knowledgeBase.loading) {
+        await loadKnowledgeBaseIndex();
+      }
+      await openKnowledgeBaseNote(notePath);
     });
   });
 
