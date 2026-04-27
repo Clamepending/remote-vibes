@@ -30,6 +30,9 @@ export function startLibraryActivityWatcher({ wikiPath, resolveSessionForPath, b
       const absolute = path.join(root, relativePath);
       scheduleEmit(absolute);
     });
+    watcher.on("error", (error) => {
+      log(`[library-activity] watcher error on ${root}: ${error?.message || error}`);
+    });
   } catch (error) {
     log(`[library-activity] could not watch ${root}: ${error.message}`);
     return () => {};
