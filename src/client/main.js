@@ -19810,17 +19810,7 @@ function isOpenClawProviderAgent(agent) {
 function renderClaudeCodeAvatarMarkup() {
   return `
     <span class="claude-code-avatar" aria-hidden="true">
-      <i class="claude-code-avatar-top"></i>
-      <i class="claude-code-avatar-left-arm"></i>
-      <i class="claude-code-avatar-mid"></i>
-      <i class="claude-code-avatar-right-arm"></i>
-      <i class="claude-code-avatar-base"></i>
-      <i class="claude-code-avatar-leg claude-code-avatar-leg-one"></i>
-      <i class="claude-code-avatar-leg claude-code-avatar-leg-two"></i>
-      <i class="claude-code-avatar-leg claude-code-avatar-leg-three"></i>
-      <i class="claude-code-avatar-leg claude-code-avatar-leg-four"></i>
-      <i class="claude-code-avatar-eye claude-code-avatar-eye-left"></i>
-      <i class="claude-code-avatar-eye claude-code-avatar-eye-right"></i>
+      <img class="claude-code-avatar-img" src="/images/claude-headshot.png" alt="" />
     </span>
   `;
 }
