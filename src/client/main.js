@@ -9901,19 +9901,6 @@ function startKnowledgeBaseGraphSimulation(boost = 0.16, { force = false } = {})
     return;
   }
 
-  if (
-    layout.nodes.length > KNOWLEDGE_BASE_GRAPH_INTERACTIVE_SIMULATION_NODE_LIMIT
-    && !force
-    && !layout.dragState
-  ) {
-    layout.running = false;
-    layout.alpha = 0;
-    layout.autoFitDuringSimulation = false;
-    layout.autoFitMaxScale = KNOWLEDGE_BASE_GRAPH_MAX_SCALE;
-    syncKnowledgeBaseGraphDom();
-    return;
-  }
-
   layout.running = true;
   layout.alpha = clamp(Math.max(layout.alpha || 0, boost), 0, KNOWLEDGE_BASE_GRAPH_PHYSICS.maxAlpha);
   scheduleKnowledgeBaseGraphFrame();
