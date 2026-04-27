@@ -9,6 +9,7 @@ import {
   readSync,
   readdirSync,
   realpathSync,
+  renameSync,
   rmSync,
   statSync,
   writeFileSync,
@@ -1407,6 +1408,45 @@ function getClaudeHomeDir(homeDirOrEnv = process.env) {
   return typeof homeDirOrEnv === "string"
     ? getProviderHomeDir(homeDirOrEnv)
     : getHomeDirectory(homeDirOrEnv);
+}
+
+function ensureClaudeFolderTrusted(cwd, homeDirOrEnv = process.env) {
+  if (!cwd || typeof cwd !== "string") {
+    return;
+  }
+  const resolvedCwd = path.resolve(cwd);
+  const claudeHome = getClaudeHomeDir(homeDirOrEnv);
+  const configPath = path.join(claudeHome, ".claude.json");
+  let config;
+  try {
+    config = JSON.parse(readFileSync(configPath, "utf8"));
+  } catch {
+    return;
+  }
+  if (!config || typeof config !== "object") {
+    return;
+  }
+  if (!config.projects || typeof config.projects !== "object") {
+    config.projects = {};
+  }
+  const existing = config.projects[resolvedCwd] && typeof config.projects[resolvedCwd] === "object"
+    ? config.projects[resolvedCwd]
+    : {};
+  if (existing.hasTrustDialogAccepted === true) {
+    return;
+  }
+  config.projects[resolvedCwd] = { ...existing, hasTrustDialogAccepted: true };
+  try {
+    const tmpPath = `${configPath}.vr-trust-${process.pid}-${Date.now()}`;
+    writeFileSync(tmpPath, JSON.stringify(config, null, 2), { mode: 0o600 });
+    renameSync(tmpPath, configPath);
+  } catch {
+    try {
+      writeFileSync(configPath, JSON.stringify(config, null, 2), { mode: 0o600 });
+    } catch {
+      // best-effort; if we can't write, fall back to the trust dialog
+    }
+  }
 }
 
 function getCodexRootDir(homeDir = os.homedir()) {
@@ -4712,6 +4752,7 @@ export class SessionManager {
     if (isClaudeProviderId(provider.id)) {
       const launchCommand = getManagedProviderLaunchCommand(provider);
       const claudeLaunchArgs = getClaudeProviderLaunchArgs(provider, this.env);
+      ensureClaudeFolderTrusted(session.cwd, this.env);
       this.setPendingProviderCapture(session, null);
       const fallbackSessionId = restored
         ? listClaudeSessionsForCwd(session.cwd, this.userHomeDir)[0]?.id || null
