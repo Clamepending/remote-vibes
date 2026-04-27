@@ -125,6 +125,7 @@ const KNOWLEDGE_BASE_GRAPH_PHYSICS = Object.freeze({
   damping: 0.9,
   dragDamping: 0.82,
   dragAlphaTarget: 0.32,
+  idleAlphaTarget: 0.04,
   centerStrength: 0.0024,
   groupAnchorStrength: 0.0056,
   projectAnchorStrength: 0.0072,
@@ -9771,7 +9772,7 @@ function scheduleKnowledgeBaseGraphFrame() {
     const centerX = layout.width / 2;
     const centerY = layout.height / 2;
     const damping = layout.dragState ? physics.dragDamping : physics.damping;
-    const alphaTarget = layout.dragState ? physics.dragAlphaTarget : 0;
+    const alphaTarget = layout.dragState ? physics.dragAlphaTarget : physics.idleAlphaTarget;
     const alpha = Math.max(layout.alpha || 0, alphaTarget);
 
     for (const node of layout.nodes) {
@@ -9879,15 +9880,15 @@ function scheduleKnowledgeBaseGraphFrame() {
     }
     syncKnowledgeBaseGraphDom();
 
-    const shouldContinue =
-      Boolean(layout.dragState) || maxVelocity > physics.stopVelocity || layout.alpha > physics.stopAlpha;
-    layout.running = shouldContinue;
-    if (!shouldContinue) {
+    const settledFromTransient =
+      !layout.dragState && maxVelocity <= physics.stopVelocity && layout.alpha <= physics.stopAlpha;
+    if (settledFromTransient) {
       layout.autoFitDuringSimulation = false;
       layout.autoFitMaxScale = KNOWLEDGE_BASE_GRAPH_MAX_SCALE;
     }
 
-    if (shouldContinue) {
+    layout.running = state.currentView === "knowledge-base" && layout.nodes.length > 0;
+    if (layout.running) {
       scheduleKnowledgeBaseGraphFrame();
     }
   });
@@ -13323,6 +13324,12 @@ function renderSidebarNav() {
       icon: MapIcon,
       label: "Map",
       meta: "town",
+    },
+    {
+      view: "system",
+      icon: Cpu,
+      label: "System",
+      meta: "host & devices",
     },
     {
       view: "settings",
