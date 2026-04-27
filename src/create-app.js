@@ -5773,36 +5773,54 @@ export async function createVibeResearchApp({
     systemMetricsTimer.unref?.();
   }
   server.on("upgrade", (request, socket, head) => {
-    const url = new URL(request.url || "/", `http://${request.headers.host}`);
+    // Wrap the whole upgrade dispatch in try/catch so a throw in any branch
+    // (e.g., bad URL, getPortFromReferrer surprise, handleUpgrade synchronous
+    // throw) closes the socket promptly with a logged reason instead of
+    // leaving the client to time out at ~5s with WS code 1006.
+    try {
+      const url = new URL(request.url || "/", `http://${request.headers.host}`);
 
-    if (url.pathname.startsWith("/proxy/")) {
-      const proxyPort = getPortFromProxyPath(url.pathname);
+      if (url.pathname.startsWith("/proxy/")) {
+        const proxyPort = getPortFromProxyPath(url.pathname);
 
-      if (!proxyPort) {
-        socket.write("HTTP/1.1 400 Bad Request\r\n\r\n");
+        if (!proxyPort) {
+          socket.write("HTTP/1.1 400 Bad Request\r\n\r\n");
+          socket.destroy();
+          return;
+        }
+
+        proxyWebsocketRequest(request, socket, head, proxyServer, proxyPort, true);
+        return;
+      }
+
+      const proxiedPort = getPortFromReferrer(request);
+      if (proxiedPort) {
+        proxyWebsocketRequest(request, socket, head, proxyServer, proxiedPort, false);
+        return;
+      }
+
+      if (url.pathname !== "/ws") {
+        socket.write("HTTP/1.1 404 Not Found\r\n\r\n");
         socket.destroy();
         return;
       }
 
-      proxyWebsocketRequest(request, socket, head, proxyServer, proxyPort, true);
-      return;
+      websocketServer.handleUpgrade(request, socket, head, (websocket) => {
+        websocketServer.emit("connection", websocket, request, url);
+      });
+    } catch (error) {
+      console.error("[vibe-research] websocket upgrade failed", {
+        url: request.url,
+        message: error?.message,
+        stack: error?.stack,
+      });
+      try {
+        socket.write("HTTP/1.1 500 Internal Server Error\r\n\r\n");
+      } catch {}
+      try {
+        socket.destroy();
+      } catch {}
     }
-
-    const proxiedPort = getPortFromReferrer(request);
-    if (proxiedPort) {
-      proxyWebsocketRequest(request, socket, head, proxyServer, proxiedPort, false);
-      return;
-    }
-
-    if (url.pathname !== "/ws") {
-      socket.write("HTTP/1.1 404 Not Found\r\n\r\n");
-      socket.destroy();
-      return;
-    }
-
-    websocketServer.handleUpgrade(request, socket, head, (websocket) => {
-      websocketServer.emit("connection", websocket, request, url);
-    });
   });
 
   websocketServer.on("connection", (websocket, _request, url) => {
