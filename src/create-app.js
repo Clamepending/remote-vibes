@@ -35,6 +35,7 @@ import { normalizeBuildingId } from "./client/building-sdk.js";
 import { createInstallJobStore, startInstallJob } from "./install-runner.js";
 import { createMcpLaunchRegistry } from "./mcp-launch-registry.js";
 import { testLaunch as testMcpLaunch } from "./mcp-launch-tester.js";
+import { handshakeWithLaunch as handshakeMcpLaunch } from "./mcp-protocol-handshake.js";
 import { createFolderEntry, listFolderEntries } from "./folder-browser.js";
 import { GitHubOAuthTokenStore } from "./github-oauth-token-store.js";
 import { GitHubService } from "./github-service.js";
@@ -2798,6 +2799,44 @@ export async function createVibeResearchApp({
     const results = [];
     for (const launch of launches) {
       const result = await testMcpLaunch({
+        command: launch.command,
+        args: launch.args,
+        env: launch.env,
+      });
+      results.push({ label: launch.label || "", ...result });
+    }
+    response.json({
+      buildingId,
+      results,
+      ok: results.every((entry) => entry.ok),
+    });
+  });
+
+  // Deeper version of /test: actually speak MCP stdio protocol against
+  // the spawned server (initialize → notifications/initialized → tools/list)
+  // and report tool count. Catches more failure modes than /test —
+  // e.g. server that boots but immediately rejects bad tokens during
+  // initialize.
+  app.post("/api/mcp/launches/:buildingId/handshake", async (request, response) => {
+    const buildingId = normalizeBuildingId(String(request.params.buildingId || ""));
+    if (!buildingId) {
+      response.status(400).json({ error: "buildingId is required" });
+      return;
+    }
+    if (!mcpLaunchRegistry.has(buildingId)) {
+      response.status(404).json({ error: `no mcp launches declared for ${buildingId}` });
+      return;
+    }
+    const launches = mcpLaunchRegistry
+      .list({ resolved: true })
+      .filter((entry) => entry.buildingId === buildingId);
+    if (launches.length === 0) {
+      response.status(404).json({ error: `no mcp launches declared for ${buildingId}` });
+      return;
+    }
+    const results = [];
+    for (const launch of launches) {
+      const result = await handshakeMcpLaunch({
         command: launch.command,
         args: launch.args,
         env: launch.env,
