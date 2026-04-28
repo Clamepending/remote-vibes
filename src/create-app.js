@@ -37,6 +37,7 @@ import { createMcpLaunchRegistry } from "./mcp-launch-registry.js";
 import { testLaunch as testMcpLaunch } from "./mcp-launch-tester.js";
 import { handshakeWithLaunch as handshakeMcpLaunch } from "./mcp-protocol-handshake.js";
 import { createMcpLaunchHealthMonitor } from "./mcp-launch-health.js";
+import { createMcpLaunchHealthScheduler } from "./mcp-launch-health-scheduler.js";
 import { createFolderEntry, listFolderEntries } from "./folder-browser.js";
 import { GitHubOAuthTokenStore } from "./github-oauth-token-store.js";
 import { GitHubService } from "./github-service.js";
@@ -1456,6 +1457,15 @@ export async function createVibeResearchApp({
     registry: mcpLaunchRegistry,
     runHandshake: handshakeMcpLaunch,
   });
+  const mcpLaunchHealthScheduler = createMcpLaunchHealthScheduler({
+    monitor: mcpLaunchHealthMonitor,
+  });
+  // Start in production-ish runs; tests + ephemeral apps can override
+  // VIBE_RESEARCH_MCP_HEALTH_SCHEDULE=off to skip the scheduler so they
+  // don't get spurious handshakes during their teardown window.
+  if (String(process.env.VIBE_RESEARCH_MCP_HEALTH_SCHEDULE || "").toLowerCase() !== "off") {
+    mcpLaunchHealthScheduler.start();
+  }
   const tutorialRegistry =
     typeof tutorialRegistryFactory === "function"
       ? tutorialRegistryFactory({ systemRootPath, cwd, stateDir })
@@ -6315,6 +6325,7 @@ export async function createVibeResearchApp({
       } catch { /* best effort */ }
       wikiBackupService.stop();
       sleepPreventionService.stop();
+      mcpLaunchHealthScheduler.stop();
       if (systemMetricsTimer) {
         clearInterval(systemMetricsTimer);
         systemMetricsTimer = null;
