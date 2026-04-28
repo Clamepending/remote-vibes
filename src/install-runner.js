@@ -195,13 +195,75 @@ function captureSettingsFromBody(captureSettings, body) {
   return out;
 }
 
+// A setting name "looks secret" if its tail matches one of these well-known
+// suffixes. Used as a heuristic to auto-add captured values to the
+// secret-mask list — keeps the install runner from leaking pasted/captured
+// API tokens through stdout/stderr/error log entries by accident.
+const SECRET_SETTING_TAIL_PATTERN = /(Token|Key|Secret|Password|ApiKey|PrivateKey)$/i;
+
+export function looksLikeSecretSetting(settingKey) {
+  if (!settingKey || typeof settingKey !== "string") return false;
+  return SECRET_SETTING_TAIL_PATTERN.test(settingKey);
+}
+
+// Replace every occurrence of any string in `secrets` with [redacted]. The
+// substitution is plain-substring (not regex) so callers don't need to
+// escape anything. Empty strings and very short strings (<4 chars) are
+// skipped — they'd produce too many false-positive substitutions and would
+// shred normal output ("a" appearing as a "secret" would obliterate every
+// "a" in stdout).
+export function maskSecrets(text, secrets) {
+  if (!text || !secrets) return text;
+  let out = String(text);
+  for (const secret of secrets) {
+    const value = String(secret || "");
+    if (value.length < 4) continue;
+    if (!out.includes(value)) continue;
+    out = out.split(value).join("[redacted]");
+  }
+  return out;
+}
+
+// Recursively redact every string field in a log entry. We only walk one
+// level deep because the runner only emits flat objects today; a deeper
+// walk would be wasted work.
+function redactLogEntry(entry, secrets) {
+  if (!entry || typeof entry !== "object") return entry;
+  if (!secrets || secrets.size === 0) return entry;
+  const out = {};
+  const secretArray = [...secrets];
+  for (const [key, value] of Object.entries(entry)) {
+    out[key] = typeof value === "string" ? maskSecrets(value, secretArray) : value;
+  }
+  return out;
+}
+
 export async function executeInstallPlan(plan, options = {}) {
   const {
-    appendLog = () => {},
+    appendLog: rawAppendLog = () => {},
     settingsStore = null,
     signal,
     fetchImpl,
   } = options;
+
+  // Secret-mask set: every value in here is replaced with [redacted] in
+  // stdout/stderr/error/message/step text emitted to the install log. We
+  // seed it from any pre-existing value at an auth-paste target setting
+  // (the human may have pasted before clicking Install again) and grow it
+  // as http captures land.
+  const secrets = new Set();
+  const noteSecret = (value) => {
+    const text = String(value ?? "").trim();
+    if (text.length >= 4) secrets.add(text);
+  };
+  if (plan && plan.auth?.kind === "auth-paste" && plan.auth.setting && settingsStore?.settings) {
+    const seed = settingsStore.settings[plan.auth.setting];
+    if (typeof seed === "string" && seed.trim()) noteSecret(seed);
+  }
+  // The runner-internal appendLog runs every entry through redactLogEntry
+  // before forwarding to the caller, so even hand-written log lines that
+  // happen to interpolate a secret get scrubbed.
+  const appendLog = (entry) => rawAppendLog(redactLogEntry(entry, secrets));
 
   if (!plan || typeof plan !== "object") {
     appendLog({ phase: "system", level: "error", message: "no install plan" });
@@ -255,7 +317,15 @@ export async function executeInstallPlan(plan, options = {}) {
         if (!result.ok) {
           return { status: "failed", reason: `install http step "${step.label || step.url}" failed`, capturedSettings };
         }
-        Object.assign(capturedSettings, captureSettingsFromBody(step.captureSettings, result.body));
+        const captured = captureSettingsFromBody(step.captureSettings, result.body);
+        Object.assign(capturedSettings, captured);
+        // Any captured value whose target setting name looks secret gets
+        // added to the mask list immediately, so subsequent verify/auth
+        // steps that echo it (e.g. a CLI that prints "Token: xxx") don't
+        // leak it into the install log.
+        for (const [settingKey, value] of Object.entries(captured)) {
+          if (looksLikeSecretSetting(settingKey)) noteSecret(value);
+        }
       }
     }
   } else {

@@ -12,6 +12,8 @@ import { join } from "node:path";
 import {
   createInstallJobStore,
   executeInstallPlan,
+  looksLikeSecretSetting,
+  maskSecrets,
   startInstallJob,
   waitForJob,
 } from "../src/install-runner.js";
@@ -533,4 +535,152 @@ test("edge: SDK normalization drops unknown step kinds and bad shapes", async ()
   assert.equal(building.install.plan.mcp.length, 0);
   const result = await executeInstallPlan(building.install.plan, { appendLog: () => {} });
   assert.equal(result.status, "ok");
+});
+
+// ---- Secret-masking edge cases ----
+
+test("maskSecrets: replaces every occurrence of a secret with [redacted]", () => {
+  const masked = maskSecrets("pasted abc123secret here and abc123secret again", ["abc123secret"]);
+  assert.equal(masked, "pasted [redacted] here and [redacted] again");
+});
+
+test("maskSecrets: handles multiple secrets including overlap-free chains", () => {
+  const masked = maskSecrets("token=tok_AAAA key=key_BBBB plain", ["tok_AAAA", "key_BBBB"]);
+  assert.equal(masked, "token=[redacted] key=[redacted] plain");
+});
+
+test("maskSecrets: skips empty + ultra-short secrets to avoid shredding output", () => {
+  // A 1-char "secret" of "a" would otherwise turn every "a" into [redacted].
+  // The runner intentionally requires >= 4 chars before masking.
+  const masked = maskSecrets("abcdefg apple", ["", " ", "a", "ab"]);
+  assert.equal(masked, "abcdefg apple");
+});
+
+test("maskSecrets: returns input unchanged when there is no overlap", () => {
+  assert.equal(maskSecrets("hello world", ["nothing-matches"]), "hello world");
+});
+
+test("maskSecrets: does NOT match across whitespace boundaries (it's plain substring)", () => {
+  // Documents the contract: maskSecrets is plain substring match, not
+  // word-boundary. A secret that contains a space will still match a
+  // multiword span.
+  const masked = maskSecrets("token: hunter two and elsewhere hunter two", ["hunter two"]);
+  assert.equal(masked, "token: [redacted] and elsewhere [redacted]");
+});
+
+test("looksLikeSecretSetting: matches common secret tail names", () => {
+  for (const name of [
+    "mcpGithubToken",
+    "mcpBraveSearchApiKey",
+    "ottoAuthPrivateKey",
+    "stripeSecret",
+    "telegramBotToken",
+    "twilioAccountSid",  // does NOT end in a secret tail — should be false
+  ]) {
+    const expected = !name.endsWith("Sid");
+    assert.equal(looksLikeSecretSetting(name), expected, `${name} → ${expected}`);
+  }
+  assert.equal(looksLikeSecretSetting(""), false);
+  assert.equal(looksLikeSecretSetting(null), false);
+});
+
+test("install run: pre-existing auth-paste setting value is masked in log entries", async () => {
+  // The human pasted before, then clicked Install again. Verify and
+  // mcp-launch echo the value into stdout/stderr. The log must scrub it.
+  const dir = mkdtempSync(join(tmpdir(), "install-runner-secret-"));
+  const verifyScript = join(dir, "verify.sh");
+  const SECRET = "sk-live-AAAAAAAAA-redact-me";
+  writeFileSync(verifyScript, `#!/bin/sh\necho "Authenticated as ${SECRET} and other text"\nexit 0\n`);
+  const settings = {
+    settings: { mcpDemoToken: SECRET },
+    async update() {},
+  };
+  const log = silentLog();
+  try {
+    const result = await executeInstallPlan(
+      {
+        preflight: [{ kind: "command", command: "true" }],
+        install: [],
+        auth: { kind: "auth-paste", setting: "mcpDemoToken", setupUrl: "https://x", setupLabel: "x" },
+        verify: [{ kind: "command", command: `sh ${verifyScript}`, label: "verify-prints-secret" }],
+        mcp: [{ kind: "mcp-launch", command: "node", args: ["server.js", "--token", `${SECRET}`], label: "mcp-with-secret" }],
+      },
+      { appendLog: log.append, settingsStore: settings },
+    );
+    assert.equal(result.status, "ok");
+    // Walk every emitted log entry and assert the secret is nowhere in it.
+    for (const entry of log.entries) {
+      for (const value of Object.values(entry)) {
+        if (typeof value !== "string") continue;
+        assert.equal(value.includes(SECRET), false, `secret leaked into log: ${value}`);
+      }
+    }
+    // Confirm at least one entry actually got redacted (otherwise the
+    // assertion above would pass trivially with an empty input).
+    const sawRedaction = log.entries.some((entry) => Object.values(entry).some((v) => typeof v === "string" && v.includes("[redacted]")));
+    assert.equal(sawRedaction, true, "expected at least one [redacted] in the log");
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+test("install run: secret captured from http response is masked in subsequent step logs", async () => {
+  const SECRET = "captured-secret-12345-AAAA";
+  const dir = mkdtempSync(join(tmpdir(), "install-runner-secret-cap-"));
+  const verifyScript = join(dir, "verify.sh");
+  writeFileSync(verifyScript, `#!/bin/sh\necho "received ${SECRET}"\nexit 0\n`);
+  const fakeFetch = async () => ({ status: 200, text: async () => JSON.stringify({ apiKey: SECRET }) });
+  const log = silentLog();
+  try {
+    const result = await executeInstallPlan(
+      {
+        preflight: [{ kind: "command", command: "false" }],
+        install: [
+          { kind: "http", method: "POST", url: "https://example.test/x", body: {}, captureSettings: { apiKey: "providerApiKey" } },
+        ],
+        verify: [{ kind: "command", command: `sh ${verifyScript}`, label: "verify-echoes-captured-secret" }],
+      },
+      { appendLog: log.append, fetchImpl: fakeFetch, settingsStore: fakeSettingsStore() },
+    );
+    assert.equal(result.status, "ok");
+    // The secret was captured into providerApiKey (which looks-secret), so
+    // the verify-step log must not contain the raw value.
+    for (const entry of log.entries) {
+      for (const value of Object.values(entry)) {
+        if (typeof value !== "string") continue;
+        assert.equal(value.includes(SECRET), false, `captured secret leaked: ${value}`);
+      }
+    }
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+test("install run: non-secret-named captured field is NOT masked", async () => {
+  // "providerUsername" doesn't match the secret-tail pattern, so its value
+  // should stay visible in subsequent log entries — that's the contract:
+  // we only mask things that look secret.
+  const VISIBLE = "alice-public-username";
+  const dir = mkdtempSync(join(tmpdir(), "install-runner-visible-"));
+  const verifyScript = join(dir, "verify.sh");
+  writeFileSync(verifyScript, `#!/bin/sh\necho "Authenticated as ${VISIBLE}"\nexit 0\n`);
+  const fakeFetch = async () => ({ status: 200, text: async () => JSON.stringify({ username: VISIBLE }) });
+  const log = silentLog();
+  try {
+    const result = await executeInstallPlan(
+      {
+        preflight: [{ kind: "command", command: "false" }],
+        install: [
+          { kind: "http", method: "POST", url: "https://example.test/x", body: {}, captureSettings: { username: "providerUsername" } },
+        ],
+        verify: [{ kind: "command", command: `sh ${verifyScript}`, label: "verify-prints-visible" }],
+      },
+      { appendLog: log.append, fetchImpl: fakeFetch, settingsStore: fakeSettingsStore() },
+    );
+    assert.equal(result.status, "ok");
+    const sawVisibleInLog = log.entries.some((entry) => Object.values(entry).some((v) => typeof v === "string" && v.includes(VISIBLE)));
+    assert.equal(sawVisibleInLog, true, "non-secret captured value should remain visible in logs");
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
 });
