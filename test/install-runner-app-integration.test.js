@@ -468,6 +468,88 @@ test("end-to-end: pasting a referenced setting triggers auto-sync without re-Ins
   }
 });
 
+test("end-to-end: full install → claude mcp list shows Connected → uninstall → claude mcp list drops it", { timeout: 120_000 }, async (t) => {
+  // The complete UX proof: a real `claude` CLI invocation against a
+  // sandboxed HOME confirms install adds the server, uninstall drops
+  // it. Without this we only know the file shape is right; this
+  // confirms the agent actually consumes it.
+  const { execSync, spawnSync } = await import("node:child_process");
+  let claudeBin = "";
+  try {
+    claudeBin = String(execSync("command -v claude", { stdio: ["ignore", "pipe", "ignore"] })).trim();
+  } catch {}
+  if (!claudeBin) { t.skip("claude CLI not on PATH"); return; }
+
+  const fakeHome = await tmp("vr-claude-e2e-home");
+  const previousHome = process.env.HOME;
+  process.env.HOME = fakeHome;
+
+  const cwdDir = await tmp("vr-claude-e2e-cwd");
+  const stateDir = await tmp("vr-claude-e2e-state");
+  const fsRoot = await tmp("vr-claude-e2e-fsroot");
+
+  const { baseUrl, cleanup } = await startApp({ cwd: cwdDir, stateDir, allowAutoSync: true });
+  try {
+    // Install mcp-filesystem.
+    await fetch(`${baseUrl}/api/settings`, {
+      method: "PATCH",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ mcpFilesystemRoots: fsRoot }),
+    });
+    const startResp = await fetch(`${baseUrl}/api/buildings/mcp-filesystem/install`, { method: "POST" });
+    const { jobId } = await startResp.json();
+    const deadline = Date.now() + 90_000;
+    let final = null;
+    while (Date.now() < deadline) {
+      const j = await (await fetch(`${baseUrl}/api/buildings/mcp-filesystem/install/jobs/${jobId}`)).json();
+      if (j.status !== "running") { final = j; break; }
+      await new Promise((r) => setTimeout(r, 250));
+    }
+    assert.equal(final?.status, "ok");
+
+    // Run `claude mcp list` from a totally unrelated cwd so it reads
+    // the user-scope ~/.claude.json (which is in our sandboxed HOME).
+    const installResult = spawnSync(claudeBin, ["mcp", "list"], {
+      cwd: fakeHome,                  // any non-project dir; just needs to not have its own .mcp.json
+      env: { ...process.env, HOME: fakeHome },
+      timeout: 60_000,
+      encoding: "utf8",
+    });
+    const installOut = `${installResult.stdout || ""}\n${installResult.stderr || ""}`;
+    assert.ok(
+      /mcp-filesystem.*(?:Connected|✓)/.test(installOut),
+      `after install, claude mcp list should show mcp-filesystem Connected. Got:\n${installOut.slice(0, 1500)}`,
+    );
+
+    // Uninstall.
+    const uninstallResp = await fetch(`${baseUrl}/api/buildings/mcp-filesystem/uninstall`, { method: "POST" });
+    assert.equal(uninstallResp.status, 200);
+
+    // Run claude mcp list again — entry should be gone.
+    const uninstallResult = spawnSync(claudeBin, ["mcp", "list"], {
+      cwd: fakeHome,
+      env: { ...process.env, HOME: fakeHome },
+      timeout: 60_000,
+      encoding: "utf8",
+    });
+    const uninstallOut = `${uninstallResult.stdout || ""}\n${uninstallResult.stderr || ""}`;
+    assert.equal(
+      /mcp-filesystem/.test(uninstallOut),
+      false,
+      `after uninstall, claude mcp list must NOT show mcp-filesystem. Got:\n${uninstallOut.slice(0, 1500)}`,
+    );
+  } finally {
+    await cleanup();
+    if (previousHome === undefined) {
+      delete process.env.HOME;
+    } else {
+      process.env.HOME = previousHome;
+    }
+    await rm(fakeHome, { recursive: true, force: true });
+    await rm(fsRoot, { recursive: true, force: true });
+  }
+});
+
 test("end-to-end: install with auto-sync writes Claude + Codex configs without a manual sync call", { timeout: 120_000 }, async (t) => {
   // Sandbox HOME so the auto-sync writes land in a temp dir, not the
   // developer's real ~/.claude.json. The syncer reads $HOME at write
