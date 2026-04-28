@@ -375,6 +375,32 @@ export class SettingsStore {
       mcpNotionToken: String(this.env.MCP_NOTION_TOKEN || this.env.NOTION_INTEGRATION_TOKEN || "").trim(),
       mcpLinearEnabled: false,
       mcpLinearApiKey: String(this.env.MCP_LINEAR_API_KEY || this.env.LINEAR_API_KEY || "").trim(),
+      // Second wave of MCP-server buildings (auth-paste only; npm packages
+      // verified against the live registry on 2026-04-28).
+      mcpPuppeteerEnabled: false,
+      mcpMemoryEnabled: false,
+      mcpRedisEnabled: false,
+      mcpRedisUrl: String(this.env.MCP_REDIS_URL || this.env.REDIS_URL || "").trim(),
+      mcpGitlabEnabled: false,
+      mcpGitlabToken: String(this.env.MCP_GITLAB_TOKEN || this.env.GITLAB_PERSONAL_ACCESS_TOKEN || "").trim(),
+      mcpGitlabUrl: String(this.env.MCP_GITLAB_URL || this.env.GITLAB_API_URL || "https://gitlab.com/api/v4").trim(),
+      mcpGoogleMapsEnabled: false,
+      mcpGoogleMapsApiKey: String(this.env.MCP_GOOGLE_MAPS_API_KEY || this.env.GOOGLE_MAPS_API_KEY || "").trim(),
+      mcpEverythingEnabled: false,
+      mcpStripeEnabled: false,
+      mcpStripeApiKey: String(this.env.MCP_STRIPE_API_KEY || this.env.STRIPE_SECRET_KEY || "").trim(),
+      mcpMongodbEnabled: false,
+      mcpMongodbUri: String(this.env.MCP_MONGODB_URI || this.env.MONGODB_URI || "").trim(),
+      mcpCloudflareEnabled: false,
+      mcpCloudflareApiToken: String(this.env.MCP_CLOUDFLARE_API_TOKEN || this.env.CLOUDFLARE_API_TOKEN || "").trim(),
+      mcpTavilyEnabled: false,
+      mcpTavilyApiKey: String(this.env.MCP_TAVILY_API_KEY || this.env.TAVILY_API_KEY || "").trim(),
+      mcpExaEnabled: false,
+      mcpExaApiKey: String(this.env.MCP_EXA_API_KEY || this.env.EXA_API_KEY || "").trim(),
+      mcpFirecrawlEnabled: false,
+      mcpFirecrawlApiKey: String(this.env.MCP_FIRECRAWL_API_KEY || this.env.FIRECRAWL_API_KEY || "").trim(),
+      mcpHubspotEnabled: false,
+      mcpHubspotPrivateAppToken: String(this.env.MCP_HUBSPOT_TOKEN || this.env.HUBSPOT_PRIVATE_APP_TOKEN || "").trim(),
       ottoAuthBaseUrl: String(this.env.OTTOAUTH_BASE_URL || getDefaultOttoAuthBaseUrl()).trim(),
       ottoAuthCallbackUrl: String(this.env.OTTOAUTH_CALLBACK_URL || "").trim(),
       ottoAuthDefaultMaxChargeCents: "",
@@ -648,6 +674,63 @@ export class SettingsStore {
         payload.mcpLinearApiKey === undefined
           ? defaults.mcpLinearApiKey
           : String(payload.mcpLinearApiKey || "").trim(),
+      mcpPuppeteerEnabled: normalizeBoolean(payload.mcpPuppeteerEnabled, defaults.mcpPuppeteerEnabled),
+      mcpMemoryEnabled: normalizeBoolean(payload.mcpMemoryEnabled, defaults.mcpMemoryEnabled),
+      mcpRedisEnabled: normalizeBoolean(payload.mcpRedisEnabled, defaults.mcpRedisEnabled),
+      mcpRedisUrl:
+        payload.mcpRedisUrl === undefined
+          ? defaults.mcpRedisUrl
+          : String(payload.mcpRedisUrl || "").trim(),
+      mcpGitlabEnabled: normalizeBoolean(payload.mcpGitlabEnabled, defaults.mcpGitlabEnabled),
+      mcpGitlabToken:
+        payload.mcpGitlabToken === undefined
+          ? defaults.mcpGitlabToken
+          : String(payload.mcpGitlabToken || "").trim(),
+      mcpGitlabUrl:
+        payload.mcpGitlabUrl === undefined
+          ? defaults.mcpGitlabUrl
+          : String(payload.mcpGitlabUrl || "").trim(),
+      mcpGoogleMapsEnabled: normalizeBoolean(payload.mcpGoogleMapsEnabled, defaults.mcpGoogleMapsEnabled),
+      mcpGoogleMapsApiKey:
+        payload.mcpGoogleMapsApiKey === undefined
+          ? defaults.mcpGoogleMapsApiKey
+          : String(payload.mcpGoogleMapsApiKey || "").trim(),
+      mcpEverythingEnabled: normalizeBoolean(payload.mcpEverythingEnabled, defaults.mcpEverythingEnabled),
+      mcpStripeEnabled: normalizeBoolean(payload.mcpStripeEnabled, defaults.mcpStripeEnabled),
+      mcpStripeApiKey:
+        payload.mcpStripeApiKey === undefined
+          ? defaults.mcpStripeApiKey
+          : String(payload.mcpStripeApiKey || "").trim(),
+      mcpMongodbEnabled: normalizeBoolean(payload.mcpMongodbEnabled, defaults.mcpMongodbEnabled),
+      mcpMongodbUri:
+        payload.mcpMongodbUri === undefined
+          ? defaults.mcpMongodbUri
+          : String(payload.mcpMongodbUri || "").trim(),
+      mcpCloudflareEnabled: normalizeBoolean(payload.mcpCloudflareEnabled, defaults.mcpCloudflareEnabled),
+      mcpCloudflareApiToken:
+        payload.mcpCloudflareApiToken === undefined
+          ? defaults.mcpCloudflareApiToken
+          : String(payload.mcpCloudflareApiToken || "").trim(),
+      mcpTavilyEnabled: normalizeBoolean(payload.mcpTavilyEnabled, defaults.mcpTavilyEnabled),
+      mcpTavilyApiKey:
+        payload.mcpTavilyApiKey === undefined
+          ? defaults.mcpTavilyApiKey
+          : String(payload.mcpTavilyApiKey || "").trim(),
+      mcpExaEnabled: normalizeBoolean(payload.mcpExaEnabled, defaults.mcpExaEnabled),
+      mcpExaApiKey:
+        payload.mcpExaApiKey === undefined
+          ? defaults.mcpExaApiKey
+          : String(payload.mcpExaApiKey || "").trim(),
+      mcpFirecrawlEnabled: normalizeBoolean(payload.mcpFirecrawlEnabled, defaults.mcpFirecrawlEnabled),
+      mcpFirecrawlApiKey:
+        payload.mcpFirecrawlApiKey === undefined
+          ? defaults.mcpFirecrawlApiKey
+          : String(payload.mcpFirecrawlApiKey || "").trim(),
+      mcpHubspotEnabled: normalizeBoolean(payload.mcpHubspotEnabled, defaults.mcpHubspotEnabled),
+      mcpHubspotPrivateAppToken:
+        payload.mcpHubspotPrivateAppToken === undefined
+          ? defaults.mcpHubspotPrivateAppToken
+          : String(payload.mcpHubspotPrivateAppToken || "").trim(),
       ottoAuthEnabled: normalizeBoolean(payload.ottoAuthEnabled, defaults.ottoAuthEnabled),
       ottoAuthPrivateKey:
         payload.ottoAuthPrivateKey === undefined

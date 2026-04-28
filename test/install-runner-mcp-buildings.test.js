@@ -20,7 +20,12 @@ function npmAvailable() {
   try { execSync("command -v npm", { stdio: "pipe" }); return true; } catch { return false; }
 }
 
-const expectOk = ["mcp-filesystem"];
+const expectOk = [
+  "mcp-filesystem",
+  "mcp-puppeteer",
+  "mcp-memory",
+  "mcp-everything",
+];
 const expectAuthRequired = [
   "mcp-github",
   "mcp-postgres",
@@ -30,6 +35,16 @@ const expectAuthRequired = [
   "mcp-sentry",
   "mcp-notion",
   "mcp-linear",
+  "mcp-redis",
+  "mcp-gitlab",
+  "mcp-google-maps",
+  "mcp-stripe",
+  "mcp-mongodb",
+  "mcp-cloudflare",
+  "mcp-tavily",
+  "mcp-exa",
+  "mcp-firecrawl",
+  "mcp-hubspot",
 ];
 
 for (const id of [...expectOk, ...expectAuthRequired]) {

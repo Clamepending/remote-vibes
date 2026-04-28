@@ -14,6 +14,7 @@ import {
   Dog,
   FlaskConical,
   GitPullRequest,
+  Globe,
   Handshake,
   Inbox,
   Lightbulb,
@@ -21,6 +22,7 @@ import {
   MessageCircle,
   MessagesSquare,
   Notebook,
+  Package,
   Plug,
   School,
   Send,
@@ -2071,6 +2073,627 @@ const CORE_BUILDING_MANIFESTS = [
       summary: "List, search, create, and update Linear issues from agent sessions.",
       env: [{ name: "LINEAR_API_KEY", required: true }],
       docs: [{ label: "@tacticlaunch/mcp-linear", url: "https://www.npmjs.com/package/@tacticlaunch/mcp-linear" }],
+    },
+  },
+  // Second wave of MCP-server buildings. Each pulls a verified npm package via
+  // npx; install plans skip the install step (npx fetches on first run) and
+  // gate usage on either an auth-paste field or, for no-auth servers, just the
+  // `npm view` verify check.
+  {
+    id: "mcp-puppeteer",
+    name: "MCP Puppeteer",
+    category: "MCP",
+    description: "Browser automation for agents via the official Model Context Protocol Puppeteer server.",
+    icon: Globe,
+    status: "one-click install",
+    source: "modelcontextprotocol",
+    install: {
+      enabledSetting: "mcpPuppeteerEnabled",
+      storedFallback: false,
+      plan: {
+        preflight: [{ kind: "command", command: "command -v npx", label: "Detect npx" }],
+        install: [],
+        verify: [
+          { kind: "command", command: "npm view @modelcontextprotocol/server-puppeteer version", timeoutSec: 60 },
+        ],
+        mcp: [
+          {
+            kind: "mcp-launch",
+            command: "npx",
+            args: ["-y", "@modelcontextprotocol/server-puppeteer"],
+            label: "Launch MCP Puppeteer server",
+          },
+        ],
+      },
+    },
+    onboarding: {
+      variables: [],
+      steps: [
+        { title: "Install the server", completeWhen: { type: "installed" } },
+        { title: "Use it", detail: "No auth required; agents can browse and screenshot pages." },
+      ],
+    },
+    agentGuide: {
+      summary: "Drive a headless Chromium for browsing, scraping, screenshotting, and form filling.",
+      docs: [{ label: "MCP Puppeteer server", url: "https://github.com/modelcontextprotocol/servers/tree/main/src/puppeteer" }],
+    },
+  },
+  {
+    id: "mcp-memory",
+    name: "MCP Memory",
+    category: "MCP",
+    description: "Persistent in-memory knowledge graph for agents via the Model Context Protocol Memory server.",
+    icon: BookOpen,
+    status: "one-click install",
+    source: "modelcontextprotocol",
+    install: {
+      enabledSetting: "mcpMemoryEnabled",
+      storedFallback: false,
+      plan: {
+        preflight: [{ kind: "command", command: "command -v npx", label: "Detect npx" }],
+        install: [],
+        verify: [
+          { kind: "command", command: "npm view @modelcontextprotocol/server-memory version", timeoutSec: 60 },
+        ],
+        mcp: [
+          {
+            kind: "mcp-launch",
+            command: "npx",
+            args: ["-y", "@modelcontextprotocol/server-memory"],
+            label: "Launch MCP Memory server",
+          },
+        ],
+      },
+    },
+    onboarding: {
+      variables: [],
+      steps: [
+        { title: "Install the server", completeWhen: { type: "installed" } },
+        { title: "Use it", detail: "No auth required; the server persists facts across sessions." },
+      ],
+    },
+    agentGuide: {
+      summary: "Lets agents store and retrieve typed memory entries (entities, relations, observations).",
+      docs: [{ label: "MCP Memory server", url: "https://github.com/modelcontextprotocol/servers/tree/main/src/memory" }],
+    },
+  },
+  {
+    id: "mcp-redis",
+    name: "MCP Redis",
+    category: "MCP",
+    description: "Read and write Redis from agent sessions via the official Model Context Protocol Redis server.",
+    icon: Database,
+    status: "one-click install",
+    source: "modelcontextprotocol",
+    install: {
+      enabledSetting: "mcpRedisEnabled",
+      storedFallback: false,
+      plan: {
+        preflight: [{ kind: "command", command: "command -v npx", label: "Detect npx" }],
+        install: [],
+        auth: {
+          kind: "auth-paste",
+          setting: "mcpRedisUrl",
+          setupLabel: "Paste Redis URL",
+          detail: "Format: redis://default:password@host:port. Use a least-privilege user.",
+        },
+        verify: [
+          { kind: "command", command: "npm view @modelcontextprotocol/server-redis version", timeoutSec: 60 },
+        ],
+        mcp: [
+          {
+            kind: "mcp-launch",
+            command: "npx",
+            args: ["-y", "@modelcontextprotocol/server-redis", "${mcpRedisUrl}"],
+            label: "Launch MCP Redis server",
+          },
+        ],
+      },
+    },
+    onboarding: {
+      variables: [
+        { label: "Redis URL", setting: "mcpRedisUrl", required: true, secret: true },
+      ],
+      steps: [
+        { title: "Install the server", completeWhen: { type: "installed" } },
+        { title: "Paste a Redis URL" },
+      ],
+    },
+    agentGuide: {
+      summary: "GET/SET/HGETALL/etc. against a configured Redis instance.",
+      docs: [{ label: "MCP Redis server", url: "https://github.com/modelcontextprotocol/servers/tree/main/src/redis" }],
+    },
+  },
+  {
+    id: "mcp-gitlab",
+    name: "MCP GitLab",
+    category: "MCP",
+    description: "Browse and edit GitLab projects from agent sessions via the official MCP GitLab server.",
+    icon: GitPullRequest,
+    status: "one-click install",
+    source: "modelcontextprotocol",
+    install: {
+      enabledSetting: "mcpGitlabEnabled",
+      storedFallback: false,
+      plan: {
+        preflight: [{ kind: "command", command: "command -v npx", label: "Detect npx" }],
+        install: [],
+        auth: {
+          kind: "auth-paste",
+          setting: "mcpGitlabToken",
+          setupUrl: "https://gitlab.com/-/profile/personal_access_tokens",
+          setupLabel: "Create a GitLab personal access token",
+          detail: "Use a token with api / read_repository scopes; for self-hosted, also set MCP_GITLAB_URL.",
+        },
+        verify: [
+          { kind: "command", command: "npm view @modelcontextprotocol/server-gitlab version", timeoutSec: 60 },
+        ],
+        mcp: [
+          {
+            kind: "mcp-launch",
+            command: "npx",
+            args: ["-y", "@modelcontextprotocol/server-gitlab"],
+            env: {
+              GITLAB_PERSONAL_ACCESS_TOKEN: "${mcpGitlabToken}",
+              GITLAB_API_URL: "${mcpGitlabUrl}",
+            },
+            label: "Launch MCP GitLab server",
+          },
+        ],
+      },
+    },
+    onboarding: {
+      variables: [
+        { label: "GitLab token", setting: "mcpGitlabToken", required: true, secret: true, setupUrl: "https://gitlab.com/-/profile/personal_access_tokens" },
+        { label: "GitLab API URL", setting: "mcpGitlabUrl", required: false },
+      ],
+      steps: [
+        { title: "Install the server", completeWhen: { type: "installed" } },
+        { title: "Paste a personal access token" },
+      ],
+    },
+    agentGuide: {
+      summary: "Browse repos, manage issues, create branches and MRs on GitLab.",
+      env: [{ name: "GITLAB_PERSONAL_ACCESS_TOKEN", required: true }],
+      docs: [{ label: "MCP GitLab server", url: "https://github.com/modelcontextprotocol/servers/tree/main/src/gitlab" }],
+    },
+  },
+  {
+    id: "mcp-google-maps",
+    name: "MCP Google Maps",
+    category: "MCP",
+    description: "Geocode, search places, and route via the official Model Context Protocol Google Maps server.",
+    icon: Globe,
+    status: "one-click install",
+    source: "modelcontextprotocol",
+    install: {
+      enabledSetting: "mcpGoogleMapsEnabled",
+      storedFallback: false,
+      plan: {
+        preflight: [{ kind: "command", command: "command -v npx", label: "Detect npx" }],
+        install: [],
+        auth: {
+          kind: "auth-paste",
+          setting: "mcpGoogleMapsApiKey",
+          setupUrl: "https://console.cloud.google.com/google/maps-apis/credentials",
+          setupLabel: "Create a Google Maps API key",
+          detail: "Restrict the key to the Maps APIs you actually use (Geocoding, Places, Directions).",
+        },
+        verify: [
+          { kind: "command", command: "npm view @modelcontextprotocol/server-google-maps version", timeoutSec: 60 },
+        ],
+        mcp: [
+          {
+            kind: "mcp-launch",
+            command: "npx",
+            args: ["-y", "@modelcontextprotocol/server-google-maps"],
+            env: { GOOGLE_MAPS_API_KEY: "${mcpGoogleMapsApiKey}" },
+            label: "Launch MCP Google Maps server",
+          },
+        ],
+      },
+    },
+    onboarding: {
+      variables: [
+        { label: "Google Maps API key", setting: "mcpGoogleMapsApiKey", required: true, secret: true, setupUrl: "https://console.cloud.google.com/google/maps-apis/credentials" },
+      ],
+      steps: [
+        { title: "Install the server", completeWhen: { type: "installed" } },
+        { title: "Paste an API key" },
+      ],
+    },
+    agentGuide: {
+      summary: "Geocode, search places, fetch directions and distance matrices.",
+      env: [{ name: "GOOGLE_MAPS_API_KEY", required: true }],
+      docs: [{ label: "MCP Google Maps server", url: "https://github.com/modelcontextprotocol/servers/tree/main/src/google-maps" }],
+    },
+  },
+  {
+    id: "mcp-everything",
+    name: "MCP Everything",
+    category: "MCP",
+    description: "Reference Model Context Protocol server bundling every demo tool — useful for testing client integrations.",
+    icon: Package,
+    status: "one-click install",
+    source: "modelcontextprotocol",
+    install: {
+      enabledSetting: "mcpEverythingEnabled",
+      storedFallback: false,
+      plan: {
+        preflight: [{ kind: "command", command: "command -v npx", label: "Detect npx" }],
+        install: [],
+        verify: [
+          { kind: "command", command: "npm view @modelcontextprotocol/server-everything version", timeoutSec: 60 },
+        ],
+        mcp: [
+          {
+            kind: "mcp-launch",
+            command: "npx",
+            args: ["-y", "@modelcontextprotocol/server-everything"],
+            label: "Launch MCP Everything server",
+          },
+        ],
+      },
+    },
+    onboarding: {
+      variables: [],
+      steps: [
+        { title: "Install the server", completeWhen: { type: "installed" } },
+        { title: "Use it for client testing" },
+      ],
+    },
+    agentGuide: {
+      summary: "Bundles every demo tool the MCP project ships — handy when wiring a new MCP client.",
+      docs: [{ label: "MCP Everything server", url: "https://github.com/modelcontextprotocol/servers/tree/main/src/everything" }],
+    },
+  },
+  {
+    id: "mcp-stripe",
+    name: "MCP Stripe",
+    category: "MCP",
+    description: "Inspect and manage Stripe charges, customers, and subscriptions via the official @stripe/mcp server.",
+    icon: ShoppingCart,
+    status: "one-click install",
+    source: "stripe",
+    install: {
+      enabledSetting: "mcpStripeEnabled",
+      storedFallback: false,
+      plan: {
+        preflight: [{ kind: "command", command: "command -v npx", label: "Detect npx" }],
+        install: [],
+        auth: {
+          kind: "auth-paste",
+          setting: "mcpStripeApiKey",
+          setupUrl: "https://dashboard.stripe.com/apikeys",
+          setupLabel: "Stripe restricted API key",
+          detail: "Use a restricted key, never the live secret. Read-only is best for agents.",
+        },
+        verify: [
+          { kind: "command", command: "npm view @stripe/mcp version", timeoutSec: 60 },
+        ],
+        mcp: [
+          {
+            kind: "mcp-launch",
+            command: "npx",
+            args: ["-y", "@stripe/mcp"],
+            env: { STRIPE_SECRET_KEY: "${mcpStripeApiKey}" },
+            label: "Launch MCP Stripe server",
+          },
+        ],
+      },
+    },
+    onboarding: {
+      variables: [
+        { label: "Stripe API key", setting: "mcpStripeApiKey", required: true, secret: true, setupUrl: "https://dashboard.stripe.com/apikeys" },
+      ],
+      steps: [
+        { title: "Install the server", completeWhen: { type: "installed" } },
+        { title: "Paste a restricted API key" },
+      ],
+    },
+    agentGuide: {
+      summary: "Read charges, customers, prices, products, subscriptions; create checkout sessions when authorised.",
+      env: [{ name: "STRIPE_SECRET_KEY", required: true }],
+      docs: [{ label: "@stripe/mcp", url: "https://www.npmjs.com/package/@stripe/mcp" }],
+    },
+  },
+  {
+    id: "mcp-mongodb",
+    name: "MCP MongoDB",
+    category: "MCP",
+    description: "Query MongoDB clusters from agent sessions via the official mongodb-mcp-server package.",
+    icon: Database,
+    status: "one-click install",
+    source: "mongodb",
+    install: {
+      enabledSetting: "mcpMongodbEnabled",
+      storedFallback: false,
+      plan: {
+        preflight: [{ kind: "command", command: "command -v npx", label: "Detect npx" }],
+        install: [],
+        auth: {
+          kind: "auth-paste",
+          setting: "mcpMongodbUri",
+          setupLabel: "Paste MongoDB URI",
+          detail: "Use a least-privilege user. Format: mongodb+srv://user:pass@cluster/db",
+        },
+        verify: [
+          { kind: "command", command: "npm view mongodb-mcp-server version", timeoutSec: 60 },
+        ],
+        mcp: [
+          {
+            kind: "mcp-launch",
+            command: "npx",
+            args: ["-y", "mongodb-mcp-server"],
+            env: { MDB_MCP_CONNECTION_STRING: "${mcpMongodbUri}" },
+            label: "Launch MCP MongoDB server",
+          },
+        ],
+      },
+    },
+    onboarding: {
+      variables: [
+        { label: "MongoDB URI", setting: "mcpMongodbUri", required: true, secret: true },
+      ],
+      steps: [
+        { title: "Install the server", completeWhen: { type: "installed" } },
+        { title: "Paste a connection URI" },
+      ],
+    },
+    agentGuide: {
+      summary: "List databases/collections, run filtered finds, aggregations, and inspect indexes.",
+      env: [{ name: "MDB_MCP_CONNECTION_STRING", required: true }],
+      docs: [{ label: "mongodb-mcp-server", url: "https://www.npmjs.com/package/mongodb-mcp-server" }],
+    },
+  },
+  {
+    id: "mcp-cloudflare",
+    name: "MCP Cloudflare",
+    category: "MCP",
+    description: "Manage Cloudflare zones, workers, and KV stores from agent sessions via the official MCP Cloudflare server.",
+    icon: Globe,
+    status: "one-click install",
+    source: "cloudflare",
+    install: {
+      enabledSetting: "mcpCloudflareEnabled",
+      storedFallback: false,
+      plan: {
+        preflight: [{ kind: "command", command: "command -v npx", label: "Detect npx" }],
+        install: [],
+        auth: {
+          kind: "auth-paste",
+          setting: "mcpCloudflareApiToken",
+          setupUrl: "https://dash.cloudflare.com/profile/api-tokens",
+          setupLabel: "Create a Cloudflare API token",
+          detail: "Restrict the token to the zones / accounts agents should touch.",
+        },
+        verify: [
+          { kind: "command", command: "npm view mcp-server-cloudflare version", timeoutSec: 60 },
+        ],
+        mcp: [
+          {
+            kind: "mcp-launch",
+            command: "npx",
+            args: ["-y", "mcp-server-cloudflare"],
+            env: { CLOUDFLARE_API_TOKEN: "${mcpCloudflareApiToken}" },
+            label: "Launch MCP Cloudflare server",
+          },
+        ],
+      },
+    },
+    onboarding: {
+      variables: [
+        { label: "Cloudflare API token", setting: "mcpCloudflareApiToken", required: true, secret: true, setupUrl: "https://dash.cloudflare.com/profile/api-tokens" },
+      ],
+      steps: [
+        { title: "Install the server", completeWhen: { type: "installed" } },
+        { title: "Paste an API token" },
+      ],
+    },
+    agentGuide: {
+      summary: "List + edit DNS records, deploy Workers, browse KV namespaces.",
+      env: [{ name: "CLOUDFLARE_API_TOKEN", required: true }],
+      docs: [{ label: "mcp-server-cloudflare", url: "https://www.npmjs.com/package/mcp-server-cloudflare" }],
+    },
+  },
+  {
+    id: "mcp-tavily",
+    name: "MCP Tavily Search",
+    category: "MCP",
+    description: "AI-grade web search for agents via the tavily-mcp server.",
+    icon: Globe,
+    status: "one-click install",
+    source: "community",
+    install: {
+      enabledSetting: "mcpTavilyEnabled",
+      storedFallback: false,
+      plan: {
+        preflight: [{ kind: "command", command: "command -v npx", label: "Detect npx" }],
+        install: [],
+        auth: {
+          kind: "auth-paste",
+          setting: "mcpTavilyApiKey",
+          setupUrl: "https://app.tavily.com/account/api-keys",
+          setupLabel: "Create a Tavily API key",
+          detail: "Tavily ships a generous free tier; the key is a `tvly-...` string.",
+        },
+        verify: [
+          { kind: "command", command: "npm view tavily-mcp version", timeoutSec: 60 },
+        ],
+        mcp: [
+          {
+            kind: "mcp-launch",
+            command: "npx",
+            args: ["-y", "tavily-mcp"],
+            env: { TAVILY_API_KEY: "${mcpTavilyApiKey}" },
+            label: "Launch MCP Tavily server",
+          },
+        ],
+      },
+    },
+    onboarding: {
+      variables: [
+        { label: "Tavily API key", setting: "mcpTavilyApiKey", required: true, secret: true, setupUrl: "https://app.tavily.com/account/api-keys" },
+      ],
+      steps: [
+        { title: "Install the server", completeWhen: { type: "installed" } },
+        { title: "Paste a Tavily API key" },
+      ],
+    },
+    agentGuide: {
+      summary: "Web search optimised for LLM-grade context retrieval (snippet relevance + citations).",
+      env: [{ name: "TAVILY_API_KEY", required: true }],
+      docs: [{ label: "tavily-mcp", url: "https://www.npmjs.com/package/tavily-mcp" }],
+    },
+  },
+  {
+    id: "mcp-exa",
+    name: "MCP Exa Search",
+    category: "MCP",
+    description: "Neural web search for agents via the exa-mcp-server package.",
+    icon: Globe,
+    status: "one-click install",
+    source: "community",
+    install: {
+      enabledSetting: "mcpExaEnabled",
+      storedFallback: false,
+      plan: {
+        preflight: [{ kind: "command", command: "command -v npx", label: "Detect npx" }],
+        install: [],
+        auth: {
+          kind: "auth-paste",
+          setting: "mcpExaApiKey",
+          setupUrl: "https://dashboard.exa.ai/api-keys",
+          setupLabel: "Create an Exa API key",
+          detail: "Exa's neural search returns LLM-friendly chunks; key is required.",
+        },
+        verify: [
+          { kind: "command", command: "npm view exa-mcp-server version", timeoutSec: 60 },
+        ],
+        mcp: [
+          {
+            kind: "mcp-launch",
+            command: "npx",
+            args: ["-y", "exa-mcp-server"],
+            env: { EXA_API_KEY: "${mcpExaApiKey}" },
+            label: "Launch MCP Exa server",
+          },
+        ],
+      },
+    },
+    onboarding: {
+      variables: [
+        { label: "Exa API key", setting: "mcpExaApiKey", required: true, secret: true, setupUrl: "https://dashboard.exa.ai/api-keys" },
+      ],
+      steps: [
+        { title: "Install the server", completeWhen: { type: "installed" } },
+        { title: "Paste an Exa API key" },
+      ],
+    },
+    agentGuide: {
+      summary: "Neural web search and content retrieval; complements Tavily for multi-source agents.",
+      env: [{ name: "EXA_API_KEY", required: true }],
+      docs: [{ label: "exa-mcp-server", url: "https://www.npmjs.com/package/exa-mcp-server" }],
+    },
+  },
+  {
+    id: "mcp-firecrawl",
+    name: "MCP Firecrawl",
+    category: "MCP",
+    description: "Crawl and structurally extract web content for agents via the firecrawl-mcp server.",
+    icon: Globe,
+    status: "one-click install",
+    source: "community",
+    install: {
+      enabledSetting: "mcpFirecrawlEnabled",
+      storedFallback: false,
+      plan: {
+        preflight: [{ kind: "command", command: "command -v npx", label: "Detect npx" }],
+        install: [],
+        auth: {
+          kind: "auth-paste",
+          setting: "mcpFirecrawlApiKey",
+          setupUrl: "https://www.firecrawl.dev/app/api-keys",
+          setupLabel: "Create a Firecrawl API key",
+          detail: "Firecrawl key is a `fc-...` string. Free tier is enough to try.",
+        },
+        verify: [
+          { kind: "command", command: "npm view firecrawl-mcp version", timeoutSec: 60 },
+        ],
+        mcp: [
+          {
+            kind: "mcp-launch",
+            command: "npx",
+            args: ["-y", "firecrawl-mcp"],
+            env: { FIRECRAWL_API_KEY: "${mcpFirecrawlApiKey}" },
+            label: "Launch MCP Firecrawl server",
+          },
+        ],
+      },
+    },
+    onboarding: {
+      variables: [
+        { label: "Firecrawl API key", setting: "mcpFirecrawlApiKey", required: true, secret: true, setupUrl: "https://www.firecrawl.dev/app/api-keys" },
+      ],
+      steps: [
+        { title: "Install the server", completeWhen: { type: "installed" } },
+        { title: "Paste a Firecrawl API key" },
+      ],
+    },
+    agentGuide: {
+      summary: "Crawl URLs, scrape pages, run structured extraction with schemas.",
+      env: [{ name: "FIRECRAWL_API_KEY", required: true }],
+      docs: [{ label: "firecrawl-mcp", url: "https://www.npmjs.com/package/firecrawl-mcp" }],
+    },
+  },
+  {
+    id: "mcp-hubspot",
+    name: "MCP HubSpot",
+    category: "MCP",
+    description: "Inspect and update HubSpot contacts, deals, and companies via the official @hubspot/mcp-server package.",
+    icon: ShoppingCart,
+    status: "one-click install",
+    source: "hubspot",
+    install: {
+      enabledSetting: "mcpHubspotEnabled",
+      storedFallback: false,
+      plan: {
+        preflight: [{ kind: "command", command: "command -v npx", label: "Detect npx" }],
+        install: [],
+        auth: {
+          kind: "auth-paste",
+          setting: "mcpHubspotPrivateAppToken",
+          setupUrl: "https://app.hubspot.com/private-apps",
+          setupLabel: "Create a HubSpot private app",
+          detail: "Use a private-app token with the scopes agents need (CRM read at minimum).",
+        },
+        verify: [
+          { kind: "command", command: "npm view @hubspot/mcp-server version", timeoutSec: 60 },
+        ],
+        mcp: [
+          {
+            kind: "mcp-launch",
+            command: "npx",
+            args: ["-y", "@hubspot/mcp-server"],
+            env: { PRIVATE_APP_ACCESS_TOKEN: "${mcpHubspotPrivateAppToken}" },
+            label: "Launch MCP HubSpot server",
+          },
+        ],
+      },
+    },
+    onboarding: {
+      variables: [
+        { label: "HubSpot private-app token", setting: "mcpHubspotPrivateAppToken", required: true, secret: true, setupUrl: "https://app.hubspot.com/private-apps" },
+      ],
+      steps: [
+        { title: "Install the server", completeWhen: { type: "installed" } },
+        { title: "Paste a private-app token" },
+      ],
+    },
+    agentGuide: {
+      summary: "List + edit contacts, deals, companies, custom objects on HubSpot.",
+      env: [{ name: "PRIVATE_APP_ACCESS_TOKEN", required: true }],
+      docs: [{ label: "@hubspot/mcp-server", url: "https://www.npmjs.com/package/@hubspot/mcp-server" }],
     },
   },
   {
