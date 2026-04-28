@@ -1,0 +1,373 @@
+/* Standalone dashboard styles. Independent of the main app — same dark
+   palette, but kept narrow on purpose so a phone glance works. */
+
+:root {
+  color-scheme: dark;
+  --vr-bg: #0d1015;
+  --vr-bg-card: #161a22;
+  --vr-bg-card-hover: #1c2230;
+  --vr-border: #283042;
+  --vr-text: #e6e8ec;
+  --vr-text-muted: #8a93a3;
+  --vr-text-dim: #5a6376;
+  --vr-accent: #6da7ff;
+  --vr-accent-soft: rgba(109, 167, 255, 0.16);
+  --vr-good: #4ec07a;
+  --vr-good-soft: rgba(78, 192, 122, 0.16);
+  --vr-warn: #d8a040;
+  --vr-warn-soft: rgba(216, 160, 64, 0.16);
+  --vr-bad: #e0635a;
+  --vr-bad-soft: rgba(224, 99, 90, 0.16);
+  --vr-radius: 10px;
+  --vr-mono: ui-monospace, "SF Mono", Menlo, Consolas, monospace;
+  --vr-sans: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, system-ui, sans-serif;
+}
+
+* { box-sizing: border-box; }
+
+html, body {
+  margin: 0;
+  padding: 0;
+  background: var(--vr-bg);
+  color: var(--vr-text);
+  font-family: var(--vr-sans);
+  font-size: 15px;
+  line-height: 1.45;
+  -webkit-font-smoothing: antialiased;
+}
+
+a { color: var(--vr-accent); text-decoration: none; }
+a:hover { text-decoration: underline; }
+code, .vr-mono { font-family: var(--vr-mono); font-size: 13px; }
+
+.vr-header {
+  position: sticky;
+  top: 0;
+  background: rgba(13, 16, 21, 0.92);
+  backdrop-filter: blur(8px);
+  border-bottom: 1px solid var(--vr-border);
+  z-index: 10;
+}
+.vr-header-inner {
+  max-width: 1100px;
+  margin: 0 auto;
+  padding: 12px 20px;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+}
+.vr-header h1 {
+  margin: 0;
+  font-size: 16px;
+  font-weight: 600;
+  letter-spacing: 0.01em;
+}
+.vr-header h1 a { color: var(--vr-text); }
+.vr-header-sub { color: var(--vr-text-muted); font-weight: 400; margin-left: 4px; }
+.vr-app-link {
+  font-size: 13px;
+  color: var(--vr-text-muted);
+  padding: 4px 10px;
+  border: 1px solid var(--vr-border);
+  border-radius: 6px;
+}
+.vr-app-link:hover { border-color: var(--vr-accent); text-decoration: none; }
+
+.vr-main {
+  max-width: 1100px;
+  margin: 0 auto;
+  padding: 20px;
+}
+
+.vr-status {
+  color: var(--vr-text-muted);
+  margin: 24px 0;
+  font-style: italic;
+}
+.vr-status.is-error {
+  color: var(--vr-bad);
+  font-style: normal;
+}
+
+/* Project list (index page) */
+.vr-project-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(320px, 1fr));
+  gap: 14px;
+}
+.vr-project-card {
+  display: block;
+  background: var(--vr-bg-card);
+  border: 1px solid var(--vr-border);
+  border-radius: var(--vr-radius);
+  padding: 16px;
+  color: var(--vr-text);
+  transition: border-color 0.15s ease, transform 0.15s ease;
+}
+.vr-project-card:hover {
+  border-color: var(--vr-accent);
+  background: var(--vr-bg-card-hover);
+  text-decoration: none;
+}
+.vr-project-card-name {
+  font-weight: 600;
+  font-family: var(--vr-mono);
+  font-size: 14px;
+  margin: 0 0 6px;
+}
+.vr-project-card-goal {
+  color: var(--vr-text-muted);
+  font-size: 13px;
+  margin: 0 0 12px;
+  display: -webkit-box;
+  -webkit-line-clamp: 2;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+}
+.vr-project-card-meta {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  font-size: 12px;
+}
+
+.vr-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  padding: 2px 8px;
+  border-radius: 999px;
+  font-size: 12px;
+  font-family: var(--vr-mono);
+  border: 1px solid var(--vr-border);
+  color: var(--vr-text-muted);
+  background: transparent;
+  white-space: nowrap;
+}
+.vr-chip-good { color: var(--vr-good); border-color: var(--vr-good); background: var(--vr-good-soft); }
+.vr-chip-warn { color: var(--vr-warn); border-color: var(--vr-warn); background: var(--vr-warn-soft); }
+.vr-chip-bad { color: var(--vr-bad); border-color: var(--vr-bad); background: var(--vr-bad-soft); }
+.vr-chip-accent { color: var(--vr-accent); border-color: var(--vr-accent); background: var(--vr-accent-soft); }
+
+/* Project dashboard */
+.vr-dashboard {
+  display: grid;
+  grid-template-columns: 1fr;
+  gap: 14px;
+}
+@media (min-width: 760px) {
+  .vr-dashboard {
+    grid-template-columns: 2fr 1fr;
+    grid-template-areas:
+      "doctor doctor"
+      "takeaway hypothesis"
+      "overview success"
+      "leaderboard active"
+      "leaderboard queue"
+      "bench bench"
+      "log log";
+  }
+  .vr-card-doctor { grid-area: doctor; }
+  .vr-card-takeaway { grid-area: takeaway; }
+  .vr-card-hypothesis { grid-area: hypothesis; }
+  .vr-card-overview { grid-area: overview; }
+  .vr-card-success { grid-area: success; }
+  .vr-card-leaderboard { grid-area: leaderboard; }
+  .vr-card-active { grid-area: active; }
+  .vr-card-queue { grid-area: queue; }
+  .vr-card-bench { grid-area: bench; }
+  .vr-card-log { grid-area: log; }
+}
+
+.vr-card {
+  background: var(--vr-bg-card);
+  border: 1px solid var(--vr-border);
+  border-radius: var(--vr-radius);
+  padding: 16px 18px;
+}
+.vr-card h2 {
+  margin: 0 0 10px;
+  font-size: 13px;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  color: var(--vr-text-muted);
+  font-weight: 600;
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+}
+.vr-card h2 .vr-card-count {
+  color: var(--vr-text-dim);
+  font-weight: 400;
+  font-size: 12px;
+}
+.vr-card h2 .vr-card-action {
+  margin-left: auto;
+  font-size: 12px;
+  font-family: var(--vr-mono);
+  color: var(--vr-text-dim);
+  text-transform: none;
+  letter-spacing: 0;
+}
+.vr-card-empty { color: var(--vr-text-dim); font-style: italic; }
+
+/* Doctor banner */
+.vr-doctor-banner {
+  display: flex;
+  align-items: flex-start;
+  gap: 12px;
+  padding: 12px 14px;
+  border-radius: 8px;
+}
+.vr-doctor-banner.is-ok { background: var(--vr-good-soft); border: 1px solid var(--vr-good); color: var(--vr-text); }
+.vr-doctor-banner.is-warning { background: var(--vr-warn-soft); border: 1px solid var(--vr-warn); }
+.vr-doctor-banner.is-error { background: var(--vr-bad-soft); border: 1px solid var(--vr-bad); }
+.vr-doctor-icon {
+  font-family: var(--vr-mono);
+  font-size: 18px;
+  line-height: 1;
+  flex-shrink: 0;
+  margin-top: 1px;
+}
+.vr-doctor-summary { font-weight: 600; }
+.vr-doctor-issues {
+  margin: 8px 0 0;
+  padding: 0;
+  list-style: none;
+  font-size: 13px;
+}
+.vr-doctor-issues li {
+  padding: 4px 0;
+  display: flex;
+  gap: 8px;
+  align-items: flex-start;
+}
+.vr-doctor-issues .vr-issue-severity {
+  font-family: var(--vr-mono);
+  font-size: 11px;
+  text-transform: uppercase;
+  flex-shrink: 0;
+  width: 60px;
+}
+.vr-doctor-issues .vr-issue-severity.error { color: var(--vr-bad); }
+.vr-doctor-issues .vr-issue-severity.warning { color: var(--vr-warn); }
+.vr-doctor-issues .vr-issue-severity.info { color: var(--vr-text-muted); }
+.vr-doctor-issues .vr-issue-where { color: var(--vr-text-muted); margin-right: 4px; }
+.vr-doctor-issues .vr-issue-code {
+  color: var(--vr-text-dim);
+  font-family: var(--vr-mono);
+  font-size: 11px;
+  margin-left: 4px;
+}
+
+/* Tables */
+.vr-table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 13px;
+}
+.vr-table th, .vr-table td {
+  text-align: left;
+  padding: 8px 6px;
+  border-bottom: 1px solid var(--vr-border);
+  vertical-align: top;
+}
+.vr-table th {
+  color: var(--vr-text-muted);
+  font-weight: 500;
+  font-size: 11px;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+}
+.vr-table td.vr-rank { font-family: var(--vr-mono); color: var(--vr-text-muted); width: 28px; }
+.vr-table td.vr-slug { font-family: var(--vr-mono); font-weight: 600; }
+.vr-table tr:last-child td { border-bottom: none; }
+
+.vr-takeaway {
+  font-size: 16px;
+  line-height: 1.5;
+  color: var(--vr-text);
+  margin: 0 0 8px;
+}
+.vr-takeaway-source {
+  font-size: 12px;
+  color: var(--vr-text-dim);
+  font-family: var(--vr-mono);
+}
+
+.vr-overview-row {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin-top: 8px;
+}
+.vr-overview-goal {
+  margin: 0 0 8px;
+  color: var(--vr-text);
+}
+
+/* Bench card */
+.vr-bench-meta {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin-bottom: 10px;
+}
+.vr-bench-purpose {
+  margin: 8px 0 12px;
+  color: var(--vr-text-muted);
+  font-size: 13px;
+}
+.vr-bench-section {
+  margin-top: 12px;
+  font-size: 13px;
+}
+.vr-bench-section h3 {
+  margin: 0 0 6px;
+  font-size: 12px;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  color: var(--vr-text-muted);
+  font-weight: 600;
+}
+.vr-bench-empty { color: var(--vr-text-dim); }
+
+/* Log */
+.vr-log-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  font-size: 13px;
+}
+.vr-log-list li {
+  padding: 6px 0;
+  display: grid;
+  grid-template-columns: 92px 110px 1fr;
+  gap: 10px;
+  align-items: baseline;
+  border-bottom: 1px solid var(--vr-border);
+}
+@media (max-width: 600px) {
+  /* Phone view: stack the three columns so a long event tag doesn't blow
+     out the layout. */
+  .vr-log-list li {
+    grid-template-columns: 1fr;
+    gap: 2px;
+  }
+}
+.vr-log-list li:last-child { border-bottom: none; }
+.vr-log-date { font-family: var(--vr-mono); color: var(--vr-text-dim); font-size: 12px; }
+.vr-log-event { font-family: var(--vr-mono); font-size: 12px; }
+.vr-log-event-resolved { color: var(--vr-good); }
+.vr-log-event-falsified { color: var(--vr-warn); }
+.vr-log-event-abandoned { color: var(--vr-bad); }
+.vr-log-event-evicted { color: var(--vr-bad); }
+.vr-log-event-review,
+.vr-log-event-insight,
+.vr-log-event-pivot,
+.vr-log-event-terminate { color: var(--vr-accent); }
+.vr-log-summary { color: var(--vr-text); }

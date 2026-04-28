@@ -1,0 +1,42 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
+  <title>Vibe Research — Project</title>
+  <link rel="stylesheet" href="/research/research.css" />
+</head>
+<body>
+  <header class="vr-header">
+    <div class="vr-header-inner">
+      <h1><a href="/research">Vibe Research</a> <span class="vr-header-sub" id="project-crumb">/ project</span></h1>
+      <a class="vr-app-link" href="/" title="Open the main app">app →</a>
+    </div>
+  </header>
+
+  <main class="vr-main">
+    <p class="vr-status" id="status">Loading project…</p>
+    <article id="dashboard" class="vr-dashboard" hidden>
+      <section class="vr-card vr-card-doctor" id="doctor-card" aria-label="Doctor status"></section>
+      <section class="vr-card vr-card-takeaway" id="takeaway-card" aria-label="Latest takeaway"></section>
+      <section class="vr-card vr-card-hypothesis" id="hypothesis-card" aria-label="Hypothesis in flight"></section>
+      <section class="vr-card vr-card-overview" id="overview-card" aria-label="Goal and ranking criterion"></section>
+      <section class="vr-card vr-card-success" id="success-card" aria-label="Success criteria"></section>
+      <section class="vr-card vr-card-leaderboard" id="leaderboard-card" aria-label="Leaderboard"></section>
+      <section class="vr-card vr-card-active" id="active-card" aria-label="Active moves"></section>
+      <section class="vr-card vr-card-queue" id="queue-card" aria-label="Queue"></section>
+      <section class="vr-card vr-card-bench" id="bench-card" aria-label="Benchmark"></section>
+      <section class="vr-card vr-card-log" id="log-card" aria-label="Recent log events"></section>
+    </article>
+  </main>
+
+  <script src="/research/research.js" defer></script>
+  <script>
+    document.addEventListener("DOMContentLoaded", () => {
+      const m = window.location.pathname.match(/^\/research\/([^/]+)\/?$/);
+      const name = m ? decodeURIComponent(m[1]) : "";
+      window.VibeResearchPage.renderProjectDashboard(name);
+    });
+  </script>
+</body>
+</html>
