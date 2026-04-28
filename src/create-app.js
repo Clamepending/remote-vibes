@@ -2759,6 +2759,27 @@ export async function createVibeResearchApp({
     }
   });
 
+  // Convenience: the most recent install job for a building, with full
+  // log. Saves the UI from chaining /jobs?limit=1 → /jobs/:jobId.
+  // 404 when nothing has run yet.
+  app.get("/api/buildings/:buildingId/install/last", (request, response) => {
+    const buildingId = normalizeBuildingId(String(request.params.buildingId || ""));
+    const [job] = installJobStore.byBuilding(buildingId, { limit: 1 });
+    if (!job) {
+      response.status(404).json({ error: "No install jobs for this building." });
+      return;
+    }
+    response.json({
+      id: job.id,
+      buildingId: job.buildingId,
+      status: job.status,
+      log: job.log,
+      result: job.result,
+      createdAt: job.createdAt,
+      updatedAt: job.updatedAt,
+    });
+  });
+
   // List recent install jobs for a building (newest first). Useful for
   // "show me the last 5 attempts so I can see when this last worked"
   // and for diffing log output across runs. Default limit keeps the
