@@ -2788,6 +2788,10 @@ export async function createVibeResearchApp({
     try {
       await buildingHubService.refresh();
       await syncBuildingAgentGuides();
+      // Compact summary of the MCP-launch registry so the UI can show
+      // "N MCP servers wired up, K still need a token" without an extra
+      // round-trip. Detail lives at GET /api/mcp/launches.
+      const mcpLaunches = mcpLaunchRegistry.list({ resolved: true });
       response.json({
         appName: "Vibe Research",
         agentPrompt: await agentPromptStore.getState(),
@@ -2808,6 +2812,11 @@ export async function createVibeResearchApp({
         urls,
         preferredUrl,
         ports: await listNamedPorts(),
+        mcp: {
+          totalLaunches: mcpLaunches.length,
+          unresolvedLaunches: mcpLaunches.filter((entry) => entry.unresolved).length,
+          buildings: [...new Set(mcpLaunches.map((entry) => entry.buildingId))].sort(),
+        },
       });
     } catch (error) {
       response
@@ -3839,6 +3848,17 @@ export async function createVibeResearchApp({
 
   app.patch("/api/settings", async (request, response) => {
     try {
+      // Snapshot the previously-installed building set BEFORE the update so
+      // we can detect uninstalls and clean up MCP-launch declarations. The
+      // alternative — leaving stale launches in the registry after a
+      // building gets uninstalled — would surprise the host agent: it would
+      // keep launching MCP servers for buildings the user thought they
+      // turned off.
+      const previousInstalled = new Set(
+        Array.isArray(settingsStore.settings.installedPluginIds)
+          ? settingsStore.settings.installedPluginIds
+          : [],
+      );
       await settingsStore.update({
         agentAutomations: request.body?.agentAutomations,
         agentAnthropicApiKey: request.body?.agentAnthropicApiKey,
@@ -3941,6 +3961,23 @@ export async function createVibeResearchApp({
       await applyRuntimeSettings(settingsStore.settings, {
         backupReason: shouldSyncLibraryForSettingsPatch(request.body) ? "settings" : false,
       });
+
+      // Reconcile the MCP-launch registry against the post-update install
+      // set. Buildings that were uninstalled in this PATCH lose their
+      // declared launches so the next /api/mcp/launches read won't include
+      // them. Re-installing the same building re-runs the install plan,
+      // which re-declares the launches. (Buildings that stay installed
+      // are untouched here.)
+      const currentInstalled = new Set(
+        Array.isArray(settingsStore.settings.installedPluginIds)
+          ? settingsStore.settings.installedPluginIds
+          : [],
+      );
+      for (const buildingId of previousInstalled) {
+        if (!currentInstalled.has(buildingId) && mcpLaunchRegistry.has(buildingId)) {
+          mcpLaunchRegistry.remove(buildingId);
+        }
+      }
 
       response.json({
         settings: getSettingsState(),
