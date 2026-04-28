@@ -749,6 +749,37 @@ test("auto-handshake: skipped when runHandshake not provided", async () => {
   assert.equal(finished.result.handshakes, undefined);
 });
 
+test("auto-handshake: records each handshake into the registry's lastHandshake", async () => {
+  const { createMcpLaunchRegistry } = await import("../src/mcp-launch-registry.js");
+  const jobStore = createInstallJobStore();
+  const registry = createMcpLaunchRegistry();
+  const fakeHandshake = async () => ({
+    ok: true,
+    status: "tools-listed",
+    toolCount: 9,
+    serverName: "stub-srv",
+    serverVersion: "0.5.0",
+  });
+  const building = {
+    id: "auto-hs-record",
+    install: {
+      plan: {
+        preflight: [{ kind: "command", command: "true" }],
+        verify: [],
+        mcp: [{ kind: "mcp-launch", command: "node", label: "primary" }],
+      },
+    },
+  };
+  const job = startInstallJob({ jobStore, building, mcpRegistry: registry, runHandshake: fakeHandshake });
+  await waitForJob(jobStore, job.id, { timeoutMs: 4000 });
+  // Registry's launch entry should now carry lastHandshake.
+  const [entry] = registry.list();
+  assert.ok(entry.lastHandshake);
+  assert.equal(entry.lastHandshake.ok, true);
+  assert.equal(entry.lastHandshake.toolCount, 9);
+  assert.equal(entry.lastHandshake.serverName, "stub-srv");
+});
+
 test("auto-handshake: handshake throw is caught and recorded as handshake-crash", async () => {
   const { createMcpLaunchRegistry } = await import("../src/mcp-launch-registry.js");
   const jobStore = createInstallJobStore();

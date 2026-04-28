@@ -64,6 +64,21 @@ export function createMcpLaunchHealthMonitor({
         serverVersion: handshakeResult.serverVersion,
         error: handshakeResult.error,
       });
+      // Record the result so the UI's per-launch view shows the latest
+      // handshake outcome inline. No-op on registries that don't expose
+      // the recorder (older versions).
+      if (typeof registry.recordHandshake === "function") {
+        try {
+          registry.recordHandshake(launch.buildingId, launch.label || "", {
+            ok: Boolean(handshakeResult.ok),
+            status: handshakeResult.status,
+            toolCount: handshakeResult.toolCount,
+            serverName: handshakeResult.serverName,
+            serverVersion: handshakeResult.serverVersion,
+            error: handshakeResult.error,
+          });
+        } catch {}
+      }
     }
     return {
       generatedAt: now(),

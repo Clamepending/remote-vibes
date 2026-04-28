@@ -401,3 +401,90 @@ test("persistence: persistencePath omitted disables persistence", () => {
   assert.equal(r.size(), 1);
   assert.equal(r.persistencePath, null);
 });
+
+// ---- recordHandshake / lastHandshake ----
+
+test("recordHandshake: writes per-launch result + list() exposes it", () => {
+  const r = createMcpLaunchRegistry();
+  r.declare("mcp-x", [{ command: "node", label: "primary" }]);
+  const wrote = r.recordHandshake("mcp-x", "primary", {
+    ok: true,
+    status: "tools-listed",
+    toolCount: 7,
+    serverName: "demo",
+    serverVersion: "1.2",
+  });
+  assert.equal(wrote, true);
+  const [entry] = r.list();
+  assert.ok(entry.lastHandshake);
+  assert.equal(entry.lastHandshake.ok, true);
+  assert.equal(entry.lastHandshake.toolCount, 7);
+  assert.equal(entry.lastHandshake.serverName, "demo");
+  assert.ok(typeof entry.lastHandshake.at === "number");
+});
+
+test("recordHandshake: empty buildingId / unknown id is a no-op", () => {
+  const r = createMcpLaunchRegistry();
+  r.declare("a", [{ command: "x" }]);
+  assert.equal(r.recordHandshake("", "", { ok: true, status: "tools-listed" }), false);
+  assert.equal(r.recordHandshake("ghost", "any", { ok: true, status: "tools-listed" }), false);
+});
+
+test("recordHandshake: matches by label across multiple launches", () => {
+  const r = createMcpLaunchRegistry();
+  r.declare("multi", [
+    { command: "a", label: "primary" },
+    { command: "b", label: "secondary" },
+  ]);
+  r.recordHandshake("multi", "secondary", { ok: false, status: "init-failed", error: "401" });
+  r.recordHandshake("multi", "primary", { ok: true, status: "tools-listed", toolCount: 3 });
+  const list = r.list();
+  const primary = list.find((e) => e.label === "primary");
+  const secondary = list.find((e) => e.label === "secondary");
+  assert.equal(primary.lastHandshake.ok, true);
+  assert.equal(primary.lastHandshake.toolCount, 3);
+  assert.equal(secondary.lastHandshake.ok, false);
+  assert.equal(secondary.lastHandshake.error, "401");
+});
+
+test("recordHandshake: empty label falls back to first launch", () => {
+  const r = createMcpLaunchRegistry();
+  r.declare("solo", [{ command: "x", label: "" }]);
+  r.recordHandshake("solo", "", { ok: true, status: "tools-listed" });
+  const [entry] = r.list();
+  assert.ok(entry.lastHandshake);
+  assert.equal(entry.lastHandshake.ok, true);
+});
+
+test("persistence: lastHandshake round-trips through the file", () => {
+  const { path: filePath, dir } = tmpFile("persist-handshake");
+  try {
+    const r1 = createMcpLaunchRegistry({ persistencePath: filePath });
+    r1.declare("a", [{ command: "x", label: "primary" }]);
+    r1.recordHandshake("a", "primary", {
+      ok: true,
+      status: "tools-listed",
+      toolCount: 4,
+      serverName: "persisted",
+    });
+    const r2 = createMcpLaunchRegistry({ persistencePath: filePath });
+    const [entry] = r2.list();
+    assert.ok(entry.lastHandshake);
+    assert.equal(entry.lastHandshake.toolCount, 4);
+    assert.equal(entry.lastHandshake.serverName, "persisted");
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+test("recordHandshake: declare() that REPLACES launches drops old lastHandshake", () => {
+  // Re-running an install plan with new launches shouldn't carry over
+  // the previous handshake — those results referenced different commands.
+  const r = createMcpLaunchRegistry();
+  r.declare("x", [{ command: "old" }]);
+  r.recordHandshake("x", "", { ok: true, status: "tools-listed", toolCount: 1 });
+  r.declare("x", [{ command: "new" }]);
+  const [entry] = r.list();
+  assert.equal(entry.command, "new");
+  assert.equal(entry.lastHandshake, undefined);
+});
