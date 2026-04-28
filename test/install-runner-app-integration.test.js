@@ -27,6 +27,11 @@ async function tmp(prefix) {
 async function startApp(options = {}) {
   const cwd = options.cwd || (await tmp("vr-test-cwd"));
   const stateDir = options.stateDir || (await tmp("vr-test-state"));
+  // Disable the periodic MCP health scheduler during tests — its 10s
+  // initial delay is longer than any single test, but it's noisy in
+  // logs and the test would have to wait for cleanup.
+  const previousScheduleEnv = process.env.VIBE_RESEARCH_MCP_HEALTH_SCHEDULE;
+  process.env.VIBE_RESEARCH_MCP_HEALTH_SCHEDULE = "off";
   const app = await createVibeResearchApp({
     host: "127.0.0.1",
     port: 0,
@@ -42,6 +47,12 @@ async function startApp(options = {}) {
       }),
     ...options,
   });
+  // Restore the env var so a parallel app constructor isn't affected.
+  if (previousScheduleEnv === undefined) {
+    delete process.env.VIBE_RESEARCH_MCP_HEALTH_SCHEDULE;
+  } else {
+    process.env.VIBE_RESEARCH_MCP_HEALTH_SCHEDULE = previousScheduleEnv;
+  }
   return {
     app,
     baseUrl: `http://127.0.0.1:${app.config.port}`,
