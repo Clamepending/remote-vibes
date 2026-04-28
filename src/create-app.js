@@ -70,6 +70,7 @@ import { WalletService } from "./wallet-service.js";
 import { WikiBackupService } from "./wiki-backup.js";
 import { detectProviders, getDefaultProviderId } from "./providers.js";
 import { listKnowledgeBase, readKnowledgeBaseNote } from "./knowledge-base.js";
+import { listProjects as listResearchProjects, getProjectDetail as getResearchProjectDetail } from "./research-api.js";
 import {
   listWorkspaceEntries,
   readWorkspaceTextFile,
@@ -6141,6 +6142,88 @@ export async function createVibeResearchApp({
 
       const graph = await sessionManager.getProjectSwarmGraph(cwd);
       response.json({ graph });
+    } catch (error) {
+      response.status(400).json({ error: error.message });
+    }
+  });
+
+  // /research and /research/<name> serve the standalone dashboard pages
+  // (separate from the main client bundle). Both load research.js, which
+  // calls the JSON endpoints below.
+  // Read the dashboard HTML once at boot so we don't re-stat the disk on each
+  // request and we sidestep Express 5's serveStatic-via-sendFile error path
+  // (which surfaces a missing file as a generic 404 indistinguishable from
+  // routing failures).
+  let researchIndexHtml = null;
+  let researchProjectHtml = null;
+  try {
+    const indexPath = path.join(publicDir, "research", "index.html");
+    const projectPath = path.join(publicDir, "research", "project.html");
+    researchIndexHtml = await readFile(indexPath, "utf8");
+    researchProjectHtml = await readFile(projectPath, "utf8");
+  } catch (error) {
+    console.warn("[vibe-research] /research dashboard HTML not loaded:", error.message);
+  }
+  function sendResearchPage(html) {
+    return (_request, response) => {
+      if (!html) {
+        response.status(500).type("text/plain").send("Research dashboard HTML failed to load at boot.");
+        return;
+      }
+      response.type("text/html").set("Cache-Control", "no-store").send(html);
+    };
+  }
+  app.get("/research", sendResearchPage(researchIndexHtml));
+  app.get("/research/", sendResearchPage(researchIndexHtml));
+  app.get("/research/:name", (request, response, next) => {
+    const name = String(request.params.name || "");
+    // Static assets like research.css / research.js / favicon.ico must fall
+    // through to express.static, NOT match the dashboard page route. We tell
+    // them apart by extension: anything with a dot is a static asset.
+    if (name.includes(".")) {
+      next();
+      return;
+    }
+    if (!/^[A-Za-z0-9_-]+$/.test(name)) {
+      response.status(400).send("invalid project name");
+      return;
+    }
+    sendResearchPage(researchProjectHtml)(request, response);
+  });
+
+  // Research dashboard: list every project under <wikiPath>/projects/ with a
+  // one-row summary (criterion, leaderboard size, active count, bench version).
+  // Powers the at-a-glance index at /research.
+  app.get("/api/research/projects", async (_request, response) => {
+    try {
+      const libraryRoot = settingsStore.settings.wikiPath;
+      if (!libraryRoot) {
+        response.status(503).json({ error: "Library path is not configured." });
+        return;
+      }
+      const projects = await listResearchProjects(libraryRoot);
+      response.json({ libraryRoot, projects });
+    } catch (error) {
+      response.status(500).json({ error: error.message });
+    }
+  });
+
+  // Research dashboard: full structured state for one project — parsed README
+  // sections, benchmark.md (if present), result-doc summaries, and a fresh
+  // doctor report. The dashboard at /research/<name> renders this in one pass.
+  app.get("/api/research/projects/:name", async (request, response) => {
+    try {
+      const libraryRoot = settingsStore.settings.wikiPath;
+      if (!libraryRoot) {
+        response.status(503).json({ error: "Library path is not configured." });
+        return;
+      }
+      const detail = await getResearchProjectDetail(libraryRoot, String(request.params.name || ""));
+      if (!detail) {
+        response.status(404).json({ error: `project "${request.params.name}" not found` });
+        return;
+      }
+      response.json(detail);
     } catch (error) {
       response.status(400).json({ error: error.message });
     }
