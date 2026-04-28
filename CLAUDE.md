@@ -108,6 +108,12 @@ The CLIs are thin wrappers around `src/research/{project-readme,result-doc,docto
 
 - **GOAL** — one paragraph. What question are we ultimately trying to answer?
 - **CODE REPO** — `<github-url>` for the project's code repo.
+- **DEPENDS ON** (optional) — bulleted list of cross-project inputs this project relies on. One line per dependency: `- <other-project-slug>:<result-slug> @ <commit-url> — <one-line why>`. When the upstream commit changes, treat downstream conclusions as suspect until re-verified; flag with a `pivot` LOG row if a dependency change forces a Method change. Inside a monorepo Library a relative path is acceptable, but cross-repo deps must be SHA-pinned GitHub URLs.
+- **BUDGET** (optional but expected for any project that spends compute or money) — three lines, one per axis:
+  - `compute: <hours-spent>/<hours-cap>` — e.g. `compute: 12/80 GPU-hours`.
+  - `dollars: <spent>/<cap>` — e.g. `dollars: 4.20/200 USD`.
+  - `calendar: <YYYY-MM-DD>` — soft deadline; missing it triggers review-with-human, not auto-stop.
+  Each `resolved` LOG row debits the budget by the move's reported cost (record cost in the result doc's Reproducibility section). Hitting any cap forces a `review` row with `event: budget-cap` and a human-only decision before any new move starts.
 - **SUCCESS CRITERIA** — bulleted, concrete. What does "done" look like?
 - **RANKING CRITERION** — exactly one of:
   - `quantitative: <metric-name> (higher|lower is better)` — requires n >= 3 seeds and a declared noise rule (default: `2 x std` across seeds). Every quantitative result doc MUST report `<metric>_mean` and `<metric>_std`. If the project cannot produce a noise estimate, pick `qualitative` or `mix` instead.
@@ -130,7 +136,7 @@ The CLIs are thin wrappers around `src/research/{project-readme,result-doc,docto
   Seed with 1-5 moves at project creation. Grows and shrinks via ADD / REMOVE / REPRIORITIZE from result docs and review mode.
 - **LOG** — append-only, newest first, one row per event:
   | date | event | slug or ref | one-line summary | link |
-  - `event` is one primary tag from {resolved, abandoned, falsified, evicted, pivot, goal-change, criterion-change, review, insight, terminate}, optionally compounded with `+admitted` or `+evicted` when the leaderboard also moved. Example: `falsified+admitted` — hypothesis was wrong, but the result still displaced a lower rank. The primary tag reflects the hypothesis outcome; the suffix reflects the leaderboard action.
+  - `event` is one primary tag from {resolved, abandoned, falsified, evicted, pivot, pivot-rejected, goal-change, criterion-change, review, insight, budget-cap, terminate}, optionally compounded with `+admitted` or `+evicted` when the leaderboard also moved. Example: `falsified+admitted` — hypothesis was wrong, but the result still displaced a lower rank. The primary tag reflects the hypothesis outcome; the suffix reflects the leaderboard action.
   - `link` is the result doc path for move events, or the README commit SHA (as GitHub URL) for project events.
 
 ### `projects/<name>/results/<slug>.md` — one per move
@@ -166,7 +172,7 @@ The CLIs are thin wrappers around `src/research/{project-readme,result-doc,docto
   - `cycle 5 @c5f6e22: +dropout=0.3 +aug -> accuracy=0.78. qual: carrier wave clean 8/8.`
   If you find yourself wanting to branch *change-cycles* (run two variants in parallel and compare), close this move and open sibling moves instead.
 - **Results** — numbers, tables, links to artifacts. No bare numbers; every figure cites commit + command + artifact path. For qualitative or mix criteria, link representative artifacts a reader can inspect.
-- **Agent canvas** — when the move produces a graph, image, screenshot, sample, or other visual artifact, publish the most significant qualitative result so far to the agent canvas with `vr-agent-canvas --image <path> --title "<short title>" --caption "<what changed>"`. Keep the result doc as the durable record; use the canvas as the current thing the human should see first.
+- **Agent canvas** — when the move produces a graph, image, screenshot, sample, or other visual artifact, publish the most significant qualitative result so far to the agent canvas with `vr-agent-canvas --image <path> --title "<short title>" --caption "<what changed>"`. Keep the result doc as the durable record; use the canvas as the current thing the human should see first. **For long-running moves with a live monitor (TensorBoard, W&B run, Modal app URL), pin the live URL with `vr-agent-canvas --url <live-monitor-url> --title "<short title>"` before leaving the turn** so the human can watch progress without opening the result doc; replace with a final image once the move resolves.
 - **Analysis** — what the results show, what they rule out, how the prior updated.
 - **Reproducibility** — commit SHA (as `<github-url>/commit/<sha>`), exact command, artifact paths, config + seed.
 - **Leaderboard verdict** — one line per current leaderboard row, using the project's criterion flavor:
@@ -189,8 +195,8 @@ If `projects/<name>/paper.md` does not exist when you start the first move, copy
 Conventions:
 
 - **Section-level edits only.** Use the Edit tool to change one `##` section at a time. Never whole-file rewrites — they destroy the human's scroll position and the diff signal.
-- **Locked sections.** Question and Method carry `<!-- locked: pre-registration -->`. Once the first cycle of the first move commits, you cannot silently rewrite them. To change a locked section, append a `pivot` row to the LOG with one-line justification, then update the paper. Locks are a brake against HARKing.
-- **Footnote every numeric or qualitative claim.** Numbers in Results get inline markdown footnotes citing `<commit-url> · <exact command> · <artifact path>`. No bare numbers in the paper either.
+- **Locked sections.** Question and Method carry `<!-- locked: pre-registration -->`. Once the first cycle of the first move commits, you cannot silently rewrite them. To change a locked section, append a `pivot` row to the LOG with one-line justification, then update the paper. Locks are a brake against HARKing. **In autonomous mode, a `pivot` row that changes Question or Method requires an Agent Inbox approval card** with capability tag `pivot-locked-section`. The card body carries: original Question/Method block, proposed replacement, one-line trigger, and the slug of the move whose result motivates the pivot. The pivot row may not land in the LOG and the locked section may not be edited until the card resolves with `approved`. The card auto-rejects on the same 24-hour timer other sensitive actions use; a rejected card is logged as `event: pivot-rejected` with the reviewer's reason.
+- **Footnote every numeric or qualitative claim.** Numbers in Results get inline markdown footnotes citing `<commit-url> · <exact command> · <artifact path>`. For derived statistics (means, accuracies, hit rates), also include `· n=<rows-considered>` so a future reader can audit which subset the metric was computed over. No bare numbers in the paper either.
 - **Limitations grows alongside Results.** Each new move lands a one-line addition to Limitations naming what this move did and did NOT test. An empty Limitations section after the second resolved move is a bug.
 - **Abstract is written last.** Leave it as a stub until the first review with admitted insights, then write it in 5-7 sentences: what we asked, what we did, what we found, what we ruled out, what comes next. Re-write at terminate.
 - **"Since last update" header** lives near the top, newest-first. Prepend one line per cycle: `- @<short-sha> <one line>`. When a single paper update batches multiple cycles plus a resolution, prepend them in strict newest-first order (resolution line at the top, latest cycle next, oldest cycle / starting line at the bottom of the new block). After a `review` LOG row, start a fresh sub-block under a new dated heading so the human sees what changed since their last visit.
@@ -247,7 +253,14 @@ Always take QUEUE row 1 at step 1. To pick differently, stop, edit the QUEUE, re
 
 ## Review Mode
 
-Entered when QUEUE is empty or a human asks to review.
+Entered when **any** of these fires (whichever is first):
+
+- QUEUE is empty.
+- A human asks to review.
+- **5 moves resolved since the last `review` LOG row** — periodic distillation.
+- **3 consecutive resolved-but-not-admitted moves** — drift detection. Each resolved move whose LOG row carries no `+admitted` suffix counts; reset on the next admission. Catches "we keep churning slug renames without leaderboard motion."
+- **Any `+evicted` row landed in the LOG** — when a leaderboard row gets bumped, it's worth one short review of what the eviction implies for the queue.
+- **A BUDGET cap is hit** — `compute`, `dollars`, or `calendar` exceeded. Emit `event: budget-cap` and stop autonomous progress until the human responds.
 
 **Autonomous-loop behavior.** Under an autonomous sentinel or unattended run (no human in the current tick), when QUEUE empties, run the review yourself and keep going unless a stop condition fires:
 
@@ -283,7 +296,7 @@ After alignment, or autonomously when allowed:
 Insight verbs (review mode only):
 
 - `INSIGHT: <slug> | claim <one sentence> | evidence <result-doc-links> | confidence <low|medium|high>` — creates `insights/<slug>.md` with CLAIM / EVIDENCE / CONFIDENCE / SCOPE / SUPERSEDES sections, adds a row to the project's INSIGHTS section, appends an `insight` LOG row.
-- `INSIGHT-UPDATE: <slug> | evidence <new-result-doc-links> | confidence <optional new level> | scope <optional new scope>` — appends evidence bullets to the existing insight file; bumps confidence or scope if stated. Appends an `insight` LOG row only if confidence, scope, or supersedes changed.
+- `INSIGHT-UPDATE: <slug> | evidence <new-result-doc-links> | confidence <optional new level> | scope <optional new scope>` — appends evidence bullets to the existing insight file; bumps confidence or scope if stated. Appends an `insight` LOG row only if confidence, scope, or supersedes changed. **Confidence bump rule:** promote `low → medium` once two independent moves cite the insight as decisive in their Decision (i.e. the move would have gone the other way without the insight). Promote `medium → high` once five do. Demote on the first move that materially contradicts the claim — never silently keep `high` confidence in the face of new evidence.
 - `INSIGHT-SUPERSEDE: <new-slug> supersedes <old-slug> | claim <one sentence> | why <one line>` — creates the new insight file with a SUPERSEDES pointer; marks the old file with a stale banner pointing forward; updates INSIGHTS rows; appends two `insight` LOG rows.
 
 ## Self-Unblocking
@@ -296,10 +309,11 @@ You are not a status reporter. You are an operator inside a research loop.
 - If a completed command, background job, scheduled wakeup, or subtask unblocks a pre-planned next step, start that next step in the same turn. Do not end with "let me know if you'd like me to proceed" while the plan is still live.
 - Ask the human only for true human decisions: goal/criterion changes, credentials, spend beyond the named budget, irreversible external actions, safety/privacy questions, or conflicting instructions.
 - If you retry the same failure 3+ times, stop the loop, write what you tried, state the suspected root cause, and choose a different angle or abandon.
+- **Before logging `falsified`, run a baseline anti-noise check.** A common failure mode is reading one bad seed of the variant as falsification of the prior. Before the `falsified` row lands in the LOG: rerun cycle 1 of the *baseline* (the move's STARTING POINT) with a fresh seed, recorded as a `rerun` cycle on the current move. Only declare `falsified` if (a) the variant misses the falsifier band by ≥ the pre-registered margin, AND (b) the baseline still hits its expected mean. If the baseline drifted as much as the variant, the apparent falsification is environment noise — record the rerun cycle, leave STATUS in flight, and either reschedule or abandon-with-reason rather than logging `falsified`.
 
 ## Long Runs
 
-- Every cycle is a commit in the code repo. Push after every cycle.
+- Every cycle is a commit in the code repo. Push after every cycle. **Exception:** projects with very short cycles (sub-minute change-run-observe) may declare `cycle_commit_strategy: squash-on-resolve` in the README to batch all cycles of a move into one commit at resolve-time. Cycle granularity still lives in the result doc's Cycles section; only the code-repo history is squashed. Default remains `per-cycle`.
 - Every Library edit is a commit in the Library repo. Push after every edit.
 - No bare numbers. Every number cites commit (as GitHub URL) + command + artifact path.
 - For solo projects, one ACTIVE row at a time. For shared projects, one ACTIVE row per agent — collaborators run in parallel, each with their own row, each on a different move slug.
