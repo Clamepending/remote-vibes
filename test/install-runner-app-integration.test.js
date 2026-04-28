@@ -219,6 +219,32 @@ test("GET /api/mcp/config/download: returns json with download disposition + mat
   }
 });
 
+test("GET /api/buildings/:id/install/last: 404 before any install; full job after", async () => {
+  const { baseUrl, cleanup } = await startApp();
+  try {
+    let resp = await fetch(`${baseUrl}/api/buildings/mcp-filesystem/install/last`);
+    assert.equal(resp.status, 404);
+
+    const startResp = await fetch(`${baseUrl}/api/buildings/mcp-filesystem/install`, { method: "POST" });
+    const { jobId } = await startResp.json();
+    const deadline = Date.now() + 60_000;
+    while (Date.now() < deadline) {
+      const j = await (await fetch(`${baseUrl}/api/buildings/mcp-filesystem/install/jobs/${jobId}`)).json();
+      if (j.status !== "running") break;
+      await new Promise((r) => setTimeout(r, 200));
+    }
+
+    resp = await fetch(`${baseUrl}/api/buildings/mcp-filesystem/install/last`);
+    assert.equal(resp.status, 200);
+    const body = await resp.json();
+    assert.equal(body.id, jobId);
+    assert.ok(Array.isArray(body.log), "/last response must include the full log array");
+    assert.ok(body.log.length > 0, "log should have entries from the install");
+  } finally {
+    await cleanup();
+  }
+});
+
 test("GET /api/buildings/:id/install/jobs: empty before any install, populated after", async () => {
   const { baseUrl, cleanup } = await startApp();
   try {
