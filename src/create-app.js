@@ -2733,6 +2733,44 @@ export async function createVibeResearchApp({
     }
   });
 
+  // Explicit uninstall: removes the building from installedPluginIds
+  // AND clears its MCP launches from the registry in one atomic step.
+  // Symmetric to POST /install. The PATCH /api/settings handler also
+  // does the registry cleanup when installedPluginIds shrinks (see
+  // PR #24), so this route is mostly UX sugar — but it gives the
+  // client a clean "uninstall" verb without needing to fetch+modify
+  // the full installedPluginIds array.
+  app.post("/api/buildings/:buildingId/uninstall", async (request, response) => {
+    const buildingId = normalizeBuildingId(String(request.params.buildingId || ""));
+    const building = BUILDING_CATALOG.find((entry) => entry.id === buildingId);
+    if (!building) {
+      response.status(404).json({ error: "Building not found." });
+      return;
+    }
+    try {
+      const previous = Array.isArray(settingsStore.settings.installedPluginIds)
+        ? settingsStore.settings.installedPluginIds
+        : [];
+      if (previous.includes(buildingId)) {
+        await settingsStore.update({
+          installedPluginIds: previous.filter((id) => id !== buildingId),
+        });
+      }
+      // Always clear the registry, even if the building wasn't in
+      // installedPluginIds — handles edge cases where install.plan ran
+      // but the user never confirmed the install via the legacy flow.
+      const removed = mcpLaunchRegistry.remove(buildingId);
+      response.json({
+        buildingId,
+        removedFromInstalledPluginIds: previous.includes(buildingId),
+        removedFromRegistry: removed,
+        installedPluginIds: settingsStore.settings.installedPluginIds,
+      });
+    } catch (error) {
+      response.status(500).json({ error: error?.message || "uninstall failed" });
+    }
+  });
+
   app.post("/api/buildings/:buildingId/install", async (request, response) => {
     const buildingId = normalizeBuildingId(String(request.params.buildingId || ""));
     const building = BUILDING_CATALOG.find((entry) => entry.id === buildingId);
