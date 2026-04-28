@@ -151,7 +151,10 @@ test("building registry exposes core building manifests", () => {
   const modal = BUILDING_CATALOG.find((building) => building.id === "modal");
   assert.equal(modal.category, "Cloud Compute");
   assert.equal(modal.visual.shape, "lab");
-  assert.equal(modal.status, "CLI install required");
+  assert.equal(modal.status, "one-click install");
+  assert.ok(modal.install?.plan, "modal must declare a one-click install plan");
+  assert.equal(modal.install.plan.preflight[0].command, "command -v modal");
+  assert.equal(modal.install.plan.auth.kind, "auth-browser-cli");
   assert.match(modal.access.detail, /MODAL_TOKEN_ID/i);
   assert.match(modal.access.detail, /cloud costs stay in the agent runtime/i);
   assert.ok(modal.agentGuide.commands.some((command) => command.command === "modal token info"));

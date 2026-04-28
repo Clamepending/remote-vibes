@@ -375,10 +375,36 @@ const CORE_BUILDING_MANIFESTS = [
     category: "Cloud Compute",
     description: "Run serverless Python apps, batch jobs, sandboxes, and GPU-backed workloads on Modal.",
     icon: CloudCog,
-    status: "CLI install required",
+    status: "one-click install",
     source: "external",
     visual: {
       shape: "lab",
+    },
+    install: {
+      enabledSetting: "modalEnabled",
+      storedFallback: false,
+      plan: {
+        preflight: [
+          { kind: "command", command: "command -v modal", label: "Detect Modal CLI" },
+        ],
+        install: [
+          {
+            kind: "command",
+            command: "python3 -m pip install --user --upgrade modal",
+            label: "Install Modal Python package",
+            timeoutSec: 300,
+          },
+        ],
+        auth: {
+          kind: "auth-browser-cli",
+          command: "modal token new --source web",
+          detail: "Opens a browser tab; sign in to Modal and approve the token.",
+          timeoutSec: 600,
+        },
+        verify: [
+          { kind: "command", command: "modal token info", label: "Verify Modal token" },
+        ],
+      },
     },
     access: {
       label: "Modal CLI + account token",
@@ -1016,8 +1042,45 @@ const CORE_BUILDING_MANIFESTS = [
     install: {
       enabledSetting: "ottoAuthEnabled",
       storedFallback: false,
+      plan: {
+        // Preflight = "do we already have credentials?" If both username + key
+        // are saved, the install is a no-op. (true exits 0 unconditionally;
+        // the real check belongs in the http step's idempotency guard, which
+        // OttoAuth's create endpoint enforces server-side.)
+        preflight: [
+          { kind: "command", command: "true", label: "OttoAuth: noop preflight" },
+        ],
+        install: [
+          {
+            kind: "http",
+            method: "POST",
+            url: "https://ottoauth.vercel.app/api/agents/create",
+            body: {},
+            headers: { "content-type": "application/json" },
+            label: "Register a new OttoAuth agent identity",
+            captureSettings: {
+              username: "ottoAuthUsername",
+              privateKey: "ottoAuthPrivateKey",
+              callbackUrl: "ottoAuthCallbackUrl",
+            },
+          },
+        ],
+        // Pairing is a human action: they enter the pairingKey at the
+        // dashboard. We surface that as a paste-style auth step so the
+        // install panel shows the dashboard link + the pairingKey to
+        // copy. Verify is left empty for v1; the Library should record
+        // the pairing as a human task.
+        auth: {
+          kind: "auth-paste",
+          setting: "ottoAuthPairingConfirmed",
+          setupUrl: "https://ottoauth.vercel.app/dashboard",
+          setupLabel: "Open OttoAuth dashboard",
+          detail: "Sign into OttoAuth and enter the pairing code from the install log.",
+        },
+        verify: [],
+      },
     },
-    status: "setup available",
+    status: "one-click install",
     source: "vibe-research",
     visual: {
       shape: "market",

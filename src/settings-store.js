@@ -352,6 +352,9 @@ export class SettingsStore {
           this.env.GOOGLE_OAUTH_CLIENT_SECRET ||
           "",
       ).trim(),
+      modalEnabled: false,
+      runpodEnabled: false,
+      harborEnabled: false,
       ottoAuthBaseUrl: String(this.env.OTTOAUTH_BASE_URL || getDefaultOttoAuthBaseUrl()).trim(),
       ottoAuthCallbackUrl: String(this.env.OTTOAUTH_CALLBACK_URL || "").trim(),
       ottoAuthDefaultMaxChargeCents: "",
@@ -573,6 +576,9 @@ export class SettingsStore {
       ottoAuthDefaultMaxChargeCents: String(
         payload.ottoAuthDefaultMaxChargeCents || defaults.ottoAuthDefaultMaxChargeCents || "",
       ).trim(),
+      modalEnabled: normalizeBoolean(payload.modalEnabled, defaults.modalEnabled),
+      runpodEnabled: normalizeBoolean(payload.runpodEnabled, defaults.runpodEnabled),
+      harborEnabled: normalizeBoolean(payload.harborEnabled, defaults.harborEnabled),
       ottoAuthEnabled: normalizeBoolean(payload.ottoAuthEnabled, defaults.ottoAuthEnabled),
       ottoAuthPrivateKey:
         payload.ottoAuthPrivateKey === undefined

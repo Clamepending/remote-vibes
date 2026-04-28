@@ -32,6 +32,7 @@ import { BuildingHubService } from "./buildinghub-service.js";
 import { BrowserUseService } from "./browser-use-service.js";
 import { BUILDING_CATALOG } from "./client/building-registry.js";
 import { normalizeBuildingId } from "./client/building-sdk.js";
+import { createInstallJobStore, startInstallJob } from "./install-runner.js";
 import { createFolderEntry, listFolderEntries } from "./folder-browser.js";
 import { GitHubOAuthTokenStore } from "./github-oauth-token-store.js";
 import { GitHubService } from "./github-service.js";
@@ -1439,6 +1440,7 @@ export async function createVibeResearchApp({
     typeof scaffoldRecipeServiceFactory === "function"
       ? scaffoldRecipeServiceFactory(settingsStore.settings, { cwd, stateDir, systemRootPath })
       : new ScaffoldRecipeService({ stateDir });
+  const installJobStore = createInstallJobStore();
   const tutorialRegistry =
     typeof tutorialRegistryFactory === "function"
       ? tutorialRegistryFactory({ systemRootPath, cwd, stateDir })
@@ -2703,6 +2705,48 @@ export async function createVibeResearchApp({
     }
   });
 
+  app.post("/api/buildings/:buildingId/install", async (request, response) => {
+    const buildingId = normalizeBuildingId(String(request.params.buildingId || ""));
+    const building = BUILDING_CATALOG.find((entry) => entry.id === buildingId);
+    if (!building) {
+      response.status(404).json({ error: "Building not found." });
+      return;
+    }
+    if (!building.install?.plan) {
+      response.status(400).json({ error: "Building has no install plan." });
+      return;
+    }
+    try {
+      const job = startInstallJob({ jobStore: installJobStore, building, settingsStore });
+      response.json({
+        jobId: job.id,
+        status: job.status,
+        buildingId: building.id,
+      });
+    } catch (error) {
+      response.status(500).json({ error: error?.message || "install start failed" });
+    }
+  });
+
+  app.get("/api/buildings/:buildingId/install/jobs/:jobId", (request, response) => {
+    const buildingId = normalizeBuildingId(String(request.params.buildingId || ""));
+    const jobId = String(request.params.jobId || "");
+    const job = installJobStore.get(jobId);
+    if (!job || job.buildingId !== buildingId) {
+      response.status(404).json({ error: "Install job not found." });
+      return;
+    }
+    response.json({
+      id: job.id,
+      buildingId: job.buildingId,
+      status: job.status,
+      log: job.log,
+      result: job.result,
+      createdAt: job.createdAt,
+      updatedAt: job.updatedAt,
+    });
+  });
+
   app.get("/", (request, response, next) => {
     if (!isMasterplanHost(request)) {
       next();
@@ -3751,6 +3795,9 @@ export async function createVibeResearchApp({
         githubOAuthClientSecret: request.body?.githubOAuthClientSecret,
         googleOAuthClientId: request.body?.googleOAuthClientId,
         googleOAuthClientSecret: request.body?.googleOAuthClientSecret,
+        modalEnabled: request.body?.modalEnabled,
+        runpodEnabled: request.body?.runpodEnabled,
+        harborEnabled: request.body?.harborEnabled,
         ottoAuthBaseUrl: request.body?.ottoAuthBaseUrl,
         ottoAuthCallbackUrl: request.body?.ottoAuthCallbackUrl,
         ottoAuthDefaultMaxChargeCents: request.body?.ottoAuthDefaultMaxChargeCents,

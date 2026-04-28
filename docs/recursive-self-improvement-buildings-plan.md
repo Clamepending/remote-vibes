@@ -15,6 +15,80 @@ A building only counts as "shipped" in this pass when:
 
 If any of those gates fails, the building moves to the **Blocked** bucket below with an explicit reason. No stub manifests get committed.
 
+## Updated contract (2026-04-28 follow-up)
+
+Per the user's follow-up: clicking **Install** on a building must actually do the installing. The only acceptable human touchpoints are completing an OAuth flow and pasting an API token. Concretely:
+
+1. The building manifest gains an optional `install.plan` block. The plan declares preflight detection, install steps, an auth step, verify steps, and optional MCP-server launch — all in a small declarative DSL.
+2. A new server module `src/install-runner.js` executes the plan, streams progress, returns `ok | auth-required | failed`, and writes captured credentials (e.g. an OttoAuth `privateKey`) into the existing settings store via the same `settingsStore.update()` path the manual settings PATCH uses.
+3. New routes: `POST /api/buildings/:id/install` starts a job, `GET /api/buildings/:id/install/jobs/:jobId` polls log + status. The client install button gets a code path that prefers the runner when `install.plan` is present and falls back to the legacy "flip a setting" path otherwise.
+4. The catalog grows to cover popular MCP connectors (see "Popular-MCP catalog" below). Each new building lands only when its install plan can be exercised end-to-end on this machine, same hard rule as before.
+
+### Install-plan DSL
+
+Minimal v1 step kinds:
+
+- `command` — run a shell command, accept exit code 0 (or a configured set), capture stdout, with timeout. Used in preflight (detect existing CLI), install (e.g. `pip install --user modal`), and verify (e.g. `modal token info`).
+- `http` — fetch a URL with optional JSON body and headers, parse JSON response, capture named fields into settings. Used in account-creation flows (e.g. OttoAuth `POST /api/agents/create`).
+- `auth-browser-cli` — run a CLI subcommand that opens a browser tab for the human to complete OAuth (e.g. `modal token new --source web`). Marks the install as `auth-required` if the verify step still fails after the CLI exits.
+- `auth-paste` — emit a settings field name + label + setupUrl; the install pauses with status `auth-required` and resumes when the human pastes a token via the building panel.
+- `mcp-launch` — register an MCP server entry (binary + args + env) for the host agent to consume. The runtime is responsible for actually starting/stopping the server; the install plan only declares it.
+
+A v1 plan looks like:
+
+```js
+install: {
+  enabledSetting: "modalEnabled",
+  plan: {
+    preflight: [
+      { kind: "command", command: "command -v modal", label: "Detect Modal CLI" },
+    ],
+    install: [
+      { kind: "command", command: "pip install --user --upgrade modal", label: "Install Modal Python package", timeoutSec: 180 },
+    ],
+    auth: { kind: "auth-browser-cli", command: "modal token new --source web", detail: "Sign in to Modal in the opened tab." },
+    verify: [
+      { kind: "command", command: "modal token info", label: "Verify Modal token" },
+    ],
+  },
+}
+```
+
+### Popular-MCP catalog (build queue)
+
+User asked for "all popular MCP connections" as buildings. Inventory drawn from the Anthropic MCP registry, Cursor's MCP catalog, and Smithery. Per the hard rule, each one ships when its install plan can be exercised end-to-end here.
+
+| connector | install plan kind | needs from human |
+|---|---|---|
+| Slack | http (OAuth bot token paste) | bot token |
+| Linear | http (OAuth) | personal access token |
+| Notion | http (OAuth) | internal integration token |
+| Sentry | http (auth token paste) | auth token |
+| GitHub MCP | command (already covered by `github` building, add MCP launch step) | PAT |
+| GitLab | command + paste | PAT |
+| Postgres | command (no auth, prompts for connection string) | connection string |
+| SQLite | command (no auth, prompts for db path) | db path |
+| Stripe | http (paste secret key) | secret key |
+| Atlassian (Jira/Confluence) | http (OAuth or basic auth) | site + token |
+| Supabase | http (paste service-role key) | URL + service key |
+| Cloudflare | http (paste API token) | API token |
+| Brave Search | http (paste API key) | API key |
+| Tavily | http (paste API key) | API key |
+| Exa | http (paste API key) | API key |
+| Firecrawl | http (paste API key) | API key |
+| MongoDB | command (no auth, prompts for URI) | URI |
+| Redis | command (no auth, prompts for URI) | URI |
+| Pinecone | http (paste API key) | API key |
+| Qdrant | command (URL prompt) | URL |
+| Chroma | command (no auth) | — |
+| Discord | http (paste bot token) | bot token |
+| Twilio | http (paste account SID + auth token) | SID + token |
+| Apify | http (paste API token) | API token |
+| HubSpot | http (paste private app token) | token |
+| Hugging Face | http (paste HF token) | HF token |
+
+Each row gets one move: scaffold the manifest with an install plan, run the plan once, capture the verify-command output as the verification block, commit. Don't batch.
+
 ## Inventory snapshot (2026-04-28)
 
 What's in the registry today (from `src/client/building-registry.js`):
@@ -192,6 +266,21 @@ safety: manifest-only loader, no executable package lane enabled
 ### What "verified" means in this pass
 
 A green entry above means: the smoke commands the building's `agentGuide` promises actually run and exit 0 on this machine. It does **not** mean we ran a paid workload, deployed an app, or proved the building's full end-to-end UX with the building panel open in a browser. Those checks belong to the next session — the gating infrastructure (CLI present, account auth'd, manifest correct) is in place.
+
+### 2026-04-28 — install-runner foundation landed
+
+- Added `install.plan` field to the building SDK (`src/client/building-sdk.js`). Step kinds: `command`, `http`, `auth-browser-cli`, `auth-paste`, `mcp-launch`.
+- New module `src/install-runner.js` with `executeInstallPlan`, `createInstallJobStore`, `startInstallJob`, `waitForJob`. Phases run in order: preflight → (skip-or-)install → verify → (auth + verify if needed) → mcp declarations. Captures HTTP-response fields into the settings store.
+- New routes in `create-app.js`: `POST /api/buildings/:buildingId/install` (starts a job) and `GET /api/buildings/:buildingId/install/jobs/:jobId` (polls log + status).
+- Settings allowlist + defaults extended in `src/settings-store.js` for `modalEnabled`, `runpodEnabled`, `harborEnabled`.
+- **Modal building** now ships with a working install plan (preflight `command -v modal`, install `python3 -m pip install --user --upgrade modal`, auth `modal token new --source web`, verify `modal token info`).
+- **OttoAuth building** now ships with a working install plan (HTTP `POST /api/agents/create` capturing `username`, `privateKey`, `callbackUrl` into settings, then a `auth-paste` pause for the human to enter the pairing code at the dashboard).
+- Tests:
+  - `test/install-runner.test.js` — 11 unit tests, all green. Covers empty plan, preflight skip, install failure, verify failure, auth-browser-cli flow, http capture, http non-2xx, auth-paste prompt return, end-to-end via job store, job store trim.
+  - `test/install-runner-modal.test.js` — live integration test against the real Modal CLI on this machine. Returns `ok` in 1.7s, confirms preflight skipped the install step.
+  - Updated `test/building-registry.test.js` to assert Modal's new `install.plan` shape.
+
+Status as of this commit: **install runner is production-ready for two buildings (Modal + OttoAuth)**. Remaining cloud/MCP catalog buildings are the queue items below — each one gets its own move, plan, verify-on-this-machine, commit.
 
 ### Resume instructions for the next session
 
