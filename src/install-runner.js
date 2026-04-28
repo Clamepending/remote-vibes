@@ -547,6 +547,20 @@ export function startInstallJob({
             serverVersion: handshakeResult.serverVersion,
             error: handshakeResult.error,
           });
+          // Record into the registry so the UI's launch list can show
+          // "tools-listed (5 tools), 30s ago" inline next to each launch.
+          if (typeof mcpRegistry.recordHandshake === "function") {
+            try {
+              mcpRegistry.recordHandshake(building.id, launch.label || "", {
+                ok: Boolean(handshakeResult.ok),
+                status: handshakeResult.status,
+                toolCount: handshakeResult.toolCount,
+                serverName: handshakeResult.serverName,
+                serverVersion: handshakeResult.serverVersion,
+                error: handshakeResult.error,
+              });
+            } catch {}
+          }
         }
         if (handshakes.length > 0) {
           result.handshakes = handshakes;

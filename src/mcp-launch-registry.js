@@ -97,6 +97,20 @@ function launchHasUnresolved(launch) {
   return false;
 }
 
+function normalizeHandshakeRecord(value) {
+  if (!value || typeof value !== "object" || Array.isArray(value)) return null;
+  const ok = Boolean(value.ok);
+  const status = trimString(value.status || "").trim() || "unknown";
+  const at = Number.isFinite(value.at) ? value.at : null;
+  const out = { ok, status };
+  if (at !== null) out.at = at;
+  if (Number.isFinite(value.toolCount)) out.toolCount = value.toolCount;
+  if (typeof value.serverName === "string" && value.serverName) out.serverName = value.serverName;
+  if (typeof value.serverVersion === "string" && value.serverVersion) out.serverVersion = value.serverVersion;
+  if (typeof value.error === "string" && value.error) out.error = value.error;
+  return out;
+}
+
 function loadFromDisk(persistencePath) {
   // Returns Map<buildingId, normalizedLaunch[]>. Missing/corrupt files
   // produce an empty map silently — the registry is best-effort durable,
@@ -121,7 +135,16 @@ function loadFromDisk(persistencePath) {
   }
   for (const [buildingId, launches] of Object.entries(parsed.buildings)) {
     if (!Array.isArray(launches)) continue;
-    const normalized = launches.map(normalizeLaunch).filter(Boolean);
+    const normalized = launches
+      .map((launch) => {
+        const base = normalizeLaunch(launch);
+        if (!base) return null;
+        // Preserve a previously-recorded handshake across reload.
+        const lastHandshake = normalizeHandshakeRecord(launch?.lastHandshake);
+        if (lastHandshake) base.lastHandshake = lastHandshake;
+        return base;
+      })
+      .filter(Boolean);
     if (normalized.length > 0) {
       out.set(String(buildingId), normalized);
     }
@@ -190,20 +213,44 @@ export function createMcpLaunchRegistry({
     has(buildingId) {
       return launchesByBuilding.has(String(buildingId || "").trim());
     },
+    // Record the most-recent handshake outcome for a (buildingId, label)
+    // pair so the UI can show "tools-listed (5 tools), 30s ago" inline.
+    // Match-by-label so multi-launch buildings track each launch
+    // separately. If the building doesn't have any launches, this is a
+    // no-op (the launch was probably unregistered between handshake
+    // start and finish).
+    recordHandshake(buildingId, label, result) {
+      const id = String(buildingId || "").trim();
+      if (!id) return false;
+      const launches = launchesByBuilding.get(id);
+      if (!launches || launches.length === 0) return false;
+      const targetLabel = String(label || "").trim();
+      const target = targetLabel
+        ? launches.find((entry) => entry.label === targetLabel) || launches[0]
+        : launches[0];
+      if (!target) return false;
+      const normalized = normalizeHandshakeRecord({ ...result, at: Date.now() });
+      if (!normalized) return false;
+      target.lastHandshake = normalized;
+      persist();
+      return true;
+    },
     list({ settings, resolved = false } = {}) {
       const effectiveSettings = settings || getSettings();
       const out = [];
       for (const [buildingId, launches] of launchesByBuilding.entries()) {
         for (const launch of launches) {
           const finalLaunch = resolved ? resolveLaunch(launch, effectiveSettings) : launch;
-          out.push({
+          const entry = {
             buildingId,
             command: finalLaunch.command,
             args: finalLaunch.args,
             env: finalLaunch.env,
             label: finalLaunch.label,
             unresolved: launchHasUnresolved(finalLaunch),
-          });
+          };
+          if (launch.lastHandshake) entry.lastHandshake = { ...launch.lastHandshake };
+          out.push(entry);
         }
       }
       return out;

@@ -170,6 +170,19 @@ test("constructor: throws on missing registry / runHandshake", () => {
   assert.throws(() => createMcpLaunchHealthMonitor({ registry: r }), /runHandshake is required/);
 });
 
+test("checkAll: records handshake outcomes into the registry's lastHandshake", async () => {
+  const registry = makeRegistry({ "mcp-x": [{ command: "node", label: "primary" }] });
+  const monitor = createMcpLaunchHealthMonitor({
+    registry,
+    runHandshake: async () => ({ ok: true, status: "tools-listed", toolCount: 12, serverName: "via-health" }),
+  });
+  await monitor.checkAll();
+  const [entry] = registry.list();
+  assert.ok(entry.lastHandshake);
+  assert.equal(entry.lastHandshake.toolCount, 12);
+  assert.equal(entry.lastHandshake.serverName, "via-health");
+});
+
 test("lastResult / isCacheFresh expose the cache state", async () => {
   const registry = makeRegistry({ "mcp-x": [{ command: "x" }] });
   let nowVal = 0;
