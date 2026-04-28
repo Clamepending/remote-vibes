@@ -3151,6 +3151,270 @@ const CORE_BUILDING_MANIFESTS = [
       docs: [{ label: "@playwright/mcp", url: "https://www.npmjs.com/package/@playwright/mcp" }],
     },
   },
+  // Fourth wave (2026-04-28): hosting, observability, KV, music — last batch
+  // for now. Each npm package verified live before this commit.
+  {
+    id: "mcp-replicate",
+    name: "MCP Replicate",
+    category: "MCP",
+    description: "Run hosted ML models via Replicate's MCP server (replicate-mcp).",
+    icon: ServerCog,
+    status: "one-click install",
+    source: "replicate",
+    install: {
+      enabledSetting: "mcpReplicateEnabled",
+      storedFallback: false,
+      plan: {
+        preflight: [{ kind: "command", command: "command -v npx", label: "Detect npx" }],
+        install: [],
+        auth: {
+          kind: "auth-paste",
+          setting: "mcpReplicateApiToken",
+          setupUrl: "https://replicate.com/account/api-tokens",
+          setupLabel: "Create a Replicate API token",
+          detail: "Replicate tokens look like `r8_...`. Pay-as-you-go; check pricing before launching big runs.",
+        },
+        verify: [
+          { kind: "command", command: "npm view replicate-mcp version", timeoutSec: 60 },
+        ],
+        mcp: [
+          {
+            kind: "mcp-launch",
+            command: "npx",
+            args: ["-y", "replicate-mcp"],
+            env: { REPLICATE_API_TOKEN: "${mcpReplicateApiToken}" },
+            label: "Launch MCP Replicate server",
+          },
+        ],
+      },
+    },
+    onboarding: {
+      variables: [
+        { label: "Replicate API token", setting: "mcpReplicateApiToken", required: true, secret: true, setupUrl: "https://replicate.com/account/api-tokens" },
+      ],
+      steps: [
+        { title: "Install the server", completeWhen: { type: "installed" } },
+        { title: "Paste a Replicate API token" },
+      ],
+    },
+    agentGuide: {
+      summary: "List models, run predictions, fetch artifacts from Replicate's hosted catalog.",
+      env: [{ name: "REPLICATE_API_TOKEN", required: true }],
+      docs: [{ label: "replicate-mcp", url: "https://www.npmjs.com/package/replicate-mcp" }],
+    },
+  },
+  {
+    id: "mcp-vercel",
+    name: "MCP Vercel",
+    category: "MCP",
+    description: "Manage Vercel deployments and projects via the vercel-mcp server.",
+    icon: ServerCog,
+    status: "one-click install",
+    source: "community",
+    install: {
+      enabledSetting: "mcpVercelEnabled",
+      storedFallback: false,
+      plan: {
+        preflight: [{ kind: "command", command: "command -v npx", label: "Detect npx" }],
+        install: [],
+        auth: {
+          kind: "auth-paste",
+          setting: "mcpVercelApiToken",
+          setupUrl: "https://vercel.com/account/tokens",
+          setupLabel: "Create a Vercel API token",
+          detail: "Vercel personal access token; scope to specific teams/projects when possible.",
+        },
+        verify: [
+          { kind: "command", command: "npm view vercel-mcp version", timeoutSec: 60 },
+        ],
+        mcp: [
+          {
+            kind: "mcp-launch",
+            command: "npx",
+            args: ["-y", "vercel-mcp"],
+            env: { VERCEL_TOKEN: "${mcpVercelApiToken}" },
+            label: "Launch MCP Vercel server",
+          },
+        ],
+      },
+    },
+    onboarding: {
+      variables: [
+        { label: "Vercel API token", setting: "mcpVercelApiToken", required: true, secret: true, setupUrl: "https://vercel.com/account/tokens" },
+      ],
+      steps: [
+        { title: "Install the server", completeWhen: { type: "installed" } },
+        { title: "Paste a Vercel API token" },
+      ],
+    },
+    agentGuide: {
+      summary: "List + inspect Vercel deployments, projects, domains, env vars; trigger redeploys.",
+      env: [{ name: "VERCEL_TOKEN", required: true }],
+      docs: [{ label: "vercel-mcp", url: "https://www.npmjs.com/package/vercel-mcp" }],
+    },
+  },
+  {
+    id: "mcp-axiom",
+    name: "MCP Axiom",
+    category: "MCP",
+    description: "Query Axiom logs and observability data via the axiom-mcp server.",
+    icon: Activity,
+    status: "one-click install",
+    source: "axiom",
+    install: {
+      enabledSetting: "mcpAxiomEnabled",
+      storedFallback: false,
+      plan: {
+        preflight: [{ kind: "command", command: "command -v npx", label: "Detect npx" }],
+        install: [],
+        auth: {
+          kind: "auth-paste",
+          setting: "mcpAxiomToken",
+          setupUrl: "https://app.axiom.co/profile",
+          setupLabel: "Create an Axiom API token",
+          detail: "Axiom personal access token + org id. Read-only is enough for log queries.",
+        },
+        verify: [
+          { kind: "command", command: "npm view axiom-mcp version", timeoutSec: 60 },
+        ],
+        mcp: [
+          {
+            kind: "mcp-launch",
+            command: "npx",
+            args: ["-y", "axiom-mcp"],
+            env: {
+              AXIOM_TOKEN: "${mcpAxiomToken}",
+              AXIOM_ORG_ID: "${mcpAxiomOrgId}",
+            },
+            label: "Launch MCP Axiom server",
+          },
+        ],
+      },
+    },
+    onboarding: {
+      variables: [
+        { label: "Axiom token", setting: "mcpAxiomToken", required: true, secret: true, setupUrl: "https://app.axiom.co/profile" },
+        { label: "Axiom org id", setting: "mcpAxiomOrgId", required: false },
+      ],
+      steps: [
+        { title: "Install the server", completeWhen: { type: "installed" } },
+        { title: "Paste your Axiom credentials" },
+      ],
+    },
+    agentGuide: {
+      summary: "Run APL queries against Axiom log streams; inspect dataset schemas; fetch monitor states.",
+      env: [{ name: "AXIOM_TOKEN", required: true }],
+      docs: [{ label: "axiom-mcp", url: "https://www.npmjs.com/package/axiom-mcp" }],
+    },
+  },
+  {
+    id: "mcp-upstash",
+    name: "MCP Upstash",
+    category: "MCP",
+    description: "Manage Upstash Redis and queues via the official @upstash/mcp-server.",
+    icon: Database,
+    status: "one-click install",
+    source: "upstash",
+    install: {
+      enabledSetting: "mcpUpstashEnabled",
+      storedFallback: false,
+      plan: {
+        preflight: [{ kind: "command", command: "command -v npx", label: "Detect npx" }],
+        install: [],
+        auth: {
+          kind: "auth-paste",
+          setting: "mcpUpstashApiKey",
+          setupUrl: "https://console.upstash.com/account/api",
+          setupLabel: "Create an Upstash management API key",
+          detail: "Upstash management API key + the email on the account.",
+        },
+        verify: [
+          { kind: "command", command: "npm view @upstash/mcp-server version", timeoutSec: 60 },
+        ],
+        mcp: [
+          {
+            kind: "mcp-launch",
+            command: "npx",
+            args: ["-y", "@upstash/mcp-server"],
+            env: {
+              UPSTASH_EMAIL: "${mcpUpstashEmail}",
+              UPSTASH_API_KEY: "${mcpUpstashApiKey}",
+            },
+            label: "Launch MCP Upstash server",
+          },
+        ],
+      },
+    },
+    onboarding: {
+      variables: [
+        { label: "Upstash account email", setting: "mcpUpstashEmail", required: true },
+        { label: "Upstash management API key", setting: "mcpUpstashApiKey", required: true, secret: true, setupUrl: "https://console.upstash.com/account/api" },
+      ],
+      steps: [
+        { title: "Install the server", completeWhen: { type: "installed" } },
+        { title: "Paste your Upstash credentials" },
+      ],
+    },
+    agentGuide: {
+      summary: "List + create Upstash Redis databases, manage QStash queues, fetch usage stats.",
+      env: [{ name: "UPSTASH_EMAIL", required: true }, { name: "UPSTASH_API_KEY", required: true }],
+      docs: [{ label: "@upstash/mcp-server", url: "https://www.npmjs.com/package/@upstash/mcp-server" }],
+    },
+  },
+  {
+    id: "mcp-spotify",
+    name: "MCP Spotify",
+    category: "MCP",
+    description: "Search and inspect Spotify catalog via the spotify-mcp server.",
+    icon: MessageCircle,
+    status: "one-click install",
+    source: "community",
+    install: {
+      enabledSetting: "mcpSpotifyEnabled",
+      storedFallback: false,
+      plan: {
+        preflight: [{ kind: "command", command: "command -v npx", label: "Detect npx" }],
+        install: [],
+        auth: {
+          kind: "auth-paste",
+          setting: "mcpSpotifyClientId",
+          setupUrl: "https://developer.spotify.com/dashboard",
+          setupLabel: "Create a Spotify Developer app",
+          detail: "Spotify client id + client secret from a developer-dashboard app. Client-credentials flow only.",
+        },
+        verify: [
+          { kind: "command", command: "npm view spotify-mcp version", timeoutSec: 60 },
+        ],
+        mcp: [
+          {
+            kind: "mcp-launch",
+            command: "npx",
+            args: ["-y", "spotify-mcp"],
+            env: {
+              SPOTIFY_CLIENT_ID: "${mcpSpotifyClientId}",
+              SPOTIFY_CLIENT_SECRET: "${mcpSpotifyClientSecret}",
+            },
+            label: "Launch MCP Spotify server",
+          },
+        ],
+      },
+    },
+    onboarding: {
+      variables: [
+        { label: "Spotify client id", setting: "mcpSpotifyClientId", required: true, secret: true, setupUrl: "https://developer.spotify.com/dashboard" },
+        { label: "Spotify client secret", setting: "mcpSpotifyClientSecret", required: true, secret: true },
+      ],
+      steps: [
+        { title: "Install the server", completeWhen: { type: "installed" } },
+        { title: "Paste your Spotify Developer credentials" },
+      ],
+    },
+    agentGuide: {
+      summary: "Search tracks/artists/albums/playlists, fetch audio features, browse genres.",
+      env: [{ name: "SPOTIFY_CLIENT_ID", required: true }, { name: "SPOTIFY_CLIENT_SECRET", required: true }],
+      docs: [{ label: "spotify-mcp", url: "https://www.npmjs.com/package/spotify-mcp" }],
+    },
+  },
   {
     id: "knowledge-base",
     name: "Library",

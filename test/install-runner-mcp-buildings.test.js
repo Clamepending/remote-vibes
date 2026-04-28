@@ -54,6 +54,11 @@ const expectAuthRequired = [
   "mcp-e2b",
   "mcp-perplexity",
   "mcp-neon",
+  "mcp-replicate",
+  "mcp-vercel",
+  "mcp-axiom",
+  "mcp-upstash",
+  "mcp-spotify",
 ];
 
 for (const id of [...expectOk, ...expectAuthRequired]) {

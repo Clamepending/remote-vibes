@@ -424,6 +424,20 @@ export class SettingsStore {
       mcpNeonEnabled: false,
       mcpNeonApiKey: String(this.env.MCP_NEON_API_KEY || this.env.NEON_API_KEY || "").trim(),
       mcpPlaywrightEnabled: false,
+      // Fourth wave (2026-04-28): Replicate, Vercel, Axiom, Upstash, Spotify.
+      mcpReplicateEnabled: false,
+      mcpReplicateApiToken: String(this.env.MCP_REPLICATE_API_TOKEN || this.env.REPLICATE_API_TOKEN || "").trim(),
+      mcpVercelEnabled: false,
+      mcpVercelApiToken: String(this.env.MCP_VERCEL_API_TOKEN || this.env.VERCEL_TOKEN || "").trim(),
+      mcpAxiomEnabled: false,
+      mcpAxiomToken: String(this.env.MCP_AXIOM_TOKEN || this.env.AXIOM_TOKEN || "").trim(),
+      mcpAxiomOrgId: String(this.env.MCP_AXIOM_ORG_ID || this.env.AXIOM_ORG_ID || "").trim(),
+      mcpUpstashEnabled: false,
+      mcpUpstashEmail: String(this.env.MCP_UPSTASH_EMAIL || this.env.UPSTASH_EMAIL || "").trim(),
+      mcpUpstashApiKey: String(this.env.MCP_UPSTASH_API_KEY || this.env.UPSTASH_API_KEY || "").trim(),
+      mcpSpotifyEnabled: false,
+      mcpSpotifyClientId: String(this.env.MCP_SPOTIFY_CLIENT_ID || this.env.SPOTIFY_CLIENT_ID || "").trim(),
+      mcpSpotifyClientSecret: String(this.env.MCP_SPOTIFY_CLIENT_SECRET || this.env.SPOTIFY_CLIENT_SECRET || "").trim(),
       ottoAuthBaseUrl: String(this.env.OTTOAUTH_BASE_URL || getDefaultOttoAuthBaseUrl()).trim(),
       ottoAuthCallbackUrl: String(this.env.OTTOAUTH_CALLBACK_URL || "").trim(),
       ottoAuthDefaultMaxChargeCents: "",
@@ -807,6 +821,43 @@ export class SettingsStore {
           ? defaults.mcpNeonApiKey
           : String(payload.mcpNeonApiKey || "").trim(),
       mcpPlaywrightEnabled: normalizeBoolean(payload.mcpPlaywrightEnabled, defaults.mcpPlaywrightEnabled),
+      mcpReplicateEnabled: normalizeBoolean(payload.mcpReplicateEnabled, defaults.mcpReplicateEnabled),
+      mcpReplicateApiToken:
+        payload.mcpReplicateApiToken === undefined
+          ? defaults.mcpReplicateApiToken
+          : String(payload.mcpReplicateApiToken || "").trim(),
+      mcpVercelEnabled: normalizeBoolean(payload.mcpVercelEnabled, defaults.mcpVercelEnabled),
+      mcpVercelApiToken:
+        payload.mcpVercelApiToken === undefined
+          ? defaults.mcpVercelApiToken
+          : String(payload.mcpVercelApiToken || "").trim(),
+      mcpAxiomEnabled: normalizeBoolean(payload.mcpAxiomEnabled, defaults.mcpAxiomEnabled),
+      mcpAxiomToken:
+        payload.mcpAxiomToken === undefined
+          ? defaults.mcpAxiomToken
+          : String(payload.mcpAxiomToken || "").trim(),
+      mcpAxiomOrgId:
+        payload.mcpAxiomOrgId === undefined
+          ? defaults.mcpAxiomOrgId
+          : String(payload.mcpAxiomOrgId || "").trim(),
+      mcpUpstashEnabled: normalizeBoolean(payload.mcpUpstashEnabled, defaults.mcpUpstashEnabled),
+      mcpUpstashEmail:
+        payload.mcpUpstashEmail === undefined
+          ? defaults.mcpUpstashEmail
+          : String(payload.mcpUpstashEmail || "").trim(),
+      mcpUpstashApiKey:
+        payload.mcpUpstashApiKey === undefined
+          ? defaults.mcpUpstashApiKey
+          : String(payload.mcpUpstashApiKey || "").trim(),
+      mcpSpotifyEnabled: normalizeBoolean(payload.mcpSpotifyEnabled, defaults.mcpSpotifyEnabled),
+      mcpSpotifyClientId:
+        payload.mcpSpotifyClientId === undefined
+          ? defaults.mcpSpotifyClientId
+          : String(payload.mcpSpotifyClientId || "").trim(),
+      mcpSpotifyClientSecret:
+        payload.mcpSpotifyClientSecret === undefined
+          ? defaults.mcpSpotifyClientSecret
+          : String(payload.mcpSpotifyClientSecret || "").trim(),
       ottoAuthEnabled: normalizeBoolean(payload.ottoAuthEnabled, defaults.ottoAuthEnabled),
       ottoAuthPrivateKey:
         payload.ottoAuthPrivateKey === undefined
