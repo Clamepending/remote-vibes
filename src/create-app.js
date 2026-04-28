@@ -2904,6 +2904,12 @@ export async function createVibeResearchApp({
       // "N MCP servers wired up, K still need a token" without an extra
       // round-trip. Detail lives at GET /api/mcp/launches.
       const mcpLaunches = mcpLaunchRegistry.list({ resolved: true });
+      // Last health result (if any) — only surface what's cached. We
+      // never trigger a handshake from /api/state because that would
+      // spawn real processes on every page load. The UI calls POST
+      // /api/mcp/launches/health explicitly when the user clicks
+      // refresh.
+      const lastHealth = mcpLaunchHealthMonitor.lastResult();
       response.json({
         appName: "Vibe Research",
         agentPrompt: await agentPromptStore.getState(),
@@ -2928,6 +2934,12 @@ export async function createVibeResearchApp({
           totalLaunches: mcpLaunches.length,
           unresolvedLaunches: mcpLaunches.filter((entry) => entry.unresolved).length,
           buildings: [...new Set(mcpLaunches.map((entry) => entry.buildingId))].sort(),
+          lastHealth: lastHealth
+            ? {
+                generatedAt: lastHealth.generatedAt,
+                summary: lastHealth.summary,
+              }
+            : null,
         },
       });
     } catch (error) {

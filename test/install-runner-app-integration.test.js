@@ -208,6 +208,30 @@ test("GET /api/mcp/config/download: returns json with download disposition + mat
   }
 });
 
+test("/api/state: mcp.lastHealth is null until /health is called, then populated", async () => {
+  const { baseUrl, cleanup } = await startApp();
+  try {
+    // Initially null — no health check has been triggered.
+    let state = await (await fetch(`${baseUrl}/api/state`)).json();
+    assert.equal(state.mcp.lastHealth, null);
+
+    // Trigger a health check (registry is empty so it's instant).
+    const healthResp = await fetch(`${baseUrl}/api/mcp/launches/health`, { method: "POST" });
+    assert.equal(healthResp.status, 200);
+    const health = await healthResp.json();
+    assert.ok(health.generatedAt);
+    assert.equal(health.summary.total, 0);
+
+    // /api/state now reports the last health result.
+    state = await (await fetch(`${baseUrl}/api/state`)).json();
+    assert.ok(state.mcp.lastHealth);
+    assert.equal(state.mcp.lastHealth.summary.total, 0);
+    assert.equal(state.mcp.lastHealth.generatedAt, health.generatedAt);
+  } finally {
+    await cleanup();
+  }
+});
+
 test("end-to-end: install mcp-filesystem then handshake against the real server", { timeout: 120_000 }, async (t) => {
   // Real-server test: lets npx fetch + run the actual MCP filesystem
   // server, then drives a real protocol handshake against it. The only
