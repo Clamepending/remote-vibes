@@ -5824,15 +5824,22 @@ export async function createVibeResearchApp({
       next(error);
       return;
     }
-    const status =
-      Number.isInteger(error?.statusCode) && error.statusCode >= 400 && error.statusCode < 600
-        ? error.statusCode
-        : 500;
+    // The Express `send` library (used by sendFile) attaches `error.status`,
+    // not `error.statusCode`, on a missing-file 404 — accept either so we
+    // don't turn legitimate 404s into 500s.
+    const candidate = Number.isInteger(error?.statusCode)
+      ? error.statusCode
+      : Number.isInteger(error?.status)
+      ? error.status
+      : null;
+    const status = candidate && candidate >= 400 && candidate < 600 ? candidate : 500;
     const message = error?.message || "Internal server error.";
-    try {
-      console.error("[vibe-research] unhandled route error:", error);
-    } catch {
-      // ignore logging failures
+    if (status >= 500) {
+      try {
+        console.error("[vibe-research] unhandled route error:", error);
+      } catch {
+        // ignore logging failures
+      }
     }
     response.status(status).json({ error: message });
   });
