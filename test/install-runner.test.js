@@ -656,6 +656,122 @@ test("install run: secret captured from http response is masked in subsequent st
   }
 });
 
+// ---- Auto-handshake on install completion ----
+
+test("auto-handshake: ok handshake adds entry, install stays ok, log includes handshake phase", async () => {
+  const { createMcpLaunchRegistry } = await import("../src/mcp-launch-registry.js");
+  const jobStore = createInstallJobStore();
+  const registry = createMcpLaunchRegistry();
+  const calls = [];
+  const fakeHandshake = async (launch) => {
+    calls.push(launch);
+    return { ok: true, status: "tools-listed", toolCount: 5, serverName: "stub", serverVersion: "1" };
+  };
+  const building = {
+    id: "auto-hs-ok",
+    install: {
+      plan: {
+        preflight: [{ kind: "command", command: "true" }],
+        verify: [{ kind: "command", command: "true" }],
+        mcp: [{ kind: "mcp-launch", command: "node", args: ["server.js"] }],
+      },
+    },
+  };
+  const job = startInstallJob({ jobStore, building, mcpRegistry: registry, runHandshake: fakeHandshake });
+  const finished = await waitForJob(jobStore, job.id, { timeoutMs: 4000 });
+  assert.equal(finished.status, "ok");
+  assert.equal(finished.result.handshakes.length, 1);
+  assert.equal(finished.result.handshakes[0].ok, true);
+  assert.equal(finished.result.handshakes[0].toolCount, 5);
+  assert.equal(calls.length, 1);
+  // Log includes the handshake phase entries.
+  const handshakeLogs = finished.log.filter((entry) => entry.phase === "handshake");
+  assert.ok(handshakeLogs.length >= 2, "expected running + ok log entries");
+});
+
+test("auto-handshake: failing handshake leaves install ok but reports the failure in result", async () => {
+  const { createMcpLaunchRegistry } = await import("../src/mcp-launch-registry.js");
+  const jobStore = createInstallJobStore();
+  const registry = createMcpLaunchRegistry();
+  const fakeHandshake = async () => ({ ok: false, status: "init-failed", error: "401 Unauthorized" });
+  const building = {
+    id: "auto-hs-broken",
+    install: {
+      plan: {
+        preflight: [{ kind: "command", command: "true" }],
+        verify: [{ kind: "command", command: "true" }],
+        mcp: [{ kind: "mcp-launch", command: "node" }],
+      },
+    },
+  };
+  const job = startInstallJob({ jobStore, building, mcpRegistry: registry, runHandshake: fakeHandshake });
+  const finished = await waitForJob(jobStore, job.id, { timeoutMs: 4000 });
+  assert.equal(finished.status, "ok", "install status should NOT be downgraded by handshake failure");
+  assert.equal(finished.result.handshakes[0].ok, false);
+  assert.equal(finished.result.handshakes[0].status, "init-failed");
+  assert.match(finished.result.handshakes[0].error, /401/);
+});
+
+test("auto-handshake: skipped when no mcp launches declared", async () => {
+  const { createMcpLaunchRegistry } = await import("../src/mcp-launch-registry.js");
+  const jobStore = createInstallJobStore();
+  const registry = createMcpLaunchRegistry();
+  let handshakeCalls = 0;
+  const fakeHandshake = async () => { handshakeCalls += 1; return { ok: true, status: "tools-listed" }; };
+  const building = {
+    id: "no-mcp",
+    install: { plan: { preflight: [{ kind: "command", command: "true" }], verify: [], mcp: [] } },
+  };
+  const job = startInstallJob({ jobStore, building, mcpRegistry: registry, runHandshake: fakeHandshake });
+  const finished = await waitForJob(jobStore, job.id, { timeoutMs: 4000 });
+  assert.equal(finished.status, "ok");
+  assert.equal(handshakeCalls, 0);
+  assert.equal(finished.result.handshakes, undefined);
+});
+
+test("auto-handshake: skipped when runHandshake not provided", async () => {
+  const { createMcpLaunchRegistry } = await import("../src/mcp-launch-registry.js");
+  const jobStore = createInstallJobStore();
+  const registry = createMcpLaunchRegistry();
+  const building = {
+    id: "no-runner",
+    install: {
+      plan: {
+        preflight: [{ kind: "command", command: "true" }],
+        verify: [],
+        mcp: [{ kind: "mcp-launch", command: "node" }],
+      },
+    },
+  };
+  const job = startInstallJob({ jobStore, building, mcpRegistry: registry });
+  const finished = await waitForJob(jobStore, job.id, { timeoutMs: 4000 });
+  assert.equal(finished.status, "ok");
+  assert.equal(finished.result.handshakes, undefined);
+});
+
+test("auto-handshake: handshake throw is caught and recorded as handshake-crash", async () => {
+  const { createMcpLaunchRegistry } = await import("../src/mcp-launch-registry.js");
+  const jobStore = createInstallJobStore();
+  const registry = createMcpLaunchRegistry();
+  const fakeHandshake = async () => { throw new Error("kaboom"); };
+  const building = {
+    id: "auto-hs-throws",
+    install: {
+      plan: {
+        preflight: [{ kind: "command", command: "true" }],
+        verify: [],
+        mcp: [{ kind: "mcp-launch", command: "node" }],
+      },
+    },
+  };
+  const job = startInstallJob({ jobStore, building, mcpRegistry: registry, runHandshake: fakeHandshake });
+  const finished = await waitForJob(jobStore, job.id, { timeoutMs: 4000 });
+  assert.equal(finished.status, "ok");
+  assert.equal(finished.result.handshakes[0].ok, false);
+  assert.equal(finished.result.handshakes[0].status, "handshake-crash");
+  assert.match(finished.result.handshakes[0].error, /kaboom/);
+});
+
 test("install run: non-secret-named captured field is NOT masked", async () => {
   // "providerUsername" doesn't match the secret-tail pattern, so its value
   // should stay visible in subsequent log entries — that's the contract:

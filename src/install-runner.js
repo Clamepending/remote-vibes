@@ -458,7 +458,22 @@ export async function executeInstallPlan(plan, options = {}) {
   return { status: "ok", capturedSettings, declaredLaunches };
 }
 
-export function startInstallJob({ jobStore, building, settingsStore, fetchImpl, mcpRegistry }) {
+export function startInstallJob({
+  jobStore,
+  building,
+  settingsStore,
+  fetchImpl,
+  mcpRegistry,
+  // Optional MCP-protocol handshake function. When supplied, the job
+  // runs handshake on every declared mcp-launch right after the install
+  // plan completes successfully. Results are attached to the job's
+  // result.handshakes — the install status itself is NOT downgraded if
+  // a handshake fails (a missing/wrong token is not the same kind of
+  // failure as the install plan itself failing). The UI uses
+  // result.handshakes to render "installed, but the server isn't
+  // responding".
+  runHandshake,
+}) {
   const job = jobStore.create(building.id);
   const controller = new AbortController();
   job.abort = () => controller.abort();
@@ -483,6 +498,60 @@ export function startInstallJob({ jobStore, building, settingsStore, fetchImpl, 
         mcpRegistry,
         buildingId: building.id,
       });
+      // Auto-handshake: if the plan succeeded and declared mcp launches,
+      // try to actually speak MCP against each one and stash the
+      // results. This makes "click Install → see ok" mean "the server
+      // works", not just "the npm package exists".
+      if (
+        result.status === "ok"
+        && typeof runHandshake === "function"
+        && mcpRegistry
+        && typeof mcpRegistry.list === "function"
+      ) {
+        const launches = mcpRegistry
+          .list({ resolved: true })
+          .filter((entry) => entry.buildingId === building.id);
+        if (launches.length === 0) {
+          // Plan declared no mcp-launch steps (or registry was cleared
+          // mid-install). Don't attach an empty handshakes array — that
+          // would imply "we tried zero handshakes" rather than "we
+          // didn't need to".
+        }
+        const handshakes = [];
+        for (const launch of launches) {
+          append({ phase: "handshake", level: "info", step: launch.label || launch.command, message: "running" });
+          let handshakeResult;
+          try {
+            handshakeResult = await runHandshake({
+              command: launch.command,
+              args: launch.args,
+              env: launch.env,
+            });
+          } catch (err) {
+            handshakeResult = { ok: false, status: "handshake-crash", error: String(err?.message || err) };
+          }
+          append({
+            phase: "handshake",
+            level: handshakeResult.ok ? "info" : "warn",
+            step: launch.label || launch.command,
+            message: handshakeResult.ok
+              ? `ok (${handshakeResult.toolCount ?? 0} tools)`
+              : `failed: ${handshakeResult.status} ${handshakeResult.error || ""}`.trim(),
+          });
+          handshakes.push({
+            label: launch.label || "",
+            ok: Boolean(handshakeResult.ok),
+            status: handshakeResult.status || "unknown",
+            toolCount: handshakeResult.toolCount,
+            serverName: handshakeResult.serverName,
+            serverVersion: handshakeResult.serverVersion,
+            error: handshakeResult.error,
+          });
+        }
+        if (handshakes.length > 0) {
+          result.handshakes = handshakes;
+        }
+      }
       jobStore.update(job.id, {
         status: result.status === "ok" ? "ok" : result.status,
         result,

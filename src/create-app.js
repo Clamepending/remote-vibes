@@ -2732,7 +2732,13 @@ export async function createVibeResearchApp({
       return;
     }
     try {
-      const job = startInstallJob({ jobStore: installJobStore, building, settingsStore, mcpRegistry: mcpLaunchRegistry });
+      const job = startInstallJob({
+        jobStore: installJobStore,
+        building,
+        settingsStore,
+        mcpRegistry: mcpLaunchRegistry,
+        runHandshake: handshakeMcpLaunch,
+      });
       response.json({
         jobId: job.id,
         status: job.status,
