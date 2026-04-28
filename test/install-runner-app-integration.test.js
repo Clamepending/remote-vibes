@@ -219,6 +219,75 @@ test("GET /api/mcp/config/download: returns json with download disposition + mat
   }
 });
 
+test("POST /api/buildings/:id/uninstall: 404 for unknown id", async () => {
+  const { baseUrl, cleanup } = await startApp();
+  try {
+    const resp = await fetch(`${baseUrl}/api/buildings/no-such-building/uninstall`, { method: "POST" });
+    assert.equal(resp.status, 404);
+  } finally {
+    await cleanup();
+  }
+});
+
+test("POST /api/buildings/:id/uninstall: clears registry + drops from installedPluginIds", async () => {
+  const { baseUrl, cleanup } = await startApp();
+  try {
+    // Install mcp-filesystem.
+    const startResp = await fetch(`${baseUrl}/api/buildings/mcp-filesystem/install`, { method: "POST" });
+    const { jobId } = await startResp.json();
+    const deadline = Date.now() + 60_000;
+    while (Date.now() < deadline) {
+      const j = await (await fetch(`${baseUrl}/api/buildings/mcp-filesystem/install/jobs/${jobId}`)).json();
+      if (j.status !== "running") break;
+      await new Promise((r) => setTimeout(r, 200));
+    }
+    // Manually add mcp-filesystem to installedPluginIds (the install
+    // endpoint doesn't do this; the client install button does).
+    await fetch(`${baseUrl}/api/settings`, {
+      method: "PATCH",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ installedPluginIds: ["mcp-filesystem"] }),
+    });
+
+    // Sanity: registry has it, settings include it.
+    let launches = (await (await fetch(`${baseUrl}/api/mcp/launches`)).json()).launches;
+    assert.equal(launches.some((l) => l.buildingId === "mcp-filesystem"), true);
+    let settings = await (await fetch(`${baseUrl}/api/settings`)).json();
+    assert.equal(settings.settings.installedPluginIds.includes("mcp-filesystem"), true);
+
+    // Uninstall.
+    const resp = await fetch(`${baseUrl}/api/buildings/mcp-filesystem/uninstall`, { method: "POST" });
+    assert.equal(resp.status, 200);
+    const body = await resp.json();
+    assert.equal(body.removedFromInstalledPluginIds, true);
+    assert.equal(body.removedFromRegistry, true);
+    assert.equal(body.installedPluginIds.includes("mcp-filesystem"), false);
+
+    // Both registry + settings should reflect the removal.
+    launches = (await (await fetch(`${baseUrl}/api/mcp/launches`)).json()).launches;
+    assert.equal(launches.some((l) => l.buildingId === "mcp-filesystem"), false);
+    settings = await (await fetch(`${baseUrl}/api/settings`)).json();
+    assert.equal(settings.settings.installedPluginIds.includes("mcp-filesystem"), false);
+  } finally {
+    await cleanup();
+  }
+});
+
+test("POST /api/buildings/:id/uninstall: idempotent when already uninstalled", async () => {
+  const { baseUrl, cleanup } = await startApp();
+  try {
+    // Building exists in catalog, but never installed.
+    const resp = await fetch(`${baseUrl}/api/buildings/mcp-filesystem/uninstall`, { method: "POST" });
+    assert.equal(resp.status, 200);
+    const body = await resp.json();
+    // Nothing was actually removed because nothing was installed.
+    assert.equal(body.removedFromInstalledPluginIds, false);
+    assert.equal(body.removedFromRegistry, false);
+  } finally {
+    await cleanup();
+  }
+});
+
 test("GET /api/buildings/:id/install/last: 404 before any install; full job after", async () => {
   const { baseUrl, cleanup } = await startApp();
   try {
