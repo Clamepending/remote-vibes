@@ -289,7 +289,70 @@ test("vr-rl-sweep init: malformed --sweep exits 1", async () => {
   }
 });
 
-test("vr-rl-sweep init: existing project without --force exits 1", async () => {
+test("vr-rl-sweep init --sweep-name: writes runs/<slug>.tsv inside existing project", async () => {
+  const dir = tmp("vr-rl-sweep-subsweep");
+  mkdirSync(join(dir, "templates"));
+  writeFileSync(join(dir, "templates", "paper-template.md"), "# <Project title>\n", "utf8");
+  try {
+    // Bootstrap parent project first.
+    await runCli([
+      "init", "parent",
+      "--library", dir,
+      "--sweep", "lr=[1e-3]",
+      "--seeds", "1",
+    ]);
+    // Plan a follow-up sweep WITHOUT --force, but WITH --sweep-name. Must succeed.
+    const result = await runCli([
+      "init", "parent",
+      "--library", dir,
+      "--sweep", "lr=[5e-4,1e-3,2e-3]",
+      "--seeds", "2",
+      "--sweep-name", "sensitivity",
+      "--json",
+    ]);
+    assert.equal(result.status, 0, `expected 0, got ${result.status}: ${result.stderr}`);
+    const summary = JSON.parse(result.stdout);
+    assert.equal(summary.sweepName, "sensitivity");
+    assert.match(summary.runsTsv, /\/runs\/sensitivity\.tsv$/);
+    assert.equal(summary.totalRows, 6); // 3 cells × 2 seeds
+    assert.ok(existsSync(join(summary.projectDir, "runs.tsv")), "top-level runs.tsv preserved");
+    assert.ok(existsSync(summary.runsTsv));
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+test("vr-rl-sweep run --sweep-name: reads runs/<slug>.tsv only", async () => {
+  const dir = tmp("vr-rl-sweep-subrun");
+  mkdirSync(join(dir, "templates"));
+  writeFileSync(join(dir, "templates", "paper-template.md"), "# <Project title>\n", "utf8");
+  try {
+    await runCli(["init", "parent", "--library", dir, "--sweep", "lr=[1e-3]", "--seeds", "1"]);
+    await runCli([
+      "init", "parent", "--library", dir,
+      "--sweep", "lr=[1e-2,1e-3]", "--seeds", "1",
+      "--sweep-name", "ablate-lr",
+    ]);
+    const result = await runCli([
+      "run", "parent", "--library", dir,
+      "--sweep-name", "ablate-lr",
+      "--launcher", "echo 'final_return: 42'",
+      "--json",
+    ]);
+    assert.equal(result.status, 0, `expected 0, got ${result.status}: ${result.stderr}`);
+    const summary = JSON.parse(result.stdout);
+    assert.equal(summary.ran, 2);
+    assert.equal(summary.ok, 2);
+    assert.match(summary.runsTsv, /\/runs\/ablate-lr\.tsv$/);
+    // Top-level runs.tsv preserved with status=planned.
+    const topTsv = readFileSync(join(dir, "projects", "parent", "runs.tsv"), "utf8");
+    assert.match(topTsv, /\tplanned\t/);
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+test("vr-rl-sweep init: existing project without --force / --sweep-name exits 1", async () => {
   const dir = tmp("vr-rl-sweep-collide");
   mkdirSync(join(dir, "templates"));
   writeFileSync(join(dir, "templates", "paper-template.md"), "# <Project title>\n", "utf8");

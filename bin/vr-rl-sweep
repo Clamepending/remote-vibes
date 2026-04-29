@@ -40,10 +40,18 @@ function printHelp() {
   process.stdout.write(`vr-rl-sweep <subcommand> [options]
 
 Subcommands:
-  init <name>     Plan a sweep and write projects/<name>/runs.tsv with one
-                  row per (cell, seed). Bootstraps the project too.
-  run <name>      Walk planned rows in projects/<name>/runs.tsv, spawn each
-                  one's launcher, capture metric, update the row in-place.
+  init <name>     Plan a sweep. If projects/<name>/ doesn't exist yet,
+                  bootstrap the project (README + paper + dirs) and write
+                  runs.tsv at the top level. If it DOES exist and a
+                  --sweep-name <slug> is given, write
+                  projects/<name>/runs/<slug>.tsv instead — the
+                  multi-move-in-one-project pattern (one project per
+                  question, many sweeps inside it). Without --sweep-name
+                  on an existing project, --force is required.
+  run <name>      Walk planned rows in a runs.tsv, spawn each one's
+                  launcher, capture metric, update the row in-place.
+                  Reads projects/<name>/runs/<slug>.tsv when --sweep-name
+                  <slug> is given, else projects/<name>/runs.tsv.
 
 Init options:
   --base <pairs>           Comma-separated base config: key=value,...
@@ -53,14 +61,20 @@ Init options:
                              key=v1,v2,v3
                              key=range(a,b,step)        (numeric range)
                              key=logspace(a,b,n)        (n log-spaced points)
+  --sweep-name <slug>      Write runs/<slug>.tsv inside an existing
+                           project instead of bootstrapping a new one.
+                           Use this for follow-up sweeps under one
+                           question.
   --seeds <n>              Number of seeds per cell (default 1).
   --hypothesis <text>      One-line pre-launch hypothesis.
   --library <path>         Library root (defaults to cwd).
   --commit <sha>           Commit SHA to record (defaults to git HEAD of cwd).
-  --force                  Overwrite an existing project dir.
+  --force                  Overwrite an existing project dir / sweep.
 
 Run options:
   --library <path>         Library root (defaults to cwd).
+  --sweep-name <slug>      Read projects/<name>/runs/<slug>.tsv instead
+                           of the top-level runs.tsv.
   --launcher <template>    Shell command template; \${key} is substituted
                            from the row's resolved config. Default infers
                            "python train.py --<key>=<value> --seed=<N>".
@@ -94,6 +108,7 @@ function parseArgs(argv) {
     maxRows: undefined,
     timeoutSec: undefined,
     runCwd: "",
+    sweepName: "",
   };
   for (let i = 0; i < argv.length; i += 1) {
     const arg = argv[i];
@@ -111,6 +126,7 @@ function parseArgs(argv) {
     if (arg === "--max-rows") { options.maxRows = Number(argv[++i] || "0"); continue; }
     if (arg === "--timeout-sec") { options.timeoutSec = Number(argv[++i] || "0"); continue; }
     if (arg === "--cwd") { options.runCwd = argv[++i] || ""; continue; }
+    if (arg === "--sweep-name") { options.sweepName = argv[++i] || ""; continue; }
     if (arg.startsWith("--")) throw new Error(`unknown flag: ${arg}`);
     if (!options.subcommand) { options.subcommand = arg; continue; }
     if (!options.name) { options.name = arg; continue; }
@@ -159,25 +175,46 @@ async function runInit(options) {
   if (!options.name) throw new Error("project name is required");
   const library = path.resolve(options.library);
   const projectsDir = path.join(library, "projects");
+  const projectDir = path.join(projectsDir, options.name);
 
   const baseConfig = parseBaseConfig(options.base);
   const sweepMap = resolveSweep(options.sweepSpecs);
   const commit = resolveCommit(options.commit, library);
 
-  // Bootstrap the project dir (README + paper + results/ + figures/).
-  const initResult = await createProject({
-    projectsDir,
-    name: options.name,
-    goal: options.hypothesis || "",
-    successCriteria: [],
-    ranking: { kind: "quantitative", metric: "mean_return", direction: "higher" },
-    queueRows: [],
-    force: options.force,
-  });
+  // Two modes:
+  //   1. --sweep-name <slug> + project EXISTS  → in-project sweep at
+  //      runs/<slug>.tsv. The right shape for follow-up moves under one
+  //      research question (one project, many sweeps).
+  //   2. Otherwise → bootstrap a new project + write the top-level
+  //      runs.tsv. Backwards-compatible with the original shape.
+  const fs = await import("node:fs/promises");
+  let projectExists = false;
+  try { await fs.stat(projectDir); projectExists = true; } catch {}
 
-  // Build the sweep plan + write runs.tsv.
+  let projectDirOut = projectDir;
+  let wrote = [];
+  if (options.sweepName && projectExists) {
+    // Make sure runs/ subdir exists.
+    await fs.mkdir(path.join(projectDir, "runs"), { recursive: true });
+  } else {
+    // Bootstrap (or refuse if exists w/o --force).
+    const initResult = await createProject({
+      projectsDir,
+      name: options.name,
+      goal: options.hypothesis || "",
+      successCriteria: [],
+      ranking: { kind: "quantitative", metric: "mean_return", direction: "higher" },
+      queueRows: [],
+      force: options.force,
+    });
+    projectDirOut = initResult.projectDir;
+    wrote = [...initResult.wrote];
+  }
+
+  // Build the sweep plan + write the right TSV path.
+  const planName = options.sweepName || options.name;
   const plan = planSweep({
-    name: options.name,
+    name: planName,
     base: baseConfig,
     sweep: sweepMap,
     seeds: options.seeds,
@@ -185,12 +222,15 @@ async function runInit(options) {
     commit,
     now: () => new Date().toISOString(),
   });
-  const tsvPath = path.join(initResult.projectDir, "runs.tsv");
+  const tsvPath = options.sweepName
+    ? path.join(projectDirOut, "runs", `${options.sweepName}.tsv`)
+    : path.join(projectDirOut, "runs.tsv");
   await writeFile(tsvPath, renderRunsTsv(plan.rows), "utf8");
 
-  const summary = {
-    projectDir: initResult.projectDir,
+  return {
+    projectDir: projectDirOut,
     runsTsv: tsvPath,
+    sweepName: options.sweepName || null,
     cells: plan.rows.length / Math.max(1, options.seeds),
     seeds: options.seeds,
     totalRows: plan.rows.length,
@@ -199,16 +239,17 @@ async function runInit(options) {
     sweepDimensions: Object.fromEntries(
       Object.entries(sweepMap).map(([k, v]) => [k, v.length]),
     ),
-    wrote: [...initResult.wrote, tsvPath],
+    wrote: [...wrote, tsvPath],
   };
-  return summary;
 }
 
 async function runRun(options) {
   if (!options.name) throw new Error("project name is required");
   const library = path.resolve(options.library);
   const projectDir = path.join(library, "projects", options.name);
-  const runsTsvPath = path.join(projectDir, "runs.tsv");
+  const runsTsvPath = options.sweepName
+    ? path.join(projectDir, "runs", `${options.sweepName}.tsv`)
+    : path.join(projectDir, "runs.tsv");
 
   let metricPattern;
   if (options.metric) {

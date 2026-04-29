@@ -17,8 +17,11 @@ Read `projects/<name>/README.md` (the project index) and `projects/<name>/kickof
    - If you have a parametric sweep curve (LR vs return), do a **narrow-around-the-peak** move at higher resolution.
    - If you have categorical alternatives (e.g. 3 reward shapings) and only ranked them on n=1, do a **seed expansion** move at n=5 on the top 2.
    - Add the moves to the QUEUE in the README, then take row 1.
-3. **For each move, plan with `vr-rl-sweep init`** — it writes `projects/<name>/runs.tsv` (the human's familiar Google-Doc-row format) with one row per (cell, seed) at status=planned, and a config column carrying the resolved overrides. Use the `--commit` flag to pin the code repo's current SHA into every row.
-4. **Execute the planned rows.** For each row in `runs.tsv` whose status is `planned`:
+3. **For each move, plan with `vr-rl-sweep init`**.
+   - **First move**: `vr-rl-sweep init <project-name>` writes `projects/<project>/runs.tsv` and bootstraps the project (README + paper + dirs). vr-rl-tuner already did this for you on bootstrap; the first move's runs.tsv goes at the top level.
+   - **Follow-up moves**: `vr-rl-sweep init <project-name> --sweep-name <move-slug>` writes `projects/<project>/runs/<move-slug>.tsv` INSIDE the existing project. **Always use `--sweep-name` for follow-up moves** so all sweeps live under one project's leaderboard + paper, not as sibling projects. The `<move-slug>` should match the move's result-doc slug.
+   Pin the code repo's current SHA via `--commit` so every row in the TSV cites the same commit.
+4. **Execute the planned rows** with `vr-rl-sweep run <project-name>` (add `--sweep-name <move-slug>` for follow-up moves). For each row in the matching runs.tsv whose status is `planned`:
    - Resolve `config` JSON into command-line overrides for the project's training entry point (look at the existing repo's launch invocation; do not invent flags).
    - Set `wandb.init(group=<row.group>, name=<row.name>, tags=[<row.commit>, *override_keys])` — match the row's group/name exactly so the doc-row format ties back to the wandb dashboard 1:1.
    - Spawn the run. Local first if GPUs are available; otherwise use the Modal or RunPod buildings (`vr-mcp install mcp-modal` / `mcp-runpod` if not already installed; their CLIs are `modal` and `runpodctl`). Get human approval before spending real money — see the budget cap in `kickoff.json`.
