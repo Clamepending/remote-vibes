@@ -74,6 +74,24 @@ import { Marked } from "marked";
 const app = document.querySelector("#app");
 let appBootReported = false;
 
+// Tell the inline boot fallback that the bundle is alive. Fired immediately
+// after import so the fallback can distinguish "the JS never loaded" (real
+// failure → show recovery message) from "the JS is running but waiting on the
+// /api/state round-trip" (slow network → show a softer 'still loading' note
+// and wait longer). Without this, a 4s /api/state on a slow remote
+// buildinghub looked identical to a 404 on app.js.
+function markBundleLoaded() {
+  try {
+    window.dispatchEvent(new CustomEvent("vibe-research:bundle-loaded"));
+    if (typeof window.__vibeResearchBundleLoaded === "function") {
+      window.__vibeResearchBundleLoaded();
+    }
+  } catch {
+    // Best-effort signaling.
+  }
+}
+markBundleLoaded();
+
 function markAppBootReady() {
   if (appBootReported) {
     return;
