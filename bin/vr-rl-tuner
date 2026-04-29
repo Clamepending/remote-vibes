@@ -25,9 +25,14 @@
 
 import path from "node:path";
 import process from "node:process";
-import { writeFile, stat } from "node:fs/promises";
+import { writeFile, stat, mkdir, readFile, copyFile } from "node:fs/promises";
+import { fileURLToPath } from "node:url";
 
 import { createProject, DEFAULT_PROJECT_NAME_PATTERN } from "../src/research/init.js";
+
+const SCRIPT_DIR = path.dirname(fileURLToPath(import.meta.url));
+const VIBE_RESEARCH_ROOT = path.resolve(SCRIPT_DIR, "..");
+const SKILL_SOURCE_PATH = path.join(VIBE_RESEARCH_ROOT, "skills", "rl-sweep-tuner", "SKILL.md");
 
 function printHelp() {
   process.stdout.write(`vr-rl-tuner — bootstrap a tuning project for the coding agent
@@ -154,12 +159,31 @@ async function main() {
   const kickoffPath = path.join(initResult.projectDir, "kickoff.json");
   await writeFile(kickoffPath, `${JSON.stringify(kickoff, null, 2)}\n`, "utf8");
 
+  // Install the skill into the project's .claude/skills/ so a Claude
+  // Code session opened in this directory auto-discovers the skill.
+  // Without this the user has to know about the system-wide install
+  // path; with this they just open the project + ask the agent to use
+  // the skill.
+  let skillDest = "";
+  try {
+    const skillSource = await readFile(SKILL_SOURCE_PATH, "utf8");
+    skillDest = path.join(initResult.projectDir, ".claude", "skills", "rl-sweep-tuner", "SKILL.md");
+    await mkdir(path.dirname(skillDest), { recursive: true });
+    await writeFile(skillDest, skillSource, "utf8");
+  } catch (err) {
+    // Best-effort: if the skill source isn't where we expect, the skill
+    // can still be loaded from the system-wide path. Surface the error
+    // so the user knows but don't fail the bootstrap.
+    process.stderr.write(`[vr-rl-tuner] warning: could not install skill into project: ${err?.message || err}\n`);
+  }
+
   const summary = {
     projectDir: initResult.projectDir,
     kickoff: kickoffPath,
     repo,
+    skillInstalled: skillDest || null,
     nextStep: `Tell your coding agent: "Use the rl-sweep-tuner skill to take over ${initResult.projectDir}."`,
-    wrote: [...initResult.wrote, kickoffPath],
+    wrote: [...initResult.wrote, kickoffPath, ...(skillDest ? [skillDest] : [])],
   };
 
   if (opts.json) {
@@ -169,9 +193,12 @@ async function main() {
 
   process.stdout.write(`bootstrapped ${initResult.projectDir}\n`);
   process.stdout.write(`kickoff:    ${kickoffPath}\n`);
+  if (skillDest) {
+    process.stdout.write(`skill:      ${skillDest} (auto-discovered when claude opens in the project dir)\n`);
+  }
   process.stdout.write(`\nNext step: tell your coding agent to take over.\n\n`);
   process.stdout.write(`  Use the rl-sweep-tuner skill to take over ${initResult.projectDir}.\n\n`);
-  process.stdout.write(`The agent will load skills/rl-sweep-tuner/SKILL.md, read kickoff.json,\n`);
+  process.stdout.write(`The agent will load .claude/skills/rl-sweep-tuner/SKILL.md, read kickoff.json,\n`);
   process.stdout.write(`plan + run moves, and update the leaderboard / paper / runs.tsv autonomously.\n`);
   process.exit(0);
 }
