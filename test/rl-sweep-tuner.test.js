@@ -116,6 +116,39 @@ test("vr-rl-tuner: --repo path that doesn't exist exits 2", async () => {
   assert.match(r.stderr, /--repo path not found/);
 });
 
+test("vr-rl-tuner: installs the skill into <projectDir>/.claude/skills/ for auto-discovery", async () => {
+  const lib = tmp("vr-tuner-skill-lib");
+  const repo = tmp("vr-tuner-skill-repo");
+  mkdirSync(join(lib, "templates"));
+  writeFileSync(join(lib, "templates", "paper-template.md"), "# <Project title>\n", "utf8");
+  try {
+    const result = await runCli([
+      "--repo", repo,
+      "--goal", "x",
+      "--library", lib,
+      "--name", "auto-skill-test",
+      "--json",
+    ]);
+    assert.equal(result.status, 0, `expected 0, got ${result.status}: ${result.stderr}`);
+    const body = JSON.parse(result.stdout);
+    // The skill MUST be installed at the project-level .claude path so a
+    // Claude Code session opened in the project dir auto-discovers it.
+    assert.ok(body.skillInstalled, "skillInstalled path should be in the JSON summary");
+    assert.match(body.skillInstalled, /\.claude\/skills\/rl-sweep-tuner\/SKILL\.md$/);
+    assert.ok(existsSync(body.skillInstalled), "the skill file must physically exist in the project");
+    // Must contain the actual skill, not a placeholder.
+    const installed = readFileSync(body.skillInstalled, "utf8");
+    assert.match(installed, /name:\s*"?rl-sweep-tuner"?/);
+    assert.match(installed, /You own the loop/);
+    // wrote should include the skill path.
+    assert.ok(body.wrote.some((p) => p === body.skillInstalled),
+      "wrote[] should include the installed skill path");
+  } finally {
+    rmSync(lib, { recursive: true, force: true });
+    rmSync(repo, { recursive: true, force: true });
+  }
+});
+
 test("vr-rl-tuner: bootstraps project + writes kickoff.json + prints next-step hint", async () => {
   const lib = tmp("vr-tuner-lib");
   const repo = tmp("vr-tuner-repo");
