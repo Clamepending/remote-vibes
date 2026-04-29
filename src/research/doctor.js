@@ -460,6 +460,67 @@ async function checkRunsTsv(projectDir, active) {
   return issues;
 }
 
+// kickoff.json carries the human-supplied goal + repo + budget for a
+// project bootstrapped via vr-rl-tuner. The agent re-reads it on every
+// loop entry, so a corrupt or missing kickoff means the loop runs blind.
+// Doctor only flags a kickoff as required when the rl-sweep-tuner skill
+// is installed under .claude/skills/ — a regular vr-research-init
+// project doesn't write kickoff.json and shouldn't be expected to.
+async function checkKickoffJson(projectDir) {
+  const issues = [];
+  const kickoffPath = path.join(projectDir, "kickoff.json");
+  const skillPath = path.join(projectDir, ".claude", "skills", "rl-sweep-tuner", "SKILL.md");
+
+  const [kickoffExists, skillExists] = await Promise.all([
+    pathExists(kickoffPath),
+    pathExists(skillPath),
+  ]);
+
+  // Project not bootstrapped via vr-rl-tuner: nothing to check.
+  if (!kickoffExists && !skillExists) return issues;
+
+  if (skillExists && !kickoffExists) {
+    issues.push(makeIssue(
+      "warning",
+      "kickoff_missing",
+      "kickoff.json",
+      "rl-sweep-tuner skill is installed but kickoff.json is missing — the agent has no goal/repo on entry",
+    ));
+    return issues;
+  }
+
+  let raw;
+  try { raw = await readFile(kickoffPath, "utf8"); }
+  catch (err) {
+    issues.push(makeIssue("error", "kickoff_unreadable", "kickoff.json", `cannot read: ${err.message}`));
+    return issues;
+  }
+
+  let parsed;
+  try { parsed = JSON.parse(raw); }
+  catch (err) {
+    issues.push(makeIssue("error", "kickoff_unparseable", "kickoff.json", `invalid JSON: ${err.message}`));
+    return issues;
+  }
+
+  const goalOk = typeof parsed.goal === "string" && parsed.goal.trim().length > 0;
+  if (!goalOk) {
+    issues.push(makeIssue("error", "kickoff_missing_goal", "kickoff.json", "missing or empty required field: goal"));
+  }
+  const repoOk = typeof parsed.repo === "string" && parsed.repo.trim().length > 0;
+  if (!repoOk) {
+    issues.push(makeIssue("error", "kickoff_missing_repo", "kickoff.json", "missing or empty required field: repo"));
+  } else if (!(await pathExists(parsed.repo))) {
+    issues.push(makeIssue(
+      "warning",
+      "kickoff_repo_missing",
+      "kickoff.json",
+      `repo path does not exist on disk: ${parsed.repo} — was the machine moved or the repo deleted?`,
+    ));
+  }
+  return issues;
+}
+
 export async function runDoctor(projectDir, { readmeText } = {}) {
   const readmePath = path.join(projectDir, "README.md");
   let text = readmeText;
@@ -484,6 +545,7 @@ export async function runDoctor(projectDir, { readmeText } = {}) {
   issues.push(...await checkInsights(projectDir, parsed.insights));
   issues.push(...await checkLog(projectDir, parsed.log));
   issues.push(...await checkRunsTsv(projectDir, parsed.active));
+  issues.push(...await checkKickoffJson(projectDir));
 
   return {
     project: parsed,

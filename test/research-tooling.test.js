@@ -926,6 +926,119 @@ test("runDoctor: bad wandb_url shape -> runs_bad_wandb_url warning", async () =>
 });
 
 // ---------------------------------------------------------------------------
+// kickoff.json validation — the agent re-reads kickoff.json on every loop
+// entry. If it's missing-when-expected, malformed, or points at a repo
+// that no longer exists, the doctor surfaces it before the agent runs blind.
+
+async function installSkillStub(projectDir) {
+  const skillDir = path.join(projectDir, ".claude", "skills", "rl-sweep-tuner");
+  await mkdir(skillDir, { recursive: true });
+  await writeFile(path.join(skillDir, "SKILL.md"), "stub\n");
+}
+
+test("runDoctor: no kickoff.json + no skill = no kickoff issues", async () => {
+  // The vanilla fixture has no kickoff.json and no skill installed —
+  // shouldn't be flagged. Acts as a regression check.
+  const report = await runDoctor(FIXTURE_PROJECT);
+  const codes = report.issues.map((i) => i.code).filter((c) => c.startsWith("kickoff_"));
+  assert.deepEqual(codes, []);
+});
+
+test("runDoctor: skill installed but kickoff.json missing -> kickoff_missing warning", async () => {
+  const tmp = await mkdtemp(path.join(os.tmpdir(), "vr-doctor-kickoff-noJson-"));
+  try {
+    const project = path.join(tmp, "widget-tuning");
+    await copyDir(FIXTURE_PROJECT, project);
+    await installSkillStub(project);
+    const report = await runDoctor(project);
+    const codes = report.issues.map((i) => i.code);
+    assert.ok(codes.includes("kickoff_missing"),
+      `expected kickoff_missing, got: ${codes.join(",")}`);
+  } finally {
+    await rm(tmp, { recursive: true, force: true });
+  }
+});
+
+test("runDoctor: kickoff.json with invalid JSON -> kickoff_unparseable error", async () => {
+  const tmp = await mkdtemp(path.join(os.tmpdir(), "vr-doctor-kickoff-bad-"));
+  try {
+    const project = path.join(tmp, "widget-tuning");
+    await copyDir(FIXTURE_PROJECT, project);
+    await writeFile(path.join(project, "kickoff.json"), "{not json");
+    const report = await runDoctor(project);
+    const codes = report.issues.map((i) => i.code);
+    assert.ok(codes.includes("kickoff_unparseable"),
+      `expected kickoff_unparseable, got: ${codes.join(",")}`);
+  } finally {
+    await rm(tmp, { recursive: true, force: true });
+  }
+});
+
+test("runDoctor: kickoff.json missing goal -> kickoff_missing_goal error", async () => {
+  const tmp = await mkdtemp(path.join(os.tmpdir(), "vr-doctor-kickoff-noGoal-"));
+  try {
+    const project = path.join(tmp, "widget-tuning");
+    await copyDir(FIXTURE_PROJECT, project);
+    await writeFile(path.join(project, "kickoff.json"),
+      JSON.stringify({ repo: tmp, library: "/x", projectDir: project }));
+    const report = await runDoctor(project);
+    const codes = report.issues.map((i) => i.code);
+    assert.ok(codes.includes("kickoff_missing_goal"),
+      `expected kickoff_missing_goal, got: ${codes.join(",")}`);
+  } finally {
+    await rm(tmp, { recursive: true, force: true });
+  }
+});
+
+test("runDoctor: kickoff.json missing repo -> kickoff_missing_repo error", async () => {
+  const tmp = await mkdtemp(path.join(os.tmpdir(), "vr-doctor-kickoff-noRepo-"));
+  try {
+    const project = path.join(tmp, "widget-tuning");
+    await copyDir(FIXTURE_PROJECT, project);
+    await writeFile(path.join(project, "kickoff.json"),
+      JSON.stringify({ goal: "x", library: "/x" }));
+    const report = await runDoctor(project);
+    const codes = report.issues.map((i) => i.code);
+    assert.ok(codes.includes("kickoff_missing_repo"),
+      `expected kickoff_missing_repo, got: ${codes.join(",")}`);
+  } finally {
+    await rm(tmp, { recursive: true, force: true });
+  }
+});
+
+test("runDoctor: kickoff.json repo path doesn't exist -> kickoff_repo_missing warning", async () => {
+  const tmp = await mkdtemp(path.join(os.tmpdir(), "vr-doctor-kickoff-noRepoPath-"));
+  try {
+    const project = path.join(tmp, "widget-tuning");
+    await copyDir(FIXTURE_PROJECT, project);
+    await writeFile(path.join(project, "kickoff.json"),
+      JSON.stringify({ goal: "x", repo: "/nonexistent/path/here-please" }));
+    const report = await runDoctor(project);
+    const codes = report.issues.map((i) => i.code);
+    assert.ok(codes.includes("kickoff_repo_missing"),
+      `expected kickoff_repo_missing, got: ${codes.join(",")}`);
+  } finally {
+    await rm(tmp, { recursive: true, force: true });
+  }
+});
+
+test("runDoctor: valid kickoff.json with existing repo path -> no kickoff_* issues", async () => {
+  const tmp = await mkdtemp(path.join(os.tmpdir(), "vr-doctor-kickoff-ok-"));
+  try {
+    const project = path.join(tmp, "widget-tuning");
+    await copyDir(FIXTURE_PROJECT, project);
+    // Use the project dir itself as a stand-in for an "existing repo".
+    await writeFile(path.join(project, "kickoff.json"),
+      JSON.stringify({ goal: "find best LR", repo: project, library: tmp }));
+    const report = await runDoctor(project);
+    const codes = report.issues.map((i) => i.code).filter((c) => c.startsWith("kickoff_"));
+    assert.deepEqual(codes, [], `expected no kickoff_* issues, got: ${codes.join(",")}`);
+  } finally {
+    await rm(tmp, { recursive: true, force: true });
+  }
+});
+
+// ---------------------------------------------------------------------------
 
 test("lintPaper: flags non-slug-prefixed footnote IDs and missing definitions", async () => {
   const tmp = await mkdtemp(path.join(os.tmpdir(), "vr-research-lint-fn-"));
