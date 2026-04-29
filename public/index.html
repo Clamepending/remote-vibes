@@ -177,6 +177,18 @@
         const root = document.getElementById("app");
         const fallback = root?.querySelector("[data-app-boot-status]");
         let resolved = false;
+        let bundleLoaded = false;
+
+        // Two distinct timeouts:
+        //  - BUNDLE_LOAD_TIMEOUT: if main.js hasn't even started executing by
+        //    this many ms, something is genuinely broken (404 on app.js,
+        //    parse error, blocked script). Show the recovery message.
+        //  - APP_BOOT_TIMEOUT: if the bundle loaded but bootstrapApp hasn't
+        //    finished yet, we're just waiting on /api/state. Be patient — the
+        //    state endpoint can take a few seconds while the server refreshes
+        //    its BuildingHub catalog, mirrors agent town, etc. Fire later.
+        const BUNDLE_LOAD_TIMEOUT_MS = 4000;
+        const APP_BOOT_TIMEOUT_MS = 20000;
 
         function setError(message) {
           if (!fallback || resolved) {
@@ -193,8 +205,24 @@
           }
         }
 
+        function softenLoadingMessage() {
+          if (!fallback || resolved) {
+            return;
+          }
+          // Bundle loaded; we're just waiting on the server. Update the copy
+          // so the user knows it's still working, not stuck.
+          const status = fallback.querySelector(".boot-fallback-status span:last-of-type");
+          if (status) {
+            status.textContent = "Loading workspace state… (slow network or first load)";
+          }
+        }
+
         function markReady() {
           resolved = true;
+        }
+
+        function markBundleLoaded() {
+          bundleLoaded = true;
         }
 
         function handleFailure(event) {
@@ -204,15 +232,34 @@
         }
 
         window.__vibeResearchBootReady = markReady;
+        window.__vibeResearchBundleLoaded = markBundleLoaded;
         window.__vibeResearchBootFailed = (message) => setError(message ? `Reload the page once to recover. Latest error: ${message}` : "");
         window.addEventListener("vibe-research:booted", markReady, { once: true });
+        window.addEventListener("vibe-research:bundle-loaded", markBundleLoaded, { once: true });
         window.addEventListener("vibe-research:boot-error", handleFailure);
+
+        // Stage 1: bundle-load watchdog. Fires only if the JS never started.
+        window.setTimeout(() => {
+          const stillShowingFallback = root && fallback && root.contains(fallback);
+          if (resolved || !stillShowingFallback) return;
+          if (!bundleLoaded) {
+            // Genuine failure: app.js didn't load or didn't run.
+            setError("");
+            return;
+          }
+          // Bundle loaded; soften the message and keep waiting.
+          softenLoadingMessage();
+        }, BUNDLE_LOAD_TIMEOUT_MS);
+
+        // Stage 2: long-stop watchdog. Fires only if the bundle loaded but
+        // bootstrapApp never finished — usually means /api/state is hung
+        // server-side. Showing a recovery prompt here is right.
         window.setTimeout(() => {
           const stillShowingFallback = root && fallback && root.contains(fallback);
           if (!resolved && stillShowingFallback) {
             setError("");
           }
-        }, 4000);
+        }, APP_BOOT_TIMEOUT_MS);
 
         fallback?.querySelector("[data-boot-reload]")?.addEventListener("click", () => {
           window.location.reload();

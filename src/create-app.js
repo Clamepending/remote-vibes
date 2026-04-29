@@ -3054,7 +3054,26 @@ export async function createVibeResearchApp({
     // rejection leaves the response hanging and the user sees a blank page.
     // Catch and emit a 500 with the message so the UI can show something.
     try {
-      await buildingHubService.refresh();
+      // Bound how long this request blocks on the BuildingHub refresh. The
+      // refresh fetches a remote catalog with an 8s timeout; on a slow or
+      // unreachable buildinghub host we used to block /api/state for the full
+      // 8s, which beats the client's 4s boot-fallback timeout and leaves the
+      // user staring at "the interface did not finish loading" while the page
+      // is in fact still loading correctly. Race the refresh against a 2s
+      // budget; on miss, serve whatever's cached and let the refresh keep
+      // running so the next /api/state call sees fresh data.
+      const STATE_BUILDINGHUB_REFRESH_TIMEOUT_MS = 2_000;
+      const refreshPromise = buildingHubService.refresh();
+      // Swallow rejections from the deferred refresh — the response will be
+      // sent regardless, and a logged error here would just be noise on every
+      // intermittent buildinghub blip.
+      refreshPromise.catch((error) => {
+        console.warn("[vibe-research] buildinghub refresh failed (background):", error?.message || error);
+      });
+      await Promise.race([
+        refreshPromise,
+        new Promise((resolve) => setTimeout(resolve, STATE_BUILDINGHUB_REFRESH_TIMEOUT_MS)),
+      ]);
       await syncBuildingAgentGuides();
       // Compact summary of the MCP-launch registry so the UI can show
       // "N MCP servers wired up, K still need a token" without an extra
