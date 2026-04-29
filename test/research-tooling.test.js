@@ -782,6 +782,151 @@ test("formatVerdict: includes benchmark line when project has bench", async () =
 
 // ---------------------------------------------------------------------------
 
+// ---------------------------------------------------------------------------
+// runs.tsv validation — sweep-runner artifact integrity from the doctor's
+// perspective. The doctor walks projects/<name>/runs.tsv and
+// projects/<name>/runs/<slug>.tsv so a stale "running" row, a malformed
+// config JSON, or a runs.tsv with missing columns surfaces up to the loop
+// rather than silently corrupting the leaderboard.
+
+const RUNS_HEADER = [
+  "started_at", "group", "name", "commit", "hypothesis",
+  "mean_return", "std_return", "wandb_url", "status", "config",
+].join("\t");
+
+function runsRow({ started_at = "", group = "g", name = "g-cell-seed0", commit = "abc1234", hypothesis = "h", mean_return = "", std_return = "", wandb_url = "", status = "planned", config = "{}" } = {}) {
+  return [started_at, group, name, commit, hypothesis, mean_return, std_return, wandb_url, status, config].join("\t");
+}
+
+test("runDoctor: clean runs.tsv (status=done) produces no new issues", async () => {
+  const tmp = await mkdtemp(path.join(os.tmpdir(), "vr-doctor-runs-clean-"));
+  try {
+    const project = path.join(tmp, "widget-tuning");
+    await copyDir(FIXTURE_PROJECT, project);
+    const tsv = `${RUNS_HEADER}\n${runsRow({
+      started_at: new Date().toISOString(),
+      status: "done",
+      mean_return: "0.81",
+      wandb_url: "https://wandb.ai/me/proj/runs/abc123",
+    })}\n`;
+    await writeFile(path.join(project, "runs.tsv"), tsv);
+    const report = await runDoctor(project);
+    const newCodes = report.issues.map((i) => i.code).filter((c) => c.startsWith("runs_"));
+    assert.deepEqual(newCodes, [], `expected no runs_* issues, got: ${newCodes.join(",")}`);
+  } finally {
+    await rm(tmp, { recursive: true, force: true });
+  }
+});
+
+test("runDoctor: stale 'running' row + no ACTIVE row -> two warnings", async () => {
+  const tmp = await mkdtemp(path.join(os.tmpdir(), "vr-doctor-runs-stale-"));
+  try {
+    const project = path.join(tmp, "widget-tuning");
+    await copyDir(FIXTURE_PROJECT, project);
+    // 48h ago = stale.
+    const staleIso = new Date(Date.now() - 48 * 60 * 60 * 1000).toISOString();
+    const tsv = `${RUNS_HEADER}\n${runsRow({
+      started_at: staleIso,
+      status: "running",
+    })}\n`;
+    await writeFile(path.join(project, "runs.tsv"), tsv);
+    const report = await runDoctor(project);
+    const codes = report.issues.map((i) => i.code);
+    assert.ok(codes.includes("runs_stale_running"),
+      `expected runs_stale_running in ${codes.join(",")}`);
+    assert.ok(codes.includes("runs_running_without_active"),
+      `expected runs_running_without_active in ${codes.join(",")}`);
+  } finally {
+    await rm(tmp, { recursive: true, force: true });
+  }
+});
+
+test("runDoctor: bad JSON in config column -> runs_config_unparseable error", async () => {
+  const tmp = await mkdtemp(path.join(os.tmpdir(), "vr-doctor-runs-cfg-"));
+  try {
+    const project = path.join(tmp, "widget-tuning");
+    await copyDir(FIXTURE_PROJECT, project);
+    const tsv = `${RUNS_HEADER}\n${runsRow({
+      status: "done",
+      mean_return: "0.5",
+      config: "{not json",
+    })}\n`;
+    await writeFile(path.join(project, "runs.tsv"), tsv);
+    const report = await runDoctor(project);
+    const codes = report.issues.map((i) => i.code);
+    assert.ok(codes.includes("runs_config_unparseable"),
+      `expected runs_config_unparseable in ${codes.join(",")}`);
+    assert.ok(report.summary.error >= 1);
+  } finally {
+    await rm(tmp, { recursive: true, force: true });
+  }
+});
+
+test("runDoctor: runs.tsv missing required columns -> runs_missing_columns error", async () => {
+  const tmp = await mkdtemp(path.join(os.tmpdir(), "vr-doctor-runs-cols-"));
+  try {
+    const project = path.join(tmp, "widget-tuning");
+    await copyDir(FIXTURE_PROJECT, project);
+    // Drop status + config.
+    const reducedHeader = ["started_at", "group", "name", "commit", "hypothesis", "mean_return", "std_return", "wandb_url"].join("\t");
+    const reducedRow = ["2026-04-28T00:00:00Z", "g", "g-cell-seed0", "abc", "h", "", "", ""].join("\t");
+    const tsv = `${reducedHeader}\n${reducedRow}\n`;
+    await writeFile(path.join(project, "runs.tsv"), tsv);
+    const report = await runDoctor(project);
+    const codes = report.issues.map((i) => i.code);
+    assert.ok(codes.includes("runs_missing_columns"),
+      `expected runs_missing_columns in ${codes.join(",")}`);
+  } finally {
+    await rm(tmp, { recursive: true, force: true });
+  }
+});
+
+test("runDoctor: walks runs/<slug>.tsv subdirectory too", async () => {
+  const tmp = await mkdtemp(path.join(os.tmpdir(), "vr-doctor-runs-sub-"));
+  try {
+    const project = path.join(tmp, "widget-tuning");
+    await copyDir(FIXTURE_PROJECT, project);
+    await mkdir(path.join(project, "runs"), { recursive: true });
+    const staleIso = new Date(Date.now() - 36 * 60 * 60 * 1000).toISOString();
+    const tsv = `${RUNS_HEADER}\n${runsRow({
+      started_at: staleIso,
+      status: "running",
+      name: "ablate-foo-cell-seed0",
+    })}\n`;
+    await writeFile(path.join(project, "runs", "ablate-foo.tsv"), tsv);
+    const report = await runDoctor(project);
+    const stale = report.issues.find((i) => i.code === "runs_stale_running");
+    assert.ok(stale, "expected runs_stale_running issue");
+    assert.match(stale.where, /runs\/ablate-foo\.tsv/,
+      `expected 'where' to mention runs/ablate-foo.tsv, got: ${stale.where}`);
+  } finally {
+    await rm(tmp, { recursive: true, force: true });
+  }
+});
+
+test("runDoctor: bad wandb_url shape -> runs_bad_wandb_url warning", async () => {
+  const tmp = await mkdtemp(path.join(os.tmpdir(), "vr-doctor-runs-wb-"));
+  try {
+    const project = path.join(tmp, "widget-tuning");
+    await copyDir(FIXTURE_PROJECT, project);
+    const tsv = `${RUNS_HEADER}\n${runsRow({
+      started_at: new Date().toISOString(),
+      status: "done",
+      mean_return: "0.5",
+      wandb_url: "https://example.com/not-wandb/run/123",
+    })}\n`;
+    await writeFile(path.join(project, "runs.tsv"), tsv);
+    const report = await runDoctor(project);
+    const codes = report.issues.map((i) => i.code);
+    assert.ok(codes.includes("runs_bad_wandb_url"),
+      `expected runs_bad_wandb_url in ${codes.join(",")}`);
+  } finally {
+    await rm(tmp, { recursive: true, force: true });
+  }
+});
+
+// ---------------------------------------------------------------------------
+
 test("lintPaper: flags non-slug-prefixed footnote IDs and missing definitions", async () => {
   const tmp = await mkdtemp(path.join(os.tmpdir(), "vr-research-lint-fn-"));
   try {
