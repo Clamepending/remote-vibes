@@ -409,6 +409,34 @@ User direction: *"get this whole system ready for recursive self improvement"* a
 - **Symlink instead of copy** for the skill-into-project install so updates to the canonical skill propagate without re-bootstrap.
 - **Wandb result-pull**: runner extracts the URL today; doesn't yet pull final summary metrics from `wandb.api.runs(group=...).summary` to back-fill `mean_return` for cells whose launcher prints to wandb but not stdout.
 
+### 2026-04-29 — doctor extensions + sweep summary (this stretch)
+
+After the autonomous-tuner skill landed, the next gap was bookkeeping integrity. The agent's loop produces three durable artifacts (`runs.tsv`, `kickoff.json`, README ACTIVE rows) and the doctor only validated one of them. A crashed launcher leaves a row stuck at `status=running` indefinitely; a corrupt kickoff means the loop runs blind on entry; a forgotten ACTIVE claim sits in the README for weeks. None of these were caught.
+
+#### What shipped
+
+- **`vr-research-doctor` validates `runs.tsv` + `runs/<slug>.tsv`** (PR #64 commit 1):
+  - `runs_stale_running` — status=running with started_at >24h ago (orphan signal)
+  - `runs_running_without_active` — running row but README ACTIVE empty (missing claim)
+  - `runs_config_unparseable` — JSON parse error in the config column (launcher gets garbage)
+  - `runs_missing_columns` — TSV missing required columns
+  - `runs_bad_wandb_url` — wandb_url doesn't match `wandb.ai`
+- **`vr-research-doctor` validates `kickoff.json`** (PR #64 commit 2): only flags it when expected (file exists OR rl-sweep-tuner skill is installed in `.claude/skills/`), so vanilla `vr-research-init` projects aren't penalised. Checks `kickoff_unparseable`, `kickoff_missing_goal`, `kickoff_missing_repo`, `kickoff_repo_missing` (path doesn't exist on disk).
+- **`vr-research-doctor` warns on stale ACTIVE rows** (PR #64 commit 4): per CLAUDE.md's >7-day staleness rule, surfaces `active_stale_row` so the recovery procedure (clear ACTIVE, file `abandoned` LOG row) actually triggers.
+- **`vr-rl-sweep summary <project>`** (PR #65): the agent's mid-loop snapshot tool. Reads `runs.tsv` (or `runs/<slug>.tsv` via `--sweep-name`), prints status counts + per-cell mean ± std across seeds + top-N ranked cells. `--json` emits structured data (`topCells`, `allCells`, `statusCounts`, `cellCount`) for programmatic use. `--direction-lower` flips the sort for "lower-is-better" metrics. The skill doc updated so the agent uses it instead of re-parsing the TSV.
+
+#### Status as of this batch
+
+- **Doctor checks**: 16 new across runs.tsv/kickoff.json/stale-ACTIVE; doctor now covers all artifacts the autonomous-tuner contract produces.
+- **Sweep tooling**: `init`, `run`, and now `summary` — the agent has read + write + inspect surface area for `runs.tsv`.
+- **Tests**: 23 new (16 doctor + 7 sweep summary), all green. Total research-side tests: ~146. Pre-existing CI flake on `getProjectDetail.figures` is orthogonal.
+
+#### Still queued (didn't change)
+
+- Real RL workload + cloud GPU end-to-end (needs user input + budget).
+- Wandb result-pull from `wandb.api.runs(group=...).summary`.
+- Symlink instead of copy for skill-into-project install.
+
 ### Resume instructions for the next session
 
 1. Read this doc top to bottom.
@@ -419,4 +447,5 @@ User direction: *"get this whole system ready for recursive self improvement"* a
 6. **To add another MCP server**: probe `npm view <package> version` first; if it resolves, copy a sibling manifest (e.g. `mcp-tavily`), wire the settings-store entry + env-var fallback, add a row to the live integration-test array in `test/install-runner-mcp-buildings.test.js`, run that test, commit. ~10 minutes per building once the pattern is internalized.
 7. Then: pick from the broader backlog (Replicate, HuggingFace Hub, Vast.ai, Lambda Labs, Fly.io, R2/B2, Pinecone, Qdrant, Chroma, Apify, Twilio, Atlassian, Supabase, …) and re-enter the same loop: install + auth + smoke check + manifest + verification block.
 8. **For the autonomous tuner**: the next high-value test is letting an agent run unbounded across 3-5 moves on a real (not toy) training script, with cloud execution via Modal. Before doing it, set a clear budget cap in the agent's prompt + verify the kickoff.json budget enforcement triggers Agent Inbox approval at the right threshold.
+9. **Doctor + summary** are now the agent's eyes on its own state. Before any new sweep tooling, ask: "is the next gap the agent can't see, or the next thing the agent can't do?" — the answer should drive whether to extend doctor or extend `vr-rl-sweep`.
 
