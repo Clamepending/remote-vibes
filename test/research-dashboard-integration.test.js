@@ -221,9 +221,12 @@ test("GET /research/research.js + research.css are served", async () => {
     const js = await fetch(`${baseUrl}/research/research.js`);
     assert.equal(js.status, 200);
     assert.match(js.headers.get("content-type") || "", /javascript/);
-    assert.match(await js.text(), /orchestrator\/tick/);
+    const jsText = await js.text();
+    assert.match(jsText, /orchestrator\/tick/);
+    assert.match(jsText, /briefs\/.*compile/);
     const css = await fetch(`${baseUrl}/research/research.css`);
     assert.equal(css.status, 200);
     assert.match(css.headers.get("content-type") || "", /css/);
+    assert.match(await css.text(), /vr-action-button/);
   });
 });

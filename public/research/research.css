@@ -338,6 +338,39 @@ code, .vr-mono { font-family: var(--vr-mono); font-size: 13px; }
   white-space: pre-wrap;
   word-break: break-word;
 }
+.vr-next-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+.vr-action-button {
+  appearance: none;
+  border: 1px solid var(--vr-border);
+  border-radius: 6px;
+  background: transparent;
+  color: var(--vr-text);
+  cursor: pointer;
+  font: 600 12px/1 var(--vr-sans);
+  padding: 8px 10px;
+}
+.vr-action-button:hover:not(:disabled) {
+  border-color: var(--vr-accent);
+  background: var(--vr-bg-card-hover);
+}
+.vr-action-button.is-primary {
+  border-color: var(--vr-accent);
+  background: var(--vr-accent-soft);
+}
+.vr-action-button:disabled {
+  cursor: wait;
+  opacity: 0.55;
+}
+.vr-next-status {
+  margin: 0;
+  color: var(--vr-text-muted);
+  font-size: 12px;
+}
+.vr-next-status.is-error { color: var(--vr-bad); }
 
 /* Bench card */
 .vr-bench-meta {

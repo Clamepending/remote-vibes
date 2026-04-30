@@ -167,6 +167,156 @@
     return null;
   }
 
+  async function fetchProjectDetail(name) {
+    const res = await fetch(`/api/research/projects/${encodeURIComponent(name)}`, {
+      headers: { accept: "application/json" },
+    });
+    if (res.status === 404) throw new Error(`Project "${name}" not found in the library.`);
+    if (!res.ok) throw new Error(`HTTP ${res.status}`);
+    return res.json();
+  }
+
+  async function postOrchestratorTick(detail, options) {
+    const res = await fetch(`/api/research/projects/${encodeURIComponent(detail.name)}/orchestrator/tick`, {
+      method: "POST",
+      headers: { accept: "application/json", "Content-Type": "application/json" },
+      body: JSON.stringify(options || {}),
+    });
+    if (!res.ok) throw new Error(`HTTP ${res.status}`);
+    return res.json();
+  }
+
+  function setActionStatus(body, message, isError) {
+    let status = body.querySelector(".vr-next-status");
+    if (!status) {
+      status = el("p", { class: "vr-next-status", role: "status" });
+      body.appendChild(status);
+    }
+    status.textContent = message || "";
+    status.classList.toggle("is-error", Boolean(isError));
+    status.hidden = !message;
+  }
+
+  function button(label, onClick, variant) {
+    return el("button", { class: `vr-action-button${variant ? " is-" + variant : ""}`, type: "button", onclick: onClick }, label);
+  }
+
+  function renderActionButtons({ detail, body, report, rec }) {
+    const buttons = [];
+    const commandText = report.nextCommand || "";
+
+    if (commandText) {
+      buttons.push(button("Copy command", async () => {
+        try {
+          await navigator.clipboard.writeText(commandText);
+          setActionStatus(body, "Command copied.");
+        } catch (err) {
+          setActionStatus(body, `Could not copy: ${err.message}`, true);
+        }
+      }));
+    }
+
+    if (rec.action === "enter-review") {
+      buttons.push(button("Enter review", async (event) => {
+        const target = event.currentTarget;
+        target.disabled = true;
+        setActionStatus(body, "Switching phase…");
+        try {
+          const applied = await postOrchestratorTick(detail, { apply: true });
+          const payload = applied.report && applied.report.phaseUpdate
+            ? await postOrchestratorTick(detail, {})
+            : applied;
+          renderNextActionPayload(detail, body, payload);
+        } catch (err) {
+          setActionStatus(body, `Could not enter review: ${err.message}`, true);
+        } finally {
+          if (target.isConnected) target.disabled = false;
+        }
+      }, "primary"));
+    }
+
+    if (rec.action === "review-brief" && rec.briefSlug) {
+      buttons.push(button("Compile brief", async (event) => {
+        const target = event.currentTarget;
+        target.disabled = true;
+        setActionStatus(body, "Compiling brief into QUEUE…");
+        try {
+          const res = await fetch(
+            `/api/research/projects/${encodeURIComponent(detail.name)}/briefs/${encodeURIComponent(rec.briefSlug)}/compile`,
+            {
+              method: "POST",
+              headers: { accept: "application/json", "Content-Type": "application/json" },
+              body: JSON.stringify({}),
+            },
+          );
+          if (!res.ok) throw new Error(`HTTP ${res.status}`);
+          const nextDetail = await fetchProjectDetail(detail.name);
+          renderDoctorCard(nextDetail);
+          await renderNextActionCard(nextDetail);
+          renderQueueCard(nextDetail);
+          renderActiveCard(nextDetail);
+          renderLogCard(nextDetail);
+        } catch (err) {
+          setActionStatus(body, `Could not compile brief: ${err.message}`, true);
+        } finally {
+          if (target.isConnected) target.disabled = false;
+        }
+      }, "primary"));
+    }
+
+    if (/^judge-/.test(rec.action || "")) {
+      buttons.push(button("Ask human", async (event) => {
+        const target = event.currentTarget;
+        target.disabled = true;
+        setActionStatus(body, "Creating Agent Inbox card…");
+        try {
+          const payload = await postOrchestratorTick(detail, { askHuman: true });
+          renderNextActionPayload(detail, body, payload);
+        } catch (err) {
+          setActionStatus(body, `Could not create review card: ${err.message}`, true);
+        } finally {
+          if (target.isConnected) target.disabled = false;
+        }
+      }, "primary"));
+    }
+
+    buttons.push(button("Refresh", async (event) => {
+      const target = event.currentTarget;
+      target.disabled = true;
+      setActionStatus(body, "Refreshing…");
+      try {
+        const payload = await postOrchestratorTick(detail, {});
+        renderNextActionPayload(detail, body, payload);
+      } catch (err) {
+        setActionStatus(body, `Could not refresh: ${err.message}`, true);
+      } finally {
+        if (target.isConnected) target.disabled = false;
+      }
+    }));
+
+    body.appendChild(el("div", { class: "vr-next-actions" }, buttons));
+  }
+
+  function renderNextActionPayload(detail, body, payload) {
+    const report = payload.report || {};
+    const rec = report.recommendation || {};
+    body.innerHTML = "";
+    body.appendChild(el("div", { class: "vr-next-header" }, [
+      chip(rec.action || "unknown", actionVariant(rec.action || "")),
+      rec.slug ? chip(rec.slug) : null,
+      rec.briefSlug ? chip(rec.briefSlug) : null,
+      rec.evaluatorStrength ? chip(`evaluator ${rec.evaluatorStrength}`, evaluatorVariant(rec.evaluatorStrength)) : null,
+      report.judge && report.judge.review && report.judge.review.actionItem
+        ? chip(`inbox ${report.judge.review.actionItem.id}`, "accent")
+        : null,
+    ]));
+    body.appendChild(el("p", { class: "vr-next-reason" }, rec.reason || "No recommendation returned."));
+    if (report.nextCommand) {
+      body.appendChild(el("pre", { class: "vr-next-command" }, report.nextCommand));
+    }
+    renderActionButtons({ detail, body, report, rec });
+  }
+
   async function renderNextActionCard(detail) {
     const card = document.getElementById("next-card");
     if (!card) return;
@@ -179,32 +329,14 @@
 
     let payload;
     try {
-      const res = await fetch(`/api/research/projects/${encodeURIComponent(detail.name)}/orchestrator/tick`, {
-        method: "POST",
-        headers: { accept: "application/json", "Content-Type": "application/json" },
-        body: JSON.stringify({}),
-      });
-      if (!res.ok) throw new Error(`HTTP ${res.status}`);
-      payload = await res.json();
+      payload = await postOrchestratorTick(detail, {});
     } catch (err) {
       body.innerHTML = "";
       body.appendChild(el("p", { class: "vr-card-empty" }, `Could not load next action: ${err.message}`));
       return;
     }
 
-    const report = payload.report || {};
-    const rec = report.recommendation || {};
-    body.innerHTML = "";
-    body.appendChild(el("div", { class: "vr-next-header" }, [
-      chip(rec.action || "unknown", actionVariant(rec.action || "")),
-      rec.slug ? chip(rec.slug) : null,
-      rec.briefSlug ? chip(rec.briefSlug) : null,
-      rec.evaluatorStrength ? chip(`evaluator ${rec.evaluatorStrength}`, evaluatorVariant(rec.evaluatorStrength)) : null,
-    ]));
-    body.appendChild(el("p", { class: "vr-next-reason" }, rec.reason || "No recommendation returned."));
-    if (report.nextCommand) {
-      body.appendChild(el("pre", { class: "vr-next-command" }, report.nextCommand));
-    }
+    renderNextActionPayload(detail, body, payload);
   }
 
   function renderHypothesisCard(detail) {
