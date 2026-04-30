@@ -1,7 +1,7 @@
 import { access, readFile } from "node:fs/promises";
 import path from "node:path";
 import { compileBriefToQueue, getBriefPath, readResearchBrief, readResearchState, updateResearchState } from "./brief.js";
-import { createBriefReviewCard, waitForBriefReview } from "./brief-review.js";
+import { createBriefReviewCard, getActionItemFromWait, waitForBriefReview } from "./brief-review.js";
 import { runDoctor } from "./doctor.js";
 import { judgeMove } from "./judge.js";
 import { loadProjectLog, parseProjectReadme } from "./project-readme.js";
@@ -252,20 +252,25 @@ export async function tickResearchOrchestrator({
           fetchImpl,
         });
         let wait = null;
+        let resolution = "";
+        const actionItemId = review.actionItem?.id || `research-brief-${briefResult.brief.slug}`;
         if (waitHuman) {
           wait = await waitForBriefReview({
             agentTownApi,
-            actionItemId: review.actionItem?.id || `research-brief-${briefResult.brief.slug}`,
+            actionItemId,
             timeoutMs,
             fetchImpl,
           });
+          resolution = getActionItemFromWait(wait, actionItemId)?.resolution || "";
         }
         briefReview = {
           actionItem: review.actionItem || null,
           wait,
+          resolution,
         };
       }
-      if (apply) {
+      const humanGateAllowsCompile = !askHuman || !waitHuman || briefReview?.resolution === "approved";
+      if (apply && humanGateAllowsCompile) {
         briefCompile = await compileBriefToQueue({
           projectDir: resolvedProjectDir,
           slug: state.briefSlug,

@@ -270,6 +270,87 @@ test("tickResearchOrchestrator recommends compiling an existing brief", async ()
   }
 });
 
+test("tickResearchOrchestrator gates waited brief apply on human approval", async () => {
+  async function seedBrief(dir) {
+    await createResearchBrief({
+      projectDir: dir,
+      slug: "plateau-plan",
+      question: "What should we test next?",
+      candidateMoves: [
+        { move: "dropout-rerun", startingPoint: "main", why: "rerun with seeds", hypothesis: "noise explains plateau" },
+      ],
+    });
+    await updateResearchState({ projectDir: dir, phase: "move-design", briefSlug: "plateau-plan", summary: "brief drafted" });
+  }
+
+  function fakeAgentTownFetch(resolution) {
+    return async (url, options = {}) => {
+      const body = JSON.parse(options.body || "{}");
+      if (String(url).endsWith("/action-items")) {
+        return {
+          ok: true,
+          status: 200,
+          async json() {
+            return { actionItem: { id: body.id, title: body.title, choices: body.choices } };
+          },
+        };
+      }
+      if (String(url).endsWith("/wait")) {
+        return {
+          ok: true,
+          status: 200,
+          async json() {
+            return {
+              satisfied: true,
+              state: {
+                actionItems: [
+                  { id: body.predicateParams.actionItemId, resolution },
+                ],
+              },
+            };
+          },
+        };
+      }
+      throw new Error(`unexpected fetch url: ${url}`);
+    };
+  }
+
+  const approvedDir = makeProject("vr-orchestrator-brief-approved");
+  const rejectedDir = makeProject("vr-orchestrator-brief-rejected");
+  try {
+    await seedBrief(approvedDir);
+    const approved = await tickResearchOrchestrator({
+      projectDir: approvedDir,
+      askHuman: true,
+      waitHuman: true,
+      apply: true,
+      agentTownApi: "http://agent-town.test/api/agent-town",
+      fetchImpl: fakeAgentTownFetch("approved"),
+    });
+    assert.equal(approved.briefReview.resolution, "approved");
+    assert.equal(approved.briefCompile.briefSlug, "plateau-plan");
+    assert.equal(approved.phaseUpdate.phase, "experiment");
+    assert.match(readFileSync(join(approvedDir, "README.md"), "utf8"), /\| dropout-rerun \| main \| rerun with seeds \|/);
+
+    await seedBrief(rejectedDir);
+    const rejected = await tickResearchOrchestrator({
+      projectDir: rejectedDir,
+      askHuman: true,
+      waitHuman: true,
+      apply: true,
+      agentTownApi: "http://agent-town.test/api/agent-town",
+      fetchImpl: fakeAgentTownFetch("rejected"),
+    });
+    assert.equal(rejected.briefReview.resolution, "rejected");
+    assert.equal(rejected.briefCompile, null);
+    assert.equal(rejected.phaseUpdate, null);
+    assert.doesNotMatch(readFileSync(join(rejectedDir, "README.md"), "utf8"), /\| dropout-rerun \|/);
+  } finally {
+    rmSync(approvedDir, { recursive: true, force: true });
+    rmSync(rejectedDir, { recursive: true, force: true });
+  }
+});
+
 test("tickResearchOrchestrator carries judge next candidates into the recommendation", async () => {
   const dir = makeProject("vr-orchestrator-judge-candidates", {
     logRows: "| 2026-04-30 | resolved | first-move | toy result | [first-move](results/first-move.md) |\n",
