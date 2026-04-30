@@ -153,6 +153,60 @@ The renderer should keep real terminal work visible.
   assert.equal(getRichSessionBlockKind(blocks[1]), "message");
 });
 
+test("rich session transcript strips Claude Code TUI footer hints and ✦ task progress lines", () => {
+  const transcript = `
+ctrl+t to hide tasks
+
+✦ · 3 ✦ * Run doctor and fix README placeholder rows... * 1 * *
+
+✦ Run doctor and fix README placeholder rows... 1 ✶ ✶
+
+Tip: Use /btw to ask a quick side question without interrupting Claude's current work
+
+  Tip: New! Use /memory to manage Claude's persistent memory
+
+The actual response begins here.
+`;
+
+  assert.deepEqual(
+    splitRichSessionTranscriptBlocks(transcript, { maxBlocks: 10 }),
+    ["The actual response begins here."],
+  );
+});
+
+test("rich session transcript drops the [vibe-research] shell cwd reset notice in any leading position", () => {
+  const transcript = `
+[vibe-research] Shell cwd was reset to /home/ogata/mac-brain/projects/bidir-video-rl-bench
+
+Shell cwd was reset to /home/ogata/mac-brain/projects/bidir-video-rl-bench
+
+Continuing the actual conversation.
+`;
+
+  assert.deepEqual(
+    splitRichSessionTranscriptBlocks(transcript, { maxBlocks: 10 }),
+    ["Continuing the actual conversation."],
+  );
+});
+
+test("rich session transcript merges hard-wrapped paths back together so file paths stay clickable", () => {
+  const buffer = createTerminalBuffer([
+    { text: "Shell cwd was reset to /home/ogata/mac-brain/projects/bidir-vid" },
+    { text: "eo-rl-bench", isWrapped: true },
+    { text: "" },
+    { text: "Investigation continues." },
+  ]);
+
+  const transcript = renderWrappedTerminalBufferPlainText(buffer, { columns: 64 });
+  assert.match(transcript, /bidir-video-rl-bench/);
+  assert.equal(sanitizeRichSessionTranscriptText(transcript), "Investigation continues.");
+});
+
+test("rich session transcript classifies a git-style commit summary as a code block, not assistant prose", () => {
+  const block = "[main b27b686] bidir-video-rl-bench: bench-v1-init resolved\n 3 files changed, 6 insertions(+), 10 deletions(-)";
+  assert.equal(getRichSessionBlockKind(block), "code");
+});
+
 test("rich session transcript strips the startup artifact mix shown in the rich session snippet", () => {
   const transcript = `
 [vibe-research] Codex session ready

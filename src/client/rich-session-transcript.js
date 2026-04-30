@@ -113,7 +113,38 @@ function stripRichSessionFrameLine(line) {
 }
 
 function isRichSessionSystemBannerLine(line) {
-  return /^\[vibe-research\]/iu.test(String(line || "").trim());
+  const trimmed = String(line || "").trim();
+  return (
+    /^\[vibe-research\]/iu.test(trimmed)
+    // The PTY wrapper announces its workspace cwd reset before launching the
+    // provider. Sometimes it carries the [vibe-research] prefix, sometimes the
+    // wrapper has rewrapped it past the prefix, but the body itself is always
+    // ephemeral chrome the user shouldn't see.
+    || /^Shell cwd was reset to\b/iu.test(trimmed)
+  );
+}
+
+// Claude Code's TUI footer rotates a few hint lines: "ctrl+t to hide tasks",
+// "tab to queue message", "n% context left", etc. Tasks for the active turn
+// also spawn one-line progress rows that include the spinner glyph (✦, ✶, etc),
+// the task title, and a counter like "1 ✶ ✶". Both are pure presentation
+// state and disappear from the TUI as the run progresses, so they should never
+// be persisted into the native feed.
+function isRichSessionTuiFooterLine(line) {
+  const trimmed = String(line || "").trim();
+  if (!trimmed) {
+    return false;
+  }
+
+  return (
+    /^ctrl\+t to (?:hide|show) tasks$/iu.test(trimmed)
+    || /^shift\+tab to (?:queue|cycle).+/iu.test(trimmed)
+    || /^esc to interrupt$/iu.test(trimmed)
+    // Spinner-prefixed task progress: optional bullets/separators between
+    // glyphs, ending with a counter that re-renders every frame.
+    || /^[✦✶✻✧✩•◦*·]\s+.+(?:\.{3}|…)\s*\d+\s*[✦✶✻✧✩•◦*·]/u.test(trimmed)
+    || /^[✦✶✻✧✩•◦*·][\s·*]*\d+\s+[✦✶✻✧✩•◦*·][\s·*].+(?:\.{3}|…)/u.test(trimmed)
+  );
 }
 
 function isRichSessionSeparatorLine(line) {
@@ -263,6 +294,10 @@ function isRichSessionStartupMetadataLine(line) {
     || /^Do you trust the contents of this directory\?$/iu.test(stripped)
     || /^Press enter to continue$/iu.test(stripped)
     || /^Tip:\s+(?:New!?\s+)?Use \/[a-z0-9_-]+\b/iu.test(stripped)
+    // Generic Tip: catch-all for the rotating Claude/Codex tooltips we don't
+    // already have a more specific pattern for ("Tip: Use /btw to ask…").
+    // The tip text itself is remote-driven, so an explicit allow-list rots.
+    || /^(?:\*New\*\s+)?Tip:\s+/iu.test(stripped)
   );
 }
 
@@ -280,6 +315,7 @@ function isRichSessionEphemeralLine(line) {
     || isRichSessionShellLaunchEchoLine(trimmed)
     || isRichSessionShellLaunchFragment(trimmed)
     || isRichSessionStartupMetadataLine(trimmed)
+    || isRichSessionTuiFooterLine(trimmed)
   ) {
     return true;
   }
@@ -344,10 +380,15 @@ function isRichSessionStartupNoiseBlock(block) {
     || /Starting MCP servers/iu.test(normalizedBlock)
     || /Try the Codex App\./iu.test(normalizedBlock)
     || /tab to queue message/iu.test(normalizedBlock)
+    || /\bctrl\+t to (?:hide|show) tasks\b/iu.test(normalizedBlock)
     || /\bcontext left\b/iu.test(normalizedBlock)
     || /Do you trust the contents of this directory\?/iu.test(normalizedBlock)
     || /Press enter to continue/iu.test(normalizedBlock)
     || /(?:OpenAI Codex|Claude Code)/iu.test(normalizedBlock)
+    || /^Shell cwd was reset to\b/iu.test(normalizedBlock)
+    // Generic tooltip rotation. Anchored at the start of the comparable block
+    // so a paragraph that merely *mentions* the word "Tip:" still survives.
+    || /^(?:\*New\*\s+)?Tip:\s/iu.test(normalizedBlock)
     || (
       /^gpt-[\w.-]+(?:\s+\w+)?\s+·\s+~?\//iu.test(normalizedBlock)
       && /\b(?:model|directory|cwd|workspace):\b/iu.test(normalizedBlock)
@@ -436,6 +477,17 @@ export function getRichSessionBlockKind(block) {
 
   if (getRichSessionToolName(block)) {
     return "tool";
+  }
+  // Standard git command outputs are easy to recognise and read much better
+  // as a code block than as assistant prose.
+  if (
+    /^\[[\w./@-]+\s+[0-9a-f]{4,40}\]/u.test(firstLine)
+    || /^On branch\s+\S/u.test(firstLine)
+    || /^(?:Your branch is up to date|Your branch is ahead of)\b/u.test(firstLine)
+    || /^Switched to (?:a new )?branch\s+/u.test(firstLine)
+    || /^\s*\d+\s+files?\s+changed/u.test(firstLine)
+  ) {
+    return "code";
   }
   if (/^(?:recap|summary|takeaway):/iu.test(firstLine)) {
     return "recap";

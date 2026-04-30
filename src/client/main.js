@@ -5268,6 +5268,70 @@ function isRichSessionMarkdownContent(text) {
   return /`[^`]+`|\*\*[^*]+\*\*|~~[^~]+~~|!\[[^\]]*\]\([^)]+\)|\[[^\]]+\]\([^)]+\)|\[\[[^\]]+\]\]/u.test(normalized);
 }
 
+// Detects file paths inside a CLI text fragment and turns each one into an
+// <a> wrapped around the original path text. Returns an HTML string that is
+// safe to inject (the surrounding text is escaped, and so is the path).
+//
+// Rules:
+//  * POSIX absolute paths (/Users/..., /home/...) — match until whitespace
+//    or a quote/paren/brace boundary.
+//  * Workspace-relative paths with at least one slash AND a final extension
+//    of 1-8 alphanum chars (so `src/foo.js`, `bin/vr-claude`, `package.json`).
+//  * Bare basenames with extensions and no slash are NOT linked — too noisy
+//    (every prose mention of a file would become a link).
+//  * Paths inside Markdown code fences are skipped — that path is presumably
+//    illustrative (assistant prose), and aggressive linking ruins copy-paste.
+//
+// `data-rich-path` carries the original text (relative or absolute). The
+// click handler in refreshRichSessionSurfaceUi resolves it to a workspace-
+// relative path against state.filesRoot before opening.
+function renderRichSessionPathLinks(text) {
+  const source = String(text ?? "");
+  if (!source) {
+    return "";
+  }
+
+  const re = /(\/(?:[\w.@~+-]|\\\s)+(?:\/(?:[\w.@~+-]|\\\s)+)+|(?:[\w.@~+-]+\/)+[\w.@~+-]+\.[A-Za-z0-9]{1,8})(?::(\d+)(?::(\d+))?)?/gu;
+
+  let result = "";
+  let cursor = 0;
+  for (const match of source.matchAll(re)) {
+    const [full, rawPath] = match;
+    const start = match.index ?? 0;
+    if (start > cursor) {
+      result += escapeHtml(source.slice(cursor, start));
+    }
+
+    // Don't linkify trailing punctuation or sentence terminators that landed
+    // in the path's character class. We trim them off the visible link AND
+    // the data-rich-path so the file resolver gets the real path.
+    let trailing = "";
+    let truncatedFull = full;
+    let truncatedPath = rawPath;
+    while (truncatedPath.length && /[.,;:!?)\]]/u.test(truncatedPath[truncatedPath.length - 1])) {
+      trailing = truncatedPath[truncatedPath.length - 1] + trailing;
+      truncatedPath = truncatedPath.slice(0, -1);
+      truncatedFull = truncatedFull.slice(0, -1);
+    }
+
+    if (!truncatedPath) {
+      result += escapeHtml(full);
+    } else {
+      const escapedPath = escapeHtml(truncatedPath);
+      const escapedDisplay = escapeHtml(truncatedFull);
+      result += `<a class="rich-session-path-link" href="#" data-rich-path="${escapedPath}" data-rich-path-full="${escapeHtml(truncatedFull)}">${escapedDisplay}</a>${escapeHtml(trailing)}`;
+    }
+
+    cursor = start + full.length;
+  }
+
+  if (cursor < source.length) {
+    result += escapeHtml(source.slice(cursor));
+  }
+
+  return result;
+}
+
 function renderRichSessionAssistantBody(text) {
   const normalized = String(text || "");
   if (!isRichSessionMarkdownContent(normalized)) {
@@ -5291,11 +5355,11 @@ function renderRichSessionEntry(entry, index) {
   const isAssistantPending = kind === "assistant" && !text.trim();
   const isThinking = isAssistantPending || isRichSessionThinkingEntry(entry);
   const icon = renderIcon(getRichSessionEntryIcon(kind), { className: "rich-session-entry-icon" });
-  const body = escapeHtml(text);
+  const body = renderRichSessionPathLinks(text);
   const metaParts = [entry?.meta || "", formatRichSessionTimestamp(entry?.timestamp)].filter(Boolean);
   const meta = metaParts.join(" · ");
   const outputPreview = entry?.outputPreview
-    ? `<pre class="rich-session-entry-pre is-output">${escapeHtml(entry.outputPreview)}</pre>`
+    ? `<pre class="rich-session-entry-pre is-output">${renderRichSessionPathLinks(entry.outputPreview)}</pre>`
     : "";
   const entryClassName = [
     "rich-session-entry",
@@ -36236,6 +36300,45 @@ function refreshShellUi({ sessions = true, ports = true, files = true } = {}) {
   refreshWorkspaceTabsUi();
 }
 
+// Resolves a path the user clicked inside the rich session feed and either
+// opens it in the workspace preview tab (path lives under the active root)
+// or copies it to the clipboard with a toast (path lives elsewhere — we
+// can't read it remotely, so the most useful action is "give me the path").
+async function openRichSessionPath(rawPath) {
+  const trimmed = String(rawPath || "").trim();
+  if (!trimmed) {
+    return;
+  }
+
+  // Strip ":line[:col]" suffixes that came from compiler-style locations.
+  const locationMatch = trimmed.match(/^(.+?)(?::(\d+)(?::\d+)?)?$/u);
+  const pathOnly = locationMatch ? locationMatch[1] : trimmed;
+
+  const root = normalizeWorkspaceRoot(state.filesRoot || state.defaultCwd || "");
+  let relativePath = "";
+
+  if (pathOnly.startsWith("/")) {
+    if (root && (pathOnly === root || pathOnly.startsWith(`${root}/`))) {
+      relativePath = pathOnly === root ? "" : pathOnly.slice(root.length + 1);
+    }
+  } else {
+    relativePath = pathOnly;
+  }
+
+  if (!relativePath) {
+    if (typeof navigator !== "undefined" && navigator.clipboard?.writeText) {
+      try {
+        await navigator.clipboard.writeText(pathOnly);
+      } catch {
+        // clipboard isn't always available (insecure context); fall through.
+      }
+    }
+    return;
+  }
+
+  await openWorkspaceFilePreview(relativePath, { force: false });
+}
+
 async function openWorkspaceFile(relativePath, { force = false } = {}) {
   const normalizedPath = normalizeFileTreePath(relativePath);
   const root = state.filesRoot;
@@ -38448,7 +38551,19 @@ function bindShellEvents() {
     syncTerminalScrollState();
   }, { passive: true });
   document.querySelector("#rich-session-feed")?.addEventListener("click", (event) => {
-    const button = event.target instanceof Element ? event.target.closest("[data-claude-prompt-send]") : null;
+    const target = event.target instanceof Element ? event.target : null;
+
+    const pathLink = target?.closest("a.rich-session-path-link");
+    if (pathLink instanceof HTMLAnchorElement) {
+      event.preventDefault();
+      const rawPath = pathLink.getAttribute("data-rich-path") || "";
+      if (rawPath) {
+        openRichSessionPath(rawPath);
+      }
+      return;
+    }
+
+    const button = target?.closest("[data-claude-prompt-send]");
     if (!(button instanceof HTMLElement)) return;
     event.preventDefault();
     const payload = button.getAttribute("data-claude-prompt-send") || "";
