@@ -2455,13 +2455,15 @@ const state = {
   richSessionPlanPushbackOpen: new Set(),
   // Sticky plan/todo panel — shows the latest plan/task list above the
   // composer so the user can see current progress while the chat scrolls.
-  // Per-session collapsed state so a user can dismiss it without losing
-  // it forever; it re-expands when a new plan or todo update arrives.
-  richSessionPlanPanelCollapsed: new Set(),
-  // Last (plan-entry-id, todo-entry-id) we showed in the panel — when these
-  // change (i.e. a NEW plan or todo update arrived), we auto-expand the
-  // panel even if the user had collapsed it. Avoids the "I collapsed it
-  // and now I never see updates" foot-gun.
+  // Default state is COLLAPSED (the header still surfaces "X of Y tasks
+  // completed" so the user always sees progress at a glance); the set
+  // tracks sessions where the user has explicitly EXPANDED the panel.
+  // We auto-expand only when a brand-new plan needs approval (the user
+  // has to act on it) — TodoWrite ticks no longer pop the panel back open
+  // every cycle, which made mobile feel noisy.
+  richSessionPlanPanelExpanded: new Set(),
+  // Last (plan-entry-id, todo-entry-id) we showed in the panel. We use
+  // this to detect a NEW pending plan and auto-expand the panel for it.
   richSessionPlanPanelLastSignature: {},
   richSessionRenderFrame: null,
   richSessionScrollToBottom: false,
@@ -6295,42 +6297,66 @@ function renderRichSessionPlanPanel(activeSession) {
   const sessionId = activeSession?.id || "";
   const signature = `${planEntry?.id || ""}|${todoEntry?.id || ""}`;
   const lastSignature = sessionId ? state.richSessionPlanPanelLastSignature[sessionId] : "";
-  // When the visible plan/todo identity changes (new plan ID or new
-  // TodoWrite emission), auto-expand: the user wanted updates surfaced.
+  // Default state is collapsed — the header line ("X of Y tasks completed")
+  // is enough at-a-glance status. Only auto-expand when a brand-new plan
+  // needs the user's approval (planEntry's identity changed): that's an
+  // action the user can't ignore, so it earns the screen real estate.
+  // TodoWrite-only updates do NOT auto-expand: they were popping the panel
+  // open every cycle and pushing the chat off-screen on mobile.
   if (sessionId && lastSignature !== signature) {
+    const planChanged = (planEntry?.id || "") && (lastSignature || "").split("|")[0] !== (planEntry?.id || "");
     state.richSessionPlanPanelLastSignature[sessionId] = signature;
-    state.richSessionPlanPanelCollapsed.delete(sessionId);
+    if (planChanged) {
+      state.richSessionPlanPanelExpanded.add(sessionId);
+    }
   }
-  const collapsed = sessionId ? state.richSessionPlanPanelCollapsed.has(sessionId) : false;
+  const collapsed = sessionId ? !state.richSessionPlanPanelExpanded.has(sessionId) : true;
 
-  // Header: "X of Y completed" when we have a todo list; else "Plan
-  // proposed" while waiting for plan approval.
+  // Header: "X / Y" + active-task preview when collapsed; "X of Y completed"
+  // when expanded. The collapsed header is also a click target — tapping
+  // anywhere on it expands the panel, which on mobile is a much bigger
+  // hit area than the small chevron alone.
   let headerText = "";
+  let counts = null;
+  let total = 0;
+  let progressRatio = 0;
+  let activeTaskLabel = "";
   if (todoEntry) {
-    const counts = summariseTodoCounts(todoEntry.todos);
-    const total = todoEntry.todos.length;
-    headerText = `${counts.completed} of ${total} ${total === 1 ? "task" : "tasks"} completed`;
-    if (counts.in_progress) headerText += ` · ${counts.in_progress} in progress`;
+    counts = summariseTodoCounts(todoEntry.todos);
+    total = todoEntry.todos.length;
+    progressRatio = total ? counts.completed / total : 0;
+    if (collapsed) {
+      headerText = `${counts.completed} / ${total}`;
+    } else {
+      headerText = `${counts.completed} of ${total} ${total === 1 ? "task" : "tasks"} completed`;
+      if (counts.in_progress) headerText += ` · ${counts.in_progress} in progress`;
+    }
+    const active = todoEntry.todos.find((t) => {
+      const s = String(t?.status || "").toLowerCase();
+      return s === "in_progress" || s === "active";
+    });
+    if (active) {
+      activeTaskLabel = String(active.activeForm || active.content || "").trim();
+    }
   } else if (planEntry) {
     headerText = "Plan proposed";
   }
 
-  const collapseGlyph = collapsed ? "↙" : "↗";
+  const collapseGlyph = collapsed ? "▾" : "▴";
   const headerHtml = `
-    <header class="rich-session-plan-panel-header">
+    <header class="rich-session-plan-panel-header" data-rich-session-plan-panel-toggle role="button" tabindex="0" aria-expanded="${collapsed ? "false" : "true"}">
       <span class="rich-session-plan-panel-icon" aria-hidden="true">⊟</span>
       <span class="rich-session-plan-panel-title">${escapeHtml(headerText)}</span>
-      <button
-        class="rich-session-plan-panel-collapse"
-        type="button"
-        aria-label="${collapsed ? "Expand plan panel" : "Collapse plan panel"}"
-        data-rich-session-plan-panel-toggle
-      >${collapseGlyph}</button>
+      ${collapsed && activeTaskLabel ? `<span class="rich-session-plan-panel-active-preview" title="${escapeHtml(activeTaskLabel)}">${escapeHtml(activeTaskLabel)}</span>` : ""}
+      <span class="rich-session-plan-panel-collapse" aria-hidden="true">${collapseGlyph}</span>
     </header>
   `;
 
   if (collapsed) {
-    return `<section class="rich-session-plan-panel is-collapsed" id="rich-session-plan-panel">${headerHtml}</section>`;
+    const collapsedProgress = todoEntry && total
+      ? `<div class="rich-session-plan-panel-progress is-collapsed-bar" aria-hidden="true"><div class="rich-session-plan-panel-progress-fill" style="width: ${(progressRatio * 100).toFixed(1)}%"></div></div>`
+      : "";
+    return `<section class="rich-session-plan-panel is-collapsed" id="rich-session-plan-panel">${headerHtml}${collapsedProgress}</section>`;
   }
 
   let bodyHtml = "";
@@ -41256,14 +41282,14 @@ function bindShellEvents() {
     document.addEventListener("click", (event) => {
       const target = event.target instanceof Element ? event.target : null;
       const toggle = target?.closest("[data-rich-session-plan-panel-toggle]");
-      if (toggle instanceof HTMLButtonElement) {
+      if (toggle instanceof HTMLElement) {
         event.preventDefault();
         const sid = getActiveSession()?.id;
         if (sid) {
-          if (state.richSessionPlanPanelCollapsed.has(sid)) {
-            state.richSessionPlanPanelCollapsed.delete(sid);
+          if (state.richSessionPlanPanelExpanded.has(sid)) {
+            state.richSessionPlanPanelExpanded.delete(sid);
           } else {
-            state.richSessionPlanPanelCollapsed.add(sid);
+            state.richSessionPlanPanelExpanded.add(sid);
           }
           refreshRichSessionSurfaceUi();
         }
@@ -41284,6 +41310,24 @@ function bindShellEvents() {
         }
       }
     }, { capture: true });
+    // Keyboard activation for the role=button plan panel header (the
+    // header itself is now the toggle so the whole strip is one big tap
+    // target on mobile).
+    document.addEventListener("keydown", (event) => {
+      if (event.key !== "Enter" && event.key !== " ") return;
+      const target = event.target instanceof Element ? event.target : null;
+      const toggle = target?.closest("[data-rich-session-plan-panel-toggle]");
+      if (!(toggle instanceof HTMLElement)) return;
+      event.preventDefault();
+      const sid = getActiveSession()?.id;
+      if (!sid) return;
+      if (state.richSessionPlanPanelExpanded.has(sid)) {
+        state.richSessionPlanPanelExpanded.delete(sid);
+      } else {
+        state.richSessionPlanPanelExpanded.add(sid);
+      }
+      refreshRichSessionSurfaceUi();
+    });
   }
 
   // Restart-session button on exited stream-mode sessions. Spawns a
