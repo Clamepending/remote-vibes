@@ -2,7 +2,7 @@ import assert from "node:assert/strict";
 import os from "node:os";
 import path from "node:path";
 import test from "node:test";
-import { mkdir, mkdtemp, rm } from "node:fs/promises";
+import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
 import { chromium } from "playwright-core";
 import { createVibeResearchApp } from "../src/create-app.js";
 import { resolveBrowserExecutablePath } from "../src/browser-runtime.js";
@@ -41,6 +41,15 @@ test("rich session native feed is clean even when the raw transcript is full of 
 
   const workspaceDir = await mkdtemp(path.join(os.tmpdir(), "vibe-research-rich-session-look-"));
   await mkdir(path.join(workspaceDir, "src"), { recursive: true });
+  // A 1x1 transparent PNG so the inline image renders end-to-end (the
+  // server actually opens this file when the renderer fetches it).
+  const pngBytes = Buffer.from(
+    "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNkYAAAAAYAAjCB0C8AAAAASUVORK5CYII=",
+    "base64",
+  );
+  await mkdir(path.join(workspaceDir, "figures"), { recursive: true });
+  await writeFile(path.join(workspaceDir, "figures", "fid-progress.png"), pngBytes);
+  await writeFile(path.join(workspaceDir, "figures", "ablation-curve.png"), pngBytes);
   const providers = [
     { id: "claude", label: "Claude Code", available: true, command: "claude", launchCommand: "claude", defaultName: "Claude" },
     { id: "shell", label: "Shell", available: true, command: null, launchCommand: null, defaultName: "Shell" },
@@ -178,7 +187,34 @@ test("rich session native feed is clean even when the raw transcript is full of 
               "Doctor passed. I pinned the v1 eval contract in projects/bidir-video-rl-bench/benchmark.md and installed paper.md from the template.",
               "",
               "**Next:** open src/research/bench-init.md to add the calibration table.",
+              "",
+              "Here's the FID figure for the 3-seed run: figures/fid-progress.png and the ablation curve at figures/ablation-curve.png.",
             ].join("\n"),
+            timestamp,
+          },
+          // Bash tool whose output explicitly says it wrote an image — should
+          // get an inline preview, but a Bash tool whose output happens to
+          // mention a .png path WITHOUT a "saved to" / "wrote" verb should
+          // not (we cover that with the negative case below).
+          {
+            kind: "tool",
+            label: "Bash",
+            text: "python plot_fid.py --out figures/fid-progress.png",
+            status: "done",
+            meta: "completed",
+            outputPreview: "saved to figures/fid-progress.png",
+            timestamp,
+          },
+          // Negative case: a grep over the figures dir mentions a .png path
+          // but should NOT auto-embed (or every grep result becomes a wall
+          // of images).
+          {
+            kind: "tool",
+            label: "Bash",
+            text: "grep -rn 'fid' figures/",
+            status: "done",
+            meta: "completed",
+            outputPreview: "figures/fid-progress.png:1:fid 3.671",
             timestamp,
           },
         ],
@@ -212,6 +248,18 @@ test("rich session native feed is clean even when the raw transcript is full of 
       const todoItems = todoBlock ? Array.from(todoBlock.querySelectorAll(".rich-session-todo-item")) : [];
       const monitorPills = Array.from(document.querySelectorAll("#rich-session-monitors .rich-session-monitor-pill"));
       const slashAction = document.querySelector("[data-rich-session-slash-command]");
+      const assistantEntry = entries.find((entry) => entry.classList.contains("is-assistant"));
+      const assistantImageTiles = assistantEntry
+        ? Array.from(assistantEntry.querySelectorAll(".rich-session-image-tile"))
+        : [];
+      const greptoolEntry = toolEntries.find((entry) => /grep/i.test(entry.textContent || ""));
+      const plotToolEntry = toolEntries.find((entry) => /plot_fid/i.test(entry.textContent || ""));
+      const greptoolImageTiles = greptoolEntry
+        ? Array.from(greptoolEntry.querySelectorAll(".rich-session-image-tile"))
+        : [];
+      const plotToolImageTiles = plotToolEntry
+        ? Array.from(plotToolEntry.querySelectorAll(".rich-session-image-tile"))
+        : [];
       return {
         feedText: feed?.textContent || "",
         toolCount: toolEntries.length,
@@ -226,6 +274,10 @@ test("rich session native feed is clean even when the raw transcript is full of 
         monitorPillLabels: monitorPills.map((pill) => pill.textContent.trim()),
         slashActionCommand: slashAction?.getAttribute("data-rich-session-slash-command") || "",
         slashActionLabel: slashAction?.textContent?.trim() || "",
+        assistantImageCount: assistantImageTiles.length,
+        assistantImagePaths: assistantImageTiles.map((tile) => tile.getAttribute("data-rich-path") || ""),
+        plotToolImageCount: plotToolImageTiles.length,
+        greptoolImageCount: greptoolImageTiles.length,
       };
     });
 
@@ -236,7 +288,7 @@ test("rich session native feed is clean even when the raw transcript is full of 
     assert.doesNotMatch(summary.feedText, /✦\s+·\s+\d+\s+✦/u);
 
     // 2. Tool entry counts and statuses match the input.
-    assert.equal(summary.toolCount, 6, "expected 6 tool entries (Bash, TodoWrite, Edit, ToolSearch, Monitor, Bash)");
+    assert.equal(summary.toolCount, 8, "expected 8 tool entries (Bash, TodoWrite, Edit, ToolSearch, Monitor, Bash, plot Bash, grep Bash)");
     assert.equal(summary.runningToolCount, 3);
     assert.equal(summary.errorToolCount, 1);
 
@@ -288,6 +340,23 @@ test("rich session native feed is clean even when the raw transcript is full of 
     await page.keyboard.press("Tab");
     const inputAfterTab = await page.inputValue("#rich-session-input");
     assert.equal(inputAfterTab, "/login ");
+
+    // 9. Image refs in assistant text auto-embed as inline tiles. The agent
+    //    just writes "see figures/x.png" — no markdown required — and the
+    //    image shows up.
+    assert.equal(summary.assistantImageCount, 2,
+      `expected 2 inline images under the assistant entry, got ${summary.assistantImageCount}`);
+    assert.deepEqual(summary.assistantImagePaths.sort(), [
+      "figures/ablation-curve.png",
+      "figures/fid-progress.png",
+    ]);
+
+    // 10. Image-producing tool calls (Bash with "saved to" verb) embed the
+    //     image; grep output mentioning the same path does NOT.
+    assert.equal(summary.plotToolImageCount, 1,
+      `expected the plot Bash tool to embed the saved figure, got ${summary.plotToolImageCount}`);
+    assert.equal(summary.greptoolImageCount, 0,
+      `expected grep output NOT to embed the figure, got ${summary.greptoolImageCount}`);
   } finally {
     await browser?.close().catch(() => {});
     await app.close();
