@@ -16129,6 +16129,49 @@ details.rich-session-compact-output[open] .rich-session-compact-output-toggle {
   height: 17px;
 }
 
+/* Send button working state. The icon and the spinner stack on top of
+   each other; whichever has aria-hidden=false is shown. The whole pile
+   sits in the same 44px circle so the button doesn't reflow as it
+   morphs between the two states. */
+.rich-session-send-icon,
+.rich-session-send-spinner {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 17px;
+  height: 17px;
+  line-height: 1;
+}
+
+.rich-session-send-icon[aria-hidden="true"],
+.rich-session-send-spinner[aria-hidden="true"] {
+  display: none;
+}
+
+.rich-session-send-spinner {
+  width: 16px;
+  height: 16px;
+  border: 2px solid currentColor;
+  border-right-color: transparent;
+  border-radius: 999px;
+  opacity: 0.86;
+  animation: rich-session-thinking-spin 0.85s linear infinite;
+}
+
+/* While the agent is working, the send button keeps the same circle but
+   reads as "queue / wait" rather than "send now". Submitting is still
+   allowed (the message goes to the queue, not to the agent). */
+.rich-session-send.is-working {
+  cursor: progress;
+}
+
+/* The standalone "X is replying…" activity strip is gone — the send
+   button now carries the working signal. Hide any leftover element if
+   it still renders (e.g. cached HTML). */
+.rich-session-working {
+  display: none !important;
+}
+
 .terminal-transcript-pre {
   min-height: 100%;
   width: 100%;

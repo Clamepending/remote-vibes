@@ -6850,24 +6850,18 @@ function renderRichSessionSurface(activeSession) {
   const richActive = surfaceMode === "native";
   const streamLogActive = surfaceMode === "stream-json";
   const surfaceActive = richActive || streamLogActive;
-  // Single authoritative "what's the agent doing right now" indicator.
-  // Pending placeholders are no longer rendered inline (see
-  // renderRichSessionEntry's early return), so the strip is always
-  // shown when streamWorking is true — its label reflects whichever of
-  // tool / replying / thinking the narrative tail signals.
-  const activity = deriveRichSessionActivity(activeSession);
-  const isWorking = activity !== null;
-  const activityLabel = activity?.label || `${activeSession?.providerLabel || "Agent"} is working…`;
-  const activityKindClass = activity?.kind ? `is-activity-${activity.kind}` : "";
+  // The "agent is doing X right now" signal lives ON the send button now
+  // (it morphs into a spinner while streamWorking is true). The standalone
+  // activity strip used to be a full-width row above the composer with
+  // the label "Claude Code is replying…", which doubled the chrome and
+  // pushed messages off-screen on mobile. The send-button affordance is
+  // less noisy and never fights with the queue strip for vertical space.
+  const isWorking = Boolean(activeSession?.streamWorking);
   const activeMonitors = getRichSessionActiveMonitors(activeSession);
   return `
     <div class="rich-session-surface ${surfaceActive ? "is-active" : ""} ${streamLogActive ? "is-stream-log" : ""}" id="rich-session-surface" aria-hidden="${surfaceActive ? "false" : "true"}" data-rich-session-surface-mode="${escapeHtml(surfaceMode)}">
       <div class="rich-session-feed ${richActive ? "" : "is-hidden"}" id="rich-session-feed" aria-hidden="${richActive ? "false" : "true"}">${renderRichSessionFeedHtml(activeSession)}</div>
       <div class="rich-session-stream-log ${streamLogActive ? "" : "is-hidden"}" id="rich-session-stream-log" aria-hidden="${streamLogActive ? "false" : "true"}"></div>
-      <div class="rich-session-working ${isWorking ? "is-active" : ""} ${activityKindClass}" id="rich-session-working" aria-live="polite" aria-hidden="${isWorking ? "false" : "true"}">
-        <span class="rich-session-thinking-spinner" aria-hidden="true"></span>
-        <span class="rich-session-working-label">${escapeHtml(activityLabel)}</span>
-      </div>
       <div class="rich-session-monitors ${activeMonitors.length ? "is-active" : ""}" id="rich-session-monitors" aria-hidden="${activeMonitors.length ? "false" : "true"}">
         ${activeMonitors.map((m) => `<span class="rich-session-monitor-pill" title="${escapeHtml(m.tooltip)}"><span class="rich-session-monitor-dot" aria-hidden="true"></span>${escapeHtml(m.label)}</span>`).join("")}
       </div>
@@ -6889,13 +6883,15 @@ function renderRichSessionSurface(activeSession) {
           <div class="rich-session-composer-foot">
             <div class="rich-session-composer-actions">
               <button
-                class="primary-button toolbar-control rich-session-send"
+                class="primary-button toolbar-control rich-session-send ${isWorking ? "is-working" : ""}"
                 type="submit"
                 id="rich-session-send"
                 data-terminal-control
-                aria-label="Send message"
+                aria-label="${isWorking ? "Queue message — agent is still working" : "Send message"}"
+                title="${isWorking ? "Queue message — agent is still working" : ""}"
               >
-                ${renderIcon(ArrowUp)}
+                <span class="rich-session-send-icon" aria-hidden="${isWorking ? "true" : "false"}">${renderIcon(ArrowUp)}</span>
+                <span class="rich-session-send-spinner" aria-hidden="${isWorking ? "false" : "true"}"></span>
               </button>
             </div>
           </div>
@@ -7136,26 +7132,24 @@ function refreshRichSessionSurfaceUi({ scrollToBottom = false } = {}) {
     }
   }
 
-  // Update the persistent activity indicator without rebuilding it.
-  // The strip's label reflects whichever of tool / replying / thinking
-  // the narrative tail currently signals (see deriveRichSessionActivity).
-  const workingIndicator = document.querySelector("#rich-session-working");
-  if (workingIndicator instanceof HTMLElement) {
-    const activity = deriveRichSessionActivity(activeSession);
-    const isWorking = activity !== null;
-    workingIndicator.classList.toggle("is-active", isWorking);
-    workingIndicator.setAttribute("aria-hidden", isWorking ? "false" : "true");
-    // Reset all activity-kind classes, then apply the current one.
-    for (const cls of Array.from(workingIndicator.classList)) {
-      if (cls.startsWith("is-activity-")) workingIndicator.classList.remove(cls);
-    }
-    if (activity?.kind) {
-      workingIndicator.classList.add(`is-activity-${activity.kind}`);
-    }
-    const label = workingIndicator.querySelector(".rich-session-working-label");
-    if (label instanceof HTMLElement) {
-      label.textContent = activity?.label || `${activeSession?.providerLabel || "Agent"} is working…`;
-    }
+  // Send-button working state. The send button morphs into a spinner
+  // while streamWorking is true, replacing the old "Claude is replying…"
+  // strip above the composer. The submit handler still works during this
+  // state — submitting just enqueues instead of sending immediately, and
+  // the placeholder change ("Queue a message for…") makes that intent
+  // legible.
+  const sendButtonForState = document.querySelector("#rich-session-send");
+  const isAgentWorking = Boolean(activeSession?.streamWorking);
+  if (sendButtonForState instanceof HTMLButtonElement) {
+    sendButtonForState.classList.toggle("is-working", isAgentWorking);
+    const sendIcon = sendButtonForState.querySelector(".rich-session-send-icon");
+    const sendSpinner = sendButtonForState.querySelector(".rich-session-send-spinner");
+    if (sendIcon instanceof HTMLElement) sendIcon.setAttribute("aria-hidden", isAgentWorking ? "true" : "false");
+    if (sendSpinner instanceof HTMLElement) sendSpinner.setAttribute("aria-hidden", isAgentWorking ? "false" : "true");
+    sendButtonForState.setAttribute(
+      "aria-label",
+      isAgentWorking ? "Queue message — agent is still working" : "Send message",
+    );
   }
 
   // Update the active monitors row (subagents / background tasks).
