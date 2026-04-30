@@ -86,7 +86,14 @@ See [LOG.md](./LOG.md) - append-only event history.
   return dir;
 }
 
-function writeResult(dir, slug, { status = "active", frontmatter = "", decision = "", cycles = "" } = {}) {
+function writeResult(dir, slug, {
+  status = "active",
+  frontmatter = "",
+  decision = "",
+  cycles = "",
+  results = "- score=0.81 from toy artifact.",
+  reproducibility = "- command `node toy.js`.",
+} = {}) {
   writeFileSync(join(dir, "results", `${slug}.md`), `${frontmatter}# ${slug}
 
 ## TAKEAWAY
@@ -131,7 +138,7 @@ ${cycles || "- cycle 1 @abcdef0: toy command -> metric=0.81. qual: completed."}
 
 ## Results
 
-- score=0.81 from toy artifact.
+${results}
 
 ## Agent canvas
 
@@ -143,7 +150,7 @@ Toy analysis.
 
 ## Reproducibility
 
-- command \`node toy.js\`.
+${reproducibility}
 
 ## Leaderboard verdict
 
@@ -181,6 +188,41 @@ test("judgeMove recommends rerun when quantitative admission is blocked", async 
     assert.equal(report.issueSummary.error >= 1, true);
     assert.match(report.summary, /admit=blocked/);
     assert.ok(report.issues.some((item) => item.code === "result_quant_frontmatter_missing"));
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+test("judgeMove flags missing artifact links for fast review", async () => {
+  const dir = makeProject("vr-judge-artifact-missing");
+  try {
+    writeResult(dir, "first-move", {
+      status: "active",
+      results: "- artifact `artifacts/first-move/missing.log` recorded the run.",
+      reproducibility: "- command `node toy.js`; artifact `artifacts/first-move/missing.log`; git `abcdef0`.",
+    });
+    const report = await judgeMove({ projectDir: dir, slug: "first-move", checkPaper: false });
+    assert.ok(report.issues.some((item) => item.code === "artifact_missing"));
+    assert.equal(report.evaluatorStrength, "weak");
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+test("judgeMove treats existing artifact provenance as medium-strength evidence", async () => {
+  const dir = makeProject("vr-judge-artifact-present");
+  try {
+    mkdirSync(join(dir, "artifacts", "first-move"), { recursive: true });
+    writeFileSync(join(dir, "artifacts", "first-move", "cycle-1.log"), "score=0.81\n");
+    writeResult(dir, "first-move", {
+      status: "active",
+      results: "- artifact `artifacts/first-move/cycle-1.log` recorded the run.",
+      reproducibility: "- command `node toy.js`; artifact `artifacts/first-move/cycle-1.log`; git `abcdef0`.",
+    });
+    const report = await judgeMove({ projectDir: dir, slug: "first-move", checkPaper: false });
+    assert.equal(report.issues.some((item) => item.code === "artifact_missing"), false);
+    assert.equal(report.evaluatorStrength, "medium");
+    assert.match(report.summary, /evaluator=medium/);
   } finally {
     rmSync(dir, { recursive: true, force: true });
   }
