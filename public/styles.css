@@ -3369,6 +3369,69 @@ input[readonly][data-folder-picker-target] {
   min-width: 0;
 }
 
+/* Collapsed view shown when a building is fully installed + verified.
+   Replaces the verbose 4-step / 4-card setup panel with a green ready
+   pill and the building's doc links. See renderPluginReadyPanel. */
+.plugin-ready-panel {
+  display: grid;
+  gap: 14px;
+  margin: 0 14px 14px;
+  padding: 16px;
+  border: 1px solid rgba(120, 220, 150, 0.28);
+  border-radius: 10px;
+  background: rgba(120, 220, 150, 0.06);
+}
+
+.plugin-ready-head {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  min-width: 0;
+}
+
+.plugin-ready-pill {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 4px 10px;
+  border-radius: 999px;
+  background: rgba(120, 220, 150, 0.18);
+  color: rgb(150, 240, 180);
+  font-size: 0.78rem;
+  font-weight: 600;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+}
+
+.plugin-ready-copy {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  min-width: 0;
+}
+
+.plugin-ready-copy strong {
+  font-size: 1rem;
+  color: rgba(255, 255, 255, 0.94);
+}
+
+.plugin-ready-copy em {
+  font-style: normal;
+  font-size: 0.82rem;
+  color: rgba(255, 255, 255, 0.6);
+}
+
+.plugin-ready-doc-links {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  min-width: 0;
+}
+
+.plugin-ready-doc-link {
+  font-size: 0.85rem;
+}
+
 .plugin-install-progressive {
   display: grid;
   gap: 12px;

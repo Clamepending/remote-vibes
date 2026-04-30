@@ -2259,6 +2259,14 @@ const state = {
     wandbApiKeyConfigured: false,
     wandbEnabled: false,
     wandbEntity: "",
+    // Modal's `install.enabledSetting` is "modalEnabled" with
+    // `storedFallback: false`, so isPluginInstalled() reads
+    // state.settings.modalEnabled to decide whether the building is
+    // installed. The server persists this flag and includes it in
+    // /api/state and /api/settings PATCH responses; the client just needs
+    // a slot for it (without one, applySettingsState would still drop the
+    // value, and the "Add Modal" button would never go away).
+    modalEnabled: false,
   },
   folderPicker: {
     open: false,
@@ -15214,10 +15222,92 @@ async function runBuildingInstallPlan(building) {
     status: final.status || "failed",
     fields: final.fields || final.result?.fields || null,
     reason: final.reason || final.result?.reason || "",
+    // Carry through the auth prompt so the next-step action knows whether
+    // to render a "Sign in to <building>" button (auth-browser-cli) vs a
+    // paste field (auth-paste).
+    authPrompt: final.authPrompt || final.result?.authPrompt || null,
     finishedAt: new Date().toISOString(),
     log: Array.isArray(final.log) ? final.log : (final.result?.log || []),
   };
   refreshSystemToastsUi({ force: true });
+  // Re-render so the building's side panel picks up the new install
+  // status — without this, transitions to auth-required (which surface
+  // a new Authenticate button via getPluginNextSetupAction) would only
+  // show after the next unrelated render tick.
+  renderShell();
+  return state.buildingInstallJobs[buildingId];
+}
+
+// Run ONLY the auth phase of a building's install plan — for buildings
+// whose install returned `auth-required` with `authPrompt.kind ===
+// "auth-browser-cli"`. This is what clicking the explicit "Authenticate"
+// button triggers. Polling logic mirrors runBuildingInstallPlan; the
+// server endpoint is /api/buildings/:id/authenticate.
+async function runBuildingAuthPlan(building) {
+  if (!building?.install?.plan?.auth) {
+    return null;
+  }
+  const buildingId = getPluginId(building);
+  if (!buildingId) return null;
+
+  const startedAt = new Date().toISOString();
+  state.buildingInstallJobs = {
+    ...state.buildingInstallJobs,
+    [buildingId]: { jobId: "", status: "starting", startedAt, name: building.name || buildingId, phase: "authenticate" },
+  };
+  refreshSystemToastsUi({ force: true });
+
+  let initial;
+  try {
+    initial = await fetchJson(`/api/buildings/${encodeURIComponent(buildingId)}/authenticate`, { method: "POST" });
+  } catch (error) {
+    state.buildingInstallJobs[buildingId] = {
+      ...state.buildingInstallJobs[buildingId],
+      status: "failed",
+      reason: error?.message || "could not start auth",
+      finishedAt: new Date().toISOString(),
+    };
+    refreshSystemToastsUi({ force: true });
+    return null;
+  }
+
+  state.buildingInstallJobs[buildingId] = {
+    ...state.buildingInstallJobs[buildingId],
+    jobId: initial.jobId,
+    status: initial.status || "running",
+  };
+  refreshSystemToastsUi({ force: true });
+
+  // Auth can take a while — the user has to switch tabs, sign in, and
+  // come back. Poll up to the auth step's declared timeout (default 5
+  // min in the registry).
+  const POLL_MS = 750;
+  const MAX_POLLS = 800;  // ~10 min upper bound; runner enforces auth.timeoutSec.
+  let final = initial;
+  for (let i = 0; i < MAX_POLLS; i += 1) {
+    if (final.status && final.status !== "running" && final.status !== "starting") {
+      break;
+    }
+    await sleep(POLL_MS);
+    try {
+      final = await fetchJson(`/api/buildings/${encodeURIComponent(buildingId)}/install/jobs/${encodeURIComponent(initial.jobId)}`);
+    } catch {
+      continue;
+    }
+  }
+
+  state.buildingInstallJobs[buildingId] = {
+    ...state.buildingInstallJobs[buildingId],
+    status: final.status || "failed",
+    reason: final.reason || final.result?.reason || "",
+    // Successful auth clears the prompt; failed auth keeps it so the user
+    // can retry.
+    authPrompt: final.status === "ok" ? null : (final.authPrompt || final.result?.authPrompt || state.buildingInstallJobs[buildingId]?.authPrompt || null),
+    finishedAt: new Date().toISOString(),
+    log: Array.isArray(final.log) ? final.log : (final.result?.log || []),
+  };
+  refreshSystemToastsUi({ force: true });
+  renderShell();
   return state.buildingInstallJobs[buildingId];
 }
 
@@ -15237,6 +15327,17 @@ function startFunctionalPluginPlacementInstall(pluginId) {
   const normalizedPluginId = getPluginId(plugin);
   if (isPluginInstalled(plugin)) {
     return false;
+  }
+
+  // If the building is already on the map (e.g. user placed it earlier and the
+  // tile shows "needs setup"), skip placement and run the install plan instead
+  // — flipping the enabled setting kicks off runBuildingInstallPlan inside
+  // setPluginInstalled, which executes the building's auth / token flow
+  // (e.g. `modal token new --source web`). Without this branch the click
+  // handler made the user re-place the building they had already placed.
+  if (getAgentTownFunctionalPlacement(normalizedPluginId)) {
+    void setPluginInstalled(normalizedPluginId, true, { force: true });
+    return true;
   }
 
   state.pluginInstallActions = {
@@ -15615,6 +15716,24 @@ function getPluginBuildingIssue(plugin) {
 
   if (getPluginPendingAction(plugin)) {
     return null;
+  }
+
+  // Browser-CLI auth pending: install ran, verify failed, and we deferred
+  // the auth command to a deliberate user click. Surface this as an issue
+  // so renderPluginDetailSettings flips to the next-step view (which then
+  // renders the "Sign in to <building>" button via getPluginNextSetupAction).
+  // Without this branch the building's panel would say "1/1 checks ready"
+  // even though the user still has to authenticate.
+  const installJob = state.buildingInstallJobs?.[getPluginId(plugin)];
+  if (
+    installJob
+    && installJob.status === "auth-required"
+    && installJob.authPrompt?.kind === "auth-browser-cli"
+  ) {
+    return {
+      detail: installJob.authPrompt.detail || `Sign in to ${plugin.name} to finish setup.`,
+      label: "needs sign-in",
+    };
   }
 
   if (!isPluginInstalled(plugin)) {
@@ -16027,6 +16146,25 @@ function getPluginNextSetupAction(plugin) {
     return null;
   }
 
+  // Browser-CLI auth is deferred: the install runner returns auth-required
+  // with `authPrompt.kind === "auth-browser-cli"` instead of auto-popping
+  // a sign-in tab the moment placement finishes. Surface the explicit
+  // "Sign in to <building>" button here so the user controls when the
+  // browser tab actually opens.
+  const installJob = state.buildingInstallJobs?.[pluginId];
+  if (
+    installJob
+    && installJob.status === "auth-required"
+    && installJob.authPrompt?.kind === "auth-browser-cli"
+  ) {
+    return {
+      type: "authenticate",
+      detail: installJob.authPrompt.detail || `Sign in to ${plugin.name} to finish setup.`,
+      label: installJob.authPrompt.label || `Sign in to ${plugin.name}`,
+      pluginId,
+    };
+  }
+
   if (!isPluginInstalled(plugin)) {
     return setupForm
       ? { type: "form", detail: "Enable this building and save the required access.", form: setupForm }
@@ -16118,13 +16256,16 @@ function renderPluginNextSetupAction(plugin, issue = getPluginBuildingIssue(plug
   const installAttrs = action.type === "install" || action.type === "enable"
     ? `data-plugin-finish-install="${escapeHtml(action.pluginId)}"`
     : "";
+  const authenticateAttrs = action.type === "authenticate"
+    ? `data-plugin-authenticate="${escapeHtml(action.pluginId)}"`
+    : "";
   const variableAttrs = action.type === "variable" && action.target
     ? `data-plugin-setup-focus="${escapeHtml(action.target.pluginId)}" data-plugin-setup-setting="${escapeHtml(action.target.setting)}" data-plugin-setup-selector="${escapeHtml(action.target.selector)}"`
     : "";
   const fallbackHref = action.type === "variable" && setupUrl
     ? `href="${escapeHtml(setupUrl)}" target="_blank" rel="noreferrer"`
     : "";
-  const canRenderButton = Boolean(confirmAttrs || installAttrs || variableAttrs);
+  const canRenderButton = Boolean(confirmAttrs || installAttrs || authenticateAttrs || variableAttrs);
 
   return `
     <section class="plugin-next-step ${minimal ? "is-minimal" : ""}" aria-label="${escapeHtml(`${plugin.name} next step`)}" data-plugin-setup-root="${escapeHtml(getPluginId(plugin))}">
@@ -16136,7 +16277,7 @@ function renderPluginNextSetupAction(plugin, issue = getPluginBuildingIssue(plug
       <div class="plugin-onboarding-actions">
         ${
           canRenderButton
-            ? `<button class="primary-button plugin-next-step-button" type="button" ${confirmAttrs || installAttrs || variableAttrs}>
+            ? `<button class="primary-button plugin-next-step-button" type="button" ${confirmAttrs || installAttrs || authenticateAttrs || variableAttrs}>
                 <span aria-hidden="true">${renderIcon(plugin.icon || Plug)}</span>
                 <span>${escapeHtml(buttonLabel)}</span>
               </button>`
@@ -16819,6 +16960,76 @@ function renderPluginWorkspaceAction(plugin) {
   `;
 }
 
+// "Fully ready" = the building is installed, has no outstanding issue,
+// and any setup steps with a `completeWhen` check have passed. When this
+// is true, the verbose 4-step / 4-card / wall-of-text setup view is just
+// noise — the user only needs a confirmation that things are wired up
+// plus quick access to docs. See renderPluginReadyPanel.
+function isPluginFullyReady(plugin) {
+  if (!plugin) return false;
+  if (!isPluginInstalled(plugin)) return false;
+  if (getPluginBuildingIssue(plugin)) return false;
+
+  const enabledSetting = String(plugin?.install?.enabledSetting || "").trim();
+  if (enabledSetting && state.settings?.[enabledSetting] !== true) return false;
+
+  if (getPluginMissingConfiguration(plugin)) return false;
+
+  // If there's an install job in flight or in a non-ok terminal state,
+  // we're not "ready" yet.
+  const installJob = state.buildingInstallJobs?.[getPluginId(plugin)];
+  if (installJob && installJob.status && installJob.status !== "ok") return false;
+
+  // Onboarding progress: every step that has a completeWhen must be done.
+  const progress = getPluginOnboardingProgress(plugin);
+  if (progress.total > 0 && progress.complete < progress.total) return false;
+
+  return true;
+}
+
+function renderPluginReadyPanel(plugin) {
+  const docs = getPluginSetupDocs(plugin);
+  const access = getPluginAccess(plugin);
+  // The full access description is verbose by design — it tells the user
+  // (and any LLM reading the manifest) what credentials the building
+  // needs. Once installed, the user already has those, so we collapse
+  // it to just the access label as a one-line subtitle.
+  const accessLabel = String(access?.label || "").trim();
+
+  return `
+    <section class="plugin-ready-panel" aria-label="${escapeHtml(`${plugin.name} ready`)}" data-plugin-setup-root="${escapeHtml(getPluginId(plugin))}">
+      <div class="plugin-ready-head">
+        <span class="plugin-ready-pill" aria-label="installed and ready">
+          <span aria-hidden="true">✓</span>
+          <span>ready</span>
+        </span>
+        <div class="plugin-ready-copy">
+          <strong>${escapeHtml(plugin.name)}</strong>
+          ${accessLabel ? `<em>${escapeHtml(accessLabel)}</em>` : ""}
+        </div>
+      </div>
+      ${
+        docs.length
+          ? `
+            <div class="plugin-ready-doc-links" aria-label="${escapeHtml(`${plugin.name} docs`)}">
+              ${docs
+                .map(
+                  (doc) => `
+                    <a class="ghost-button plugin-ready-doc-link" href="${escapeHtml(doc.url)}" target="_blank" rel="noreferrer">
+                      <span aria-hidden="true">${renderIcon(BookOpen)}</span>
+                      <span>${escapeHtml(doc.label)}</span>
+                    </a>
+                  `,
+                )
+                .join("")}
+            </div>
+          `
+          : ""
+      }
+    </section>
+  `;
+}
+
 function renderPluginDetailSettings(plugin) {
   const entryView = renderPluginEntryView(plugin);
   if (entryView) {
@@ -16830,6 +17041,16 @@ function renderPluginDetailSettings(plugin) {
     return renderPluginNextSetupAction(plugin, issue, {
       minimal: shouldUseMinimalPreOnboardingPluginView(plugin),
     });
+  }
+
+  // Fully-ready collapsed view: the verbose access block + 4-step
+  // onboarding list + variable cards are just clutter once the building
+  // is installed, configured, and verified. Show a green pill + the
+  // building's docs links instead. The full onboarding contract is
+  // still reachable via the agent guide section rendered elsewhere on
+  // the detail page; this block is only the per-building setup panel.
+  if (isPluginFullyReady(plugin)) {
+    return renderPluginReadyPanel(plugin);
   }
 
   const access = getPluginAccess(plugin);
@@ -34685,6 +34906,36 @@ function bindPluginCardEvents() {
     });
   });
 
+  // "Sign in to <building>" button. Surfaced when the install runner has
+  // returned auth-required for an auth-browser-cli plan — clicking it
+  // POSTs /api/buildings/:id/authenticate, which spawns the auth command
+  // server-side (e.g. `modal token new --source web`), opening a browser
+  // tab for the user to sign in.
+  document.querySelectorAll("[data-plugin-authenticate]").forEach((button) => {
+    button.addEventListener("click", () => {
+      if (!(button instanceof HTMLButtonElement)) {
+        return;
+      }
+      const pluginId = button.getAttribute("data-plugin-authenticate") || "";
+      const plugin = getPluginById(pluginId);
+      if (!plugin) return;
+      button.disabled = true;
+      const labelSpan = button.querySelector("span:last-child");
+      const previousLabel = labelSpan?.textContent || "";
+      if (labelSpan) labelSpan.textContent = "Signing in…";
+      void runBuildingAuthPlan(plugin).finally(() => {
+        // The renderShell inside runBuildingAuthPlan will re-render this
+        // section once the auth job resolves; fall back to restoring the
+        // label here in case the rerender is suppressed (e.g. detail view
+        // closed mid-auth).
+        if (document.body.contains(button)) {
+          button.disabled = false;
+          if (labelSpan) labelSpan.textContent = previousLabel;
+        }
+      });
+    });
+  });
+
   bindPluginInstallStepEvents();
 }
 
@@ -38338,6 +38589,15 @@ function applySettingsState(payload) {
       state.settings.wikiBackupIntervalMs ||
       5 * 60 * 1000,
     wikiBackup: backup || null,
+    // modalEnabled: without this read, the server's PATCH response is
+    // dropped client-side and isPluginInstalled(modal) stays false even
+    // after the install plan completes — the "Add Modal" button never
+    // disappears, so the user clicks it expecting the auth flow and the
+    // panel just briefly flickers (looks like the click did nothing).
+    modalEnabled:
+      settings.modalEnabled === undefined
+        ? state.settings.modalEnabled
+        : Boolean(settings.modalEnabled),
   };
   if (settings.agentSpawnPath !== undefined && state.settings.agentSpawnPath) {
     state.defaultCwd = state.settings.agentSpawnPath;
