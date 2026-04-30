@@ -18,6 +18,7 @@ import { removeQueueRow } from "./queue-edit.js";
 import { resolveMove } from "./resolve.js";
 import { updateResearchState } from "./brief.js";
 import { lintPaper } from "./paper-lint.js";
+import { budgetCapBreaches, isBudgetCapReached, normalizeBudgetDebits } from "./budget.js";
 
 const execFileAsync = promisify(execFile);
 const DEFAULT_TIMEOUT_MS = 30 * 60 * 1000;
@@ -992,6 +993,7 @@ export async function claimNextMove({
   gitFetch = false,
   gitPush = false,
   gitRemote = "origin",
+  allowBudgetCap = false,
 } = {}) {
   if (!projectDir) throw new TypeError("projectDir is required");
   const readmePath = path.join(projectDir, "README.md");
@@ -1009,6 +1011,11 @@ export async function claimNextMove({
       resumed: true,
       claimed: false,
     };
+  }
+
+  if (!allowBudgetCap && isBudgetCapReached(project.budget)) {
+    const caps = budgetCapBreaches(project.budget).map((cap) => cap.summary).join("; ");
+    throw new Error(`budget cap reached (${caps}); human review is required before claiming a new move (pass --allow-budget-cap after approval)`);
   }
 
   const queueRow = requestedSlug
@@ -1277,6 +1284,7 @@ export async function runNextMove({
   gitAllowEmpty = false,
   gitPush = false,
   gitRemote = "origin",
+  allowBudgetCap = false,
 } = {}) {
   const claim = await claimNextMove({
     projectDir,
@@ -1294,6 +1302,7 @@ export async function runNextMove({
     gitFetch,
     gitPush: prepareBranch ? gitPush : false,
     gitRemote,
+    allowBudgetCap,
   });
   const cycle = await runCycle({
     projectDir,
@@ -1341,6 +1350,8 @@ export async function finishMove({
   commit = "",
   score = "",
   summary = "",
+  costCompute = "",
+  costDollars = "",
   updatePaper = false,
   paperFigure = "",
   paperCaption = "",
@@ -1415,6 +1426,15 @@ export async function finishMove({
     text = replaceSectionBody(text, "Queue updates", queueUpdates.join("\n"));
   }
 
+  const budgetDebits = normalizeBudgetDebits({ compute: costCompute, dollars: costDollars });
+  const hasBudgetDebit = budgetDebits.compute > 0 || budgetDebits.dollars > 0;
+  if (hasBudgetDebit) {
+    const costParts = [];
+    if (budgetDebits.compute > 0) costParts.push(`compute=${formatNumber(budgetDebits.compute)}`);
+    if (budgetDebits.dollars > 0) costParts.push(`dollars=${formatNumber(budgetDebits.dollars)}`);
+    text = appendSectionBullet(text, "Reproducibility", `- cost: ${costParts.join("; ")}.`);
+  }
+
   await atomicWrite(resultPath, text);
   if (apply && admissionBlocked) {
     throw new Error("auto-admission is blocked; wrote the verdict to the result doc but did not apply README/LOG updates");
@@ -1474,6 +1494,7 @@ export async function finishMove({
       summary,
       score,
       commit,
+      budgetDebits,
     })
     : null;
 

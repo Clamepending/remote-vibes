@@ -43,6 +43,8 @@ Optional overrides (auto-derived if omitted):
   --summary <text>   LOG summary. Defaults to the first line of TAKEAWAY.
   --score <text>     Leaderboard score cell. Defaults to "<mean> ± <std>
                      across n=<seeds> seeds" from frontmatter.
+  --cost-compute <N> Debit README BUDGET compute spent by N.
+  --cost-dollars <N> Debit README BUDGET dollars spent by N.
 
 Common:
   --json             Emit a structured \`steps\` array on stdout.
@@ -68,6 +70,8 @@ function parseArgs(argv) {
     summary: "",
     score: "",
     commit: "",
+    costCompute: "",
+    costDollars: "",
     json: false,
     help: false,
   };
@@ -80,6 +84,8 @@ function parseArgs(argv) {
     if (arg === "--summary") { opts.summary = argv[++i] || ""; continue; }
     if (arg === "--score") { opts.score = argv[++i] || ""; continue; }
     if (arg === "--commit") { opts.commit = argv[++i] || ""; continue; }
+    if (arg === "--cost-compute") { opts.costCompute = argv[++i] || ""; continue; }
+    if (arg === "--cost-dollars") { opts.costDollars = argv[++i] || ""; continue; }
     if (arg.startsWith("--")) throw new Error(`unknown flag: ${arg}`);
     if (!opts.projectDir) { opts.projectDir = arg; continue; }
     throw new Error(`unexpected positional arg: ${arg}`);
@@ -116,6 +122,10 @@ async function main() {
       summary: opts.summary,
       score: opts.score,
       commit: opts.commit,
+      budgetDebits: {
+        compute: opts.costCompute,
+        dollars: opts.costDollars,
+      },
     });
   } catch (err) {
     process.stderr.write(`${err.message}\n`);
@@ -136,6 +146,7 @@ async function main() {
     if (step.toRow) extra.push(`to-row=${step.toRow}`);
     if (step.skipped) extra.push(`(${step.skipped})`);
     if (step.event) extra.push(`event=${step.event}`);
+    if (step.caps?.length) extra.push(`cap=${step.caps.join(",")}`);
     if (step.slug && step.step !== "log.append" && step.step !== "queue.add") extra.push(`slug=${step.slug}`);
     const tag = extra.length ? `  (${extra.join(", ")})` : "";
     process.stdout.write(`  ${step.step}${tag}\n`);

@@ -29,6 +29,11 @@ import {
   reprioritizeQueueRow,
 } from "./queue-edit.js";
 import { appendLogRow } from "./log-append.js";
+import {
+  applyBudgetDebitsToReadme,
+  normalizeBudgetDebits,
+  summarizeBudgetCaps,
+} from "./budget.js";
 
 const VALID_EVENTS = new Set(["resolved", "falsified", "abandoned"]);
 
@@ -132,6 +137,7 @@ export async function resolveMove({
   summary,
   score,
   commit,
+  budgetDebits = {},
   // Dependency-injection points for testing:
   insertImpl = insertLeaderboardRow,
   removeActiveImpl = removeActiveRow,
@@ -164,12 +170,15 @@ export async function resolveMove({
   const queueBody = getSectionBody(resultText, "Queue updates");
   const verbs = parseQueueUpdates(queueBody);
   const { admit, rank } = parseAdmitDecision(doc.decision);
+  const normalizedBudgetDebits = normalizeBudgetDebits(budgetDebits);
+  const hasBudgetDebit = normalizedBudgetDebits.compute > 0 || normalizedBudgetDebits.dollars > 0;
 
   const finalSummary = (summary && summary.trim()) || doc.takeaway.split("\n")[0] || `${event} ${slug}`;
   const branchUrl = extractFirstUrl(doc.branchBody);
   const resultRelative = `results/${slug}.md`;
   const steps = [];
   let evicted = null;
+  let budget = null;
 
   if (admit) {
     if (!commit) throw new Error(`admitting requires --commit (commit URL of the cycle SHA)`);
@@ -233,6 +242,20 @@ export async function resolveMove({
     }
   }
 
+  if (hasBudgetDebit) {
+    budget = await applyBudgetDebitsToReadme({
+      readmePath,
+      debits: normalizedBudgetDebits,
+    });
+    steps.push({
+      step: "budget.debit",
+      compute: normalizedBudgetDebits.compute,
+      dollars: normalizedBudgetDebits.dollars,
+      skipped: budget.applied ? "" : budget.reason,
+      caps: budget.caps.map((cap) => cap.axis),
+    });
+  }
+
   // Eviction LOG row first (chronologically before the resolution).
   if (evicted) {
     await appendLogImpl({
@@ -260,6 +283,19 @@ export async function resolveMove({
   });
   steps.push({ step: "log.append", event: eventTag, slug });
 
+  if (budget?.caps?.length) {
+    await appendLogImpl({
+      logPath,
+      row: {
+        event: "budget-cap",
+        slug,
+        summary: `budget cap reached: ${summarizeBudgetCaps(budget.caps)}`,
+        link: resultRelative,
+      },
+    });
+    steps.push({ step: "log.append", event: "budget-cap", slug });
+  }
+
   return {
     resolved: true,
     slug,
@@ -267,6 +303,7 @@ export async function resolveMove({
     admitted: admit,
     rank: admit ? rank : null,
     evicted: evicted ? evicted.slug : null,
+    budget,
     steps,
   };
 }

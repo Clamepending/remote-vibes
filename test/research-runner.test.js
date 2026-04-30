@@ -116,6 +116,29 @@ test("claimNextMove moves QUEUE row to ACTIVE and creates a result doc", async (
   }
 });
 
+test("claimNextMove blocks new claims after a budget cap until explicitly allowed", async () => {
+  const dir = makeProject("vr-runner-budget-cap");
+  try {
+    const readmePath = join(dir, "README.md");
+    const readme = readFileSync(readmePath, "utf8");
+    writeFileSync(readmePath, readme.replace(
+      "## RANKING CRITERION",
+      "## BUDGET\n\ncompute: 80/80 GPU-hours\ndollars: 4.20/20 USD\ncalendar: 2099-01-01\n\n## RANKING CRITERION",
+    ));
+
+    await assert.rejects(
+      claimNextMove({ projectDir: dir }),
+      /budget cap reached.*human review is required/,
+    );
+
+    const allowed = await claimNextMove({ projectDir: dir, allowBudgetCap: true });
+    assert.equal(allowed.slug, "first-move");
+    assert.equal(allowed.claimed, true);
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
+
 test("runCycle executes a command, extracts a metric, and appends cycle provenance", async () => {
   const dir = makeProject("vr-runner-cycle");
   try {
@@ -314,6 +337,47 @@ test("finishMove aggregates cycle metrics and applies README/LOG resolution", as
   }
 });
 
+test("finishMove records move cost and debits project budget when applying", async () => {
+  const dir = makeProject("vr-runner-finish-budget");
+  try {
+    const readmePath = join(dir, "README.md");
+    writeFileSync(readmePath, readFileSync(readmePath, "utf8").replace(
+      "## RANKING CRITERION",
+      "## BUDGET\n\ncompute: 1.5/2 GPU-hours\ndollars: 1.00/10 USD\ncalendar: 2099-01-01\n\n## RANKING CRITERION",
+    ));
+
+    await claimNextMove({ projectDir: dir });
+    await runCycle({
+      projectDir: dir,
+      slug: "first-move",
+      command: "node -e \"console.log('score=0.81')\"",
+      metricRegex: "score=([0-9.]+)",
+      timeoutMs: 5_000,
+    });
+    const result = await finishMove({
+      projectDir: dir,
+      slug: "first-move",
+      takeaway: "Budgeted move resolved.",
+      decision: "do not admit",
+      apply: true,
+      costCompute: 0.5,
+      costDollars: 1.25,
+    });
+
+    assert.equal(result.resolve.budget.applied, true);
+    assert.deepEqual(result.resolve.budget.caps.map((cap) => cap.axis), ["compute"]);
+    const readme = readFileSync(readmePath, "utf8");
+    assert.match(readme, /compute: 2\/2 GPU-hours/);
+    assert.match(readme, /dollars: 2\.25\/10 USD/);
+    const resultDoc = readFileSync(join(dir, "results", "first-move.md"), "utf8");
+    assert.match(resultDoc, /- cost: compute=0\.5; dollars=1\.25\./);
+    const log = readFileSync(join(dir, "LOG.md"), "utf8");
+    assert.match(log, /\| budget-cap \| first-move \|/);
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
+
 test("finishMove can update paper.md with a generated figure", async () => {
   const dir = makeProject("vr-runner-paper");
   try {
@@ -405,7 +469,9 @@ test("vr-research-runner CLI help and run command work", async () => {
   assert.equal(help.status, 0);
   assert.match(help.stdout, /vr-research-runner/);
   assert.match(help.stdout, /--wait-human/);
+  assert.match(help.stdout, /--allow-budget-cap/);
   assert.match(help.stdout, /--update-paper/);
+  assert.match(help.stdout, /--cost-compute/);
 
   const dir = makeProject("vr-runner-cli");
   try {

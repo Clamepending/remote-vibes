@@ -33,6 +33,7 @@ Claim options:
   --grounding <text>     Override result-doc Research grounding.
   --design <text>        Override result-doc Experiment design.
   --force                Overwrite an existing result doc while claiming.
+  --allow-budget-cap     Claim after a human approved continuing past cap.
   --code-cwd <path>      Code repo directory for branch preparation.
   --prepare-branch       Switch/create r/<slug> in --code-cwd before claiming.
   --start-ref <ref>      Git ref to branch from (defaults to QUEUE starting-point).
@@ -75,6 +76,8 @@ Finish options:
   --commit <url>         Commit URL required if the move is admitted.
   --score <text>         Override leaderboard score cell if admitted.
   --summary <text>       Override LOG summary.
+  --cost-compute <N>     Debit project BUDGET compute spent by N.
+  --cost-dollars <N>     Debit project BUDGET dollars spent by N.
   --update-paper         Create/update paper.md with a Results subsection.
   --paper-figure <path>  Figure to copy into figures/<slug>-figure.*.
   --paper-caption <text> Figure/result caption for the paper update.
@@ -144,6 +147,7 @@ function parseArgs(argv) {
     humanTimeoutSec: 30,
     agentTownApi: "",
     force: false,
+    allowBudgetCap: false,
     codeCwd: "",
     prepareBranch: false,
     startRef: "",
@@ -170,6 +174,8 @@ function parseArgs(argv) {
     commit: "",
     score: "",
     summary: "",
+    costCompute: "",
+    costDollars: "",
     updatePaper: false,
     paperFigure: "",
     paperCaption: "",
@@ -193,6 +199,7 @@ function parseArgs(argv) {
     if (arg === "--ask-human") { opts.askHuman = true; continue; }
     if (arg === "--wait-human") { opts.askHuman = true; opts.waitHuman = true; continue; }
     if (arg === "--force") { opts.force = true; continue; }
+    if (arg === "--allow-budget-cap") { opts.allowBudgetCap = true; continue; }
     if (arg === "--prepare-branch") { opts.prepareBranch = true; continue; }
     if (arg === "--git-fetch") { opts.gitFetch = true; continue; }
     if (arg === "--git-commit") { opts.gitCommit = true; continue; }
@@ -239,6 +246,8 @@ function parseArgs(argv) {
     if (arg === "--commit") { opts.commit = readValue(argv, index, arg); index += 1; continue; }
     if (arg === "--score") { opts.score = readValue(argv, index, arg); index += 1; continue; }
     if (arg === "--summary") { opts.summary = readValue(argv, index, arg); index += 1; continue; }
+    if (arg === "--cost-compute") { opts.costCompute = readValue(argv, index, arg); index += 1; continue; }
+    if (arg === "--cost-dollars") { opts.costDollars = readValue(argv, index, arg); index += 1; continue; }
     if (arg === "--paper-figure") { opts.paperFigure = readValue(argv, index, arg); opts.updatePaper = true; index += 1; continue; }
     if (arg === "--paper-caption") { opts.paperCaption = readValue(argv, index, arg); opts.updatePaper = true; index += 1; continue; }
     if (arg === "--paper-limitations") { opts.paperLimitations = readValue(argv, index, arg); opts.updatePaper = true; index += 1; continue; }
@@ -296,6 +305,9 @@ function printFinish(result) {
   if (result.canvasSkippedReason) process.stdout.write(`canvas skipped: ${result.canvasSkippedReason}\n`);
   if (result.resolve) {
     process.stdout.write(`applied: ${result.resolve.event}\n`);
+    if (result.resolve.budget?.applied) process.stdout.write(`budget: debited\n`);
+    if (result.resolve.budget && !result.resolve.budget.applied && result.resolve.budget.reason) process.stdout.write(`budget skipped: ${result.resolve.budget.reason}\n`);
+    if (result.resolve.budget?.caps?.length) process.stdout.write(`budget cap: ${result.resolve.budget.caps.map((cap) => cap.axis).join(",")}\n`);
   }
 }
 
@@ -366,6 +378,7 @@ async function main() {
     humanTimeoutMs: Math.max(0, opts.humanTimeoutSec * 1000),
     agentTownApi: opts.agentTownApi,
     force: opts.force,
+    allowBudgetCap: opts.allowBudgetCap,
     codeCwd: opts.codeCwd,
     prepareBranch: opts.prepareBranch,
     startRef: opts.startRef,
@@ -397,6 +410,7 @@ async function main() {
         gitFetch: opts.gitFetch,
         gitPush: opts.gitPush,
         gitRemote: opts.gitRemote,
+        allowBudgetCap: opts.allowBudgetCap,
       });
     } else if (subcommand === "cycle") {
       result = await runCycle(common);
@@ -420,6 +434,8 @@ async function main() {
         commit: opts.commit,
         score: opts.score,
         summary: opts.summary,
+        costCompute: opts.costCompute,
+        costDollars: opts.costDollars,
         updatePaper: opts.updatePaper,
         paperFigure: opts.paperFigure,
         paperCaption: opts.paperCaption,

@@ -48,7 +48,7 @@ function runCli(args, { cwd, env = {}, timeoutMs = 10_000 } = {}) {
 
 // Project fixture: README with 5 leaderboard rows so an insert-at-rank-1
 // triggers eviction; ACTIVE has the move slug claimed; QUEUE has 2 rows.
-function makeProject(prefix, { slug, decision, queueUpdates, status = "resolved", frontmatter = "", takeaway = "Move resolved cleanly." } = {}) {
+function makeProject(prefix, { slug, decision, queueUpdates, status = "resolved", frontmatter = "", takeaway = "Move resolved cleanly.", budget = "" } = {}) {
   const dir = tmp(prefix);
   const lbRows = [];
   for (let i = 1; i <= 5; i += 1) {
@@ -68,6 +68,7 @@ function makeProject(prefix, { slug, decision, queueUpdates, status = "resolved"
     "## SUCCESS CRITERIA",
     "- a",
     "",
+    ...(budget ? ["## BUDGET", "", budget, ""] : []),
     "## RANKING CRITERION",
     "",
     "`quantitative: m (higher is better)`",
@@ -424,6 +425,46 @@ test("resolveMove: tolerates ACTIVE row that doesn't exist (was never claimed)",
   }
 });
 
+test("resolveMove: debits README BUDGET and logs budget-cap when a cap is hit", async () => {
+  const dir = makeProject("vr-resolve-budget", {
+    slug: "v9-budget",
+    decision: "do not admit",
+    budget: [
+      "compute: 78/80 GPU-hours",
+      "dollars: 4.20/10 USD",
+      "calendar: 2099-01-01",
+    ].join("\n"),
+  });
+  try {
+    const result = await resolveMove({
+      projectDir: dir,
+      slug: "v9-budget",
+      event: "resolved",
+      budgetDebits: { compute: 2, dollars: 1.5 },
+    });
+    assert.equal(result.budget.applied, true);
+    assert.deepEqual(result.budget.caps.map((cap) => cap.axis), ["compute"]);
+
+    const after = readFileSync(join(dir, "README.md"), "utf8");
+    assert.match(after, /compute: 80\/80 GPU-hours/);
+    assert.match(after, /dollars: 5\.70\/10 USD/);
+
+    const logBody = readFileSync(join(dir, "LOG.md"), "utf8");
+    assert.match(logBody, /\| budget-cap \| v9-budget \| budget cap reached: compute 80\/80 GPU-hours \| results\/v9-budget\.md \|/);
+    assert.match(logBody, /\| resolved \| v9-budget \|/);
+
+    const stepNames = result.steps.map((step) => step.step);
+    assert.deepEqual(stepNames, [
+      "active.remove",
+      "budget.debit",
+      "log.append",
+      "log.append",
+    ]);
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
+
 // ---- bin/vr-research-resolve CLI ----
 
 test("vr-research-resolve --help: exits 0", async () => {
@@ -431,6 +472,7 @@ test("vr-research-resolve --help: exits 0", async () => {
   assert.equal(r.status, 0);
   assert.match(r.stdout, /vr-research-resolve/);
   assert.match(r.stdout, /--commit/);
+  assert.match(r.stdout, /--cost-compute/);
 });
 
 test("vr-research-resolve: missing flags exit 2", async () => {

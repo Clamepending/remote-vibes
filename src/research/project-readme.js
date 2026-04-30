@@ -13,6 +13,7 @@
 
 import { readFile } from "node:fs/promises";
 import path from "node:path";
+import { parseBudgetSection } from "./budget.js";
 
 const SECTION_HEADER = /^##\s+(.+?)\s*$/;
 const TABLE_ROW = /^\|(.*)\|\s*$/;
@@ -300,6 +301,7 @@ export function parseProjectReadme(text) {
   const codeRepoBody = plainText(sections.get("CODE REPO") || "");
   const codeRepoLink = extractFirstLink(codeRepoBody);
   const successCriteria = parseSuccessCriteria(sections.get("SUCCESS CRITERIA") || "");
+  const budget = parseBudgetSection(sections.get("BUDGET") || "");
   const rankingCriterion = parseRankingCriterion(sections.get("RANKING CRITERION") || "");
   const leaderboard = parseLeaderboard(sections.get("LEADERBOARD") || "");
   const insights = parseInsights(sections.get("INSIGHTS") || "");
@@ -317,6 +319,7 @@ export function parseProjectReadme(text) {
       url: codeRepoLink.url || codeRepoBody,
     },
     successCriteria,
+    budget,
     rankingCriterion,
     leaderboard,
     insights,
