@@ -149,6 +149,7 @@
     renderLeaderboardCard(detail);
     renderActiveCard(detail);
     renderQueueCard(detail);
+    renderSweepsCard(detail);
     renderBenchCard(detail);
     renderLogCard(detail);
   }
@@ -619,6 +620,44 @@
       );
     }
     card.appendChild(list);
+  }
+
+  function renderSweepsCard(detail) {
+    const card = document.getElementById("sweeps-card");
+    if (!card) return;
+    const sweeps = Array.isArray(detail.sweeps) ? detail.sweeps : [];
+    card.innerHTML = "";
+    card.appendChild(el("h2", null, [
+      "Sweeps",
+      el("span", { class: "vr-card-count" }, `(${sweeps.length})`),
+    ]));
+    if (!sweeps.length) {
+      card.appendChild(el("p", { class: "vr-card-empty" }, "No runs.tsv sweeps yet."));
+      return;
+    }
+
+    const grid = el("div", { class: "vr-sweep-grid" });
+    for (const sweep of sweeps) {
+      const counts = sweep.statusCounts || {};
+      const item = el("div", { class: "vr-sweep-item" }, [
+        el("div", { class: "vr-sweep-title" }, [
+          el("span", null, sweep.name || sweep.path || "sweep"),
+          el("span", { class: "vr-card-empty" }, `${sweep.cells || 0} cell${sweep.cells === 1 ? "" : "s"} · ${sweep.rows || 0} row${sweep.rows === 1 ? "" : "s"}`),
+        ]),
+        el("div", { class: "vr-sweep-counts" }, [
+          chip(`planned ${counts.planned || 0}`),
+          chip(`running ${counts.running || 0}`, counts.running ? "accent" : null),
+          chip(`done ${counts.done || 0}`, counts.done ? "good" : null),
+          chip(`failed ${counts.failed || 0}`, counts.failed ? "bad" : null),
+          counts.skipped ? chip(`skipped ${counts.skipped}`) : null,
+        ]),
+        sweep.bestMean !== null && sweep.bestMean !== undefined
+          ? el("div", { class: "vr-sweep-best" }, `best ${sweep.bestMean}: ${sweep.bestName || "row"}`)
+          : null,
+      ]);
+      grid.appendChild(item);
+    }
+    card.appendChild(grid);
   }
 
   function renderBenchCard(detail) {

@@ -13,12 +13,15 @@ import { parseProjectReadme, loadProjectLog } from "./research/project-readme.js
 import { parseResultDoc } from "./research/result-doc.js";
 import { loadBenchmark } from "./research/benchmark.js";
 import { runDoctor } from "./research/doctor.js";
+import { parseRunsTsv } from "./research/sweep-runner.js";
 
 const PROJECT_README = "README.md";
 const BENCHMARK_FILE = "benchmark.md";
 const PAPER_FILE = "paper.md";
 const RESULTS_DIR = "results";
 const FIGURES_DIR = "figures";
+const RUNS_FILE = "runs.tsv";
+const RUNS_DIR = "runs";
 
 async function pathExists(p) {
   try {
@@ -69,6 +72,69 @@ function projectExistsBucket(parsed, benchmark) {
       : "",
     hasBenchmark: Boolean(benchmark),
   };
+}
+
+function emptyStatusCounts() {
+  return { planned: 0, running: 0, done: 0, failed: 0, skipped: 0, other: 0 };
+}
+
+function sweepCellKey(name) {
+  return String(name || "").replace(/-seed\d+$/i, "") || "(unnamed)";
+}
+
+async function summarizeRunsFile(projectDir, relPath) {
+  const text = await readTextOrNull(path.join(projectDir, relPath));
+  if (!text) return null;
+  const { headers, rows } = parseRunsTsv(text);
+  if (!headers.length) return null;
+
+  const statusCounts = emptyStatusCounts();
+  const cells = new Set();
+  let bestMean = null;
+  let bestName = "";
+  let newestStartedAt = "";
+  for (const row of rows) {
+    const status = String(row.status || "").trim() || "other";
+    if (Object.hasOwn(statusCounts, status)) statusCounts[status] += 1;
+    else statusCounts.other += 1;
+    cells.add(sweepCellKey(row.name));
+    const startedAt = String(row.started_at || "").trim();
+    if (startedAt && (!newestStartedAt || startedAt > newestStartedAt)) newestStartedAt = startedAt;
+    const mean = Number(row.mean_return);
+    if (Number.isFinite(mean) && (bestMean === null || mean > bestMean)) {
+      bestMean = mean;
+      bestName = String(row.name || "");
+    }
+  }
+
+  return {
+    path: relPath,
+    name: relPath === RUNS_FILE ? "top-level" : path.basename(relPath, ".tsv"),
+    rows: rows.length,
+    cells: cells.size,
+    statusCounts,
+    bestMean,
+    bestName,
+    newestStartedAt,
+  };
+}
+
+async function loadSweepSummaries(projectDir) {
+  const targets = [];
+  if (await pathExists(path.join(projectDir, RUNS_FILE))) {
+    targets.push(RUNS_FILE);
+  }
+  const runsDir = path.join(projectDir, RUNS_DIR);
+  if (await pathExists(runsDir)) {
+    const entries = await readdir(runsDir, { withFileTypes: true });
+    for (const entry of entries.sort((a, b) => a.name.localeCompare(b.name))) {
+      if (entry.isFile() && entry.name.endsWith(".tsv")) {
+        targets.push(path.join(RUNS_DIR, entry.name));
+      }
+    }
+  }
+  const summaries = await Promise.all(targets.map((relPath) => summarizeRunsFile(projectDir, relPath)));
+  return summaries.filter(Boolean);
 }
 
 async function summarizeProject(projectsDir, name) {
@@ -304,6 +370,7 @@ export async function getProjectDetail(libraryRoot, projectName) {
   const currentBenchVersion = benchmark?.frontmatter?.version
     ? String(benchmark.frontmatter.version)
     : "";
+  const sweeps = await loadSweepSummaries(projectDir);
   const annotatedLeaderboard = annotateLeaderboardWithBench(
     parsed.leaderboard,
     docs,
@@ -322,6 +389,7 @@ export async function getProjectDetail(libraryRoot, projectName) {
     queue: parsed.queue || [],
     log: parsed.log || [],
     insights: parsed.insights || [],
+    sweeps,
     benchmark: benchmark
       ? {
           version: benchmark.frontmatter?.version
@@ -353,4 +421,6 @@ export const __internal = {
   severityCounts,
   doctorBucket,
   projectExistsBucket,
+  summarizeRunsFile,
+  loadSweepSummaries,
 };

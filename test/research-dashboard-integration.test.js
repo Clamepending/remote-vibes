@@ -99,6 +99,9 @@ test("GET /api/research/projects/<name> returns full detail with doctor result",
     assert.equal(body.benchmark.version, "v1");
     assert.equal(body.benchmark.metrics[0].name, "readability");
     assert.equal(body.leaderboard.length, 2);
+    assert.equal(body.sweeps.length, 1);
+    assert.equal(body.sweeps[0].statusCounts.done, 2);
+    assert.equal(body.sweeps[0].statusCounts.planned, 1);
     assert.equal(body.doctor.bucket, "ok");
     assert.equal(body.doctor.counts.error, 0);
     assert.ok(Array.isArray(body.resultDocs));
@@ -203,6 +206,7 @@ test("GET /research/<name> returns the static project page", async () => {
     assert.match(text, /<title>Vibe Research — Project<\/title>/);
     assert.match(text, /id="dashboard"/);
     assert.match(text, /id="next-card"/);
+    assert.match(text, /id="sweeps-card"/);
   });
 });
 
@@ -225,6 +229,7 @@ test("GET /research/research.js + research.css are served", async () => {
     assert.match(jsText, /orchestrator\/tick/);
     assert.match(jsText, /briefs\/.*compile/);
     assert.match(jsText, /vr-next-candidates/);
+    assert.match(jsText, /renderSweepsCard/);
     const css = await fetch(`${baseUrl}/research/research.css`);
     assert.equal(css.status, 200);
     assert.match(css.headers.get("content-type") || "", /css/);
