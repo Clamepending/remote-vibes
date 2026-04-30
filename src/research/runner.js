@@ -1750,7 +1750,7 @@ export async function finishMove({
 
   await updateResearchState({
     projectDir,
-    phase: normalizedStatus === "resolved" ? "review" : "brainstorm",
+    phase: normalizedStatus === "resolved" ? "review" : "ideation",
     briefSlug: "",
     summary: `${normalizedStatus} move ${slug}`,
   }).catch(() => null);

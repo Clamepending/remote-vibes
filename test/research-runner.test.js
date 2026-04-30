@@ -9,6 +9,9 @@ import { tmpdir } from "node:os";
 import path, { join } from "node:path";
 import test from "node:test";
 import {
+  readResearchState,
+} from "../src/research/brief.js";
+import {
   claimNextMove,
   finishMove,
   runCycle,
@@ -499,6 +502,35 @@ test("finishMove records move cost and debits project budget when applying", asy
     assert.match(resultDoc, /- cost: compute=0\.5; dollars=1\.25\./);
     const log = readFileSync(join(dir, "LOG.md"), "utf8");
     assert.match(log, /\| budget-cap \| first-move \|/);
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+test("finishMove returns abandoned moves to ideation phase", async () => {
+  const dir = makeProject("vr-runner-finish-abandoned");
+  try {
+    await claimNextMove({ projectDir: dir });
+    await runCycle({
+      projectDir: dir,
+      slug: "first-move",
+      command: "node -e \"console.log('blocked')\"",
+      timeoutMs: 5_000,
+    });
+    const result = await finishMove({
+      projectDir: dir,
+      slug: "first-move",
+      status: "abandoned",
+      event: "abandoned",
+      takeaway: "Blocked by missing data.",
+      analysis: "No durable dataset was available, so return to ideation.",
+      decision: "do not admit",
+      apply: true,
+    });
+    assert.equal(result.status, "abandoned");
+    const state = await readResearchState({ projectDir: dir });
+    assert.equal(state.phase, "ideation");
+    assert.equal(state.summary, "abandoned move first-move");
   } finally {
     rmSync(dir, { recursive: true, force: true });
   }

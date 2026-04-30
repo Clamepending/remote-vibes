@@ -187,6 +187,25 @@ test("POST /api/research/projects/<name>/orchestrator/tick returns next phase ac
   });
 });
 
+test("POST /api/research/projects/<name>/autopilot/step returns routed next action", async () => {
+  await withLibraryServer(async ({ baseUrl }) => {
+    const res = await fetch(`${baseUrl}/api/research/projects/prose-style/autopilot/step`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ commandText: "node eval.js", checkPaper: false }),
+    });
+    assert.equal(res.status, 200);
+    const body = await res.json();
+    assert.equal(body.ok, true);
+    assert.equal(body.projectName, "prose-style");
+    assert.equal(body.report.delegated, "orchestrator");
+    assert.equal(body.report.recommendation.action, "orchestrator-run-next");
+    assert.equal(body.report.orchestrator.recommendation.slug, "v3-fewshot");
+    assert.match(body.report.nextCommand, /vr-research-runner/);
+    assert.match(body.report.nextCommand, /node eval\.js/);
+  });
+});
+
 test("GET /research returns the static index page", async () => {
   await withLibraryServer(async ({ baseUrl }) => {
     const res = await fetch(`${baseUrl}/research`);

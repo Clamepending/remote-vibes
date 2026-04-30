@@ -1,0 +1,128 @@
+#!/usr/bin/env node
+// Bounded decision router for Vibe Research projects.
+
+import path from "node:path";
+import process from "node:process";
+import {
+  formatAutopilotReport,
+  stepResearchAutopilot,
+} from "../src/research/autopilot.js";
+
+function printHelp() {
+  process.stdout.write(`vr-research-autopilot
+
+Route the current research state and latest durable review decision into one
+bounded next action. This command is conservative: it emits exact next commands
+and only mutates safe phase state with --apply.
+
+Usage:
+  vr-research-autopilot step <project-dir> [options]
+  vr-research-autopilot <project-dir> [options]
+
+Options:
+  --apply                  Apply safe phase-state transitions or delegate safe orchestrator applies.
+  --decision <action>      Override the latest result-doc review decision for this step.
+  --command <text>         Experiment command to include in suggested runner cycle command.
+  --code-cwd <dir>         Code repo cwd to include in suggested runner command.
+  --ask-human              Include human review gates in suggested/delegated commands.
+  --wait-human             Wait when delegating to human-reviewable orchestrator actions.
+  --timeout-ms <ms>        Total wait budget for --wait-human.
+  --api <url>              Agent Town API base URL.
+  --allow-cross-version    Allow judge admission across benchmark versions when delegated.
+  --no-paper               Skip paper.md linting when delegated to judge/orchestrator.
+  --json                   Print the full structured report.
+  --help, -h               Show this help.
+`);
+}
+
+function requireValue(args, index, flag) {
+  const value = args[index + 1];
+  if (!value || value.startsWith("--")) {
+    throw new Error(`${flag} requires a value.`);
+  }
+  return value;
+}
+
+function parseArgs(argv) {
+  const opts = {
+    allowCrossVersion: false,
+    api: "",
+    apply: false,
+    askHuman: false,
+    checkPaper: true,
+    codeCwd: "",
+    commandText: "",
+    decision: "",
+    help: false,
+    json: false,
+    projectDir: "",
+    subcommand: "step",
+    timeoutMs: "",
+    waitHuman: false,
+  };
+
+  for (let index = 0; index < argv.length; index += 1) {
+    const arg = argv[index];
+    if (arg === "--help" || arg === "-h") { opts.help = true; continue; }
+    if (arg === "--allow-cross-version") { opts.allowCrossVersion = true; continue; }
+    if (arg === "--apply") { opts.apply = true; continue; }
+    if (arg === "--ask-human") { opts.askHuman = true; continue; }
+    if (arg === "--json") { opts.json = true; continue; }
+    if (arg === "--no-paper") { opts.checkPaper = false; continue; }
+    if (arg === "--wait-human") { opts.askHuman = true; opts.waitHuman = true; continue; }
+    if (arg === "--api") { opts.api = requireValue(argv, index, arg); index += 1; continue; }
+    if (arg === "--code-cwd") { opts.codeCwd = requireValue(argv, index, arg); index += 1; continue; }
+    if (arg === "--command") { opts.commandText = requireValue(argv, index, arg); index += 1; continue; }
+    if (arg === "--decision") { opts.decision = requireValue(argv, index, arg); index += 1; continue; }
+    if (arg === "--timeout-ms") { opts.timeoutMs = requireValue(argv, index, arg); index += 1; continue; }
+    if (arg.startsWith("--")) throw new Error(`unknown flag: ${arg}`);
+    if (arg === "step" && opts.subcommand === "step" && !opts.projectDir) { opts.subcommand = "step"; continue; }
+    if (!opts.projectDir) { opts.projectDir = arg; continue; }
+    throw new Error(`unexpected positional arg: ${arg}`);
+  }
+  return opts;
+}
+
+async function main() {
+  let opts;
+  try {
+    opts = parseArgs(process.argv.slice(2));
+  } catch (error) {
+    process.stderr.write(`${error.message}\n\n`);
+    printHelp();
+    process.exit(2);
+  }
+
+  if (opts.help) {
+    printHelp();
+    return;
+  }
+  if (!opts.projectDir) {
+    throw new Error("project-dir is required.");
+  }
+
+  const report = await stepResearchAutopilot({
+    projectDir: path.resolve(opts.projectDir),
+    apply: opts.apply,
+    decision: opts.decision,
+    askHuman: opts.askHuman,
+    waitHuman: opts.waitHuman,
+    agentTownApi: opts.api,
+    timeoutMs: opts.timeoutMs,
+    allowCrossVersion: opts.allowCrossVersion,
+    checkPaper: opts.checkPaper,
+    codeCwd: opts.codeCwd,
+    commandText: opts.commandText,
+  });
+
+  if (opts.json) {
+    process.stdout.write(`${JSON.stringify(report, null, 2)}\n`);
+  } else {
+    process.stdout.write(`${formatAutopilotReport(report)}\n`);
+  }
+}
+
+void main().catch((error) => {
+  process.stderr.write(`[vr-research-autopilot] error: ${error.message}\n`);
+  process.exit(1);
+});

@@ -146,6 +146,7 @@ Current implementation:
 - `vr-research-judge <project-dir> --slug <slug>` audits a move without mutating project state.
 - It reads the result doc, doctor, admit, lint-paper, and benchmark context where available.
 - It emits a structured recommendation and can open an Agent Inbox card with `--ask-human`.
+- It sniffs existing artifacts and attaches figures/logs directly to the review card so chat review starts from inspectable evidence.
 
 Build:
 
@@ -181,8 +182,10 @@ Current implementation:
 - With queued work it recommends the concrete runner command.
 - With planned/running `runs.tsv` sweeps and no queued move, it recommends `vr-rl-sweep run` before entering review.
 - With exhausted `experiment` / `hillclimb` state, `--apply` safely transitions to `review`.
+- With no queued work and no existing brief, `--apply` drafts a conservative brief and can open a human approval card.
 - With an existing reviewed brief, `--apply` compiles the selected candidate into QUEUE and moves the project to `experiment`.
 - In `review` / `synthesis`, it invokes `vr-research-judge` logic and can open the human Agent Inbox card with `--ask-human`.
+- `vr-research-autopilot step <project-dir>` routes the latest durable `reviewDecision` into the next bounded action: continue cycle, rerun cycle, finish/synthesize, return to ideation, or delegate back to orchestrator when no move is active.
 - It does not yet synthesize new LLM-written briefs; that remains the next planner layer.
 
 Success criteria:

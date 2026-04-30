@@ -73,6 +73,7 @@ import { WikiBackupService } from "./wiki-backup.js";
 import { detectProviders, getDefaultProviderId } from "./providers.js";
 import { listKnowledgeBase, readKnowledgeBaseNote } from "./knowledge-base.js";
 import { listProjects as listResearchProjects, getProjectDetail as getResearchProjectDetail } from "./research-api.js";
+import { stepResearchAutopilot } from "./research/autopilot.js";
 import { compileBriefToQueue, updateResearchState } from "./research/brief.js";
 import { tickResearchOrchestrator } from "./research/orchestrator.js";
 import {
@@ -6619,6 +6620,64 @@ export async function createVibeResearchApp({
       });
     } catch (error) {
       const message = error?.message || "Could not tick research orchestrator.";
+      response.status(/invalid project name/i.test(message) ? 400 : 500).json({ error: message });
+    }
+  });
+
+  app.post("/api/research/projects/:name/autopilot/step", async (request, response) => {
+    try {
+      const libraryRoot = settingsStore.settings.wikiPath;
+      if (!libraryRoot) {
+        response.status(503).json({ error: "Library path is not configured." });
+        return;
+      }
+
+      const projectName = String(request.params.name || "").trim();
+      if (!/^[A-Za-z0-9_-]+$/.test(projectName)) {
+        response.status(400).json({ error: "invalid project name" });
+        return;
+      }
+
+      const projectsRoot = path.resolve(libraryRoot, "projects");
+      const projectDir = path.resolve(projectsRoot, projectName);
+      const relativeProjectPath = path.relative(projectsRoot, projectDir);
+      if (relativeProjectPath.startsWith("..") || path.isAbsolute(relativeProjectPath)) {
+        response.status(400).json({ error: "invalid project name" });
+        return;
+      }
+
+      const projectStats = await stat(projectDir).catch(() => null);
+      if (!projectStats?.isDirectory()) {
+        response.status(404).json({ error: `project "${projectName}" not found` });
+        return;
+      }
+
+      const body = request.body && typeof request.body === "object" && !Array.isArray(request.body)
+        ? request.body
+        : {};
+      const serverBaseUrl = String(publicBaseUrl || helperBaseUrl || `${request.protocol}://${request.get("host") || ""}`)
+        .trim()
+        .replace(/\/+$/, "");
+      const report = await stepResearchAutopilot({
+        projectDir,
+        apply: Boolean(body.apply),
+        decision: body.decision,
+        askHuman: Boolean(body.askHuman || body.waitHuman),
+        waitHuman: Boolean(body.waitHuman),
+        agentTownApi: String(body.agentTownApi || body.api || (serverBaseUrl ? `${serverBaseUrl}/api/agent-town` : "")),
+        timeoutMs: body.timeoutMs,
+        allowCrossVersion: Boolean(body.allowCrossVersion),
+        checkPaper: body.checkPaper !== false && !body.noPaper,
+        codeCwd: body.codeCwd,
+        commandText: body.commandText || body.command,
+      });
+      response.json({
+        ok: true,
+        projectName,
+        report,
+      });
+    } catch (error) {
+      const message = error?.message || "Could not step research autopilot.";
       response.status(/invalid project name/i.test(message) ? 400 : 500).json({ error: message });
     }
   });
