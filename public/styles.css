@@ -14816,6 +14816,36 @@ body.is-reordering-file-tabs {
   margin: 0 auto;
 }
 
+.rich-session-action-panel {
+  display: grid;
+  gap: 10px;
+  width: min(100%, 1080px);
+  margin: 4px auto 8px;
+  padding: 0 6px;
+}
+
+.rich-session-action-panel-header {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  min-width: 0;
+}
+
+.rich-session-action-panel-header .rich-session-entry-meta {
+  margin-left: 0;
+}
+
+.rich-session-action-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(min(100%, 280px), 1fr));
+  gap: 10px;
+}
+
+.rich-session-action-grid .agent-inbox-card {
+  min-width: 0;
+  background: rgba(255, 255, 255, 0.035);
+}
+
 .rich-session-entry.is-overview {
   gap: 4px;
   padding: 0 6px 8px;

@@ -187,6 +187,26 @@ test("native UI renders plan card, MCP badge, image strip, /login action, thinki
       };
     };
 
+    const actionResponse = await fetch(`${baseUrl}/api/agent-town/action-items`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        id: "chat-review-card",
+        kind: "review",
+        priority: "high",
+        title: "Review latest cycle",
+        detail: "Cycle 1 improved the metric; choose how the agent should proceed.",
+        recommendation: "Continue one more cycle before synthesis.",
+        consequence: "Your click resolves the gate without leaving chat.",
+        source: "research-judge",
+        sourceSessionId: session.id,
+        target: { type: "file", id: "projects/demo/results/cycle.md", label: "cycle.md" },
+        evidence: [{ label: "result doc", path: "projects/demo/results/cycle.md", kind: "result" }],
+        choices: ["continue", "steer"],
+      }),
+    });
+    assert.equal(actionResponse.status, 201);
+
     browser = await chromium.launch({ executablePath, headless: true });
     const page = await browser.newPage();
     await page.goto(`${baseUrl}/?view=shell`, { waitUntil: "domcontentloaded" });
@@ -209,6 +229,7 @@ test("native UI renders plan card, MCP badge, image strip, /login action, thinki
     await page.click("#toggle-shell-surface-native");
     await page.waitForSelector(".rich-session-surface.is-active", { timeout: 10_000 });
     await page.waitForSelector(".rich-session-plan-card", { timeout: 15_000 });
+    await page.waitForSelector('[data-rich-session-action-panel] [data-agent-town-action-item="chat-review-card"]', { timeout: 10_000 });
 
     const surfaces = await page.evaluate(() => {
       // Pending assistant: spinner + "is thinking…" copy.
@@ -250,6 +271,16 @@ test("native UI renders plan card, MCP badge, image strip, /login action, thinki
       const slashCommand = slashButton?.getAttribute("data-rich-session-slash-command") || "";
       const slashLabel = slashButton?.textContent?.trim() || "";
 
+      // Chat-native Agent Inbox: review cards should render inside the
+      // active chat feed, not only in the separate Agent Inbox workspace.
+      const actionPanel = document.querySelector("[data-rich-session-action-panel]");
+      const actionCard = actionPanel?.querySelector('[data-agent-town-action-item="chat-review-card"]');
+      const actionTitle = actionCard?.querySelector("strong")?.textContent || "";
+      const actionButtons = Array.from(
+        actionCard?.querySelectorAll("button") || [],
+        (button) => button.textContent?.trim() || "",
+      );
+
       // Surface toggle: native should be active, three buttons present
       // (Native | Terminal | Stream JSON).
       const toggleButtons = Array.from(
@@ -269,6 +300,8 @@ test("native UI renders plan card, MCP badge, image strip, /login action, thinki
         planBody,
         slashCommand,
         slashLabel,
+        actionTitle,
+        actionButtons,
         toggleButtons,
       };
     });
@@ -300,6 +333,18 @@ test("native UI renders plan card, MCP badge, image strip, /login action, thinki
     assert.equal(surfaces.slashCommand, "/login", "slash-action button targets /login");
     assert.match(surfaces.slashLabel, /Sign in/u, "slash-action button label reads Sign in");
 
+    assert.equal(surfaces.actionTitle, "Review latest cycle", "Agent Inbox card appears inside the chat feed");
+    assert.ok(surfaces.actionButtons.includes("continue"), "chat card exposes continue choice");
+    assert.ok(surfaces.actionButtons.includes("steer"), "chat card exposes steer choice");
+
+    await page.click('[data-rich-session-action-panel] [data-agent-town-action-resolve="chat-review-card"][data-agent-town-action-resolution="continued"]');
+    await page.waitForFunction(async () => {
+      const response = await fetch("/api/agent-town/action-items");
+      const payload = await response.json();
+      const item = payload.actionItems.find((entry) => entry.id === "chat-review-card");
+      return item?.resolution === "continued" && item?.status === "completed";
+    }, null, { timeout: 10_000 });
+
     // Surface toggle buttons. Stream-mode sessions hide the Terminal button
     // (no PTY to point it at) but Native and Stream JSON are always present.
     const toggleIds = surfaces.toggleButtons.map((b) => b.id);
@@ -309,7 +354,7 @@ test("native UI renders plan card, MCP badge, image strip, /login action, thinki
     assert.equal(native?.active, true, "Native is the active surface");
   } finally {
     await browser?.close().catch(() => {});
-    await app.shutdown?.().catch(() => {});
+    await app.close?.().catch(() => {});
     await rm(workspaceDir, { recursive: true, force: true });
   }
 });
@@ -377,7 +422,7 @@ test("Stream JSON viewer is reachable and shows the wire-format frames the rende
     assert.equal(feedHidden, true, "Native feed is hidden while Stream JSON is active");
   } finally {
     await browser?.close().catch(() => {});
-    await app.shutdown?.().catch(() => {});
+    await app.close?.().catch(() => {});
     await rm(workspaceDir, { recursive: true, force: true });
   }
 });
@@ -461,7 +506,7 @@ test("native UI: code blocks containing ANSI escapes render clean (no [31m / [0m
     assert.equal(codeText.includes(ESCByte), false, "no raw ESC byte");
   } finally {
     await browser?.close().catch(() => {});
-    await app.shutdown?.().catch(() => {});
+    await app.close?.().catch(() => {});
     await rm(workspaceDir, { recursive: true, force: true });
   }
 });

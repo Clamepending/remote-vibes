@@ -6432,11 +6432,53 @@ function renderRichSessionFeedHtml(activeSession) {
   const entries = Array.isArray(narrative?.entries) ? narrative.entries : [];
   const prompt = activeSession.claudePrompt || null;
   const filteredEntries = prompt ? filterEntriesForClaudePrompt(entries, prompt) : entries;
+  const inlineActions = renderRichSessionActionItems(activeSession);
 
   return `
     ${renderRichSessionOverviewCard(activeSession)}
     ${prompt ? renderClaudePromptCard(prompt) : ""}
     ${filteredEntries.length ? filteredEntries.map((entry, index) => renderRichSessionEntry(entry, index)).join("") : renderRichSessionEmptyState(activeSession)}
+    ${inlineActions}
+  `;
+}
+
+function isRichSessionRelevantActionItem(item, activeSession) {
+  const sourceSessionId = String(item?.sourceSessionId || "").trim();
+  const activeSessionId = String(activeSession?.id || "").trim();
+  const source = String(item?.source || "").trim();
+  const id = String(item?.id || "").trim();
+  if (sourceSessionId && activeSessionId && sourceSessionId === activeSessionId) {
+    return true;
+  }
+  if (/^research-/i.test(source) || /^research-/i.test(id)) {
+    return true;
+  }
+  return !sourceSessionId;
+}
+
+function getRichSessionActionItems(activeSession) {
+  return getAgentTownOpenActionItems()
+    .filter((item) => !String(item?.tutorialId || "").trim())
+    .filter((item) => isRichSessionRelevantActionItem(item, activeSession))
+    .slice(0, 4);
+}
+
+function renderRichSessionActionItems(activeSession) {
+  const items = getRichSessionActionItems(activeSession);
+  if (!items.length) {
+    return "";
+  }
+
+  return `
+    <section class="rich-session-action-panel" data-rich-session-action-panel aria-label="Pending human decisions">
+      <div class="rich-session-action-panel-header">
+        <span class="rich-session-entry-kicker-label">Human decisions</span>
+        <span class="rich-session-entry-meta">${escapeHtml(`${items.length} pending`)}</span>
+      </div>
+      <div class="rich-session-action-grid">
+        ${items.map(renderAgentTownActionItemCard).join("")}
+      </div>
+    </section>
   `;
 }
 
@@ -24704,6 +24746,7 @@ async function updateAgentTownActionItemStatus(actionItemId, status, extra = {})
     applyAgentTownState(payload.agentTown);
     refreshAgentTownActionItemUi();
     refreshAgentCanvasUi();
+    refreshRichSessionSurfaceUi();
     return payload.actionItem;
   } catch (error) {
     window.alert(error.message);
@@ -24739,6 +24782,7 @@ async function compileResearchBriefFromActionItem(actionItemId) {
       applyAgentTownState(payload.agentTown);
       refreshAgentTownActionItemUi();
       refreshAgentCanvasUi();
+      refreshRichSessionSurfaceUi();
     }
     if (payload.actionItem?.resolution === "approved") {
       return payload.actionItem;
@@ -41448,6 +41492,69 @@ function bindShellEvents() {
       if (command) {
         sendRichSessionSlashCommand(command, { trigger: slashAction });
       }
+      return;
+    }
+
+    const actionOpen = target?.closest("[data-agent-town-action-open]");
+    if (actionOpen instanceof HTMLElement) {
+      event.preventDefault();
+      event.stopPropagation();
+      openAgentTownActionHref(actionOpen.getAttribute("data-agent-town-action-open") || "");
+      return;
+    }
+
+    const actionResolve = target?.closest("[data-agent-town-action-resolve]");
+    if (actionResolve instanceof HTMLElement) {
+      event.preventDefault();
+      event.stopPropagation();
+      const actionItemId = actionResolve.getAttribute("data-agent-town-action-resolve") || "";
+      const resolution = actionResolve.getAttribute("data-agent-town-action-resolution") || "";
+      const status = actionResolve.getAttribute("data-agent-town-action-status") || "completed";
+      let resolutionNote = "";
+      if (resolution === "steered") {
+        resolutionNote = window.prompt("Steer this agent with one short note:", "") || "";
+        if (!resolutionNote.trim()) {
+          return;
+        }
+      }
+      if (actionResolve instanceof HTMLButtonElement) {
+        actionResolve.disabled = true;
+      }
+      void updateAgentTownActionItemStatus(actionItemId, status, { resolution, resolutionNote });
+      return;
+    }
+
+    const compileAction = target?.closest("[data-research-brief-compile-action]");
+    if (compileAction instanceof HTMLElement) {
+      event.preventDefault();
+      event.stopPropagation();
+      if (compileAction instanceof HTMLButtonElement) {
+        compileAction.disabled = true;
+        compileAction.textContent = "queuing...";
+      }
+      void compileResearchBriefFromActionItem(compileAction.getAttribute("data-research-brief-compile-action") || "")
+        .finally(() => {
+          if (compileAction instanceof HTMLButtonElement && document.body.contains(compileAction)) {
+            compileAction.disabled = false;
+            compileAction.textContent = "approve & queue";
+          }
+        });
+      return;
+    }
+
+    const actionComplete = target?.closest("[data-agent-town-action-complete]");
+    if (actionComplete instanceof HTMLElement) {
+      event.preventDefault();
+      event.stopPropagation();
+      void updateAgentTownActionItemStatus(actionComplete.getAttribute("data-agent-town-action-complete") || "", "completed");
+      return;
+    }
+
+    const actionDismiss = target?.closest("[data-agent-town-action-dismiss]");
+    if (actionDismiss instanceof HTMLElement) {
+      event.preventDefault();
+      event.stopPropagation();
+      void updateAgentTownActionItemStatus(actionDismiss.getAttribute("data-agent-town-action-dismiss") || "", "dismissed");
       return;
     }
 
