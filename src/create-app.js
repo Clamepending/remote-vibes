@@ -67,6 +67,7 @@ import { PRODUCTION_TYPING_REFRESH_MS, TelegramService } from "./telegram-servic
 import { TwilioService } from "./twilio-service.js";
 import { UpdateManager } from "./update-manager.js";
 import { loadVideoMemoryRuntime } from "./videomemory-service-loader.js";
+import { runVideoMemoryGitPull, startPeriodicVideoMemoryGitPull } from "./videomemory-server-update.js";
 import { WalletService } from "./wallet-service.js";
 import { WikiBackupService } from "./wiki-backup.js";
 import { detectProviders, getDefaultProviderId } from "./providers.js";
@@ -1636,6 +1637,20 @@ export async function createVibeResearchApp({
   await ottoAuthService.initialize();
   await twilioService.initialize?.();
   await videoMemoryService.initialize();
+  // Keep ~/videomemory current with origin so a long-running Vibe Research
+  // doesn't drift weeks behind the upstream. Pull is fast-forward-only —
+  // it bails loudly on local edits / divergent history rather than
+  // clobbering the user's checkout. We never auto-restart the launched
+  // server (would interrupt running monitors); the new code lands at the
+  // next manual restart.
+  const stopVideoMemoryGitPull = startPeriodicVideoMemoryGitPull({
+    installRoot: String(settingsStore.settings.videoMemoryLaunchCwd || path.join(homedir(), "videomemory")).trim(),
+    log: (entry) => {
+      if (entry?.result?.ok === false && entry.result.reason && entry.result.reason !== "not-installed") {
+        console.warn("[vibe-research] videomemory git pull warning:", entry.result.reason);
+      }
+    },
+  });
   await agentCallbackService.initialize();
   await scaffoldRecipeService.initialize();
   await tutorialRegistry.load();
@@ -2852,6 +2867,10 @@ export async function createVibeResearchApp({
         runHandshake: handshakeMcpLaunch,
         runAutoSync: runAutoSyncForAgents,
         appDir: appRootDir,
+        // Resolve the local server URL so install plans can call back
+        // into the running Vibe Research API (e.g. VideoMemory's plan
+        // posts to /api/videomemory/install-server).
+        serverBaseUrl: `http://127.0.0.1:${exposedPort || port}`,
       });
       response.json({
         jobId: job.id,
@@ -2890,6 +2909,7 @@ export async function createVibeResearchApp({
         building,
         settingsStore,
         appDir: appRootDir,
+        serverBaseUrl: `http://127.0.0.1:${exposedPort || port}`,
       });
       response.json({
         jobId: job.id,
@@ -5612,9 +5632,42 @@ export async function createVibeResearchApp({
               "git is not installed. The Xcode Command Line Tools installer was opened — finish that dialog and click install again.",
             );
           }
+        } else if (process.platform === "linux") {
+          // Detect the host's package manager and surface the exact one-liner
+          // instead of a generic "use apt or dnf" hint. Most users will paste
+          // the suggestion verbatim — meeting them where they are matters.
+          // We don't run sudo here ourselves: a non-interactive sudo
+          // reliably fails (no TTY for password) and a passwordless install
+          // is a security smell to assume by default.
+          const pmCandidates = [
+            { cmd: "apt-get", install: "sudo apt-get update && sudo apt-get install -y git" },
+            { cmd: "apt", install: "sudo apt install -y git" },
+            { cmd: "dnf", install: "sudo dnf install -y git" },
+            { cmd: "yum", install: "sudo yum install -y git" },
+            { cmd: "pacman", install: "sudo pacman -S --noconfirm git" },
+            { cmd: "zypper", install: "sudo zypper install -y git" },
+            { cmd: "apk", install: "sudo apk add git" },
+          ];
+          let suggestion = "your package manager (e.g. `sudo apt-get install -y git`)";
+          for (const candidate of pmCandidates) {
+            try {
+              await execFileAsync("command", ["-v", candidate.cmd]);
+              suggestion = `\`${candidate.install}\``;
+              break;
+            } catch {
+              // try the next one
+            }
+          }
+          throw new Error(
+            `git is not installed. Run ${suggestion}, then click install again.`,
+          );
+        } else if (process.platform === "win32") {
+          throw new Error(
+            "git is not installed. Install Git for Windows from https://git-scm.com/download/win, then click install again.",
+          );
         } else {
           throw new Error(
-            "git is not installed. Install it with your package manager (e.g. `sudo apt-get install git` or `sudo dnf install git`), then click install again.",
+            `git is not installed. Install it with your platform's package manager (detected platform: ${process.platform}), then click install again.`,
           );
         }
       }
@@ -5692,6 +5745,28 @@ export async function createVibeResearchApp({
         repoUrl,
       });
     }
+  });
+
+  // Run a manual git pull on the user's ~/videomemory checkout. The
+  // background timer (startPeriodicVideoMemoryGitPull) handles routine
+  // updates; this endpoint exists so the UI can offer an explicit
+  // "update server" button for users who want to apply newer code right
+  // now without waiting for the next 24h tick.
+  app.post("/api/videomemory/update-server", async (request, response) => {
+    const installRoot = String(
+      request.body?.installPath
+        || settingsStore.settings.videoMemoryLaunchCwd
+        || path.join(homedir(), "videomemory"),
+    ).trim();
+    const result = await runVideoMemoryGitPull({ installRoot });
+    if (!result.ok) {
+      response.status(result.reason === "not-installed" ? 404 : 400).json({
+        installPath: installRoot,
+        ...result,
+      });
+      return;
+    }
+    response.json({ installPath: installRoot, ...result });
   });
 
   app.get("/api/videomemory/monitors", (_request, response) => {
@@ -7059,6 +7134,9 @@ export async function createVibeResearchApp({
       twilioService.stop();
       try {
         videoMemoryService?.stopLaunchedProcess?.();
+      } catch { /* best effort */ }
+      try {
+        stopVideoMemoryGitPull?.();
       } catch { /* best effort */ }
       wikiBackupService.stop();
       sleepPreventionService.stop();
