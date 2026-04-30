@@ -20,15 +20,18 @@ function normalizeText(value) {
 
 function stripAnsiAndControlText(value) {
   // OSC sequences are pure metadata (titles, hyperlinks) — drop entirely.
-  // CSI sequences include cursor-movement (e.g. ESC[5C = move 5 right) which
-  // visually creates gaps between glyphs in the terminal. If we drop them
-  // outright, words rendered with cursor positioning collapse together
-  // ("Hello! What would you like to work on?" -> "Hello!Whatwouldyouliketoworkon?"
-  // — Codex hits this hard). Substitute a single space so the projection
-  // preserves at least the visible gap; downstream collapses runs anyway.
+  // CSI cursor-movement / mode sequences would otherwise leave raw bytes
+  // visible if dropped; substitute a single space so words don't collapse
+  // together (Codex hits this hard).
+  //
+  // SGR sequences (the "m"-terminated subset of CSI: ESC[<params>m) ARE
+  // preserved — they carry the agent's colour cues (red errors, green
+  // oks, blue paths) and the renderer turns them into <span style="color:..">
+  // at draw time. Without this preservation the native feed reads as a
+  // washed-out monochrome version of the terminal view.
   return String(value ?? "")
-    .replace(/\u001b\][^\u0007]*(?:\u0007|\u001b\\)/g, "")
-    .replace(/\u001b\[[0-9;?]*[ -/]*[@-~]/g, " ")
+    .replace(/\u001b\][^\u0007\u001b]*(?:\u0007|\u001b\\)/g, "")
+    .replace(/\u001b\[[0-9;?]*[ -/]*([@-ln-~])/g, (match, finalByte) => finalByte === "m" ? match : " ")
     .replace(/\u001b[()][0-9A-Za-z]/g, "")
     .replace(/\u001b[@-_]/g, "")
     .replace(/\u009b[0-9;?]*[ -/]*[@-~]/g, " ");
