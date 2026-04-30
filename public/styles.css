@@ -14346,6 +14346,86 @@ body.is-reordering-file-tabs {
   opacity: 1;
 }
 
+/* Tool entries — promote them to a subtle card so a chain of tool calls reads
+   as a sequence of distinct rows instead of an indented blob. The kicker
+   label is the tool name; the body is the summarised input. */
+.rich-session-entry.is-tool {
+  position: relative;
+  padding: 8px 12px 8px 18px;
+  border-left: 2px solid rgba(255, 255, 255, 0.07);
+  background: rgba(255, 255, 255, 0.014);
+  border-radius: 0 10px 10px 0;
+}
+
+.rich-session-entry.is-tool .rich-session-entry-kicker-label {
+  color: rgba(244, 244, 242, 0.74);
+  font-family: "IBM Plex Mono", monospace;
+  font-size: 0.74rem;
+  font-weight: 600;
+  letter-spacing: 0.02em;
+  text-transform: none;
+}
+
+.rich-session-entry.is-tool .rich-session-entry-pre {
+  color: rgba(244, 244, 242, 0.66);
+  font-family: "IBM Plex Mono", monospace;
+  font-size: 0.86rem;
+}
+
+.rich-session-entry.is-tool .rich-session-entry-pre.is-output {
+  margin-top: 4px;
+  padding: 8px 12px;
+  border-radius: 10px;
+  background: rgba(8, 9, 11, 0.55);
+  border: 1px solid rgba(255, 255, 255, 0.04);
+  color: rgba(244, 244, 242, 0.55);
+  font-size: 0.8rem;
+  line-height: 1.5;
+}
+
+/* Per-status accents on tool entries. The background dot in the kicker
+   tells the user at-a-glance whether a tool is still running, finished
+   cleanly, or errored. */
+.rich-session-entry.is-tool::before {
+  content: "";
+  position: absolute;
+  left: -4px;
+  top: 13px;
+  width: 6px;
+  height: 6px;
+  border-radius: 999px;
+  background: rgba(255, 255, 255, 0.22);
+}
+
+.rich-session-entry.is-tool.is-running::before {
+  background: rgba(255, 196, 92, 0.92);
+  box-shadow: 0 0 0 3px rgba(255, 196, 92, 0.18);
+  animation: rich-session-tool-pulse 1.4s ease-in-out infinite;
+}
+
+.rich-session-entry.is-tool.is-done::before {
+  background: rgba(120, 220, 160, 0.92);
+}
+
+.rich-session-entry.is-tool.is-error {
+  border-left-color: rgba(255, 121, 109, 0.62);
+  background: rgba(255, 121, 109, 0.04);
+}
+
+.rich-session-entry.is-tool.is-error::before {
+  background: rgba(255, 121, 109, 0.95);
+  box-shadow: 0 0 0 3px rgba(255, 121, 109, 0.18);
+}
+
+@keyframes rich-session-tool-pulse {
+  0%, 100% {
+    box-shadow: 0 0 0 3px rgba(255, 196, 92, 0.18);
+  }
+  50% {
+    box-shadow: 0 0 0 5px rgba(255, 196, 92, 0.05);
+  }
+}
+
 /* Pending assistant placeholder — explicit "thinking" text alongside the
    spinner kicker so the user can never miss the loading state. */
 .rich-session-entry.is-pending .is-pending-copy {
@@ -14383,6 +14463,32 @@ body.is-reordering-file-tabs {
   to {
     transform: rotate(360deg);
   }
+}
+
+/* Inline file paths inside tool / status / code entries. Clicking opens the
+   path in the workspace preview when it lives under the current root, or
+   copies the absolute path to the clipboard otherwise. */
+.rich-session-path-link {
+  color: rgba(120, 188, 255, 0.86);
+  text-decoration-line: underline;
+  text-decoration-style: dotted;
+  text-decoration-color: rgba(120, 188, 255, 0.4);
+  text-underline-offset: 2px;
+  font-family: inherit;
+  word-break: break-all;
+  cursor: pointer;
+}
+
+.rich-session-path-link:hover,
+.rich-session-path-link:focus-visible {
+  color: rgba(150, 210, 255, 1);
+  text-decoration-color: rgba(150, 210, 255, 0.9);
+  outline: none;
+}
+
+.rich-session-entry.is-tool .rich-session-path-link,
+.rich-session-entry.is-status .rich-session-path-link {
+  color: rgba(160, 200, 255, 0.78);
 }
 
 .rich-session-composer {

@@ -118,6 +118,12 @@ test("rich session assistant replies render markdown while tool rows stay plain"
     browser = await chromium.launch({ executablePath, headless: true });
     const page = await browser.newPage();
     await page.goto(`${baseUrl}/?view=shell`, { waitUntil: "domcontentloaded" });
+    // Default surface mode is "terminal" — flip to "native" so the rich
+    // session entries are actually rendered visible (not just present in the
+    // DOM under display:none).
+    await page.waitForSelector("#toggle-shell-surface-native", { timeout: 10_000 });
+    await page.click("#toggle-shell-surface-native");
+    await page.waitForSelector(".rich-session-surface.is-active", { timeout: 5_000 });
     await page.waitForSelector(".rich-session-entry-markdown .knowledge-base-table", { timeout: 10_000 });
 
     const rendered = await page.evaluate(() => {
