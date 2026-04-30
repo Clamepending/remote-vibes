@@ -333,6 +333,21 @@ function isRichSessionEphemeralLine(line) {
     return true;
   }
 
+  // ANSI SGR residue: lines that are *only* an SGR fragment (`39m`, `0m`,
+  // `1;31m`, `[0m`, `[39m`, etc.) when the leading ESC byte was lost in
+  // a partial buffer capture. These would otherwise render as standalone
+  // single-line "entries" with names like "39m" — exactly the artifact
+  // the user saw in the screenshot. Anchored at start-and-end so prose
+  // mentions ("the run took 39m to finish") survive.
+  if (/^\[?[0-9]+(?:;[0-9]+)*[A-Za-z]$/u.test(trimmed)) {
+    return true;
+  }
+  // Lone single letter that's a common SGR finalizer (m, K, J, H, etc.)
+  // — same rationale: mid-escape buffer capture left only the final byte.
+  if (/^[mKJHABCDfsuln]$/u.test(trimmed)) {
+    return true;
+  }
+
   return false;
 }
 

@@ -175,31 +175,34 @@ function isClaudeProviderId(providerId) {
 }
 
 function isClaudeStreamModeEnabled(env = process.env) {
-  // Stream mode is opt-in for Claude sessions. By default we use the PTY+TUI
-  // surface so the xterm chat view shows the unaltered Claude CLI. Set
-  // VIBE_RESEARCH_CLAUDE_STREAM_MODE=1 to opt into the JSONL stream surface.
+  // Stream mode is now ON by default for Claude sessions. The structured
+  // JSONL surface produces a real native chat (typed entries, reducer,
+  // images / plan cards / MCP badges / /login actions) instead of the
+  // older PTY+TUI projection that re-parses CLI bytes. Opt-out by
+  // setting VIBE_RESEARCH_CLAUDE_STREAM_MODE=0 (or false/off/no) — the
+  // legacy session-manager test suite uses that escape hatch.
   const value = String(
     env?.VIBE_RESEARCH_CLAUDE_STREAM_MODE
       ?? env?.REMOTE_VIBES_CLAUDE_STREAM_MODE
       ?? "",
   ).trim();
   if (!value) {
-    return false;
+    return true;
   }
   return !/^(?:0|false|off|no)$/i.test(value);
 }
 
 function isCodexStreamModeEnabled(env = process.env) {
-  // Same opt-in semantics as Claude: PTY+TUI is the default so new Codex
-  // sessions render the raw CLI in xterm. Set VIBE_RESEARCH_CODEX_STREAM_MODE=1
-  // to opt into the codex exec --json stream surface.
+  // Same opt-out semantics as Claude: stream mode (`codex exec --json`)
+  // is the default so new Codex sessions get structured entries. Set
+  // VIBE_RESEARCH_CODEX_STREAM_MODE=0 to fall back to PTY+TUI projection.
   const value = String(
     env?.VIBE_RESEARCH_CODEX_STREAM_MODE
       ?? env?.REMOTE_VIBES_CODEX_STREAM_MODE
       ?? "",
   ).trim();
   if (!value) {
-    return false;
+    return true;
   }
   return !/^(?:0|false|off|no)$/i.test(value);
 }
@@ -3614,10 +3617,17 @@ export class SessionManager {
     });
 
     if (provider.id !== "shell") {
+      // Copy depends on whether this session uses the structured JSONL
+      // stream (default) or the PTY+TUI projection (opt-out). Stream-mode
+      // sessions don't have a Terminal tab, so the "switch to Terminal"
+      // line would be a lie; the Stream JSON tab is the corresponding
+      // diagnostic.
       this.pushNativeNarrativeEntry(session, {
         kind: "status",
         label: "Native",
-        text: "Native view is live. Switch to Terminal any time for the raw CLI.",
+        text: session.streamMode
+          ? "Native view is live. Open the Stream JSON tab to inspect the wire-format events."
+          : "Native view is live. Switch to Terminal any time for the raw CLI.",
         timestamp: createdAt,
         meta: "owned-ui",
       });

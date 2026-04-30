@@ -2423,6 +2423,15 @@ const state = {
   richSessionComposerDrafts: {},
   richSessionInputBuffers: {},
   richSessionRecentInputs: {},
+  // Pushback textarea drafts keyed by plan-card entry id. The textarea
+  // re-renders whenever a narrative-event lands (which happens often during
+  // a streaming reply); without persistent state, in-progress pushback
+  // text would vanish mid-typing. Store it under
+  // state.richSessionPlanPushbackDrafts[entryId] and re-hydrate on render.
+  richSessionPlanPushbackDrafts: {},
+  // Plan cards whose pushback panel the user has expanded. Without this we'd
+  // lose the open/closed state on every narrative-event re-render.
+  richSessionPlanPushbackOpen: new Set(),
   richSessionRenderFrame: null,
   richSessionScrollToBottom: false,
   terminalComposing: false,
@@ -5739,8 +5748,15 @@ function renderRichSessionEntry(entry, index) {
     const planHtml = isRichSessionMarkdownContent(planText)
       ? `<div class="rich-session-plan-body knowledge-base-markdown">${renderKnowledgeBaseMarkdown(planText, "")}</div>`
       : `<pre class="rich-session-plan-body is-plain">${escapeHtml(planText)}</pre>`;
+    // Re-hydrate the pushback panel state: open/closed and any in-progress
+    // text the user typed. Without this, every narrative-event that re-
+    // renders the feed would reset both — frustrating during a streaming
+    // reply that fires events 2-5x per second.
+    const planEntryId = String(entry?.id || "");
+    const pushbackDraft = planEntryId ? (state.richSessionPlanPushbackDrafts[planEntryId] || "") : "";
+    const pushbackOpen = planEntryId && state.richSessionPlanPushbackOpen.has(planEntryId);
     return `
-      <article class="${entryClassName} rich-session-plan-card" data-rich-session-entry="${index}">
+      <article class="${entryClassName} rich-session-plan-card" data-rich-session-entry="${index}" data-plan-entry-id="${escapeHtml(planEntryId)}">
         <div class="rich-session-entry-kicker">
           <span class="rich-session-entry-kicker-icon">${renderIcon(Waypoints, { className: "rich-session-entry-icon" })}</span>
           <span class="rich-session-entry-kicker-label">Proposed plan</span>
@@ -5751,12 +5767,12 @@ function renderRichSessionEntry(entry, index) {
           <button class="primary-button rich-session-plan-accept" type="button" data-rich-session-plan-accept>Approve plan</button>
           <button class="ghost-button rich-session-plan-reject" type="button" data-rich-session-plan-reject>Push back</button>
         </div>
-        <div class="rich-session-plan-pushback" data-rich-session-plan-pushback hidden>
+        <div class="rich-session-plan-pushback" data-rich-session-plan-pushback ${pushbackOpen ? "" : "hidden"}>
           <textarea
             class="rich-session-plan-pushback-input"
             placeholder="What should the agent do differently? (optional)"
             rows="2"
-          ></textarea>
+          >${escapeHtml(pushbackDraft)}</textarea>
           <div class="rich-session-plan-pushback-actions">
             <button class="primary-button" type="button" data-rich-session-plan-pushback-send>Send pushback</button>
             <button class="ghost-button" type="button" data-rich-session-plan-pushback-cancel>Cancel</button>
@@ -40241,8 +40257,13 @@ function bindShellEvents() {
     if (planReject instanceof HTMLButtonElement) {
       event.preventDefault();
       const card = planReject.closest(".rich-session-plan-card");
+      const planEntryId = card instanceof HTMLElement ? card.getAttribute("data-plan-entry-id") || "" : "";
       const pushback = card?.querySelector("[data-rich-session-plan-pushback]");
       const textarea = pushback?.querySelector(".rich-session-plan-pushback-input");
+      // Persist the open state so a re-render keeps the panel expanded.
+      if (planEntryId) {
+        state.richSessionPlanPushbackOpen.add(planEntryId);
+      }
       if (pushback instanceof HTMLElement) {
         pushback.removeAttribute("hidden");
       }
@@ -40255,17 +40276,25 @@ function bindShellEvents() {
     if (planPushbackSend instanceof HTMLButtonElement) {
       event.preventDefault();
       const card = planPushbackSend.closest(".rich-session-plan-card");
+      const planEntryId = card instanceof HTMLElement ? card.getAttribute("data-plan-entry-id") || "" : "";
       const textarea = card?.querySelector(".rich-session-plan-pushback-input");
       const message = textarea instanceof HTMLTextAreaElement ? textarea.value.trim() : "";
       planPushbackSend.setAttribute("disabled", "disabled");
       planPushbackSend.classList.add("is-sending");
       sendRichSessionPlanResponse({ approve: false, message, trigger: planPushbackSend });
+      // Clear hoisted state — the response is in flight; if it fails the
+      // user can re-open and retype, which is fine.
+      if (planEntryId) {
+        delete state.richSessionPlanPushbackDrafts[planEntryId];
+        state.richSessionPlanPushbackOpen.delete(planEntryId);
+      }
       return;
     }
     const planPushbackCancel = target?.closest("[data-rich-session-plan-pushback-cancel]");
     if (planPushbackCancel instanceof HTMLButtonElement) {
       event.preventDefault();
       const card = planPushbackCancel.closest(".rich-session-plan-card");
+      const planEntryId = card instanceof HTMLElement ? card.getAttribute("data-plan-entry-id") || "" : "";
       const pushback = card?.querySelector("[data-rich-session-plan-pushback]");
       if (pushback instanceof HTMLElement) {
         pushback.setAttribute("hidden", "");
@@ -40273,6 +40302,10 @@ function bindShellEvents() {
       const textarea = pushback?.querySelector(".rich-session-plan-pushback-input");
       if (textarea instanceof HTMLTextAreaElement) {
         textarea.value = "";
+      }
+      if (planEntryId) {
+        delete state.richSessionPlanPushbackDrafts[planEntryId];
+        state.richSessionPlanPushbackOpen.delete(planEntryId);
       }
       return;
     }
