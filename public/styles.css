@@ -6848,7 +6848,7 @@ button.visual-agent-tile:focus-visible,
 
 .visual-agent-sprite-claude {
   border-color: rgba(215, 123, 74, 0.46);
-  background: #050609;
+  background: #000;
   box-shadow: 0 5px 0 rgba(0, 0, 0, 0.32);
 }
 
@@ -7082,7 +7082,10 @@ button.visual-agent-tile:focus-visible,
 
 .visual-agent-sprite-claude.visual-agent-sprite-working,
 .visual-agent-sprite-claude.visual-agent-sprite-done,
-.visual-agent-sprite-claude.visual-agent-sprite-failed,
+.visual-agent-sprite-claude.visual-agent-sprite-failed {
+  background: #000;
+}
+
 .visual-agent-sprite-openclaw.visual-agent-sprite-working,
 .visual-agent-sprite-openclaw.visual-agent-sprite-done,
 .visual-agent-sprite-openclaw.visual-agent-sprite-failed {
@@ -9353,7 +9356,7 @@ button.visual-town-building:focus-visible {
 .visual-town-agent.visual-provider-claude .visual-town-agent-body {
   width: 44px;
   border-color: rgba(215, 123, 74, 0.45);
-  background: #050609;
+  background: #000;
 }
 
 .visual-town-agent.visual-provider-claude .visual-town-agent-body .claude-code-avatar {
@@ -9387,11 +9390,8 @@ button.visual-town-building:focus-visible {
 
 .visual-town-agent.visual-provider-claude.visual-status-done .visual-town-agent-body,
 .visual-town-agent.visual-provider-claude.visual-status-failed .visual-town-agent-body,
-.visual-town-agent.visual-provider-claude.is-working .visual-town-agent-body,
-.visual-town-agent.visual-provider-openclaw.visual-status-done .visual-town-agent-body,
-.visual-town-agent.visual-provider-openclaw.visual-status-failed .visual-town-agent-body,
-.visual-town-agent.visual-provider-openclaw.is-working .visual-town-agent-body {
-  background: #050609;
+.visual-town-agent.visual-provider-claude.is-working .visual-town-agent-body {
+  background: #000;
 }
 
 .visual-town-agent.visual-provider-openclaw.visual-status-done .visual-town-agent-body,
@@ -13538,15 +13538,12 @@ button.visual-town-building:focus-visible {
 }
 
 .agent-profile-avatar-claudecode {
-  background:
-    radial-gradient(circle at 50% 28%, rgba(255, 200, 162, 0.2), transparent 30%),
-    linear-gradient(180deg, rgba(215, 123, 74, 0.16), rgba(80, 40, 28, 0.1)),
-    #14100c;
+  background: #000;
 }
 
 .agent-profile-avatar-claudecode .agent-profile-avatar-backdrop {
-  background: linear-gradient(180deg, #d77b4a, #2f1815);
-  opacity: 0.55;
+  background: #000;
+  opacity: 1;
 }
 
 .agent-profile-avatar-headshot {
