@@ -225,6 +225,22 @@ function isCodexStreamModeEnabled(env = process.env) {
   return !/^(?:0|false|off|no)$/i.test(value);
 }
 
+function isCodexBypassPermissionsEnabled(env = process.env) {
+  // Reviewer/agent sessions need to call the local Vibe Research HTTP APIs
+  // and read the throwaway project files they are asked to inspect. Match
+  // Claude's default low-friction mode, with an explicit opt-out for users
+  // who want Codex's sandboxed approval flow.
+  const value = String(
+    env?.VIBE_RESEARCH_CODEX_BYPASS_PERMISSIONS
+      ?? env?.REMOTE_VIBES_CODEX_BYPASS_PERMISSIONS
+      ?? "",
+  ).trim();
+  if (!value) {
+    return true;
+  }
+  return !/^(?:0|false|off|no)$/i.test(value);
+}
+
 function getClaudeOllamaBaseUrl(env = process.env) {
   return (
     String(
@@ -3632,6 +3648,17 @@ export class SessionManager {
     const normalizedDelayMs = normalizePromptDelayMs(delayMs, this.initialPromptDelayMs);
     let answeredWorkspaceTrust = false;
 
+    if (session.streamSession) {
+      this.setTimeoutFn(() => {
+        const currentSession = this.sessions.get(session.id);
+        if (currentSession !== session || session.status === "exited" || !session.streamSession) {
+          return;
+        }
+        this.write(session.id, `${normalizedPrompt}\n`);
+      }, normalizedDelayMs);
+      return true;
+    }
+
     const submitPrompt = () => {
       const currentSession = this.sessions.get(session.id);
       if (currentSession !== session || session.status === "exited" || !session.pty) {
@@ -6098,6 +6125,9 @@ export class SessionManager {
       cwd: sessionCwd,
       env: sessionEnv,
       codexBin,
+      extraArgs: isCodexBypassPermissionsEnabled(this.env)
+        ? ["--dangerously-bypass-approvals-and-sandbox"]
+        : [],
       allocateSeq: () => {
         if (typeof session.entrySeqCounter !== "number") {
           session.entrySeqCounter = 0;

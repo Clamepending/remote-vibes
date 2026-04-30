@@ -299,7 +299,7 @@ export class CodexStreamSession extends EventEmitter {
         outputPreview = `${head}\n\n… (${elided.toLocaleString()} more chars elided) …\n\n${tail}`;
       }
       const exitCode = item.exit_code;
-      const status = completed ? (exitCode === 0 ? "completed" : "error") : "running";
+      const status = completed ? (exitCode === 0 ? "done" : "error") : "running";
       return {
         id,
         kind: "tool",
@@ -320,7 +320,7 @@ export class CodexStreamSession extends EventEmitter {
         text: summary,
         timestamp: stamp,
         meta: baseMeta,
-        status: completed ? "completed" : "running",
+        status: completed ? "done" : "running",
       };
     }
     if (type === "mcp_tool_call") {
@@ -333,7 +333,7 @@ export class CodexStreamSession extends EventEmitter {
         text,
         timestamp: stamp,
         meta: baseMeta,
-        status: completed ? "completed" : "running",
+        status: completed ? "done" : "running",
       };
     }
     // Unknown item type — render generically

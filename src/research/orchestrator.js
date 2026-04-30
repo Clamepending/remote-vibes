@@ -192,6 +192,9 @@ export async function tickResearchOrchestrator({
   checkPaper = true,
   codeCwd = "",
   commandText = "",
+  agentReviewProvider = "",
+  agentReviewName = "",
+  agentReviewPrompt = "",
   fetchImpl = globalThis.fetch,
 } = {}) {
   if (!projectDir) throw new TypeError("projectDir is required");
@@ -229,7 +232,7 @@ export async function tickResearchOrchestrator({
       `ACTIVE has ${row.slug}; continue or finish that move before claiming another.`,
       { slug: row.slug },
     );
-    nextCommand = command([
+    const parts = [
       "vr-research-runner",
       resolvedProjectDir,
       "cycle",
@@ -237,7 +240,14 @@ export async function tickResearchOrchestrator({
       row.slug,
       "--command",
       commandText || "<experiment-command>",
-    ]);
+    ];
+    if (waitHuman) parts.push("--wait-human");
+    else if (askHuman) parts.push("--ask-human");
+    if (agentTownApi) parts.push("--agent-town-api", agentTownApi);
+    if (agentReviewProvider) parts.push("--agent-review-provider", agentReviewProvider);
+    if (agentReviewName) parts.push("--agent-review-name", agentReviewName);
+    if (agentReviewPrompt) parts.push("--agent-review-prompt", agentReviewPrompt);
+    nextCommand = command(parts);
   } else if ((parsed.queue || []).length) {
     const row = parsed.queue[0];
     rec = recommendation(
@@ -254,6 +264,12 @@ export async function tickResearchOrchestrator({
     ];
     if (codeCwd) parts.push("--cwd", codeCwd);
     parts.push("--command", commandText || "<experiment-command>");
+    if (waitHuman) parts.push("--wait-human");
+    else if (askHuman) parts.push("--ask-human");
+    if (agentTownApi) parts.push("--agent-town-api", agentTownApi);
+    if (agentReviewProvider) parts.push("--agent-review-provider", agentReviewProvider);
+    if (agentReviewName) parts.push("--agent-review-name", agentReviewName);
+    if (agentReviewPrompt) parts.push("--agent-review-prompt", agentReviewPrompt);
     nextCommand = command(parts);
   } else if (["experiment", "hillclimb"].includes(state.phase) && sweeps.some(sweepHasRunnableRows)) {
     const sweep = sweeps.find(sweepHasRunnableRows);

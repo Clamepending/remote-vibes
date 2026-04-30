@@ -6757,6 +6757,9 @@ export async function createVibeResearchApp({
         checkPaper: body.checkPaper !== false && !body.noPaper,
         codeCwd: body.codeCwd,
         commandText: body.commandText || body.command,
+        agentReviewProvider: body.agentReviewProvider,
+        agentReviewName: body.agentReviewName,
+        agentReviewPrompt: body.agentReviewPrompt,
       });
       response.json({
         ok: true,
@@ -6815,6 +6818,9 @@ export async function createVibeResearchApp({
         checkPaper: body.checkPaper !== false && !body.noPaper,
         codeCwd: body.codeCwd,
         commandText: body.commandText || body.command,
+        agentReviewProvider: body.agentReviewProvider,
+        agentReviewName: body.agentReviewName,
+        agentReviewPrompt: body.agentReviewPrompt,
       });
       response.json({
         ok: true,
@@ -6880,6 +6886,9 @@ export async function createVibeResearchApp({
         change: body.change,
         qual: body.qual,
         seed: body.seed,
+        agentReviewProvider: body.agentReviewProvider,
+        agentReviewName: body.agentReviewName,
+        agentReviewPrompt: body.agentReviewPrompt,
         finishOnSynthesize: Boolean(body.finishOnSynthesize),
         finishApply: Boolean(body.finishApply),
         finishTakeaway: body.finishTakeaway,

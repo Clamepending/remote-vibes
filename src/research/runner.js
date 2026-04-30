@@ -779,8 +779,8 @@ function buildAgentReviewPrompt({
     `1. Poll ${agentTownApi}/action-items until the action item id above exists.`,
     "2. Read the result doc and cycle log paths listed above or in the action item's evidence.",
     "3. Choose one resolution from: continued, rerun, synthesized, brainstorm, steered.",
-    "4. PATCH the action item with JSON like:",
-    '   {"resolution":"continued","resolutionNote":"Reviewed result doc and cycle log; continue."}',
+    "4. PATCH the action item with JSON like this exact command:",
+    `   curl -s -X PATCH ${JSON.stringify(`${agentTownApi}/action-items/${actionItemId}`)} -H 'Content-Type: application/json' -d '{"resolution":"continued","resolutionNote":"Reviewed result doc and cycle log; continue."}'`,
     "",
     "Use continued only if the cycle completed cleanly and the next autonomous step can proceed. Use rerun for noise or flaky evidence, synthesized when the move should close, brainstorm when the direction should reset, and steered when you need to leave explicit guidance.",
   ].filter(Boolean).join("\n");

@@ -391,6 +391,43 @@ test("initial agent prompts are submitted after provider readiness", async () =>
   }
 });
 
+test("initial agent prompts are submitted to stream-mode sessions", async () => {
+  const { manager, workspaceDir, userHomeDir } = await createManager({
+    initialPromptDelayMs: 0,
+  });
+
+  try {
+    const provider = fakeAgentProviders.find((entry) => entry.id === "claude");
+    const sends = [];
+    const session = manager.buildSessionRecord({
+      providerId: "claude",
+      providerLabel: "Claude Code",
+      name: "Stream reviewer",
+      cwd: workspaceDir,
+      status: "running",
+      streamMode: true,
+    });
+    session.streamSession = {
+      send(input) {
+        sends.push(input);
+      },
+      close() {},
+    };
+    manager.sessions.set(session.id, session);
+
+    assert.equal(
+      manager.queueInitialPromptForSession(session, provider, "hello stream", { delayMs: 0 }),
+      true,
+    );
+    await new Promise((resolve) => setTimeout(resolve, 20));
+
+    assert.deepEqual(sends, ["hello stream"]);
+    assert.ok(session.lastPromptAt);
+  } finally {
+    await cleanupManager(manager, workspaceDir, userHomeDir);
+  }
+});
+
 test("sessions record the selected occupation and forks inherit it", async () => {
   const { manager, workspaceDir, userHomeDir } = await createManager({ occupationId: "engineer" });
 

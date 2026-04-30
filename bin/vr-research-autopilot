@@ -33,6 +33,12 @@ Options:
   --qual <text>            One-line qualitative observation for run mode.
   --seed <text>            Seed/id attached to the cycle metric in run mode.
   --cycle-timeout-ms <ms>  Per-cycle command timeout in run mode.
+  --agent-review-provider <id>
+                           Launch a reviewer coding agent before posting/waiting on a review card.
+  --agent-review-name <text>
+                           Name for the reviewer agent session.
+  --agent-review-prompt <text>
+                           Override the reviewer agent prompt.
   --finish-on-synthesize   Let run mode call finishMove when decision is synthesize.
   --finish-apply           Apply README/LOG updates when finishing.
   --finish-takeaway <text> Takeaway to write when finishing.
@@ -74,6 +80,9 @@ function parseArgs(argv) {
     api: "",
     apply: false,
     askHuman: false,
+    agentReviewName: "",
+    agentReviewPrompt: "",
+    agentReviewProvider: "",
     checkPaper: true,
     codeCwd: "",
     commandText: "",
@@ -122,6 +131,9 @@ function parseArgs(argv) {
     if (arg === "--no-paper") { opts.checkPaper = false; continue; }
     if (arg === "--wait-human") { opts.askHuman = true; opts.waitHuman = true; continue; }
     if (arg === "--api") { opts.api = requireValue(argv, index, arg); index += 1; continue; }
+    if (arg === "--agent-review-name") { opts.agentReviewName = requireValue(argv, index, arg); index += 1; continue; }
+    if (arg === "--agent-review-prompt") { opts.agentReviewPrompt = requireValue(argv, index, arg); index += 1; continue; }
+    if (arg === "--agent-review-provider") { opts.agentReviewProvider = requireValue(argv, index, arg); index += 1; continue; }
     if (arg === "--code-cwd") { opts.codeCwd = requireValue(argv, index, arg); index += 1; continue; }
     if (arg === "--change") { opts.change = requireValue(argv, index, arg); index += 1; continue; }
     if (arg === "--cycle-timeout-ms") { opts.commandTimeoutMs = Number(requireValue(argv, index, arg)); index += 1; continue; }
@@ -176,6 +188,9 @@ async function main() {
     checkPaper: opts.checkPaper,
     codeCwd: opts.codeCwd,
     commandText: opts.commandText,
+    agentReviewProvider: opts.agentReviewProvider,
+    agentReviewName: opts.agentReviewName,
+    agentReviewPrompt: opts.agentReviewPrompt,
   };
 
   const report = opts.subcommand === "run"

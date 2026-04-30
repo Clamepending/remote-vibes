@@ -110,7 +110,19 @@ function activeResultPath(projectDir, row) {
   return path.resolve(projectDir, "results", `${row.slug}.md`);
 }
 
-function runnerCycleCommand({ projectDir, slug, kind, commandText, askHuman, waitHuman, agentTownApi, codeCwd } = {}) {
+function runnerCycleCommand({
+  projectDir,
+  slug,
+  kind,
+  commandText,
+  askHuman,
+  waitHuman,
+  agentTownApi,
+  codeCwd,
+  agentReviewProvider = "",
+  agentReviewName = "",
+  agentReviewPrompt = "",
+} = {}) {
   const parts = [
     "vr-research-runner",
     projectDir,
@@ -126,6 +138,9 @@ function runnerCycleCommand({ projectDir, slug, kind, commandText, askHuman, wai
   if (waitHuman) parts.push("--wait-human");
   else if (askHuman) parts.push("--ask-human");
   if (agentTownApi) parts.push("--agent-town-api", agentTownApi);
+  if (agentReviewProvider) parts.push("--agent-review-provider", agentReviewProvider);
+  if (agentReviewName) parts.push("--agent-review-name", agentReviewName);
+  if (agentReviewPrompt) parts.push("--agent-review-prompt", agentReviewPrompt);
   return command(parts);
 }
 
@@ -172,6 +187,9 @@ async function routeActiveDecision({
   commandText = "",
   codeCwd = "",
   agentTownApi = "",
+  agentReviewProvider = "",
+  agentReviewName = "",
+  agentReviewPrompt = "",
 } = {}) {
   const slug = row.slug;
   let phaseUpdate = null;
@@ -193,6 +211,9 @@ async function routeActiveDecision({
       waitHuman,
       agentTownApi,
       codeCwd,
+      agentReviewProvider,
+      agentReviewName,
+      agentReviewPrompt,
     });
   } else if (decision.action === "continue") {
     rec = recommendation(
@@ -200,14 +221,38 @@ async function routeActiveDecision({
       `latest review decision for ${slug} was continue; run the next change cycle.`,
       { slug, decision },
     );
-    nextCommand = runnerCycleCommand({ projectDir, slug, kind: "change", commandText, askHuman, waitHuman, agentTownApi, codeCwd });
+    nextCommand = runnerCycleCommand({
+      projectDir,
+      slug,
+      kind: "change",
+      commandText,
+      askHuman,
+      waitHuman,
+      agentTownApi,
+      codeCwd,
+      agentReviewProvider,
+      agentReviewName,
+      agentReviewPrompt,
+    });
   } else if (decision.action === "rerun") {
     rec = recommendation(
       "rerun-cycle",
       `latest review decision for ${slug} requested a rerun/noise check.`,
       { slug, decision },
     );
-    nextCommand = runnerCycleCommand({ projectDir, slug, kind: "rerun", commandText, askHuman, waitHuman, agentTownApi, codeCwd });
+    nextCommand = runnerCycleCommand({
+      projectDir,
+      slug,
+      kind: "rerun",
+      commandText,
+      askHuman,
+      waitHuman,
+      agentTownApi,
+      codeCwd,
+      agentReviewProvider,
+      agentReviewName,
+      agentReviewPrompt,
+    });
   } else if (decision.action === "synthesize") {
     rec = recommendation(
       "finish-move",
@@ -258,6 +303,9 @@ async function routeActiveDecision({
       waitHuman,
       agentTownApi,
       codeCwd,
+      agentReviewProvider,
+      agentReviewName,
+      agentReviewPrompt,
     });
   } else if (decision.action === "timeout" || decision.action === "pause") {
     rec = recommendation(
@@ -288,6 +336,9 @@ export async function stepResearchAutopilot({
   checkPaper = true,
   codeCwd = "",
   commandText = "",
+  agentReviewProvider = "",
+  agentReviewName = "",
+  agentReviewPrompt = "",
   fetchImpl = globalThis.fetch,
 } = {}) {
   if (!projectDir) throw new TypeError("projectDir is required");
@@ -310,6 +361,9 @@ export async function stepResearchAutopilot({
       checkPaper,
       codeCwd,
       commandText,
+      agentReviewProvider,
+      agentReviewName,
+      agentReviewPrompt,
       fetchImpl,
     });
     return {
@@ -344,6 +398,9 @@ export async function stepResearchAutopilot({
     commandText,
     codeCwd,
     agentTownApi,
+    agentReviewProvider,
+    agentReviewName,
+    agentReviewPrompt,
   });
 
   return {
@@ -380,6 +437,9 @@ function cycleOptionsFromRun({
   change = "",
   qual = "",
   seed = "",
+  agentReviewProvider = "",
+  agentReviewName = "",
+  agentReviewPrompt = "",
   fetchImpl = globalThis.fetch,
 } = {}) {
   return {
@@ -398,6 +458,9 @@ function cycleOptionsFromRun({
     waitHuman,
     humanTimeoutMs,
     agentTownApi,
+    agentReviewProvider,
+    agentReviewName,
+    agentReviewPrompt,
     fetchImpl,
   };
 }
@@ -445,6 +508,9 @@ export async function runResearchAutopilot({
   finishAutoAdmit = false,
   finishUpdatePaper = false,
   finishPublishCanvas = false,
+  agentReviewProvider = "",
+  agentReviewName = "",
+  agentReviewPrompt = "",
   fetchImpl = globalThis.fetch,
 } = {}) {
   if (!projectDir) throw new TypeError("projectDir is required");
@@ -452,6 +518,13 @@ export async function runResearchAutopilot({
   const limit = finitePositiveInteger(maxSteps, 1);
   const humanTimeoutMs = finiteNonNegativeInteger(timeoutMs, 30_000);
   const cycleTimeoutMs = finitePositiveInteger(commandTimeoutMs, 30 * 60 * 1000);
+  const effectiveAgentTownApi = trimString(
+    agentTownApi
+      || process.env.VIBE_RESEARCH_AGENT_TOWN_API
+      || process.env.REMOTE_VIBES_AGENT_TOWN_API
+      || "",
+  );
+  const needsReviewGate = Boolean(askHuman || waitHuman || trimString(agentReviewProvider));
   const actions = [];
   let stopReason = "max-steps";
   let stopSummary = `stopped after ${limit} step${limit === 1 ? "" : "s"}`;
@@ -470,6 +543,9 @@ export async function runResearchAutopilot({
       checkPaper,
       codeCwd,
       commandText,
+      agentReviewProvider,
+      agentReviewName,
+      agentReviewPrompt,
       fetchImpl,
     });
     lastStep = step;
@@ -491,6 +567,13 @@ export async function runResearchAutopilot({
     }
 
     if (action === "orchestrator-run-next") {
+      if (needsReviewGate && !effectiveAgentTownApi) {
+        actionRecord.result = { skipped: true, reason: "missing-agent-town-api" };
+        actions.push(actionRecord);
+        stopReason = "missing-agent-town-api";
+        stopSummary = "human/agent review was requested, but Agent Town API is not configured";
+        break;
+      }
       if (!trimString(commandText)) {
         actionRecord.result = { skipped: true, reason: "missing-command" };
         actions.push(actionRecord);
@@ -504,7 +587,7 @@ export async function runResearchAutopilot({
         codeCwd,
         askHuman,
         waitHuman,
-        agentTownApi,
+        agentTownApi: effectiveAgentTownApi,
         humanTimeoutMs,
         commandTimeoutMs: cycleTimeoutMs,
         metric,
@@ -512,6 +595,9 @@ export async function runResearchAutopilot({
         change,
         qual,
         seed,
+        agentReviewProvider,
+        agentReviewName,
+        agentReviewPrompt,
         fetchImpl,
       }));
       actionRecord.result = {
@@ -530,6 +616,13 @@ export async function runResearchAutopilot({
     }
 
     if (["run-cycle", "rerun-cycle", "wait-review", "apply-steering"].includes(action)) {
+      if (needsReviewGate && !effectiveAgentTownApi) {
+        actionRecord.result = { skipped: true, reason: "missing-agent-town-api" };
+        actions.push(actionRecord);
+        stopReason = "missing-agent-town-api";
+        stopSummary = "human/agent review was requested, but Agent Town API is not configured";
+        break;
+      }
       if (!trimString(commandText)) {
         actionRecord.result = { skipped: true, reason: "missing-command" };
         actions.push(actionRecord);
@@ -546,7 +639,7 @@ export async function runResearchAutopilot({
         codeCwd,
         askHuman,
         waitHuman,
-        agentTownApi,
+        agentTownApi: effectiveAgentTownApi,
         humanTimeoutMs,
         commandTimeoutMs: cycleTimeoutMs,
         metric,
@@ -554,6 +647,9 @@ export async function runResearchAutopilot({
         change: change || step.decision?.resolutionNote || "",
         qual,
         seed,
+        agentReviewProvider,
+        agentReviewName,
+        agentReviewPrompt,
         fetchImpl,
       }));
       actionRecord.result = { kind: "cycle", cycle: result };

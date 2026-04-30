@@ -191,6 +191,8 @@ test("stepResearchAutopilot routes rerun decisions to a rerun cycle command", as
       commandText: "node train.js",
       waitHuman: true,
       agentTownApi: "http://agent-town.test/api/agent-town",
+      agentReviewProvider: "codex",
+      agentReviewName: "Review Bot",
     });
     assert.equal(report.recommendation.action, "rerun-cycle");
     assert.equal(report.decision.action, "rerun");
@@ -199,6 +201,8 @@ test("stepResearchAutopilot routes rerun decisions to a rerun cycle command", as
     assert.match(report.nextCommand, /node train\.js/);
     assert.match(report.nextCommand, /--wait-human/);
     assert.match(report.nextCommand, /agent-town\.test/);
+    assert.match(report.nextCommand, /--agent-review-provider codex/);
+    assert.match(report.nextCommand, /--agent-review-name 'Review Bot'/);
   } finally {
     rmSync(dir, { recursive: true, force: true });
   }
@@ -300,6 +304,36 @@ test("runResearchAutopilot stops before execution when a command is missing", as
   }
 });
 
+test("runResearchAutopilot stops before gated execution when Agent Town API is missing", async () => {
+  const dir = await makeProject("vr-autopilot-run-missing-agent-town", {
+    active: false,
+    queue: "| gated-move | main | needs review gate |\n",
+  });
+  const previousApi = process.env.VIBE_RESEARCH_AGENT_TOWN_API;
+  const previousLegacyApi = process.env.REMOTE_VIBES_AGENT_TOWN_API;
+  try {
+    delete process.env.VIBE_RESEARCH_AGENT_TOWN_API;
+    delete process.env.REMOTE_VIBES_AGENT_TOWN_API;
+    const report = await runResearchAutopilot({
+      projectDir: dir,
+      commandText: "node -e \"console.log('score=0.50')\"",
+      metricRegex: "score=([0-9.]+)",
+      maxSteps: 1,
+      askHuman: true,
+    });
+    assert.equal(report.stopReason, "missing-agent-town-api");
+    assert.equal(report.actions[0].result.reason, "missing-agent-town-api");
+    const readme = readFileSync(join(dir, "README.md"), "utf8");
+    assert.match(readme, /\| gated-move \| main \| needs review gate \|/);
+  } finally {
+    if (previousApi === undefined) delete process.env.VIBE_RESEARCH_AGENT_TOWN_API;
+    else process.env.VIBE_RESEARCH_AGENT_TOWN_API = previousApi;
+    if (previousLegacyApi === undefined) delete process.env.REMOTE_VIBES_AGENT_TOWN_API;
+    else process.env.REMOTE_VIBES_AGENT_TOWN_API = previousLegacyApi;
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
+
 test("runResearchAutopilot executes rerun decisions as rerun cycles", async () => {
   const dir = await makeProject("vr-autopilot-run-rerun");
   try {
@@ -328,6 +362,7 @@ test("vr-research-autopilot CLI help and JSON output work", async () => {
   const help = await runCli(["--help"]);
   assert.equal(help.status, 0);
   assert.match(help.stdout, /vr-research-autopilot/);
+  assert.match(help.stdout, /--agent-review-provider/);
 
   const dir = await makeProject("vr-autopilot-cli");
   try {
