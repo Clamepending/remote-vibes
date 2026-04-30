@@ -355,6 +355,7 @@ const CORE_BUILDING_MANIFESTS = [
       shape: "studio",
     },
     install: {
+      enabledSetting: "wandbEnabled",
       storedFallback: false,
       plan: {
         preflight: [
@@ -373,16 +374,21 @@ const CORE_BUILDING_MANIFESTS = [
           },
         ],
         auth: {
-          kind: "auth-browser-cli",
-          command: "wandb login --relogin",
-          detail: "Opens a browser tab; sign in to W&B and paste the API key when prompted.",
-          timeoutSec: 600,
+          kind: "auth-paste",
+          setting: "wandbApiKey",
+          setupUrl: "https://wandb.ai/authorize",
+          setupLabel: "Get W&B API key",
+          detail: "Generate an API key at wandb.ai/authorize and paste it here. The key is stored in Vibe Research settings and injected into agent processes as WANDB_API_KEY.",
         },
         verify: [
           {
             kind: "command",
-            command: "python3 -c \"import wandb; print(wandb.Api().viewer.username)\"",
-            label: "Verify W&B credentials",
+            // Just confirm the wandb library is importable. The pasted API
+            // key is verified at agent-runtime when wandb.init() is called;
+            // matches the convention used by MCP-server buildings.
+            command: "python3 -c \"import wandb; print(wandb.__version__)\"",
+            label: "Verify wandb importable",
+            timeoutSec: 60,
           },
         ],
       },
@@ -393,16 +399,25 @@ const CORE_BUILDING_MANIFESTS = [
     },
     onboarding: {
       variables: [
-        { label: "wandb client", value: "wandb Python package on PATH", required: true },
-        { label: "W&B credentials", value: "wandb login or WANDB_API_KEY in the agent environment", required: true },
-        { label: "Default entity", value: "WANDB_ENTITY (used by vr-research-init to seed the project)", required: false },
-        { label: "Project / group / name", value: "project=<project-slug>, group=<move-slug>, name=cycle-N (per the researcher contract)", required: true },
+        {
+          label: "W&B API key",
+          setting: "wandbApiKey",
+          configuredSetting: "wandbApiKeyConfigured",
+          secret: true,
+          required: true,
+          setupUrl: "https://wandb.ai/authorize",
+        },
+        {
+          label: "W&B entity (user or team)",
+          setting: "wandbEntity",
+          required: false,
+        },
       ],
       steps: [
-        { title: "Install wandb", detail: "Install the wandb Python package in the agent environment and confirm wandb --help works." },
-        { title: "Authenticate", detail: "Run wandb login (interactive) or set WANDB_API_KEY in the agent environment." },
-        { title: "Set the default entity", detail: "Export WANDB_ENTITY so vr-research-init can seed the project's W&B page when the project is created." },
-        { title: "Install the building", detail: "Add W&B to Agent Town once credentials are wired and the entity is set.", completeWhen: { type: "installed" } },
+        { title: "Place W&B in the map", detail: "Drop the building anywhere — install starts automatically." },
+        { title: "Install wandb", detail: "We pip install wandb into the agent environment. If it's already there, this step is skipped.", completeWhen: { type: "installed" } },
+        { title: "Paste your API key", detail: "Click \"Get W&B API key\" to open wandb.ai/authorize, copy the key, and paste it into the field. Stored in settings; never logged." },
+        { title: "(Optional) Set entity", detail: "Type your W&B entity (username or team) so the project shortcut and vr-research-init seeding can find your account. Skippable." },
       ],
     },
     agentGuide: {

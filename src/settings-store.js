@@ -526,6 +526,8 @@ export class SettingsStore {
       // The Library is just a folder of markdown notes by default. Beginners
       // don't need a git history of every change unless they explicitly opt
       // in via "Link GitHub" in the Library UI.
+      wandbApiKey: "",
+      wandbEnabled: false,
       wandbEntity: String(this.env.VIBE_RESEARCH_WANDB_ENTITY || this.env.WANDB_ENTITY || "").trim(),
       wikiGitBackupEnabled: false,
       wikiGitRemoteBranch: "main",
@@ -1018,6 +1020,11 @@ export class SettingsStore {
       ),
       wikiGitRemoteName: normalizeGitRemoteName(payload.wikiGitRemoteName ?? defaults.wikiGitRemoteName),
       wikiGitRemoteUrl: String(payload.wikiGitRemoteUrl || "").trim(),
+      wandbApiKey:
+        payload.wandbApiKey === undefined
+          ? defaults.wandbApiKey
+          : normalizeSecret(payload.wandbApiKey),
+      wandbEnabled: normalizeBoolean(payload.wandbEnabled, defaults.wandbEnabled),
       wandbEntity: String(payload.wandbEntity ?? defaults.wandbEntity ?? "").trim(),
       wikiBackupIntervalMs: normalizeIntervalMs(
         payload.wikiBackupIntervalMs ?? defaults.wikiBackupIntervalMs,
@@ -1248,6 +1255,8 @@ export class SettingsStore {
       walletStripeSecretKeyConfigured: Boolean(this.settings.walletStripeSecretKey),
       walletStripeWebhookSecret: "",
       walletStripeWebhookSecretConfigured: Boolean(this.settings.walletStripeWebhookSecret),
+      wandbApiKey: "",
+      wandbApiKeyConfigured: Boolean(this.settings.wandbApiKey || this.env.WANDB_API_KEY),
       walletStatus,
       videoMemoryAnthropicApiKey: "",
       videoMemoryAnthropicApiKeyConfigured: Boolean(this.settings.videoMemoryAnthropicApiKey),
@@ -1281,6 +1290,16 @@ export function buildAgentCredentialEnv(settings = {}, env = process.env) {
 
   if (hfToken) {
     nextEnv.HF_TOKEN = hfToken;
+  }
+
+  const wandbApiKey = normalizeSecret(settings.wandbApiKey);
+  if (wandbApiKey) {
+    nextEnv.WANDB_API_KEY = wandbApiKey;
+  }
+
+  const wandbEntity = String(settings.wandbEntity || "").trim();
+  if (wandbEntity) {
+    nextEnv.WANDB_ENTITY = wandbEntity;
   }
 
   return nextEnv;

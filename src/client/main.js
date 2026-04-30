@@ -2246,6 +2246,9 @@ const state = {
     wikiGitRemoteUrl: "",
     wikiBackupIntervalMs: 5 * 60 * 1000,
     wikiBackup: null,
+    wandbApiKey: "",
+    wandbApiKeyConfigured: false,
+    wandbEnabled: false,
     wandbEntity: "",
   },
   folderPicker: {
