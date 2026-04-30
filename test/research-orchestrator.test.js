@@ -4,7 +4,7 @@ import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import path, { join } from "node:path";
 import test from "node:test";
-import { updateResearchState } from "../src/research/brief.js";
+import { createResearchBrief, updateResearchState } from "../src/research/brief.js";
 import { tickResearchOrchestrator } from "../src/research/orchestrator.js";
 
 const VR_RESEARCH_ORCHESTRATOR = path.resolve("bin/vr-research-orchestrator");
@@ -205,6 +205,28 @@ test("tickResearchOrchestrator judges the latest resolved result in review phase
     assert.match(report.recommendation.action, /^judge-/);
     assert.equal(report.judge.slug, "first-move");
     assert.match(report.nextCommand, /vr-research-judge/);
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+test("tickResearchOrchestrator recommends compiling an existing brief", async () => {
+  const dir = makeProject("vr-orchestrator-brief");
+  try {
+    await createResearchBrief({
+      projectDir: dir,
+      slug: "plateau-plan",
+      question: "What should we test next?",
+      candidateMoves: [
+        { move: "dropout-rerun", startingPoint: "main", why: "rerun with seeds", hypothesis: "noise explains plateau" },
+      ],
+    });
+    await updateResearchState({ projectDir: dir, phase: "move-design", briefSlug: "plateau-plan", summary: "brief drafted" });
+    const report = await tickResearchOrchestrator({ projectDir: dir });
+    assert.equal(report.recommendation.action, "review-brief");
+    assert.equal(report.recommendation.briefSlug, "plateau-plan");
+    assert.match(report.nextCommand, /vr-research-brief/);
+    assert.match(report.nextCommand, /compile/);
   } finally {
     rmSync(dir, { recursive: true, force: true });
   }

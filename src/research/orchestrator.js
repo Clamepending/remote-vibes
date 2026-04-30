@@ -1,6 +1,6 @@
 import { access, readFile } from "node:fs/promises";
 import path from "node:path";
-import { readResearchState, updateResearchState } from "./brief.js";
+import { getBriefPath, readResearchState, updateResearchState } from "./brief.js";
 import { runDoctor } from "./doctor.js";
 import { judgeMove } from "./judge.js";
 import { loadProjectLog, parseProjectReadme } from "./project-readme.js";
@@ -188,20 +188,37 @@ export async function tickResearchOrchestrator({
       });
     }
   } else {
-    rec = recommendation(
-      "create-brief",
-      `${state.phase} phase needs a research brief before experiments should start.`,
-    );
-    nextCommand = command([
-      "vr-research-brief",
-      resolvedProjectDir,
-      "create",
-      "--slug",
-      state.briefSlug || "next-brief",
-      "--question",
-      parsed.goal || "<question>",
-      "--ask-human",
-    ]);
+    const existingBriefPath = state.briefSlug ? getBriefPath(resolvedProjectDir, state.briefSlug) : "";
+    const hasExistingBrief = existingBriefPath ? await pathExists(existingBriefPath) : false;
+    if (hasExistingBrief) {
+      rec = recommendation(
+        "review-brief",
+        `${state.phase} phase already has brief ${state.briefSlug}; review or compile it before claiming experiments.`,
+        { briefSlug: state.briefSlug },
+      );
+      nextCommand = command([
+        "vr-research-brief",
+        resolvedProjectDir,
+        "compile",
+        "--slug",
+        state.briefSlug,
+      ]);
+    } else {
+      rec = recommendation(
+        "create-brief",
+        `${state.phase} phase needs a research brief before experiments should start.`,
+      );
+      nextCommand = command([
+        "vr-research-brief",
+        resolvedProjectDir,
+        "create",
+        "--slug",
+        state.briefSlug || "next-brief",
+        "--question",
+        parsed.goal || "<question>",
+        "--ask-human",
+      ]);
+    }
   }
 
   return {
