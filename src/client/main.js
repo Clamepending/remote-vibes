@@ -2456,15 +2456,13 @@ const state = {
   // Sticky plan/todo panel — shows the latest plan/task list above the
   // composer so the user can see current progress while the chat scrolls.
   // Default state is COLLAPSED (the header still surfaces "X of Y tasks
-  // completed" so the user always sees progress at a glance); the set
-  // tracks sessions where the user has explicitly EXPANDED the panel.
-  // We auto-expand only when a brand-new plan needs approval (the user
-  // has to act on it) — TodoWrite ticks no longer pop the panel back open
-  // every cycle, which made mobile feel noisy.
+  // completed" / "Plan proposed" so the user always sees what's happening
+  // at a glance); the set tracks sessions the user has explicitly EXPANDED.
+  // No auto-expand on chat updates — once collapsed, stay collapsed until
+  // the user taps the header. The previous "auto-expand on new plan/todo"
+  // behavior was popping the panel open every chat tick and pushing the
+  // composer off-screen on mobile.
   richSessionPlanPanelExpanded: new Set(),
-  // Last (plan-entry-id, todo-entry-id) we showed in the panel. We use
-  // this to detect a NEW pending plan and auto-expand the panel for it.
-  richSessionPlanPanelLastSignature: {},
   richSessionRenderFrame: null,
   richSessionScrollToBottom: false,
   terminalComposing: false,
@@ -6295,21 +6293,10 @@ function renderRichSessionPlanPanel(activeSession) {
   if (!planEntry && !todoEntry) return "";
 
   const sessionId = activeSession?.id || "";
-  const signature = `${planEntry?.id || ""}|${todoEntry?.id || ""}`;
-  const lastSignature = sessionId ? state.richSessionPlanPanelLastSignature[sessionId] : "";
-  // Default state is collapsed — the header line ("X of Y tasks completed")
-  // is enough at-a-glance status. Only auto-expand when a brand-new plan
-  // needs the user's approval (planEntry's identity changed): that's an
-  // action the user can't ignore, so it earns the screen real estate.
-  // TodoWrite-only updates do NOT auto-expand: they were popping the panel
-  // open every cycle and pushing the chat off-screen on mobile.
-  if (sessionId && lastSignature !== signature) {
-    const planChanged = (planEntry?.id || "") && (lastSignature || "").split("|")[0] !== (planEntry?.id || "");
-    state.richSessionPlanPanelLastSignature[sessionId] = signature;
-    if (planChanged) {
-      state.richSessionPlanPanelExpanded.add(sessionId);
-    }
-  }
+  // Default state is collapsed. The panel never auto-expands on chat
+  // updates — the header still says "Plan proposed" / "X of Y tasks
+  // completed" so the user knows what's happening, and they can tap the
+  // header to drill in. Once collapsed, stay collapsed.
   const collapsed = sessionId ? !state.richSessionPlanPanelExpanded.has(sessionId) : true;
 
   // Header: "X / Y" + active-task preview when collapsed; "X of Y completed"
@@ -9802,7 +9789,7 @@ function getKnowledgeBaseAbsoluteFileUrl(filePath) {
   return absolutePath ? getFileContentUrlForRoot(absolutePath.root, absolutePath.path) : "";
 }
 
-function getKnowledgeBaseMediaResource(currentPath, targetPath, { defaultToImage = false } = {}) {
+function getKnowledgeBaseMediaResource(currentPath, targetPath, { defaultToImage = false, assetRoot = null } = {}) {
   const cleanedTarget = cleanMarkdownLinkTarget(targetPath);
 
   if (!cleanedTarget || cleanedTarget.startsWith("#")) {
@@ -9830,13 +9817,21 @@ function getKnowledgeBaseMediaResource(currentPath, targetPath, { defaultToImage
   }
 
   const kind = getKnowledgeBaseMediaKind(relativeAssetPath, { defaultToImage });
-  return kind
-    ? {
-        kind,
-        url: getKnowledgeBaseNoteRawUrl(relativeAssetPath),
-        local: true,
-      }
-    : null;
+  if (!kind) {
+    return null;
+  }
+
+  // When the markdown is being rendered for a file that lives outside the
+  // Library (e.g. a workspace paper.md), relative asset paths must resolve
+  // against the workspace root, not the wiki root. Without this, a paper.md
+  // at /workspace/projects/foo/paper.md with `![](figures/x.png)` builds a
+  // URL pointing at <wikiRoot>/projects/foo/figures/x.png, which 404s and
+  // falls back to alt-text-as-prose.
+  const url = assetRoot
+    ? getFileContentUrlForRoot(assetRoot, relativeAssetPath)
+    : getKnowledgeBaseNoteRawUrl(relativeAssetPath);
+
+  return { kind, url, local: true };
 }
 
 function getFileDisplayName(relativePath) {
@@ -11892,7 +11887,7 @@ function renderKnowledgeBaseMedia(media, { altText = "", caption = "" } = {}) {
   `;
 }
 
-function createKnowledgeBaseMarked(currentPath) {
+function createKnowledgeBaseMarked(currentPath, { assetRoot = null } = {}) {
   const wikiLinkExtension = {
     name: "kbWikiLink",
     level: "inline",
@@ -11971,7 +11966,7 @@ function createKnowledgeBaseMarked(currentPath) {
   const renderer = {
     image({ href, title, text }) {
       const altText = String(text || "");
-      const media = getKnowledgeBaseMediaResource(currentPath, href, { defaultToImage: true });
+      const media = getKnowledgeBaseMediaResource(currentPath, href, { defaultToImage: true, assetRoot });
       if (!media) {
         return `<span>${escapeHtml(altText)}</span>`;
       }
@@ -11986,7 +11981,7 @@ function createKnowledgeBaseMarked(currentPath) {
         return `<button class="knowledge-base-inline-link" type="button" data-kb-open-note="${escapeHtml(notePath)}">${innerHtml}</button>`;
       }
 
-      const media = getKnowledgeBaseMediaResource(currentPath, cleanedTarget);
+      const media = getKnowledgeBaseMediaResource(currentPath, cleanedTarget, { assetRoot });
       if (media) {
         // Use the rendered inner as the visible label, but fall back to a plain
         // text caption derived from the link tokens via the textRenderer.
@@ -12002,7 +11997,9 @@ function createKnowledgeBaseMarked(currentPath) {
       const absoluteFileHref = getKnowledgeBaseAbsoluteFileUrl(cleanedTarget);
       const relativeAssetPath = absoluteFileHref ? "" : resolveKnowledgeBaseRelativePath(currentPath, cleanedTarget);
       const externalHref = absoluteFileHref || (relativeAssetPath
-        ? getKnowledgeBaseNoteRawUrl(relativeAssetPath)
+        ? (assetRoot
+            ? getFileContentUrlForRoot(assetRoot, relativeAssetPath)
+            : getKnowledgeBaseNoteRawUrl(relativeAssetPath))
         : cleanedTarget || String(href || "").trim());
       return `<a class="knowledge-base-external-link" href="${escapeHtml(externalHref)}" target="_blank" rel="noreferrer">${innerHtml}</a>`;
     },
@@ -12057,11 +12054,11 @@ function createKnowledgeBaseMarked(currentPath) {
   });
 }
 
-function renderKnowledgeBaseInline(text, currentPath) {
+function renderKnowledgeBaseInline(text, currentPath, { assetRoot = null } = {}) {
   const source = String(text || "");
   if (!source) return "";
   try {
-    return createKnowledgeBaseMarked(currentPath).parseInline(source);
+    return createKnowledgeBaseMarked(currentPath, { assetRoot }).parseInline(source);
   } catch (error) {
     if (typeof console !== "undefined" && console.warn) {
       console.warn("renderKnowledgeBaseInline failed", error);
@@ -12510,7 +12507,7 @@ function installPaperQuoteListenerOnce() {
   window.addEventListener("resize", updatePaperQuoteFloater);
 }
 
-function renderKnowledgeBaseMarkdown(markdown, currentPath) {
+function renderKnowledgeBaseMarkdown(markdown, currentPath, { assetRoot = null } = {}) {
   let prefixHtml = "";
   let source = String(markdown || "");
   const isPaper = isPaperMarkdownPath(currentPath);
@@ -12531,7 +12528,7 @@ function renderKnowledgeBaseMarkdown(markdown, currentPath) {
 
   let mainHtml = "";
   try {
-    mainHtml = createKnowledgeBaseMarked(currentPath).parse(source);
+    mainHtml = createKnowledgeBaseMarked(currentPath, { assetRoot }).parse(source);
   } catch (error) {
     if (typeof console !== "undefined" && console.warn) {
       console.warn("renderKnowledgeBaseMarkdown failed", error);
@@ -13334,9 +13331,15 @@ function renderFileTextPreview(activeTab) {
   const notePath = getKnowledgeBaseNotePathForWorkspaceFile(state.openFileRelativePath);
 
   if (isMarkdownFilePath(state.openFileRelativePath)) {
+    // When the file lives outside the Library (no resolved notePath),
+    // relative image refs like `figures/foo.png` must resolve against the
+    // workspace root, not the wiki root — otherwise the API URL points
+    // into <wikiRoot>/... which 404s and the renderer falls back to
+    // alt-text-as-prose. See getKnowledgeBaseMediaResource for context.
+    const assetRoot = notePath ? null : state.filesRoot;
     return `
       <div class="file-rendered-markdown knowledge-base-markdown">
-        ${renderKnowledgeBaseMarkdown(content, notePath || state.openFileRelativePath)}
+        ${renderKnowledgeBaseMarkdown(content, notePath || state.openFileRelativePath, { assetRoot })}
       </div>
     `;
   }
