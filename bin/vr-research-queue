@@ -1,0 +1,128 @@
+#!/usr/bin/env node
+// vr-research-queue — manage the QUEUE table per CLAUDE.md verbs.
+//
+// Loop step 7: result docs end with `Queue updates` listing ADD / REMOVE /
+// REPRIORITIZE verbs. This command applies them to the README's QUEUE
+// table (cap = 5).
+//
+// Usage:
+//   vr-research-queue <project-dir> add --slug v3-narrow --starting-point <url> --why "narrow around the peak" [--position N]
+//   vr-research-queue <project-dir> remove --slug v3-narrow
+//   vr-research-queue <project-dir> reprioritize --slug v3-narrow --to-row 2
+
+import path from "node:path";
+import process from "node:process";
+import {
+  addQueueRow,
+  removeQueueRow,
+  reprioritizeQueueRow,
+} from "../src/research/queue-edit.js";
+
+function printHelp() {
+  process.stdout.write(`vr-research-queue — manage the QUEUE table per the contract verbs
+
+Usage:
+  vr-research-queue <project-dir> add --slug <slug> [--starting-point <text>] [--why <text>] [--position N]
+  vr-research-queue <project-dir> remove --slug <slug>
+  vr-research-queue <project-dir> reprioritize --slug <slug> --to-row N
+
+Subcommands:
+  add            Append a new row at --position (defaults to end). Cap = 5;
+                 a row pushed past the cap is returned as \`bumped\`.
+  remove         Delete the row whose slug matches.
+  reprioritize   Move an existing row to position --to-row (1-indexed).
+
+Common:
+  --json         Machine-readable summary on stdout.
+  --help, -h     Show this message.
+`);
+}
+
+function parseArgs(argv) {
+  const opts = {
+    projectDir: "",
+    subcommand: "",
+    slug: "",
+    startingPoint: "",
+    why: "",
+    position: undefined,
+    toRow: undefined,
+    json: false,
+    help: false,
+  };
+  for (let i = 0; i < argv.length; i += 1) {
+    const arg = argv[i];
+    if (arg === "--help" || arg === "-h") { opts.help = true; continue; }
+    if (arg === "--json") { opts.json = true; continue; }
+    if (arg === "--slug") { opts.slug = argv[++i] || ""; continue; }
+    if (arg === "--starting-point") { opts.startingPoint = argv[++i] || ""; continue; }
+    if (arg === "--why") { opts.why = argv[++i] || ""; continue; }
+    if (arg === "--position") { opts.position = Number(argv[++i] || ""); continue; }
+    if (arg === "--to-row") { opts.toRow = Number(argv[++i] || ""); continue; }
+    if (arg.startsWith("--")) throw new Error(`unknown flag: ${arg}`);
+    if (!opts.projectDir) { opts.projectDir = arg; continue; }
+    if (!opts.subcommand) { opts.subcommand = arg; continue; }
+    throw new Error(`unexpected positional arg: ${arg}`);
+  }
+  return opts;
+}
+
+async function main() {
+  let opts;
+  try { opts = parseArgs(process.argv.slice(2)); }
+  catch (err) {
+    process.stderr.write(`${err.message}\n\n`);
+    printHelp();
+    process.exit(2);
+  }
+  if (opts.help) { printHelp(); process.exit(0); }
+  if (!opts.projectDir) { process.stderr.write(`project-dir positional argument is required\n`); process.exit(2); }
+  if (!["add", "remove", "reprioritize"].includes(opts.subcommand)) {
+    process.stderr.write(`subcommand must be 'add', 'remove', or 'reprioritize', got "${opts.subcommand}"\n`);
+    process.exit(2);
+  }
+
+  const readmePath = path.join(path.resolve(opts.projectDir), "README.md");
+  let result;
+  try {
+    if (opts.subcommand === "add") {
+      if (!opts.slug) { process.stderr.write(`--slug is required\n`); process.exit(2); }
+      result = await addQueueRow({
+        readmePath,
+        row: { slug: opts.slug, startingPoint: opts.startingPoint, why: opts.why },
+        position: opts.position,
+      });
+    } else if (opts.subcommand === "remove") {
+      if (!opts.slug) { process.stderr.write(`--slug is required\n`); process.exit(2); }
+      result = await removeQueueRow({ readmePath, slug: opts.slug });
+    } else {
+      if (!opts.slug) { process.stderr.write(`--slug is required\n`); process.exit(2); }
+      if (!Number.isInteger(opts.toRow) || opts.toRow < 1) {
+        process.stderr.write(`--to-row N (>= 1) is required\n`);
+        process.exit(2);
+      }
+      result = await reprioritizeQueueRow({ readmePath, slug: opts.slug, toRow: opts.toRow });
+    }
+  } catch (err) {
+    process.stderr.write(`${err.message}\n`);
+    process.exit(1);
+  }
+
+  if (opts.json) {
+    process.stdout.write(`${JSON.stringify(result, null, 2)}\n`);
+    process.exit(0);
+  }
+  if (opts.subcommand === "add") {
+    process.stdout.write(`added ${result.added.slug} at position ${result.added.position} in ${result.readmePath}\n`);
+    if (result.bumped) {
+      process.stdout.write(`  bumped: ${result.bumped.slug} fell off the end (cap=5)\n`);
+    }
+  } else if (opts.subcommand === "remove") {
+    process.stdout.write(`removed ${result.slug} from QUEUE in ${result.readmePath}\n`);
+  } else {
+    process.stdout.write(`reprioritized ${result.slug}: row ${result.fromRow} → ${result.toRow}\n`);
+  }
+  process.exit(0);
+}
+
+main();
