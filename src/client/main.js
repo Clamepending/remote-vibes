@@ -19366,6 +19366,138 @@ function renderCpuCoreGrid(cpu) {
   `;
 }
 
+function getAgentColorForKey(key) {
+  const id = String(key || "");
+  if (!id) {
+    return null;
+  }
+  let hash = 0;
+  for (let i = 0; i < id.length; i++) {
+    hash = (hash * 31 + id.charCodeAt(i)) | 0;
+  }
+  const hue = Math.abs(hash) % 360;
+  return {
+    hue,
+    bg: `hsl(${hue}, 55%, 18%)`,
+    border: `hsl(${hue}, 70%, 58%)`,
+    text: `hsl(${hue}, 80%, 82%)`,
+  };
+}
+
+function describeGpuProcessAgent(process) {
+  const sessionId = String(process?.sessionId || "");
+  const providerId = String(process?.providerId || "");
+  const session = sessionId
+    ? state.sessions.find((entry) => entry.id === sessionId)
+    : null;
+  const name =
+    session?.name || session?.providerLabel || providerId || "Agent";
+  const initials =
+    getAgentInitials(name) ||
+    (providerId || "??").slice(0, 2).toUpperCase();
+  const colorKey = sessionId || `provider:${providerId || "unknown"}`;
+  return {
+    sessionId,
+    providerId,
+    name,
+    initials,
+    color: getAgentColorForKey(colorKey),
+    session,
+  };
+}
+
+function groupGpuProcessesByAgent(processes) {
+  const byKey = new Map();
+  for (const process of Array.isArray(processes) ? processes : []) {
+    if (!process?.ownedByUs) {
+      continue;
+    }
+    const sessionId = String(process.sessionId || "");
+    const providerId = String(process.providerId || "");
+    const key = sessionId || `provider:${providerId || "unknown"}`;
+    const entry = byKey.get(key) || {
+      key,
+      processCount: 0,
+      memoryBytes: 0,
+      sample: process,
+    };
+    entry.processCount += 1;
+    entry.memoryBytes += Number(process.usedMemoryBytes) || 0;
+    byKey.set(key, entry);
+  }
+  return [...byKey.values()];
+}
+
+function renderGpuAgentChip(entry, { variant = "card" } = {}) {
+  const info = describeGpuProcessAgent(entry.sample);
+  const color = info.color;
+  const styleAttr = color
+    ? `style="--agent-color-bg:${color.bg};--agent-color-border:${color.border};--agent-color-text:${color.text};"`
+    : "";
+  const procText = entry.processCount > 1 ? ` × ${entry.processCount}` : "";
+  const memText = entry.memoryBytes ? ` · ${formatBytes(entry.memoryBytes)}` : "";
+  const tooltipBody = `${info.name}${procText}${memText}`;
+  const sessionAttr = info.sessionId
+    ? `data-session-id="${escapeHtml(info.sessionId)}"`
+    : "";
+  const label =
+    variant === "summary"
+      ? `${info.name} · ${entry.deviceCount} ${entry.deviceCount === 1 ? "GPU" : "GPUs"}`
+      : info.name;
+
+  return `
+    <span class="system-gpu-agent-chip is-${escapeHtml(variant)}" ${styleAttr} ${sessionAttr} ${tooltipAttributes(tooltipBody)}>
+      <span class="system-gpu-agent-chip-initials">${escapeHtml(info.initials)}</span>
+      <span class="system-gpu-agent-chip-name">${escapeHtml(label)}</span>
+    </span>
+  `;
+}
+
+function renderGpuAgentChipsForDevice(device) {
+  const entries = groupGpuProcessesByAgent(device?.processes);
+  if (!entries.length) {
+    return "";
+  }
+  return `
+    <div class="system-gpu-agent-chip-row" aria-label="Agents on this GPU">
+      ${entries.map((entry) => renderGpuAgentChip(entry, { variant: "card" })).join("")}
+    </div>
+  `;
+}
+
+function renderGpuAgentSectionSummary(devices) {
+  const byKey = new Map();
+  for (const device of Array.isArray(devices) ? devices : []) {
+    const seenForDevice = new Set();
+    for (const process of Array.isArray(device?.processes) ? device.processes : []) {
+      if (!process?.ownedByUs) {
+        continue;
+      }
+      const sessionId = String(process.sessionId || "");
+      const providerId = String(process.providerId || "");
+      const key = sessionId || `provider:${providerId || "unknown"}`;
+      if (seenForDevice.has(key)) {
+        continue;
+      }
+      seenForDevice.add(key);
+      const entry = byKey.get(key) || { key, deviceCount: 0, sample: process };
+      entry.deviceCount += 1;
+      byKey.set(key, entry);
+    }
+  }
+  if (!byKey.size) {
+    return "";
+  }
+  const chips = [...byKey.values()]
+    .sort((a, b) => b.deviceCount - a.deviceCount)
+    .map((entry) => renderGpuAgentChip(entry, { variant: "summary" }));
+  return `
+    <div class="system-gpu-agent-chip-row is-section-summary" aria-label="GPU usage by agent">
+      ${chips.join("")}
+    </div>
+  `;
+}
+
 function renderDeviceCard(device) {
   const utilization = device?.utilizationPercent;
   const usedByUs = Boolean(device?.usedByUs);
@@ -19391,6 +19523,7 @@ function renderDeviceCard(device) {
     device?.architecture,
     device?.details,
   ].filter(Boolean);
+  const agentChips = renderGpuAgentChipsForDevice(device);
 
   return `
     <article class="system-device-card ${usedByUs ? "is-used-by-us" : ""}">
@@ -19399,6 +19532,7 @@ function renderDeviceCard(device) {
         <span>${escapeHtml(formatPercent(utilization))}</span>
       </div>
       ${renderMetricBar(utilization, usedByUs ? "is-device is-used-by-us" : "is-device")}
+      ${agentChips}
       <p>${escapeHtml(detailParts.join(" · ") || "detected, but utilization is not exposed by this host")}</p>
     </article>
   `;
@@ -19410,6 +19544,7 @@ function renderDeviceSection(title, devices, emptyMessage) {
   const summary = usedByUsCount
     ? `${entries.length} detected · ${usedByUsCount} used by Vibe Research`
     : `${entries.length} detected`;
+  const agentSummary = renderGpuAgentSectionSummary(entries);
 
   return `
     <section class="system-section">
@@ -19417,6 +19552,7 @@ function renderDeviceSection(title, devices, emptyMessage) {
         <strong>${escapeHtml(title)}</strong>
         <span>${escapeHtml(summary)}</span>
       </div>
+      ${agentSummary}
       <div class="system-device-grid">
         ${entries.length ? entries.map((device) => renderDeviceCard(device)).join("") : `<div class="blank-state">${escapeHtml(emptyMessage)}</div>`}
       </div>
