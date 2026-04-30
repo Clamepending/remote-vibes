@@ -70,6 +70,15 @@ import {
   renderWrappedTerminalBufferPlainText,
   sanitizeRichSessionTranscriptText,
 } from "./rich-session-transcript.js";
+import {
+  RICH_SESSION_INLINE_IMAGE_EXTENSIONS,
+  RICH_SESSION_SLASH_COMMANDS,
+  extractRichSessionImageRefs,
+  extractRichSessionSlashAction,
+  getRichSessionImageUrl as getRichSessionImageUrlPure,
+  renderAnsiToHtml,
+  stripAnsi,
+} from "./rich-session-helpers.js";
 import { Marked } from "marked";
 
 const app = document.querySelector("#app");
@@ -5351,105 +5360,23 @@ function renderRichSessionPathLinks(text) {
   return result;
 }
 
-// Image extensions the native feed will auto-thumbnail. PDF/SVG are
-// renderable inline by browsers but not as plain <img>; skip them for now
-// and let the path-link click open them in the workspace tab instead.
-const RICH_SESSION_INLINE_IMAGE_EXTENSIONS = /\.(?:png|jpe?g|gif|webp|bmp)\b/iu;
-
-// Pulls every plausible image path out of a CLI / assistant text block.
-// Catches:
-//   * POSIX absolute: /Users/.../foo.png
-//   * Workspace-relative: figures/foo.png, src/img/x.jpg
-//   * "Saved to <path>" style references that bash plot scripts tend to emit
-// Bare filenames like "foo.png" with no slash are skipped (too noisy).
-function extractRichSessionImageRefs(text, { includeMarkdown = false } = {}) {
-  const seen = new Set();
-  const out = [];
-  const source = String(text ?? "");
-  if (!source) {
-    return out;
-  }
-
-  const pushIfImage = (raw) => {
-    let trimmed = String(raw || "");
-    while (trimmed.length && /[.,;:!?)\]]/u.test(trimmed[trimmed.length - 1])) {
-      trimmed = trimmed.slice(0, -1);
-    }
-    if (!RICH_SESSION_INLINE_IMAGE_EXTENSIONS.test(trimmed)) {
-      return;
-    }
-    if (seen.has(trimmed)) {
-      return;
-    }
-    seen.add(trimmed);
-    out.push(trimmed);
-  };
-
-  // Pull paths out of markdown image syntax explicitly when the caller asks
-  // for it. Used for user-message entries (which don't render markdown via
-  // the knowledge-base renderer) and for tool entries that paste in an
-  // attachment reference. Assistant entries skip this branch — the markdown
-  // renderer's image() hook produces an <img> directly, so re-extracting
-  // here would double-render the same figure.
-  if (includeMarkdown) {
-    for (const match of source.matchAll(/!\[[^\]]*\]\(<?([^)<>]+)>?\)/gu)) {
-      pushIfImage(match[1]);
-      if (out.length >= 4) {
-        return out;
-      }
-    }
-  }
-
-  // Strip markdown image syntax before scanning for plain paths so we don't
-  // double-extract a path that already appeared inside ![](...) above.
-  const sanitized = source.replace(/!\[[^\]]*\]\([^)]+\)/gu, "");
-
-  const re = /(\/(?:[\w.@~+-]+(?:\s\w[\w.@~+-]*)*\/)+[\w.@~+-]+\.[A-Za-z0-9]{2,8}|(?:[\w.@~+-]+\/)+[\w.@~+-]+\.[A-Za-z0-9]{2,8})/gu;
-  for (const match of sanitized.matchAll(re)) {
-    pushIfImage(match[1]);
-    if (out.length >= 4) {
-      break;
-    }
-  }
-
-  return out;
+function getRichSessionImageUrl(rawPath) {
+  return getRichSessionImageUrlPure(rawPath, {
+    workspaceRoot: normalizeWorkspaceRoot(state.filesRoot || state.defaultCwd || ""),
+  });
 }
 
-// Resolves an image path to a URL the renderer can drop into <img src=...>.
-// Three cases:
-//   1. Absolute path under the vibe-research attachments dir
-//      (e.g. drag/paste uploads) — route through /api/attachments/file.
-//   2. Absolute path inside the active workspace root, OR a workspace-
-//      relative path — route through /api/files/content.
-//   3. Anything else (absolute path outside both) → return "" and let the
-//      renderer fall back to the path link.
-function getRichSessionImageUrl(rawPath) {
-  const trimmed = String(rawPath || "").trim();
-  if (!trimmed) {
-    return "";
-  }
-
-  if (trimmed.startsWith("/") && /\/attachments\/sessions\//u.test(trimmed)) {
-    return `/api/attachments/file?${new URLSearchParams({ path: trimmed }).toString()}`;
-  }
-
-  const root = normalizeWorkspaceRoot(state.filesRoot || state.defaultCwd || "");
-  let relativePath = "";
-
-  if (trimmed.startsWith("/")) {
-    if (root && (trimmed === root || trimmed.startsWith(`${root}/`))) {
-      relativePath = trimmed === root ? "" : trimmed.slice(root.length + 1);
-    }
-  } else {
-    relativePath = trimmed;
-  }
-
-  if (!relativePath || !root) {
-    return "";
-  }
-
-  const params = new URLSearchParams({ root, path: relativePath });
-  return `/api/files/content?${params.toString()}`;
+// Single entry point for converting CLI text into safe-to-inject HTML.
+// Layers, in order:
+//   1. ANSI SGR codes → coloured/bold/underlined <span> wrappers, so the
+//      agent's red/green/yellow/blue accent colours survive into the feed.
+//   2. Each plain-text segment between codes goes through the path
+//      linkifier (which does its own HTML escape AND wraps recognised
+//      paths in clickable anchors). Spans stay intact because we only
+//      ever feed plain-text segments to the linkifier — never code-laden
+//      HTML.
+function renderRichSessionInlineHtml(text) {
+  return renderAnsiToHtml(String(text ?? ""), { escape: renderRichSessionPathLinks });
 }
 
 function renderRichSessionImageStrip(refs, { caption = "" } = {}) {
@@ -5521,11 +5448,11 @@ function renderRichSessionEntry(entry, index) {
   const isAssistantPending = kind === "assistant" && !text.trim();
   const isThinking = isAssistantPending || isRichSessionThinkingEntry(entry);
   const icon = renderIcon(getRichSessionEntryIcon(kind), { className: "rich-session-entry-icon" });
-  const body = renderRichSessionPathLinks(text);
+  const body = renderRichSessionInlineHtml(text);
   const metaParts = [entry?.meta || "", formatRichSessionTimestamp(entry?.timestamp)].filter(Boolean);
   const meta = metaParts.join(" · ");
   const outputPreview = entry?.outputPreview
-    ? `<pre class="rich-session-entry-pre is-output">${renderRichSessionPathLinks(entry.outputPreview)}</pre>`
+    ? `<pre class="rich-session-entry-pre is-output">${renderRichSessionInlineHtml(entry.outputPreview)}</pre>`
     : "";
   const entryClassName = [
     "rich-session-entry",
@@ -5643,16 +5570,6 @@ function renderRichSessionEntry(entry, index) {
   `;
 }
 
-const RICH_SESSION_SLASH_COMMANDS = [
-  { command: "/login", label: "Sign in", hint: "Open Claude login flow", aliases: [/please\s+run\s+\/login/iu, /authentication[_\s]?(?:failed|error)/iu, /invalid\s+authentication\s+credentials/iu] },
-  { command: "/logout", label: "Sign out", hint: "Sign out of the current Claude account", aliases: [/please\s+run\s+\/logout/iu] },
-  { command: "/clear", label: "Clear context", hint: "Reset Claude's conversation memory", aliases: [/please\s+run\s+\/clear/iu] },
-  { command: "/compact", label: "Compact context", hint: "Compress prior turns", aliases: [/please\s+run\s+\/compact/iu] },
-  { command: "/model", label: "Pick a model", hint: "Switch the Claude model", aliases: [/please\s+run\s+\/model/iu] },
-  { command: "/help", label: "Help", hint: "Show available commands", aliases: [/please\s+run\s+\/help/iu] },
-  { command: "/resume", label: "Resume", hint: "Resume a previous Claude session", aliases: [/please\s+run\s+\/resume/iu] },
-];
-
 function refreshRichSessionSlashMenu(input) {
   const menu = document.querySelector("#rich-session-slash-menu");
   if (!(menu instanceof HTMLElement)) {
@@ -5742,10 +5659,26 @@ function moveRichSessionSlashMenuSelection(direction) {
   }
 }
 
-function sendRichSessionSlashCommand(command, { trigger = null } = {}) {
+// Slash commands almost always launch an interactive Claude Code TUI flow
+// (login chooser, model picker, resume picker, help screen). The native
+// feed can't render those — they're TUI-only and re-draw faster than the
+// projected narrative can follow. So when the user fires a slash command,
+// flip the surface to the terminal first, then send the command. The user
+// sees the chooser in the actual TUI and can interact with it immediately
+// instead of staring at a native feed that lags behind a redrawing menu.
+//
+// This intentionally applies to ALL slash commands because today's
+// "non-interactive" commands ("/clear") still print prompts the user has
+// to confirm, and the next command someone adds is most likely interactive
+// too. Terminal mode is the safe default for CLI control surfaces.
+function sendRichSessionSlashCommand(command, { trigger = null, switchToTerminal = true } = {}) {
   const value = String(command || "").trim();
   if (!value || !value.startsWith("/")) {
     return false;
+  }
+
+  if (switchToTerminal) {
+    setShellSurfaceMode("terminal");
   }
 
   const sent = sendTerminalInput(`${value}\r`, { queueIfDisconnected: true });
@@ -5765,21 +5698,6 @@ function sendRichSessionSlashCommand(command, { trigger = null } = {}) {
   }
 
   return true;
-}
-
-function extractRichSessionSlashAction(text) {
-  const value = String(text || "");
-  if (!value) {
-    return null;
-  }
-
-  for (const entry of RICH_SESSION_SLASH_COMMANDS) {
-    if (entry.aliases?.some((pattern) => pattern.test(value))) {
-      return { command: entry.command, label: entry.label };
-    }
-  }
-
-  return null;
 }
 
 function renderRichSessionTodoBody(todos) {

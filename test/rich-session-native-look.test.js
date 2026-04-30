@@ -123,11 +123,11 @@ test("rich session native feed is clean even when the raw transcript is full of 
           },
           // TodoWrite entry — should render as a checklist with the
           // in-progress item shown first, completed items strikethrough,
-          // and a footer count for additional completed items.
+          // and a "+N more" footer when the list exceeds the visible cap.
           {
             kind: "tool",
             label: "TodoWrite",
-            text: "5 tasks (3 done, 1 in progress, 1 open)",
+            text: "10 tasks (8 done, 1 in progress, 1 open)",
             status: "done",
             meta: "completed",
             timestamp,
@@ -135,8 +135,13 @@ test("rich session native feed is clean even when the raw transcript is full of 
               { content: "Map projection-narrative pipeline", activeForm: "Mapping projection pipeline", status: "completed" },
               { content: "Add tests for ✦ noise lines", activeForm: "Adding regression tests", status: "completed" },
               { content: "Tighten transcript filters", activeForm: "Tightening transcript filters", status: "completed" },
-              { content: "Render TodoWrite as a real task list", activeForm: "Rendering TodoWrite", status: "in_progress" },
-              { content: "Restrict monitor pills to long-running tools", activeForm: "Restricting monitor pills", status: "pending" },
+              { content: "Restrict monitor pills to long-running tools", activeForm: "Restricting monitor pills", status: "completed" },
+              { content: "Verify Playwright assertions", activeForm: "Verifying Playwright assertions", status: "completed" },
+              { content: "Render TodoWrite as a real task list", activeForm: "Rendering TodoWrite", status: "completed" },
+              { content: "Capture screenshot", activeForm: "Capturing screenshot", status: "completed" },
+              { content: "Land the auth_failed login button", activeForm: "Landing the login button", status: "completed" },
+              { content: "Wire image strip on user bubbles", activeForm: "Wiring image strip on user bubbles", status: "in_progress" },
+              { content: "Cover edge cases for slash menu", activeForm: "Covering slash menu edge cases", status: "pending" },
             ],
           },
           {
@@ -174,7 +179,10 @@ test("rich session native feed is clean even when the raw transcript is full of 
             text: "git commit -m 'bench-v1-init resolved'",
             status: "error",
             meta: "exit 1",
-            outputPreview: "fatal: cannot lock ref 'HEAD' at projects/bidir-video-rl-bench/.git/HEAD",
+            // Output preview carries ANSI red on the "fatal:" prefix and
+            // ANSI green on the "ok" suffix so the renderer's colour
+            // preservation can be asserted end-to-end.
+            outputPreview: "[31mfatal:[0m cannot lock ref 'HEAD' at projects/bidir-video-rl-bench/.git/HEAD\n[32mok[0m: retry succeeded after lock release.",
             timestamp,
           },
           // Auth failure — should produce an inline "Sign in" action button
@@ -254,6 +262,12 @@ test("rich session native feed is clean even when the raw transcript is full of 
       const todoItems = todoBlock ? Array.from(todoBlock.querySelectorAll(".rich-session-todo-item")) : [];
       const monitorPills = Array.from(document.querySelectorAll("#rich-session-monitors .rich-session-monitor-pill"));
       const slashAction = document.querySelector("[data-rich-session-slash-command]");
+      const errorBashEntry = toolEntries.find((entry) => /bench-v1-init resolved/.test(entry.textContent || ""));
+      const ansiSpansInError = errorBashEntry
+        ? Array.from(errorBashEntry.querySelectorAll("pre.is-output span[style]"))
+        : [];
+      const redSpan = ansiSpansInError.find((span) => /ff7b72/i.test(span.getAttribute("style") || ""));
+      const greenSpan = ansiSpansInError.find((span) => /7ee787/i.test(span.getAttribute("style") || ""));
       const assistantEntry = entries.find((entry) => entry.classList.contains("is-assistant"));
       const assistantImageTiles = assistantEntry
         ? Array.from(assistantEntry.querySelectorAll(".rich-session-image-tile"))
@@ -287,6 +301,9 @@ test("rich session native feed is clean even when the raw transcript is full of 
         monitorPillLabels: monitorPills.map((pill) => pill.textContent.trim()),
         slashActionCommand: slashAction?.getAttribute("data-rich-session-slash-command") || "",
         slashActionLabel: slashAction?.textContent?.trim() || "",
+        ansiSpanCount: ansiSpansInError.length,
+        redText: redSpan?.textContent?.trim() || "",
+        greenText: greenSpan?.textContent?.trim() || "",
         assistantImageCount: assistantImageTiles.length,
         assistantImagePaths: assistantImageTiles.map((tile) => tile.getAttribute("data-rich-path") || ""),
         plotToolImageCount: plotToolImageTiles.length,
@@ -315,7 +332,7 @@ test("rich session native feed is clean even when the raw transcript is full of 
 
     // 4. TodoWrite renders a structured checklist with the in-progress
     //    task first.
-    assert.match(summary.todoSummary, /5 tasks/);
+    assert.match(summary.todoSummary, /10 tasks/);
     assert.match(summary.todoSummary, /1 in progress/);
     assert.ok(summary.todoCount >= 5, `expected >=5 todo items, got ${summary.todoCount}`);
     assert.equal(summary.todoInProgressFirst, true, "in-progress task should be ordered first");
@@ -357,6 +374,44 @@ test("rich session native feed is clean even when the raw transcript is full of 
     const inputAfterTab = await page.inputValue("#rich-session-input");
     assert.equal(inputAfterTab, "/login ");
 
+    // 8a. Adding a space after a slash command hides the menu (the user
+    //     is now writing args, not picking a command).
+    const menuHiddenAfterSpace = await page.evaluate(() => {
+      const menu = document.querySelector("#rich-session-slash-menu");
+      return menu?.getAttribute("aria-hidden") === "true";
+    });
+    assert.equal(menuHiddenAfterSpace, true, "slash menu must close once the user starts typing args");
+
+    // 8b. Typing a non-existent command hides the menu (no false matches).
+    await page.fill("#rich-session-input", "");
+    await page.keyboard.type("/zzz");
+    const menuHiddenForUnknown = await page.evaluate(() => {
+      const menu = document.querySelector("#rich-session-slash-menu");
+      return menu?.getAttribute("aria-hidden") === "true";
+    });
+    assert.equal(menuHiddenForUnknown, true, "slash menu must close for unknown commands");
+
+    // 8c. ArrowDown cycles selection within the menu.
+    await page.fill("#rich-session-input", "");
+    await page.keyboard.type("/");
+    await page.waitForSelector("#rich-session-slash-menu.is-active", { timeout: 2_000 });
+    const firstSelection = await page.evaluate(() => (
+      document.querySelector("#rich-session-slash-menu")?.getAttribute("data-active-command") || ""
+    ));
+    await page.keyboard.press("ArrowDown");
+    const secondSelection = await page.evaluate(() => (
+      document.querySelector("#rich-session-slash-menu")?.getAttribute("data-active-command") || ""
+    ));
+    assert.notEqual(firstSelection, secondSelection, "ArrowDown should advance the highlight");
+
+    // 8d. Escape dismisses the menu.
+    await page.keyboard.press("Escape");
+    const menuHiddenAfterEscape = await page.evaluate(() => (
+      document.querySelector("#rich-session-slash-menu")?.getAttribute("aria-hidden")
+    ));
+    assert.equal(menuHiddenAfterEscape, "true", "Escape should close the slash menu");
+    await page.fill("#rich-session-input", "");
+
     // 9. Image refs in assistant text auto-embed as inline tiles. The agent
     //    just writes "see figures/x.png" — no markdown required — and the
     //    image shows up.
@@ -374,7 +429,35 @@ test("rich session native feed is clean even when the raw transcript is full of 
     assert.equal(summary.greptoolImageCount, 0,
       `expected grep output NOT to embed the figure, got ${summary.greptoolImageCount}`);
 
-    // 11. User-message attachments (drag/paste) render as a tile on the
+    // 11a. ANSI red/green codes in tool output preserve their colour as
+    //      <span style="color:..."> wrappers in the rendered DOM.
+    assert.ok(summary.ansiSpanCount >= 2,
+      `expected at least 2 ANSI-coloured spans in the failed git output, got ${summary.ansiSpanCount}`);
+    assert.equal(summary.redText, "fatal:");
+    assert.equal(summary.greenText, "ok");
+
+    // 11b. Sign in click flips the surface to terminal mode so the user
+    //      lands in the actual TUI login chooser instead of staring at a
+    //      native feed that can't render the chooser.
+    await page.click("[data-rich-session-slash-command='/login']");
+    await page.waitForFunction(
+      () => document.querySelector("#toggle-shell-surface-terminal")?.classList.contains("is-active"),
+      { timeout: 5_000 },
+    );
+    const surfaceState = await page.evaluate(() => ({
+      richSurfaceActive: document.querySelector("#rich-session-surface")?.classList.contains("is-active") || false,
+      terminalToggleActive: document.querySelector("#toggle-shell-surface-terminal")?.classList.contains("is-active") || false,
+      nativeToggleActive: document.querySelector("#toggle-shell-surface-native")?.classList.contains("is-active") || false,
+    }));
+    assert.equal(surfaceState.terminalToggleActive, true, "Sign in must switch to terminal mode");
+    assert.equal(surfaceState.nativeToggleActive, false, "Sign in must DEACTIVATE native mode toggle");
+    assert.equal(surfaceState.richSurfaceActive, false, "rich-session-surface should no longer be is-active");
+
+    // Restore native mode for the remaining assertions and screenshot.
+    await page.click("#toggle-shell-surface-native");
+    await page.waitForSelector(".rich-session-surface.is-active", { timeout: 5_000 });
+
+    // 12. User-message attachments (drag/paste) render as a tile on the
     //     user bubble. The attachment's absolute path is outside the
     //     workspace root, so the tile's <img src> must route through the
     //     /api/attachments/file endpoint, not /api/files/content. Bare
