@@ -6221,6 +6221,32 @@ export async function createVibeResearchApp({
     }
   });
 
+  // Resolve a pending ExitPlanMode tool call from the native plan-mode
+  // card. Body: { approve: boolean, message?: string }. The session
+  // manager dispatches a structured tool_result content block back to
+  // the running Claude stream session — the protocol-correct shape, vs
+  // typing an English approval into the composer.
+  app.post("/api/sessions/:sessionId/plan-response", (request, response) => {
+    try {
+      const { approve = true, message = "" } = request.body || {};
+      const result = sessionManager.resolvePlanMode(request.params.sessionId, {
+        approve: Boolean(approve),
+        message: typeof message === "string" ? message : "",
+      });
+      if (!result.ok) {
+        const status = result.reason === "session-not-found" ? 404
+          : result.reason === "no-plan-awaiting" ? 409
+          : result.reason === "not-stream-mode" ? 400
+          : 500;
+        response.status(status).json({ error: result.reason });
+        return;
+      }
+      response.json({ ok: true, toolUseId: result.toolUseId, approved: result.approved });
+    } catch (error) {
+      response.status(500).json({ error: error.message || "plan-response failed" });
+    }
+  });
+
   app.get("/api/sessions/:sessionId/swarm", async (request, response) => {
     try {
       const graph = await sessionManager.getSessionSwarmGraph(request.params.sessionId);

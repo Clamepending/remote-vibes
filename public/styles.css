@@ -14283,6 +14283,43 @@ body.is-reordering-file-tabs {
   margin-top: 10px;
 }
 
+/* Inline pushback panel — expands when the user clicks "Push back" so
+   they can type a reason that rides along with the rejection signal as a
+   structured tool_result. Hidden by default; the click handler clears the
+   `hidden` attribute. */
+.rich-session-plan-pushback {
+  margin-top: 10px;
+  display: grid;
+  gap: 8px;
+}
+
+.rich-session-plan-pushback[hidden] {
+  display: none;
+}
+
+.rich-session-plan-pushback-input {
+  width: 100%;
+  min-height: 60px;
+  padding: 8px 10px;
+  border: 1px solid rgba(167, 138, 255, 0.4);
+  border-radius: 8px;
+  background: rgba(20, 14, 36, 0.5);
+  color: rgba(244, 244, 242, 0.92);
+  font-family: inherit;
+  font-size: 0.9rem;
+  resize: vertical;
+}
+
+.rich-session-plan-pushback-input:focus {
+  outline: 2px solid rgba(167, 138, 255, 0.65);
+  outline-offset: 1px;
+}
+
+.rich-session-plan-pushback-actions {
+  display: flex;
+  gap: 8px;
+}
+
 /* MCP badge — a small pill on tool entries whose name starts with `mcp__`,
    so the user can tell at a glance the tool is going through an MCP server
    rather than the agent's built-in tool set. */
