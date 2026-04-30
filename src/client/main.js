@@ -5339,16 +5339,137 @@ function renderRichSessionPathLinks(text) {
   return result;
 }
 
+// Image extensions the native feed will auto-thumbnail. PDF/SVG are
+// renderable inline by browsers but not as plain <img>; skip them for now
+// and let the path-link click open them in the workspace tab instead.
+const RICH_SESSION_INLINE_IMAGE_EXTENSIONS = /\.(?:png|jpe?g|gif|webp|bmp)\b/iu;
+
+// Pulls every plausible image path out of a CLI / assistant text block.
+// Catches:
+//   * POSIX absolute: /Users/.../foo.png
+//   * Workspace-relative: figures/foo.png, src/img/x.jpg
+//   * "Saved to <path>" style references that bash plot scripts tend to emit
+// Bare filenames like "foo.png" with no slash are skipped (too noisy).
+function extractRichSessionImageRefs(text) {
+  const seen = new Set();
+  const out = [];
+  const source = String(text ?? "");
+  if (!source) {
+    return out;
+  }
+
+  // Strip markdown image syntax first — those are handled by the markdown
+  // renderer's image() hook, no need to double-render.
+  const sanitized = source.replace(/!\[[^\]]*\]\([^)]+\)/gu, "");
+
+  const re = /(\/(?:[\w.@~+-]+(?:\s\w[\w.@~+-]*)*\/)+[\w.@~+-]+\.[A-Za-z0-9]{2,8}|(?:[\w.@~+-]+\/)+[\w.@~+-]+\.[A-Za-z0-9]{2,8})/gu;
+  for (const match of sanitized.matchAll(re)) {
+    const raw = String(match[1] || "");
+    let trimmed = raw;
+    while (trimmed.length && /[.,;:!?)\]]/u.test(trimmed[trimmed.length - 1])) {
+      trimmed = trimmed.slice(0, -1);
+    }
+    if (!RICH_SESSION_INLINE_IMAGE_EXTENSIONS.test(trimmed)) {
+      continue;
+    }
+    if (seen.has(trimmed)) {
+      continue;
+    }
+    seen.add(trimmed);
+    out.push(trimmed);
+    if (out.length >= 4) {
+      break;
+    }
+  }
+
+  return out;
+}
+
+// Resolves an image path (absolute or workspace-relative) to a URL the
+// renderer can drop into <img src=...>. Absolute paths inside the active
+// workspace root convert to relative; paths outside the root return "" so
+// the renderer can fall back to the path link instead of a broken image.
+function getRichSessionImageUrl(rawPath) {
+  const trimmed = String(rawPath || "").trim();
+  if (!trimmed) {
+    return "";
+  }
+
+  const root = normalizeWorkspaceRoot(state.filesRoot || state.defaultCwd || "");
+  let relativePath = "";
+
+  if (trimmed.startsWith("/")) {
+    if (root && (trimmed === root || trimmed.startsWith(`${root}/`))) {
+      relativePath = trimmed === root ? "" : trimmed.slice(root.length + 1);
+    }
+  } else {
+    relativePath = trimmed;
+  }
+
+  if (!relativePath || !root) {
+    return "";
+  }
+
+  const params = new URLSearchParams({ root, path: relativePath });
+  return `/api/files/content?${params.toString()}`;
+}
+
+function renderRichSessionImageStrip(refs, { caption = "" } = {}) {
+  if (!Array.isArray(refs) || !refs.length) {
+    return "";
+  }
+
+  const tiles = refs
+    .map((rawPath) => {
+      const url = getRichSessionImageUrl(rawPath);
+      if (!url) {
+        return "";
+      }
+      const altText = rawPath.split("/").filter(Boolean).pop() || rawPath;
+      return `
+        <a class="rich-session-image-tile" href="#" data-rich-path="${escapeHtml(rawPath)}">
+          <img
+            src="${escapeHtml(url)}"
+            alt="${escapeHtml(altText)}"
+            loading="lazy"
+            decoding="async"
+          />
+          <span class="rich-session-image-caption">${escapeHtml(altText)}</span>
+        </a>
+      `;
+    })
+    .filter(Boolean)
+    .join("");
+
+  if (!tiles) {
+    return "";
+  }
+
+  return `
+    <div class="rich-session-image-strip" data-rich-image-strip>
+      ${caption ? `<div class="rich-session-image-strip-caption">${escapeHtml(caption)}</div>` : ""}
+      <div class="rich-session-image-strip-tiles">${tiles}</div>
+    </div>
+  `;
+}
+
 function renderRichSessionAssistantBody(text) {
   const normalized = String(text || "");
+  const imageRefs = extractRichSessionImageRefs(normalized);
+  const imageStripHtml = renderRichSessionImageStrip(imageRefs);
+
   if (!isRichSessionMarkdownContent(normalized)) {
-    return `<div class="rich-session-entry-copy">${escapeHtml(normalized)}</div>`;
+    return `
+      <div class="rich-session-entry-copy">${escapeHtml(normalized)}</div>
+      ${imageStripHtml}
+    `;
   }
 
   return `
     <div class="rich-session-entry-markdown knowledge-base-markdown">
       ${renderKnowledgeBaseMarkdown(normalized, "")}
     </div>
+    ${imageStripHtml}
   `;
 }
 
@@ -5435,12 +5556,31 @@ function renderRichSessionEntry(entry, index) {
       </div>`
     : "";
 
+  // Tool entries get an inline image strip when the tool was clearly about
+  // an image: a Write/Edit/Read whose `text` (the input summary) names an
+  // image path, OR a Bash whose output preview mentions one. Keeping the
+  // detection scoped to image-producing tools means a `Bash(grep -r '.png'
+  // src/)` doesn't dump every match into the feed.
+  const toolImageRefs = kind === "tool"
+    ? (() => {
+        const label = String(entry?.label || "");
+        const looksImageProducing = /^(?:Write|Edit|MultiEdit|Read|NotebookEdit|Open|View)$/i.test(label)
+          || (label === "Bash" && /\b(?:saved\s+to|wrote|figure\s+at|image\s+at|plot\s+at|screenshot)\b/iu.test(`${text} ${entry?.outputPreview || ""}`));
+        if (!looksImageProducing) {
+          return [];
+        }
+        const combined = `${text}\n${entry?.outputPreview || ""}`;
+        return extractRichSessionImageRefs(combined);
+      })()
+    : [];
+  const toolImageStripHtml = renderRichSessionImageStrip(toolImageRefs);
+
   const bodyHtml = isThinking
     ? ""
     : isTodoEntry
     ? renderRichSessionTodoBody(entry.todos)
     : kind === "tool"
-    ? `<pre class="rich-session-entry-pre">${body}</pre>${outputPreview}`
+    ? `<pre class="rich-session-entry-pre">${body}</pre>${outputPreview}${toolImageStripHtml}`
     : `<div class="rich-session-entry-copy">${body}</div>${slashActionHtml}`;
 
   return `
@@ -38785,7 +38925,7 @@ function bindShellEvents() {
   document.querySelector("#rich-session-feed")?.addEventListener("click", (event) => {
     const target = event.target instanceof Element ? event.target : null;
 
-    const pathLink = target?.closest("a.rich-session-path-link");
+    const pathLink = target?.closest("a.rich-session-path-link, a.rich-session-image-tile");
     if (pathLink instanceof HTMLAnchorElement) {
       event.preventDefault();
       const rawPath = pathLink.getAttribute("data-rich-path") || "";
