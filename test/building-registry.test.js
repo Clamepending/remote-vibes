@@ -11,6 +11,7 @@ import {
 test("building registry exposes core building manifests", () => {
   const ids = BUILDING_CATALOG.map((building) => building.id);
   assert.equal(new Set(ids).size, ids.length);
+  assert.ok(ids.includes("zinc"), "zinc retail API building must be in the catalog");
   assert.ok(ids.includes("automations"));
   assert.ok(ids.includes("agent-inbox"));
   assert.ok(ids.includes("ci-repair-shop"));
@@ -157,6 +158,38 @@ test("building registry exposes core building manifests", () => {
   assert.equal(wandb.visual.shape, "studio");
   assert.match(wandb.access.detail, /WANDB_API_KEY/i);
   assert.ok(wandb.onboarding.steps.some((step) => step.completeWhen?.type === "installed"));
+
+  const zinc = BUILDING_CATALOG.find((building) => building.id === "zinc");
+  assert.ok(zinc, "zinc building must exist (zinc.com retail API)");
+  assert.equal(zinc.category, "Commerce");
+  assert.equal(zinc.install.enabledSetting, "zincEnabled");
+  assert.equal(zinc.install.storedFallback, false, "zinc relies on its enabledSetting being authoritative");
+  assert.match(
+    zinc.access.detail,
+    /Bearer auth on api\.zinc\.com/i,
+    "zinc access description must call out Bearer auth so agents pick the right header",
+  );
+  assert.match(
+    zinc.access.detail,
+    /Real money/i,
+    "zinc access description must mention the real-money risk so agents and humans treat orders carefully",
+  );
+  // The API key must be a secret paste variable — never echoed back from
+  // /api/state, only the configured-flag.
+  const tokenVar = zinc.onboarding.variables.find((v) => v.setting === "zincApiKey");
+  assert.ok(tokenVar, "zinc must expose a zincApiKey paste field");
+  assert.equal(tokenVar.secret, true);
+  assert.equal(tokenVar.configuredSetting, "zincApiKeyConfigured");
+  assert.equal(tokenVar.setupUrl, "https://app.zinc.com");
+  // Agent guide must point at the real Zinc docs and use Bearer auth.
+  assert.ok(
+    zinc.agentGuide.commands.some((cmd) => cmd.command.includes("Authorization: Bearer $ZINC_API_KEY")),
+    "zinc agent guide must use Bearer auth (not Basic) — that's what the Zinc docs specify",
+  );
+  assert.ok(
+    zinc.agentGuide.docs.some((doc) => doc.url === "https://www.zinc.com/docs/quickstart"),
+    "zinc agent guide must link the canonical quickstart",
+  );
 
   const modal = BUILDING_CATALOG.find((building) => building.id === "modal");
   assert.equal(modal.category, "Cloud Compute");

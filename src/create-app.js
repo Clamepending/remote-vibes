@@ -32,7 +32,7 @@ import { BuildingHubService } from "./buildinghub-service.js";
 import { BrowserUseService } from "./browser-use-service.js";
 import { BUILDING_CATALOG } from "./client/building-registry.js";
 import { normalizeBuildingId } from "./client/building-sdk.js";
-import { createInstallJobStore, startInstallJob } from "./install-runner.js";
+import { createInstallJobStore, startInstallJob, startAuthenticateJob } from "./install-runner.js";
 import { createMcpLaunchRegistry } from "./mcp-launch-registry.js";
 import { testLaunch as testMcpLaunch } from "./mcp-launch-tester.js";
 import { handshakeWithLaunch as handshakeMcpLaunch } from "./mcp-protocol-handshake.js";
@@ -101,6 +101,13 @@ const PROVIDER_INSTALL_MAX_BUFFER = Number(
 );
 const WIKI_CLONE_RATE_LIMIT_WINDOW_MS = 60 * 1000;
 const WIKI_CLONE_RATE_LIMIT_MAX = 5;
+// POST /api/buildings/:id/install and .../authenticate spawn subprocesses
+// (CLI installers, browser-cli auth commands like `modal token new --source
+// web`) — every call burns local resources and can pop browser tabs.
+// Capping the rate prevents both accidental loops in client code and
+// trivial abuse if the surface ever ends up exposed beyond the local UI.
+const BUILDING_INSTALL_RATE_LIMIT_WINDOW_MS = 60 * 1000;
+const BUILDING_INSTALL_RATE_LIMIT_MAX = 12;
 const BUILDINGHUB_GITHUB_OAUTH_INTEGRATION_ID = "buildinghub";
 const BUILDINGHUB_GITHUB_OAUTH_START_PATH = "/buildinghub/auth/github/start";
 const BUILDINGHUB_GITHUB_OAUTH_CALLBACK_PATH = "/buildinghub/auth/github/callback";
@@ -1383,6 +1390,13 @@ export async function createVibeResearchApp({
     standardHeaders: true,
     legacyHeaders: false,
     message: { error: "Too many Library clone requests. Try again shortly." },
+  });
+  const buildingInstallRateLimit = rateLimit({
+    windowMs: BUILDING_INSTALL_RATE_LIMIT_WINDOW_MS,
+    limit: BUILDING_INSTALL_RATE_LIMIT_MAX,
+    standardHeaders: true,
+    legacyHeaders: false,
+    message: { error: "Too many install/authenticate requests. Try again shortly." },
   });
   const serverEnv = { ...process.env };
   const agentRunStore = new AgentRunStore({ stateDir });
@@ -2817,7 +2831,7 @@ export async function createVibeResearchApp({
     }
   });
 
-  app.post("/api/buildings/:buildingId/install", async (request, response) => {
+  app.post("/api/buildings/:buildingId/install", buildingInstallRateLimit, async (request, response) => {
     const buildingId = normalizeBuildingId(String(request.params.buildingId || ""));
     const building = BUILDING_CATALOG.find((entry) => entry.id === buildingId);
     if (!building) {
@@ -2845,6 +2859,44 @@ export async function createVibeResearchApp({
       });
     } catch (error) {
       response.status(500).json({ error: error?.message || "install start failed" });
+    }
+  });
+
+  // Run the auth phase only — for buildings whose install plan has
+  // `auth.kind: "auth-browser-cli"` and whose initial install returned
+  // `auth-required`. The install endpoint above intentionally defers the
+  // browser-CLI auth step to this endpoint so that placing the building
+  // doesn't pop a sign-in tab unprompted; the UI surfaces an explicit
+  // "Authenticate" button which POSTs here when the user is ready.
+  app.post("/api/buildings/:buildingId/authenticate", buildingInstallRateLimit, async (request, response) => {
+    const buildingId = normalizeBuildingId(String(request.params.buildingId || ""));
+    const building = BUILDING_CATALOG.find((entry) => entry.id === buildingId);
+    if (!building) {
+      response.status(404).json({ error: "Building not found." });
+      return;
+    }
+    if (!building.install?.plan?.auth) {
+      response.status(400).json({ error: "Building has no auth step." });
+      return;
+    }
+    if (building.install.plan.auth.kind !== "auth-browser-cli") {
+      response.status(400).json({ error: `auth kind ${building.install.plan.auth.kind} cannot be triggered via this endpoint.` });
+      return;
+    }
+    try {
+      const job = startAuthenticateJob({
+        jobStore: installJobStore,
+        building,
+        settingsStore,
+        appDir: appRootDir,
+      });
+      response.json({
+        jobId: job.id,
+        status: job.status,
+        buildingId: building.id,
+      });
+    } catch (error) {
+      response.status(500).json({ error: error?.message || "auth start failed" });
     }
   });
 
@@ -4302,6 +4354,8 @@ export async function createVibeResearchApp({
         modalEnabled: request.body?.modalEnabled,
         runpodEnabled: request.body?.runpodEnabled,
         harborEnabled: request.body?.harborEnabled,
+        zincEnabled: request.body?.zincEnabled,
+        zincApiKey: request.body?.zincApiKey,
         mcpHealthCheckIntervalSec: request.body?.mcpHealthCheckIntervalSec,
         mcpFilesystemEnabled: request.body?.mcpFilesystemEnabled,
         mcpFilesystemRoots: request.body?.mcpFilesystemRoots,

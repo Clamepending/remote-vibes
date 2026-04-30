@@ -316,6 +316,13 @@ export async function executeInstallPlan(plan, options = {}) {
     // <appDir>/bin/ (e.g. vr-pip-install-tool) regardless of the user's
     // PATH. Also useful for tests that want to inject HOME, etc.
     spawnEnv = null,
+    // When true, an auth-browser-cli plan whose verify fails is reported
+    // as `auth-required` instead of having its auth command auto-run. The
+    // UI then surfaces an explicit "Authenticate" button (see
+    // executeAuthPhase / POST /api/buildings/:id/authenticate) so the
+    // browser tab only opens on a deliberate user click — placement no
+    // longer hijacks the screen with a sign-in popup.
+    deferBrowserAuth = false,
   } = options;
 
   // Secret-mask set: every value in here is replaced with [redacted] in
@@ -453,7 +460,36 @@ export async function executeInstallPlan(plan, options = {}) {
     return true;
   })();
 
-  if (!firstVerify.ok && plan.auth?.kind === "auth-browser-cli") {
+  if (!firstVerify.ok && plan.auth?.kind === "auth-browser-cli" && deferBrowserAuth) {
+    // Deferred-auth path: don't auto-run the browser-CLI auth command.
+    // Return auth-required with the metadata the UI needs to render an
+    // explicit "Authenticate" button. POST /api/buildings/:id/authenticate
+    // runs executeAuthPhase to actually fire the browser-CLI command when
+    // the user opts in.
+    appendLog({
+      phase: "auth",
+      level: "info",
+      step: plan.auth.command,
+      message: `auth-required: deferred until user clicks Authenticate (${plan.auth.command})`,
+    });
+    if (settingsStore && Object.keys(capturedSettings).length) {
+      try { await settingsStore.update(capturedSettings); } catch (err) {
+        appendLog({ phase: "settings", level: "warn", message: `settings update failed: ${err?.message || err}` });
+      }
+    }
+    return {
+      status: "auth-required",
+      reason: "browser-auth-pending",
+      capturedSettings,
+      authPrompt: {
+        kind: "auth-browser-cli",
+        command: plan.auth.command,
+        label: plan.auth.label || `Sign in to ${buildingId || "building"}`,
+        detail: plan.auth.detail || "",
+        timeoutSec: plan.auth.timeoutSec || 300,
+      },
+    };
+  } else if (!firstVerify.ok && plan.auth?.kind === "auth-browser-cli") {
     appendLog({ phase: "auth", level: "info", step: plan.auth.command, message: "running" });
     const result = await runShellCommand({ ...plan.auth, timeoutSec: plan.auth.timeoutSec || 300 }, { signal });
     appendLog({
@@ -536,6 +572,110 @@ export async function executeInstallPlan(plan, options = {}) {
   return { status: "ok", capturedSettings, declaredLaunches };
 }
 
+// Run ONLY the auth + verify phases of an install plan. Used by the
+// deferred auth-browser-cli flow: the install runs preflight + install +
+// verify and returns auth-required, then the user clicks an "Authenticate"
+// button in the UI which POSTs /api/buildings/:id/authenticate, which
+// invokes this. Splitting these out keeps placement-time installs from
+// auto-popping a sign-in tab that the user didn't ask for.
+export async function executeAuthPhase(plan, options = {}) {
+  const {
+    appendLog: rawAppendLog = () => {},
+    settingsStore = null,
+    signal,
+    spawnEnv = null,
+  } = options;
+  const appendLog = (entry) => rawAppendLog(entry);
+
+  if (!plan || typeof plan !== "object") {
+    appendLog({ phase: "system", level: "error", message: "no install plan" });
+    return { status: "failed", reason: "no-plan" };
+  }
+  if (plan.auth?.kind !== "auth-browser-cli") {
+    appendLog({ phase: "system", level: "error", message: `auth phase not supported for kind=${plan.auth?.kind || "none"}` });
+    return { status: "failed", reason: "auth-not-applicable" };
+  }
+
+  appendLog({ phase: "auth", level: "info", step: plan.auth.command, message: "running" });
+  const authResult = await runShellCommand(
+    { ...plan.auth, timeoutSec: plan.auth.timeoutSec || 300 },
+    { signal, env: spawnEnv },
+  );
+  appendLog({
+    phase: "auth",
+    level: authResult.ok ? "info" : "warn",
+    step: plan.auth.command,
+    message: authResult.ok ? "ok" : `failed (exit=${authResult.exitCode}, reason=${authResult.reason || "exit-code"})`,
+    stdoutTail: authResult.stdout?.slice(-400),
+    stderrTail: authResult.stderr?.slice(-400),
+  });
+  if (!authResult.ok) {
+    return { status: "failed", reason: `auth command failed (exit=${authResult.exitCode}, reason=${authResult.reason || "exit-code"})` };
+  }
+
+  // Verify the new credentials actually work (e.g. `modal token info`).
+  if (Array.isArray(plan.verify) && plan.verify.length) {
+    for (const step of plan.verify) {
+      appendLog({ phase: "verify", level: "info", step: step.label || step.command, message: "running" });
+      const result = await runShellCommand(step, { signal, env: spawnEnv });
+      appendLog({
+        phase: "verify",
+        level: result.ok ? "info" : "warn",
+        step: step.label || step.command,
+        message: result.ok ? "ok" : `failed (exit=${result.exitCode})`,
+        stdoutTail: result.stdout?.slice(-400),
+        stderrTail: result.stderr?.slice(-400),
+      });
+      if (!result.ok) {
+        return { status: "failed", reason: result.reason || "verify-failed-after-auth" };
+      }
+    }
+  }
+
+  return { status: "ok" };
+}
+
+export function startAuthenticateJob({
+  jobStore,
+  building,
+  settingsStore,
+  appDir = null,
+}) {
+  const job = jobStore.create(building.id);
+  const controller = new AbortController();
+  job.abort = () => controller.abort();
+
+  const append = (entry) => jobStore.appendLog(job.id, entry);
+
+  (async () => {
+    try {
+      append({ phase: "system", level: "info", message: `auth phase started for ${building.id}` });
+      const plan = building.install?.plan;
+      if (!plan) {
+        jobStore.update(job.id, { status: "failed", result: { reason: "no-plan" } });
+        append({ phase: "system", level: "error", message: "building has no install plan" });
+        return;
+      }
+      const result = await executeAuthPhase(plan, {
+        appendLog: append,
+        settingsStore,
+        signal: controller.signal,
+        spawnEnv: appDir ? { VIBE_RESEARCH_APP_DIR: appDir } : null,
+      });
+      jobStore.update(job.id, {
+        status: result.status === "ok" ? "ok" : result.status,
+        result,
+      });
+      append({ phase: "system", level: result.status === "ok" ? "info" : "warn", message: `auth finished: ${result.status}` });
+    } catch (err) {
+      jobStore.update(job.id, { status: "failed", result: { reason: String(err?.message || err) } });
+      append({ phase: "system", level: "error", message: `auth crashed: ${err?.message || err}` });
+    }
+  })().catch(() => {});
+
+  return job;
+}
+
 export function startInstallJob({
   jobStore,
   building,
@@ -589,6 +729,10 @@ export function startInstallJob({
         mcpRegistry,
         buildingId: building.id,
         spawnEnv: appDir ? { VIBE_RESEARCH_APP_DIR: appDir } : null,
+        // Defer auth-browser-cli to a deliberate user click (POST
+        // /api/buildings/:id/authenticate) instead of auto-opening a
+        // sign-in tab the moment the user finishes placing the building.
+        deferBrowserAuth: true,
       });
       // Record the install outcome on the registry so /api/mcp/launches
       // can show "installed 2 days ago, status ok" inline. We do this
