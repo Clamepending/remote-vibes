@@ -6859,6 +6859,26 @@ button.visual-agent-tile:focus-visible,
   box-shadow: 0 5px 0 rgba(0, 0, 0, 0.34);
 }
 
+.visual-agent-sprite-codex {
+  border-color: rgba(255, 255, 255, 0.18);
+  background: #050609;
+  box-shadow: 0 5px 0 rgba(0, 0, 0, 0.32);
+}
+
+.codex-avatar {
+  position: relative;
+  display: block;
+  width: 32px;
+  height: 32px;
+}
+
+.codex-avatar-img {
+  display: block;
+  width: 100%;
+  height: 100%;
+  object-fit: contain;
+}
+
 .claude-code-avatar {
   --claude-code-avatar-fill: #d77b4a;
   --claude-code-avatar-dark: #050609;
@@ -7082,7 +7102,10 @@ button.visual-agent-tile:focus-visible,
 
 .visual-agent-sprite-claude.visual-agent-sprite-working,
 .visual-agent-sprite-claude.visual-agent-sprite-done,
-.visual-agent-sprite-claude.visual-agent-sprite-failed {
+.visual-agent-sprite-claude.visual-agent-sprite-failed,
+.visual-agent-sprite-codex.visual-agent-sprite-working,
+.visual-agent-sprite-codex.visual-agent-sprite-done,
+.visual-agent-sprite-codex.visual-agent-sprite-failed {
   background: #000;
 }
 
@@ -9363,6 +9386,16 @@ button.visual-town-building:focus-visible {
   transform: scale(0.9);
 }
 
+.visual-town-agent.visual-provider-codex .visual-town-agent-body {
+  width: 44px;
+  border-color: rgba(255, 255, 255, 0.2);
+  background: #050609;
+}
+
+.visual-town-agent.visual-provider-codex .visual-town-agent-body .codex-avatar {
+  transform: scale(0.92);
+}
+
 .visual-town-agent.visual-provider-openclaw .visual-town-agent-body {
   width: 48px;
   border-color: rgba(230, 82, 44, 0.48);
@@ -9390,7 +9423,10 @@ button.visual-town-building:focus-visible {
 
 .visual-town-agent.visual-provider-claude.visual-status-done .visual-town-agent-body,
 .visual-town-agent.visual-provider-claude.visual-status-failed .visual-town-agent-body,
-.visual-town-agent.visual-provider-claude.is-working .visual-town-agent-body {
+.visual-town-agent.visual-provider-claude.is-working .visual-town-agent-body,
+.visual-town-agent.visual-provider-codex.visual-status-done .visual-town-agent-body,
+.visual-town-agent.visual-provider-codex.visual-status-failed .visual-town-agent-body,
+.visual-town-agent.visual-provider-codex.is-working .visual-town-agent-body {
   background: #000;
 }
 

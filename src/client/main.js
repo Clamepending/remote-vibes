@@ -21095,6 +21095,10 @@ function isClaudeCodeProviderAgent(agent) {
   return String(agent?.providerId || "").toLowerCase() === "claude";
 }
 
+function isCodexProviderAgent(agent) {
+  return String(agent?.providerId || "").toLowerCase() === "codex";
+}
+
 function isOpenClawProviderId(providerId) {
   return String(providerId || "").toLowerCase() === "openclaw";
 }
@@ -21107,6 +21111,14 @@ function renderClaudeCodeAvatarMarkup() {
   return `
     <span class="claude-code-avatar" aria-hidden="true">
       <img class="claude-code-avatar-img" src="/images/claude-headshot.png" alt="" />
+    </span>
+  `;
+}
+
+function renderCodexAvatarMarkup() {
+  return `
+    <span class="codex-avatar" aria-hidden="true">
+      <img class="codex-avatar-img" src="/images/codex-headshot.png" alt="" />
     </span>
   `;
 }
@@ -21135,13 +21147,16 @@ function renderVisualAgentTile(agent, index) {
   const icon = agent.kind === "camera" ? Camera : agent.kind === "ottoauth" ? ShoppingCart : agent.kind === "browser" ? AppWindow : agent.kind === "helper" ? Zap : Bot;
   const isClaudeAgent = isClaudeCodeProviderAgent(agent);
   const isOpenClawAgent = isOpenClawProviderAgent(agent);
+  const isCodexAgent = isCodexProviderAgent(agent);
   const spriteMarkup = isClaudeAgent
     ? renderClaudeCodeAvatarMarkup()
-    : isOpenClawAgent
-      ? renderOpenClawCrabAvatarMarkup()
-      : renderIcon(icon);
+    : isCodexAgent
+      ? renderCodexAvatarMarkup()
+      : isOpenClawAgent
+        ? renderOpenClawCrabAvatarMarkup()
+        : renderIcon(icon);
   const content = `
-    <span class="visual-agent-sprite visual-agent-sprite-${escapeHtml(statusClass)} ${isClaudeAgent ? "visual-agent-sprite-claude" : ""} ${isOpenClawAgent ? "visual-agent-sprite-openclaw" : ""}" aria-hidden="true">
+    <span class="visual-agent-sprite visual-agent-sprite-${escapeHtml(statusClass)} ${isClaudeAgent ? "visual-agent-sprite-claude" : ""} ${isCodexAgent ? "visual-agent-sprite-codex" : ""} ${isOpenClawAgent ? "visual-agent-sprite-openclaw" : ""}" aria-hidden="true">
       ${spriteMarkup}
     </span>
     <span class="visual-agent-copy">
@@ -21457,6 +21472,7 @@ function renderVisualTownAgent(agent, index) {
   const icon = agent.kind === "camera" ? Camera : agent.kind === "ottoauth" ? ShoppingCart : agent.kind === "browser" ? AppWindow : agent.kind === "helper" ? Zap : Bot;
   const isClaudeAgent = isClaudeCodeProviderAgent(agent);
   const isOpenClawAgent = isOpenClawProviderAgent(agent);
+  const isCodexAgent = isCodexProviderAgent(agent);
   const isWorking = placement.statusClass === "working";
   const label = truncateSwarmLabel(agent.name || "agent", isWorking ? 28 : 18);
   const style = [
@@ -21468,9 +21484,11 @@ function renderVisualTownAgent(agent, index) {
   ].join(";");
   const spriteMarkup = isClaudeAgent
     ? renderClaudeCodeAvatarMarkup()
-    : isOpenClawAgent
-      ? renderOpenClawCrabAvatarMarkup()
-      : renderIcon(icon);
+    : isCodexAgent
+      ? renderCodexAvatarMarkup()
+      : isOpenClawAgent
+        ? renderOpenClawCrabAvatarMarkup()
+        : renderIcon(icon);
   const content = `
     <span class="visual-town-agent-body" aria-hidden="true">${spriteMarkup}</span>
     <span class="visual-town-agent-shadow" aria-hidden="true"></span>
@@ -21479,7 +21497,7 @@ function renderVisualTownAgent(agent, index) {
       <em>${escapeHtml(isWorking ? "at computer" : "walking")}</em>
     </span>
   `;
-  const attributes = `class="visual-town-agent visual-status-${escapeHtml(placement.statusClass)} ${isWorking ? "is-working" : "is-roaming"} ${isClaudeAgent ? "visual-provider-claude" : ""} ${isOpenClawAgent ? "visual-provider-openclaw" : ""}" style="${escapeHtml(style)}"`;
+  const attributes = `class="visual-town-agent visual-status-${escapeHtml(placement.statusClass)} ${isWorking ? "is-working" : "is-roaming"} ${isClaudeAgent ? "visual-provider-claude" : ""} ${isCodexAgent ? "visual-provider-codex" : ""} ${isOpenClawAgent ? "visual-provider-openclaw" : ""}" style="${escapeHtml(style)}"`;
 
   if (agent.browserUseSessionId) {
     return `
