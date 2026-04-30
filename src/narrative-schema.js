@@ -19,6 +19,12 @@
 
 export const NARRATIVE_SCHEMA_VERSION = 2;
 
+// Defensive caps applied by the validator. Producers that emit larger
+// values get their input clipped — the renderer never has to reason
+// about a 100MB imageRefs array or a 50KB filename.
+const MAX_IMAGE_REFS = 8;
+const MAX_IMAGE_REF_LENGTH = 1024;
+
 // The discriminated union by `kind`. Every kind has a fixed core shape
 // (id, kind, text, timestamp, seq) and a kind-specific tail. The
 // validator below enforces the contract; the renderer dispatches on `kind`.
@@ -113,12 +119,17 @@ export function normaliseNarrativeEntry(rawEntry) {
 
   // String[] of image paths — assistant text mentioning a saved figure,
   // tool input naming an image path, user attachments via markdown syntax.
+  // Cap each ref at MAX_IMAGE_REF_LENGTH and the array at MAX_IMAGE_REFS
+  // so a misbehaving producer can't pad the wire with multi-MB path
+  // strings or hundreds of refs per entry.
   if (rawEntry.imageRefs !== undefined) {
     if (!isStringArray(rawEntry.imageRefs)) {
       throw new TypeError(`narrative entry ${id}: imageRefs must be a string[]`);
     }
     if (rawEntry.imageRefs.length) {
-      out.imageRefs = rawEntry.imageRefs.slice();
+      out.imageRefs = rawEntry.imageRefs
+        .slice(0, MAX_IMAGE_REFS)
+        .map((ref) => String(ref).slice(0, MAX_IMAGE_REF_LENGTH));
     }
   }
 

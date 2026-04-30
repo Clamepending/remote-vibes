@@ -4036,6 +4036,23 @@ export class SessionManager {
     session.streamWorking = true;
     session.lastPromptAt = new Date().toISOString();
     session.updatedAt = session.lastPromptAt;
+
+    // Push a synthetic user entry into the narrative so every connected
+    // client sees the user's plan response immediately — without it the
+    // chat goes silent for a beat between the plan card and Claude's next
+    // turn. Multi-client setups also rely on this so the second tab sees
+    // what the first tab approved/rejected.
+    this.pushNativeNarrativeEntry(session, {
+      kind: "user",
+      label: "You",
+      text: isApprove
+        ? "Approved the plan."
+        : (message ? `Push back: ${String(message).trim()}` : "Pushed back on the plan."),
+      timestamp: session.lastPromptAt,
+      meta: "plan-response",
+    });
+    this.broadcastNarrativeDiff(session);
+
     this.scheduleSessionMetaBroadcast(session, { immediate: true });
     this.schedulePersist();
     return { ok: true, toolUseId, approved: isApprove };

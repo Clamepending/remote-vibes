@@ -53,6 +53,23 @@ test("normaliseNarrativeEntry: keeps the canonical core fields and drops unknown
   assert.equal(out.bogus, undefined);
 });
 
+test("normaliseNarrativeEntry: imageRefs array is capped at 8 items, each capped at 1024 bytes", () => {
+  const longPath = "x".repeat(2000);
+  const tooMany = Array.from({ length: 50 }, (_, i) => `figures/run-${i}.png`);
+  const out = normaliseNarrativeEntry({
+    id: "a1", kind: "assistant", imageRefs: [...tooMany, longPath],
+  });
+  assert.equal(out.imageRefs.length, 8, "array clipped to 8");
+  // longPath was at index 50 — past the slice — so it doesn't appear.
+  // Confirm the items we got are the first 8.
+  assert.deepEqual(out.imageRefs, tooMany.slice(0, 8));
+
+  const oneBigItem = normaliseNarrativeEntry({
+    id: "a2", kind: "assistant", imageRefs: [longPath],
+  });
+  assert.equal(oneBigItem.imageRefs[0].length, 1024, "single ref clipped to 1024 bytes");
+});
+
 test("normaliseNarrativeEntry: imageRefs must be a string[] or absent (not on entry when empty)", () => {
   const out = normaliseNarrativeEntry({
     id: "a1", kind: "assistant", imageRefs: ["figures/x.png"],

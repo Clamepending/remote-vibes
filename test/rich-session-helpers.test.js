@@ -416,6 +416,28 @@ test("OSC-8 + SGR: a coloured + hyperlinked path still extracts", () => {
   assert.deepEqual(extractRichSessionImageRefs(wrapped), ["figures/x.png"]);
 });
 
+test("OSC-8 with id= params: ESC]8;id=foo;url BEL strips cleanly", () => {
+  // OSC-8 supports a parameter section before the url. gh and some editors
+  // emit `ESC]8;id=link123;https://x.test BEL`. The regex's negated class
+  // (everything except BEL/ESC) eats the params + url together.
+  const wrapped = `${ESC}]8;id=link123;https://x.test${BEL}figures/x.png${ESC}]8;;${BEL}`;
+  assert.equal(stripAnsi(wrapped), "figures/x.png");
+  assert.deepEqual(extractRichSessionImageRefs(wrapped), ["figures/x.png"]);
+});
+
+test("OSC-8 with id= params + ST terminator: ESC]8;id=foo;url ESC\\\\ strips cleanly", () => {
+  const wrapped = `${ESC}]8;id=link999;file:///a/b.png${ESC}\\figures/b.png${ESC}]8;;${ESC}\\`;
+  assert.equal(stripAnsi(wrapped), "figures/b.png");
+  assert.deepEqual(extractRichSessionImageRefs(wrapped), ["figures/b.png"]);
+});
+
+test("OSC-8 with multi-key params: ESC]8;a=1:b=2;url BEL strips cleanly", () => {
+  // Some terminals encode multiple params separated by `:` inside the
+  // params section. The negated class still consumes them.
+  const wrapped = `${ESC}]8;a=1:b=2;https://x.test${BEL}link${ESC}]8;;${BEL}`;
+  assert.equal(stripAnsi(wrapped), "link");
+});
+
 // ============================================================================
 // Path forms with spaces, parens, unicode
 // ============================================================================

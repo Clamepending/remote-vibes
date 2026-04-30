@@ -6226,12 +6226,21 @@ export async function createVibeResearchApp({
   // manager dispatches a structured tool_result content block back to
   // the running Claude stream session — the protocol-correct shape, vs
   // typing an English approval into the composer.
+  //
+  // Pushback message is capped at PLAN_PUSHBACK_MAX_LENGTH (4096) so a
+  // user (or a malicious client) can't post an arbitrarily large body
+  // through to the agent's tool_result content block. 4096 is well
+  // above any reasonable explanation; longer reasoning belongs in the
+  // composer as its own message.
   app.post("/api/sessions/:sessionId/plan-response", (request, response) => {
+    const PLAN_PUSHBACK_MAX_LENGTH = 4096;
     try {
       const { approve = true, message = "" } = request.body || {};
+      const trimmedMessage = (typeof message === "string" ? message : "")
+        .slice(0, PLAN_PUSHBACK_MAX_LENGTH);
       const result = sessionManager.resolvePlanMode(request.params.sessionId, {
         approve: Boolean(approve),
-        message: typeof message === "string" ? message : "",
+        message: trimmedMessage,
       });
       if (!result.ok) {
         const status = result.reason === "session-not-found" ? 404
@@ -6241,7 +6250,12 @@ export async function createVibeResearchApp({
         response.status(status).json({ error: result.reason });
         return;
       }
-      response.json({ ok: true, toolUseId: result.toolUseId, approved: result.approved });
+      response.json({
+        ok: true,
+        toolUseId: result.toolUseId,
+        approved: result.approved,
+        truncated: typeof message === "string" && message.length > PLAN_PUSHBACK_MAX_LENGTH,
+      });
     } catch (error) {
       response.status(500).json({ error: error.message || "plan-response failed" });
     }

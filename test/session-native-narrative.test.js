@@ -595,6 +595,32 @@ test("parseMcpToolName splits mcp__server__tool names while ignoring native tool
   assert.equal(parseMcpToolName(""), null);
 });
 
+test("parseMcpToolName handles server names containing underscores via non-greedy matching", () => {
+  // Server names like `github_enterprise` or `vector_search_remote` are
+  // legitimate. The regex's non-greedy server portion has to bind to the
+  // shortest prefix that still leaves a `__<tool>` suffix. Tool name can
+  // contain underscores too — that's the greedy tail.
+  assert.deepEqual(
+    parseMcpToolName("mcp__github_enterprise__create_pr"),
+    { server: "github_enterprise", tool: "create_pr" },
+  );
+  assert.deepEqual(
+    parseMcpToolName("mcp__vector_search_remote__similarity_search"),
+    { server: "vector_search_remote", tool: "similarity_search" },
+  );
+  assert.deepEqual(
+    parseMcpToolName("mcp__a_b__c_d_e"),
+    { server: "a_b", tool: "c_d_e" },
+  );
+});
+
+test("parseMcpToolName: a single-segment name with mcp prefix but no tool half is null", () => {
+  // Defensive: a malformed `mcp__foo` without the second `__` separator
+  // is not a valid MCP tool name. Returning null is correct.
+  assert.equal(parseMcpToolName("mcp__foo"), null);
+  assert.equal(parseMcpToolName("mcp__"), null);
+});
+
 test("extractPlanFromToolUse pulls the plan body from an ExitPlanMode tool_use", () => {
   const toolUse = {
     type: "tool_use",
