@@ -31,6 +31,11 @@ import {
   classifyPromptEntry,
   loadProviderBackedNarrative,
 } from "./session-native-narrative.js";
+import {
+  makeNarrativeEventFrame,
+  makeNarrativeInitFrame,
+  normaliseNarrativeEntry,
+} from "./narrative-schema.js";
 import { ClaudeStreamSession } from "./claude-stream-session.js";
 import { CodexStreamSession } from "./codex-stream-session.js";
 import { SessionStore } from "./session-store.js";
@@ -3824,6 +3829,15 @@ export class SessionManager {
 
     this.sendSnapshot(socket, session);
 
+    // Push the narrative baseline so the client reducer has coherent state
+    // immediately, instead of waiting on the first /api/sessions/:id/narrative
+    // HTTP fetch. Only stream-mode sessions emit incremental events today;
+    // for non-stream sessions this is a no-op (empty entries) and the HTTP
+    // pull path remains the primary source.
+    if (session.streamMode) {
+      this.broadcastNarrativeInit(session, socket);
+    }
+
     return session;
   }
 
@@ -4200,6 +4214,129 @@ export class SessionManager {
         client.send(payload);
       }
     }
+  }
+
+  // Build the canonical narrative snapshot for a stream-mode session — the
+  // entries the WS push protocol carries to a client. We deliberately skip
+  // the empty-state placeholder that getNativeNarrativeEntries injects for
+  // the HTTP narrative path: the WS reducer treats an empty entries[] as a
+  // legitimate baseline and the renderer paints its own empty state, so
+  // emitting a synthetic "waiting for stream" entry just to immediately
+  // remove it on the first real event is wire-format noise.
+  getStreamNarrativeSnapshot(session, { maxEntries = 96 } = {}) {
+    if (!session) return [];
+    const streamEntries = Array.isArray(session.streamEntries) ? session.streamEntries.slice(-maxEntries) : [];
+    const nativeEntries = this.getNativeNarrativeEntries(session, {
+      maxEntries,
+      includePlaceholder: false,
+    });
+    const merged = mergeNarrativeEntries(nativeEntries, streamEntries, maxEntries);
+    return merged.map((entry, index) => {
+      try {
+        return normaliseNarrativeEntry({
+          ...entry,
+          id: entry.id || `synthetic-${index}`,
+          seq: entry.seq || 0,
+        });
+      } catch (error) {
+        console.warn(`[vibe-research] narrative entry ${entry?.id || index} failed validation:`, error.message);
+        return null;
+      }
+    }).filter(Boolean);
+  }
+
+  // Send a narrative-init frame to one client (or all of a session's
+  // clients). Used on WebSocket connect to warm the client's reducer with
+  // a coherent baseline before any incremental events arrive.
+  broadcastNarrativeInit(session, target = null) {
+    if (!session) return;
+    const entries = this.getStreamNarrativeSnapshot(session);
+    if (typeof session.broadcastSeq !== "number") session.broadcastSeq = 0;
+    const lastSeq = session.broadcastSeq;
+    let frame;
+    try {
+      frame = makeNarrativeInitFrame({ sessionId: session.id, entries, lastSeq });
+    } catch (error) {
+      console.warn(`[vibe-research] could not build narrative-init for ${session.id}:`, error.message);
+      return;
+    }
+    const payload = JSON.stringify(frame);
+    const clients = target ? [target] : (session.clients || []);
+    for (const client of clients) {
+      if (client && client.readyState === client.OPEN) {
+        client.send(payload);
+      }
+    }
+    // Cache the snapshot so the diff helper has a baseline for the next
+    // entries update. Storing as a Map keyed by entry id keeps the diff
+    // O(n) on whichever side has more entries.
+    session.lastBroadcastNarrative = new Map(entries.map((entry) => [entry.id, entry]));
+  }
+
+  // Compute and emit a narrative-event diff after the stream session
+  // produces a new entries snapshot. Each upsert/remove gets its own seq
+  // so a client can detect a missed frame and resync via the HTTP endpoint
+  // (or by re-handshaking the WebSocket).
+  broadcastNarrativeDiff(session) {
+    if (!session) return;
+    const next = this.getStreamNarrativeSnapshot(session);
+    const nextById = new Map(next.map((entry) => [entry.id, entry]));
+    const prevById = session.lastBroadcastNarrative instanceof Map ? session.lastBroadcastNarrative : new Map();
+    if (typeof session.broadcastSeq !== "number") session.broadcastSeq = 0;
+
+    const upserts = [];
+    for (const [id, entry] of nextById) {
+      const previous = prevById.get(id);
+      // A trivial JSON-equality check is enough — the entries are pure data
+      // and small. Skipping the upsert when nothing changed keeps the wire
+      // quiet during long-running tool runs that don't mutate the entry.
+      if (!previous || JSON.stringify(previous) !== JSON.stringify(entry)) {
+        upserts.push(entry);
+      }
+    }
+
+    const removes = [];
+    for (const id of prevById.keys()) {
+      if (!nextById.has(id)) {
+        removes.push(id);
+      }
+    }
+
+    if (!upserts.length && !removes.length) {
+      return;
+    }
+
+    const frames = [];
+    for (const entry of upserts) {
+      session.broadcastSeq += 1;
+      try {
+        frames.push(makeNarrativeEventFrame({
+          sessionId: session.id, op: "upsert", seq: session.broadcastSeq, entry,
+        }));
+      } catch (error) {
+        console.warn(`[vibe-research] could not build upsert frame for ${entry.id}:`, error.message);
+      }
+    }
+    for (const entryId of removes) {
+      session.broadcastSeq += 1;
+      try {
+        frames.push(makeNarrativeEventFrame({
+          sessionId: session.id, op: "remove", seq: session.broadcastSeq, entryId,
+        }));
+      } catch (error) {
+        console.warn(`[vibe-research] could not build remove frame for ${entryId}:`, error.message);
+      }
+    }
+
+    for (const frame of frames) {
+      const payload = JSON.stringify(frame);
+      for (const client of session.clients || []) {
+        if (client.readyState === client.OPEN) {
+          client.send(payload);
+        }
+      }
+    }
+    session.lastBroadcastNarrative = nextById;
   }
 
   serializeSession(session) {
@@ -5488,14 +5625,17 @@ export class SessionManager {
 
     streamSession.on("entries", (entries) => {
       session.streamEntries = Array.isArray(entries) ? entries : [];
-      // Immediate broadcast: rich-session entries are the user's primary view
-      // for stream sessions, so we always want the client refresh to fire as
-      // soon as a Thinking signal or token delta lands.
+      // Push narrative diffs over the WS so the client reducer applies
+      // upserts/removes directly — no HTTP round-trip required. The legacy
+      // session-meta broadcast still fires alongside (cheap; small payload)
+      // because session-level fields like backgroundActivity ride on it.
+      this.broadcastNarrativeDiff(session);
       this.scheduleSessionMetaBroadcast(session, { immediate: true });
     });
 
     streamSession.on("turn-complete", () => {
       session.streamWorking = false;
+      this.broadcastNarrativeDiff(session);
       this.scheduleSessionMetaBroadcast(session, { immediate: true });
       this.schedulePersist();
     });
@@ -5515,6 +5655,7 @@ export class SessionManager {
         timestamp: new Date().toISOString(),
         meta: "stream-mode",
       });
+      this.broadcastNarrativeDiff(session);
       this.scheduleSessionMetaBroadcast(session, { immediate: true });
     });
 
@@ -5531,6 +5672,7 @@ export class SessionManager {
         timestamp: new Date().toISOString(),
         meta: "stream-mode",
       });
+      this.broadcastNarrativeDiff(session);
       this.scheduleSessionMetaBroadcast(session, { immediate: true });
       this.schedulePersist({ immediate: true });
     });
@@ -5618,6 +5760,7 @@ export class SessionManager {
 
     streamSession.on("entries", (entries) => {
       session.streamEntries = Array.isArray(entries) ? entries : [];
+      this.broadcastNarrativeDiff(session);
       this.scheduleSessionMetaBroadcast(session, { immediate: true });
     });
 
@@ -5627,6 +5770,7 @@ export class SessionManager {
       if (streamSession.threadId) {
         this.updateProviderState(session, { sessionId: streamSession.threadId });
       }
+      this.broadcastNarrativeDiff(session);
       this.scheduleSessionMetaBroadcast(session, { immediate: true });
       this.schedulePersist();
     });
@@ -5646,6 +5790,7 @@ export class SessionManager {
         timestamp: new Date().toISOString(),
         meta: "stream-mode",
       });
+      this.broadcastNarrativeDiff(session);
       this.scheduleSessionMetaBroadcast(session, { immediate: true });
     });
 
@@ -5662,6 +5807,7 @@ export class SessionManager {
         timestamp: new Date().toISOString(),
         meta: "stream-mode",
       });
+      this.broadcastNarrativeDiff(session);
       this.scheduleSessionMetaBroadcast(session, { immediate: true });
       this.schedulePersist({ immediate: true });
     });

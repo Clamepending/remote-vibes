@@ -82,6 +82,12 @@ import {
   renderAnsiToHtml,
   stripAnsi,
 } from "./rich-session-helpers.js";
+import {
+  NARRATIVE_FRAME_TYPES,
+  applyNarrativeFrame,
+  createInitialNarrativeState,
+  selectNarrativeEntries,
+} from "../narrative-schema.js";
 import { Marked } from "marked";
 
 const app = document.querySelector("#app");
@@ -2393,6 +2399,17 @@ const state = {
   nativeSessionNarrativeLoading: {},
   nativeSessionNarrativeRequestCounter: 0,
   nativeSessionNarrativeTimers: {},
+  // Per-session reducer state for the WS push protocol. The server emits
+  // narrative-init on attach and narrative-event per upsert/remove; the
+  // reducer applies them and produces a canonical entries[] the renderer
+  // reads from. nativeSessionNarratives (HTTP-fetched) survives as the
+  // bootstrap path for sessions / providers the push protocol doesn't
+  // cover yet, and as a resync path when the reducer detects a seq gap.
+  nativeSessionReducerState: {},
+  // Sessions whose reducer state has been seeded by a narrative-init frame.
+  // A session in this set treats its reducer as the authoritative entries
+  // source; outside it, the renderer falls back to the HTTP narrative.
+  nativeSessionReducerArmed: new Set(),
   // Per-session circular log of stream-protocol events the native UI is
   // parsing. Keys are sessionIds. Each value is an array of { source, type,
   // ts, payload } records, capped at STREAM_LOG_LIMIT entries. Populated by
@@ -5253,7 +5270,62 @@ async function attachRichSessionImageFiles(files, source) {
 }
 
 function getRichSessionNarrative(sessionId) {
-  return state.nativeSessionNarratives[String(sessionId || "")] || null;
+  const id = String(sessionId || "");
+  // Prefer the WS-reducer-driven view when the session has been armed by a
+  // narrative-init frame. Each entry update arrives via a narrative-event
+  // and the reducer folds it in; the renderer stays a pure function of
+  // selectNarrativeEntries(reducerState).
+  if (state.nativeSessionReducerArmed.has(id)) {
+    const reducerState = state.nativeSessionReducerState[id];
+    if (reducerState) {
+      const entries = selectNarrativeEntries(reducerState);
+      // Wrap in the same shape the HTTP path returns so renderRichSessionFeedHtml
+      // and consumers don't need to switch on which source produced the data.
+      return {
+        providerBacked: true,
+        entries,
+        sourceLabel: "WebSocket narrative push",
+        updatedAt: "",
+      };
+    }
+  }
+  return state.nativeSessionNarratives[id] || null;
+}
+
+// Apply a narrative-init or narrative-event frame to the reducer state for
+// the given sessionId. Returns true on success; false when the frame
+// indicates a seq gap and the caller should trigger a resync.
+function applyNarrativeFrameToState(sessionId, frame, { armed = false } = {}) {
+  const id = String(sessionId || "");
+  if (!id || !frame || typeof frame !== "object") return true;
+  const previous = state.nativeSessionReducerState[id] || createInitialNarrativeState();
+
+  // Gap detection on event frames: if the frame's seq is more than one
+  // ahead of the reducer's lastSeq, a frame in between went missing and we
+  // need a fresh init. The reducer itself drops out-of-order seqs silently.
+  if (frame.type === NARRATIVE_FRAME_TYPES.EVENT) {
+    const expected = (previous.lastSeq || 0) + 1;
+    if (frame.seq && frame.seq > expected) {
+      // Drop the reducer arm so the next render falls back to the HTTP
+      // narrative — preventing a half-applied state from being shown — and
+      // signal the caller to resync.
+      state.nativeSessionReducerArmed.delete(id);
+      return false;
+    }
+  }
+
+  const next = applyNarrativeFrame(previous, frame);
+  state.nativeSessionReducerState[id] = next;
+  if (armed) {
+    state.nativeSessionReducerArmed.add(id);
+  }
+  if (id === String(state.activeSessionId || "")) {
+    refreshRichSessionSurfaceUi();
+  }
+  // The WS catch-all higher up in the message handler already mirrors every
+  // non-snapshot frame into the stream-log buffer, so the JSON viewer picks
+  // up narrative-init / narrative-event without us double-recording here.
+  return true;
 }
 
 function clearRichSessionNarrativeTimer(sessionId) {
@@ -5699,15 +5771,11 @@ function renderRichSessionEntry(entry, index) {
     : [];
   const toolImageStripHtml = renderRichSessionImageStrip(toolImageRefs);
 
-  // User-message entries get an image strip when the message contains the
-  // attachment markdown the composer produces ("![dropped image: foo.png]
-  // (/abs/path/...)"). The shaper already filters to that explicit syntax
-  // before stamping `imageRefs`; for legacy entries we still re-filter.
-  const userImageRefs = kind === "user"
-    ? (Array.isArray(entry?.imageRefs) && entry.imageRefs.length
-        ? entry.imageRefs.slice(0, 4)
-        : extractRichSessionImageRefs(text, { includeMarkdown: true })
-            .filter((value) => new RegExp(`!\\[[^\\]]*\\]\\(<?${value.replace(/[.*+?^${}()|[\\]\\\\]/g, "\\\\$&")}>?\\)`).test(text)))
+  // User-message entries get an image strip when the shaper detected the
+  // composer's explicit attachment markdown ("![dropped image: foo.png]
+  // (/abs/path)"). Plain prose mentions of an image stay as text.
+  const userImageRefs = kind === "user" && Array.isArray(entry?.imageRefs)
+    ? entry.imageRefs.slice(0, 4)
     : [];
   const userImageStripHtml = renderRichSessionImageStrip(userImageRefs);
 
@@ -41477,7 +41545,28 @@ function connectToSession(sessionId) {
 
     if (payload.type === "session") {
       updateSession(payload.session);
-      scheduleRichSessionNarrativeRefresh(sessionId);
+      // Only fall back to the HTTP narrative fetch when the reducer has not
+      // yet been armed for this session. Once narrative-init has landed the
+      // reducer is the source of truth and HTTP refresh would only race.
+      if (!state.nativeSessionReducerArmed.has(sessionId)) {
+        scheduleRichSessionNarrativeRefresh(sessionId);
+      }
+      return;
+    }
+
+    if (payload.type === NARRATIVE_FRAME_TYPES.INIT) {
+      applyNarrativeFrameToState(sessionId, payload, { armed: true });
+      return;
+    }
+
+    if (payload.type === NARRATIVE_FRAME_TYPES.EVENT) {
+      const ok = applyNarrativeFrameToState(sessionId, payload);
+      if (!ok) {
+        // seq gap detected — resync via the HTTP narrative endpoint, which
+        // will rebuild the reducer state on its next narrative-init or
+        // hand off to the legacy HTTP path until init re-arrives.
+        scheduleRichSessionNarrativeRefresh(sessionId, { immediate: true });
+      }
       return;
     }
 
@@ -41500,6 +41589,9 @@ function connectToSession(sessionId) {
       delete state.nativeSessionNarratives[payload.sessionId];
       delete state.nativeSessionNarrativeErrors[payload.sessionId];
       delete state.nativeSessionNarrativeLoading[payload.sessionId];
+      delete state.nativeSessionReducerState[payload.sessionId];
+      state.nativeSessionReducerArmed.delete(payload.sessionId);
+      delete state.nativeSessionStreamLog[payload.sessionId];
       const visualSelectionPruned = pruneVisualGameSessionSelection();
       if (state.activeSessionId === payload.sessionId) {
         state.activeSessionId = state.sessions[0]?.id ?? null;
