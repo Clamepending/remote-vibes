@@ -479,6 +479,37 @@ function extractClaudeMessageText(content) {
   return normalizeText(textChunks.join("\n\n"));
 }
 
+// Codex `reasoning` items may carry summary text (depends on the model
+// + responses-API version). Pull whatever text-bearing fields the
+// payload exposes; fall back to the empty string when there's only a
+// shape with no human-readable content. Returning "" tells the caller
+// to skip emitting a placeholder Thinking row.
+function extractCodexReasoningText(item) {
+  if (!item || typeof item !== "object") return "";
+  const summary = Array.isArray(item.summary) ? item.summary : [];
+  const chunks = [];
+  for (const part of summary) {
+    if (typeof part === "string" && part.trim()) {
+      chunks.push(part);
+      continue;
+    }
+    if (part && typeof part === "object") {
+      if (typeof part.text === "string" && part.text.trim()) {
+        chunks.push(part.text);
+        continue;
+      }
+      if (typeof part.summary === "string" && part.summary.trim()) {
+        chunks.push(part.summary);
+      }
+    }
+  }
+  // Some Codex variants put the text directly on the item.
+  if (typeof item.text === "string" && item.text.trim()) {
+    chunks.push(item.text);
+  }
+  return normalizeText(chunks.join("\n\n"));
+}
+
 function extractClaudeThinkingText(content) {
   if (!Array.isArray(content)) {
     return "";
@@ -694,13 +725,11 @@ function buildCodexNarrativeFromText(text, session = {}, { maxEntries = DEFAULT_
       const eventPayload = payload.payload;
 
       if (eventPayload.type === "task_started") {
-        dedupePush(entries, {
-          id: makeEntryId("codex-thinking", entries.length + 1),
-          kind: "status",
-          label: "Thinking",
-          text: `${session.providerLabel || "Codex"} is thinking...`,
-          timestamp: updatedAt,
-        }, maxEntries);
+        // The send-button spinner already conveys "agent is working".
+        // Emitting a "Thinking" placeholder row per turn just clutters
+        // the chat — Codex fires task_started + multiple `reasoning`
+        // events per turn, and the user was seeing 4-7 Thinking rows
+        // interleaved with their tool calls. Skip it.
         continue;
       }
 
@@ -748,13 +777,25 @@ function buildCodexNarrativeFromText(text, session = {}, { maxEntries = DEFAULT_
 
     const item = payload.payload;
     if (item.type === "reasoning") {
-      dedupePush(entries, {
-        id: makeEntryId("codex-thinking", entries.length + 1),
-        kind: "status",
-        label: "Thinking",
-        text: `${session.providerLabel || "Codex"} is thinking...`,
-        timestamp: updatedAt,
-      }, maxEntries);
+      // Codex's `reasoning` items historically rendered as a
+      // placeholder "Thinking" row with no content. They appeared
+      // BETWEEN every tool call, so a single turn produced rows like
+      // [Thinking] [shell] [Thinking] [shell] [Thinking] [shell] —
+      // pure visual noise on top of the send-button spinner that
+      // already conveys "agent is working". If the reasoning item
+      // ever ships actual summary text, surface that instead;
+      // otherwise drop the row entirely.
+      const summaryText = extractCodexReasoningText(item);
+      if (summaryText) {
+        dedupePush(entries, {
+          id: makeEntryId("codex-thinking", entries.length + 1),
+          kind: "status",
+          label: "Thinking",
+          text: summaryText,
+          timestamp: updatedAt,
+          thinking: true,
+        }, maxEntries);
+      }
       continue;
     }
 

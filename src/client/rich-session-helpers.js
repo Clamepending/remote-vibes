@@ -389,3 +389,73 @@ export function getRichSessionImageUrl(rawPath, { workspaceRoot = "" } = {}) {
 
   return "";
 }
+
+// =====================================================================
+// Browser-use widget detection. When an agent runs `vr-browser` (the
+// localhost-debugging CLI) and produces a screenshot, we want to render
+// the result as a chat widget that LOOKS like a browser preview — a
+// chrome bar with the URL, then the screenshot — instead of a generic
+// inline image. This pure helper inspects a tool entry and pulls out
+// the URL + screenshot path if the entry was a vr-browser invocation.
+// Returns null when the entry is unrelated (so the caller falls back to
+// the regular image strip).
+//
+// Supported shapes:
+//   1. The agent ran `vr-browser screenshot 5173 out.png` via Bash; the
+//      tool input is the command string and the output is the JSON the
+//      CLI prints to stdout: { ok, command, target, outputPath, ... }.
+//   2. The CLI's JSON envelope appears anywhere in the entry text or
+//      outputPreview (resume / replay tolerant).
+// =====================================================================
+export function extractBrowserUseWidget(entry) {
+  if (!entry || typeof entry !== "object") return null;
+  const label = String(entry.label || "");
+  const input = String(entry.input || entry.text || "");
+  const output = String(entry.outputPreview || entry.output || entry.text || "");
+
+  // Cheap pre-filter — must look like a vr-browser invocation OR carry
+  // the CLI's JSON envelope. Avoids running the JSON.parse loop on
+  // every Bash entry in the chat.
+  const looksRelated = /\bvr-browser\b/.test(input)
+    || /\bvr-browser\b/.test(output)
+    || /"command"\s*:\s*"(?:screenshot|run|describe)"/u.test(output);
+  if (!looksRelated) return null;
+  if (label && !/^(?:Bash|Shell|Run)$/i.test(label) && !/\bvr-browser\b/.test(input)) {
+    return null;
+  }
+
+  const envelope = parseBrowserUseEnvelope(output) || parseBrowserUseEnvelope(input);
+  if (!envelope) return null;
+
+  const url = String(envelope.target || envelope.url || "").trim();
+  const screenshotPath = String(envelope.outputPath || envelope.screenshot || envelope.path || "").trim();
+  if (!screenshotPath) return null;
+
+  const command = String(envelope.command || "").trim();
+  return {
+    url: url || "",
+    screenshotPath,
+    command: command || "screenshot",
+    title: typeof envelope.title === "string" ? envelope.title : "",
+  };
+}
+
+function parseBrowserUseEnvelope(text) {
+  const source = String(text || "");
+  if (!source) return null;
+  // Envelope is the LAST JSON object in the output (the CLI prints
+  // status lines first, then the final JSON). Walk from the right.
+  const closing = source.lastIndexOf("}");
+  if (closing < 0) return null;
+  const opening = source.lastIndexOf("{", closing);
+  if (opening < 0) return null;
+  const candidate = source.slice(opening, closing + 1);
+  try {
+    const value = JSON.parse(candidate);
+    if (!value || typeof value !== "object") return null;
+    if (!("outputPath" in value) && !("screenshot" in value) && !("path" in value)) return null;
+    return value;
+  } catch {
+    return null;
+  }
+}
