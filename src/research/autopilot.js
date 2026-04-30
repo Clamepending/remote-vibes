@@ -3,6 +3,7 @@ import path from "node:path";
 import { readResearchState, updateResearchState } from "./brief.js";
 import { tickResearchOrchestrator } from "./orchestrator.js";
 import { parseProjectReadme } from "./project-readme.js";
+import { finishMove, runCycle, runNextMove } from "./runner.js";
 
 function trimString(value) {
   return String(value || "").trim();
@@ -146,6 +147,18 @@ function runnerFinishCommand({ projectDir, slug, apply = false } = {}) {
 
 function recommendation(action, reason, extra = {}) {
   return { action, reason, ...extra };
+}
+
+function finitePositiveInteger(value, fallback) {
+  const numeric = Number(value);
+  if (!Number.isFinite(numeric) || numeric <= 0) return fallback;
+  return Math.max(1, Math.floor(numeric));
+}
+
+function finiteNonNegativeInteger(value, fallback) {
+  const numeric = Number(value);
+  if (!Number.isFinite(numeric) || numeric < 0) return fallback;
+  return Math.floor(numeric);
 }
 
 async function routeActiveDecision({
@@ -351,6 +364,279 @@ export async function stepResearchAutopilot({
   };
 }
 
+function cycleOptionsFromRun({
+  projectDir,
+  slug = "",
+  kind = "change",
+  commandText = "",
+  codeCwd = "",
+  askHuman = false,
+  waitHuman = false,
+  agentTownApi = "",
+  humanTimeoutMs = 30_000,
+  commandTimeoutMs = 30 * 60 * 1000,
+  metric = "",
+  metricRegex = "",
+  change = "",
+  qual = "",
+  seed = "",
+  fetchImpl = globalThis.fetch,
+} = {}) {
+  return {
+    projectDir,
+    slug,
+    command: commandText,
+    cwd: codeCwd,
+    kind,
+    metric,
+    metricRegex,
+    change,
+    qual,
+    seed,
+    timeoutMs: commandTimeoutMs,
+    askHuman,
+    waitHuman,
+    humanTimeoutMs,
+    agentTownApi,
+    fetchImpl,
+  };
+}
+
+function summarizeCycleStop(cycle, { waitHuman = false } = {}) {
+  if (cycle?.review && !waitHuman) {
+    return { stop: true, reason: "human-gate", summary: "cycle opened a review card" };
+  }
+  if (cycle?.reviewDecision?.action === "timeout") {
+    return { stop: true, reason: "human-timeout", summary: "human review wait timed out" };
+  }
+  if (["pause", "reject", "dismiss"].includes(cycle?.reviewDecision?.action || "")) {
+    return { stop: true, reason: "human-stop", summary: `human review resolved as ${cycle.reviewDecision.action}` };
+  }
+  return { stop: false, reason: "", summary: "" };
+}
+
+export async function runResearchAutopilot({
+  projectDir,
+  maxSteps = 1,
+  apply = false,
+  decision = "",
+  askHuman = false,
+  waitHuman = false,
+  agentTownApi = "",
+  timeoutMs = "",
+  allowCrossVersion = false,
+  checkPaper = true,
+  codeCwd = "",
+  commandText = "",
+  commandTimeoutMs = 30 * 60 * 1000,
+  metric = "",
+  metricRegex = "",
+  change = "",
+  qual = "",
+  seed = "",
+  finishOnSynthesize = false,
+  finishApply = false,
+  finishTakeaway = "",
+  finishAnalysis = "",
+  finishDecision = "",
+  finishAggregateMetric = false,
+  finishMetricName = "",
+  finishHigherIsBetter,
+  finishAutoAdmit = false,
+  finishUpdatePaper = false,
+  finishPublishCanvas = false,
+  fetchImpl = globalThis.fetch,
+} = {}) {
+  if (!projectDir) throw new TypeError("projectDir is required");
+  const resolvedProjectDir = path.resolve(projectDir);
+  const limit = finitePositiveInteger(maxSteps, 1);
+  const humanTimeoutMs = finiteNonNegativeInteger(timeoutMs, 30_000);
+  const cycleTimeoutMs = finitePositiveInteger(commandTimeoutMs, 30 * 60 * 1000);
+  const actions = [];
+  let stopReason = "max-steps";
+  let stopSummary = `stopped after ${limit} step${limit === 1 ? "" : "s"}`;
+  let lastStep = null;
+
+  for (let index = 0; index < limit; index += 1) {
+    const step = await stepResearchAutopilot({
+      projectDir: resolvedProjectDir,
+      apply,
+      decision: index === 0 ? decision : "",
+      askHuman,
+      waitHuman,
+      agentTownApi,
+      timeoutMs: humanTimeoutMs,
+      allowCrossVersion,
+      checkPaper,
+      codeCwd,
+      commandText,
+      fetchImpl,
+    });
+    lastStep = step;
+    const action = step.recommendation?.action || "";
+    const actionRecord = {
+      index: index + 1,
+      plannedAction: action,
+      recommendation: step.recommendation,
+      decision: step.decision || null,
+      result: null,
+    };
+
+    if (action === "orchestrator-fix-doctor") {
+      actionRecord.result = { skipped: true, reason: "doctor-error" };
+      actions.push(actionRecord);
+      stopReason = "doctor-error";
+      stopSummary = step.recommendation.reason;
+      break;
+    }
+
+    if (action === "orchestrator-run-next") {
+      if (!trimString(commandText)) {
+        actionRecord.result = { skipped: true, reason: "missing-command" };
+        actions.push(actionRecord);
+        stopReason = "missing-command";
+        stopSummary = "QUEUE has work, but --command is required before autopilot can run it";
+        break;
+      }
+      const result = await runNextMove(cycleOptionsFromRun({
+        projectDir: resolvedProjectDir,
+        commandText,
+        codeCwd,
+        askHuman,
+        waitHuman,
+        agentTownApi,
+        humanTimeoutMs,
+        commandTimeoutMs: cycleTimeoutMs,
+        metric,
+        metricRegex,
+        change,
+        qual,
+        seed,
+        fetchImpl,
+      }));
+      actionRecord.result = {
+        kind: "run-next",
+        claim: result.claim,
+        cycle: result.cycle,
+      };
+      actions.push(actionRecord);
+      const stop = summarizeCycleStop(result.cycle, { waitHuman });
+      if (stop.stop) {
+        stopReason = stop.reason;
+        stopSummary = stop.summary;
+        break;
+      }
+      continue;
+    }
+
+    if (["run-cycle", "rerun-cycle", "wait-review", "apply-steering"].includes(action)) {
+      if (!trimString(commandText)) {
+        actionRecord.result = { skipped: true, reason: "missing-command" };
+        actions.push(actionRecord);
+        stopReason = "missing-command";
+        stopSummary = `${action} needs --command before autopilot can execute it`;
+        break;
+      }
+      const kind = action === "rerun-cycle" ? "rerun" : "change";
+      const result = await runCycle(cycleOptionsFromRun({
+        projectDir: resolvedProjectDir,
+        slug: step.active?.slug || step.recommendation?.slug || "",
+        kind,
+        commandText,
+        codeCwd,
+        askHuman,
+        waitHuman,
+        agentTownApi,
+        humanTimeoutMs,
+        commandTimeoutMs: cycleTimeoutMs,
+        metric,
+        metricRegex,
+        change: change || step.decision?.resolutionNote || "",
+        qual,
+        seed,
+        fetchImpl,
+      }));
+      actionRecord.result = { kind: "cycle", cycle: result };
+      actions.push(actionRecord);
+      const stop = summarizeCycleStop(result, { waitHuman });
+      if (stop.stop) {
+        stopReason = stop.reason;
+        stopSummary = stop.summary;
+        break;
+      }
+      continue;
+    }
+
+    if (action === "finish-move") {
+      if (!finishOnSynthesize) {
+        actionRecord.result = { skipped: true, reason: "finish-not-enabled" };
+        actions.push(actionRecord);
+        stopReason = "synthesis-ready";
+        stopSummary = "synthesis was requested; pass --finish-on-synthesize to let autopilot call finishMove";
+        break;
+      }
+      const result = await finishMove({
+        projectDir: resolvedProjectDir,
+        slug: step.active?.slug || step.recommendation?.slug || "",
+        status: "resolved",
+        event: "resolved",
+        takeaway: finishTakeaway,
+        analysis: finishAnalysis,
+        decision: finishDecision,
+        aggregateMetric: finishAggregateMetric,
+        metricName: finishMetricName,
+        higherIsBetter: finishHigherIsBetter,
+        autoAdmit: finishAutoAdmit,
+        allowCrossVersion,
+        apply: finishApply,
+        updatePaper: finishUpdatePaper,
+        publishCanvas: finishPublishCanvas,
+        agentTownApi,
+        fetchImpl,
+      });
+      actionRecord.result = { kind: "finish", finish: result };
+      actions.push(actionRecord);
+      stopReason = "finished";
+      stopSummary = `finished ${result.slug} as ${result.status}`;
+      break;
+    }
+
+    if (action === "return-to-ideation") {
+      actionRecord.result = {
+        kind: "phase",
+        phase: step.phaseUpdate,
+      };
+      actions.push(actionRecord);
+      stopReason = "ideation";
+      stopSummary = "returned project to ideation";
+      break;
+    }
+
+    if (action === "pause" || action === "needs-human") {
+      actionRecord.result = { skipped: true, reason: action };
+      actions.push(actionRecord);
+      stopReason = action;
+      stopSummary = step.recommendation.reason;
+      break;
+    }
+
+    actionRecord.result = { skipped: true, reason: "delegated-or-unsupported" };
+    actions.push(actionRecord);
+    stopReason = action.startsWith("orchestrator-") ? "orchestrator-stop" : "unsupported-action";
+    stopSummary = step.recommendation.reason;
+    break;
+  }
+
+  return {
+    projectDir: resolvedProjectDir,
+    maxSteps: limit,
+    stopReason,
+    stopSummary,
+    actions,
+    lastStep,
+  };
+}
+
 export function formatAutopilotReport(report) {
   const lines = [
     `vr-research-autopilot: ${path.basename(report.projectDir)}`,
@@ -371,6 +657,33 @@ export function formatAutopilotReport(report) {
   }
   if (report.nextCommand) {
     lines.push(`next: ${report.nextCommand}`);
+  }
+  return lines.join("\n");
+}
+
+export function formatAutopilotRunReport(report) {
+  const lines = [
+    `vr-research-autopilot run: ${path.basename(report.projectDir)}`,
+    `stop: ${report.stopReason} - ${report.stopSummary}`,
+  ];
+  for (const action of report.actions || []) {
+    lines.push(`step ${action.index}: ${action.plannedAction}`);
+    const result = action.result || {};
+    if (result.kind === "run-next") {
+      lines.push(`  claimed: ${result.claim?.slug || ""}`);
+      lines.push(`  cycle: ${result.cycle?.cycleIndex || ""} ${result.cycle?.metric ? `metric=${result.cycle.metric}` : `exit=${result.cycle?.exitCode}`}`);
+    } else if (result.kind === "cycle") {
+      lines.push(`  cycle: ${result.cycle?.cycleIndex || ""} ${result.cycle?.metric ? `metric=${result.cycle.metric}` : `exit=${result.cycle?.exitCode}`}`);
+    } else if (result.kind === "finish") {
+      lines.push(`  finished: ${result.finish?.slug || ""} ${result.finish?.status || ""}`);
+    } else if (result.kind === "phase") {
+      lines.push(`  phase: ${result.phase?.phase || ""}`);
+    } else if (result.skipped) {
+      lines.push(`  skipped: ${result.reason}`);
+    }
+  }
+  if (report.lastStep?.nextCommand) {
+    lines.push(`planned: ${report.lastStep.nextCommand}`);
   }
   return lines.join("\n");
 }

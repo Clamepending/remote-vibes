@@ -206,6 +206,34 @@ test("POST /api/research/projects/<name>/autopilot/step returns routed next acti
   });
 });
 
+test("POST /api/research/projects/<name>/autopilot/run executes one bounded step", async () => {
+  await withLibraryServer(async ({ baseUrl }) => {
+    const res = await fetch(`${baseUrl}/api/research/projects/prose-style/autopilot/run`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        commandText: "node -e \"console.log('score=0.55')\"",
+        metricRegex: "score=([0-9.]+)",
+        maxSteps: 1,
+        checkPaper: false,
+      }),
+    });
+    assert.equal(res.status, 200);
+    const body = await res.json();
+    assert.equal(body.ok, true);
+    assert.equal(body.report.stopReason, "max-steps");
+    assert.equal(body.report.actions[0].plannedAction, "orchestrator-run-next");
+    assert.equal(body.report.actions[0].result.kind, "run-next");
+    assert.equal(body.report.actions[0].result.claim.slug, "v3-fewshot");
+    assert.equal(body.report.actions[0].result.cycle.metric, "0.55");
+
+    const detailRes = await fetch(`${baseUrl}/api/research/projects/prose-style`);
+    assert.equal(detailRes.status, 200);
+    const detail = await detailRes.json();
+    assert.equal(detail.active[0].slug, "v3-fewshot");
+  });
+});
+
 test("GET /research returns the static index page", async () => {
   await withLibraryServer(async ({ baseUrl }) => {
     const res = await fetch(`${baseUrl}/research`);

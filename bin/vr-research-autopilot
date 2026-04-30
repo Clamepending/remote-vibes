@@ -5,6 +5,8 @@ import path from "node:path";
 import process from "node:process";
 import {
   formatAutopilotReport,
+  formatAutopilotRunReport,
+  runResearchAutopilot,
   stepResearchAutopilot,
 } from "../src/research/autopilot.js";
 
@@ -16,13 +18,36 @@ bounded next action. This command is conservative: it emits exact next commands
 and only mutates safe phase state with --apply.
 
 Usage:
+  vr-research-autopilot run <project-dir> [options]
   vr-research-autopilot step <project-dir> [options]
   vr-research-autopilot <project-dir> [options]
 
 Options:
   --apply                  Apply safe phase-state transitions or delegate safe orchestrator applies.
   --decision <action>      Override the latest result-doc review decision for this step.
+  --max-steps <N>          Max bounded execution steps for run mode (default: 1).
   --command <text>         Experiment command to include in suggested runner cycle command.
+  --metric-regex <regex>   Extract metric from stdout/stderr capture group 1 in run mode.
+  --metric <text>          Explicit metric/outcome value for run mode.
+  --change <text>          Cycle change description for run mode.
+  --qual <text>            One-line qualitative observation for run mode.
+  --seed <text>            Seed/id attached to the cycle metric in run mode.
+  --cycle-timeout-ms <ms>  Per-cycle command timeout in run mode.
+  --finish-on-synthesize   Let run mode call finishMove when decision is synthesize.
+  --finish-apply           Apply README/LOG updates when finishing.
+  --finish-takeaway <text> Takeaway to write when finishing.
+  --finish-analysis <text> Analysis to write when finishing.
+  --finish-decision <text> Decision line to write when finishing.
+  --finish-aggregate-metric
+                           Aggregate cycle metrics when finishing.
+  --finish-metric-name <text>
+                           Metric name for finish aggregation.
+  --finish-higher-is-better
+                           Mark aggregate metric as higher-is-better.
+  --finish-lower-is-better Mark aggregate metric as lower-is-better.
+  --finish-auto-admit      Run admission while finishing.
+  --finish-update-paper    Update paper.md while finishing.
+  --finish-publish-canvas  Publish final figure/canvas while finishing.
   --code-cwd <dir>         Code repo cwd to include in suggested runner command.
   --ask-human              Include human review gates in suggested/delegated commands.
   --wait-human             Wait when delegating to human-reviewable orchestrator actions.
@@ -52,10 +77,28 @@ function parseArgs(argv) {
     checkPaper: true,
     codeCwd: "",
     commandText: "",
+    commandTimeoutMs: 30 * 60 * 1000,
     decision: "",
+    finishAggregateMetric: false,
+    finishAnalysis: "",
+    finishApply: false,
+    finishAutoAdmit: false,
+    finishHigherIsBetter: undefined,
+    finishMetricName: "",
+    finishOnSynthesize: false,
+    finishPublishCanvas: false,
+    finishTakeaway: "",
+    finishDecision: "",
+    finishUpdatePaper: false,
+    change: "",
     help: false,
     json: false,
+    maxSteps: 1,
+    metric: "",
+    metricRegex: "",
     projectDir: "",
+    qual: "",
+    seed: "",
     subcommand: "step",
     timeoutMs: "",
     waitHuman: false,
@@ -67,15 +110,35 @@ function parseArgs(argv) {
     if (arg === "--allow-cross-version") { opts.allowCrossVersion = true; continue; }
     if (arg === "--apply") { opts.apply = true; continue; }
     if (arg === "--ask-human") { opts.askHuman = true; continue; }
+    if (arg === "--finish-aggregate-metric") { opts.finishAggregateMetric = true; continue; }
+    if (arg === "--finish-apply") { opts.finishApply = true; continue; }
+    if (arg === "--finish-auto-admit") { opts.finishAutoAdmit = true; continue; }
+    if (arg === "--finish-higher-is-better") { opts.finishHigherIsBetter = true; continue; }
+    if (arg === "--finish-lower-is-better") { opts.finishHigherIsBetter = false; continue; }
+    if (arg === "--finish-on-synthesize") { opts.finishOnSynthesize = true; continue; }
+    if (arg === "--finish-publish-canvas") { opts.finishPublishCanvas = true; continue; }
+    if (arg === "--finish-update-paper") { opts.finishUpdatePaper = true; continue; }
     if (arg === "--json") { opts.json = true; continue; }
     if (arg === "--no-paper") { opts.checkPaper = false; continue; }
     if (arg === "--wait-human") { opts.askHuman = true; opts.waitHuman = true; continue; }
     if (arg === "--api") { opts.api = requireValue(argv, index, arg); index += 1; continue; }
     if (arg === "--code-cwd") { opts.codeCwd = requireValue(argv, index, arg); index += 1; continue; }
+    if (arg === "--change") { opts.change = requireValue(argv, index, arg); index += 1; continue; }
+    if (arg === "--cycle-timeout-ms") { opts.commandTimeoutMs = Number(requireValue(argv, index, arg)); index += 1; continue; }
     if (arg === "--command") { opts.commandText = requireValue(argv, index, arg); index += 1; continue; }
     if (arg === "--decision") { opts.decision = requireValue(argv, index, arg); index += 1; continue; }
+    if (arg === "--finish-analysis") { opts.finishAnalysis = requireValue(argv, index, arg); index += 1; continue; }
+    if (arg === "--finish-decision") { opts.finishDecision = requireValue(argv, index, arg); index += 1; continue; }
+    if (arg === "--finish-metric-name") { opts.finishMetricName = requireValue(argv, index, arg); index += 1; continue; }
+    if (arg === "--finish-takeaway") { opts.finishTakeaway = requireValue(argv, index, arg); index += 1; continue; }
+    if (arg === "--max-steps") { opts.maxSteps = Number(requireValue(argv, index, arg)); index += 1; continue; }
+    if (arg === "--metric") { opts.metric = requireValue(argv, index, arg); index += 1; continue; }
+    if (arg === "--metric-regex") { opts.metricRegex = requireValue(argv, index, arg); index += 1; continue; }
+    if (arg === "--qual") { opts.qual = requireValue(argv, index, arg); index += 1; continue; }
+    if (arg === "--seed") { opts.seed = requireValue(argv, index, arg); index += 1; continue; }
     if (arg === "--timeout-ms") { opts.timeoutMs = requireValue(argv, index, arg); index += 1; continue; }
     if (arg.startsWith("--")) throw new Error(`unknown flag: ${arg}`);
+    if (arg === "run" && opts.subcommand === "step" && !opts.projectDir) { opts.subcommand = "run"; continue; }
     if (arg === "step" && opts.subcommand === "step" && !opts.projectDir) { opts.subcommand = "step"; continue; }
     if (!opts.projectDir) { opts.projectDir = arg; continue; }
     throw new Error(`unexpected positional arg: ${arg}`);
@@ -101,7 +164,7 @@ async function main() {
     throw new Error("project-dir is required.");
   }
 
-  const report = await stepResearchAutopilot({
+  const common = {
     projectDir: path.resolve(opts.projectDir),
     apply: opts.apply,
     decision: opts.decision,
@@ -113,12 +176,36 @@ async function main() {
     checkPaper: opts.checkPaper,
     codeCwd: opts.codeCwd,
     commandText: opts.commandText,
-  });
+  };
+
+  const report = opts.subcommand === "run"
+    ? await runResearchAutopilot({
+      ...common,
+      maxSteps: opts.maxSteps,
+      commandTimeoutMs: opts.commandTimeoutMs,
+      metric: opts.metric,
+      metricRegex: opts.metricRegex,
+      change: opts.change,
+      qual: opts.qual,
+      seed: opts.seed,
+      finishOnSynthesize: opts.finishOnSynthesize,
+      finishApply: opts.finishApply,
+      finishTakeaway: opts.finishTakeaway,
+      finishAnalysis: opts.finishAnalysis,
+      finishDecision: opts.finishDecision,
+      finishAggregateMetric: opts.finishAggregateMetric,
+      finishMetricName: opts.finishMetricName,
+      finishHigherIsBetter: opts.finishHigherIsBetter,
+      finishAutoAdmit: opts.finishAutoAdmit,
+      finishUpdatePaper: opts.finishUpdatePaper,
+      finishPublishCanvas: opts.finishPublishCanvas,
+    })
+    : await stepResearchAutopilot(common);
 
   if (opts.json) {
     process.stdout.write(`${JSON.stringify(report, null, 2)}\n`);
   } else {
-    process.stdout.write(`${formatAutopilotReport(report)}\n`);
+    process.stdout.write(`${opts.subcommand === "run" ? formatAutopilotRunReport(report) : formatAutopilotReport(report)}\n`);
   }
 }
 

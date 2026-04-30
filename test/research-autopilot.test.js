@@ -7,6 +7,7 @@ import path, { join } from "node:path";
 import test from "node:test";
 import { updateResearchState } from "../src/research/brief.js";
 import {
+  runResearchAutopilot,
   stepResearchAutopilot,
   __internal,
 } from "../src/research/autopilot.js";
@@ -255,6 +256,74 @@ test("stepResearchAutopilot delegates no-active projects to the orchestrator", a
   }
 });
 
+test("runResearchAutopilot executes a queued move when a command is supplied", async () => {
+  const dir = await makeProject("vr-autopilot-run-queue", {
+    active: false,
+    queue: "| queued-move | main | run next queued work |\n",
+  });
+  try {
+    const report = await runResearchAutopilot({
+      projectDir: dir,
+      commandText: "node -e \"console.log('score=0.42')\"",
+      metricRegex: "score=([0-9.]+)",
+      maxSteps: 1,
+    });
+    assert.equal(report.stopReason, "max-steps");
+    assert.equal(report.actions.length, 1);
+    assert.equal(report.actions[0].plannedAction, "orchestrator-run-next");
+    assert.equal(report.actions[0].result.kind, "run-next");
+    assert.equal(report.actions[0].result.claim.slug, "queued-move");
+    assert.equal(report.actions[0].result.cycle.metric, "0.42");
+
+    const readme = readFileSync(join(dir, "README.md"), "utf8");
+    assert.match(readme, /\| queued-move \| \[queued-move\]\(results\/queued-move\.md\)/);
+    const resultDoc = readFileSync(join(dir, "results", "queued-move.md"), "utf8");
+    assert.match(resultDoc, /cycle 1.*metric=0\.42/);
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+test("runResearchAutopilot stops before execution when a command is missing", async () => {
+  const dir = await makeProject("vr-autopilot-run-missing-command", {
+    active: false,
+    queue: "| queued-move | main | run next queued work |\n",
+  });
+  try {
+    const report = await runResearchAutopilot({ projectDir: dir, maxSteps: 1 });
+    assert.equal(report.stopReason, "missing-command");
+    assert.equal(report.actions[0].result.reason, "missing-command");
+    const readme = readFileSync(join(dir, "README.md"), "utf8");
+    assert.match(readme, /\| queued-move \| main \| run next queued work \|/);
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+test("runResearchAutopilot executes rerun decisions as rerun cycles", async () => {
+  const dir = await makeProject("vr-autopilot-run-rerun");
+  try {
+    writeResult(dir, {
+      reviewLine: "- cycle 1 review: rerun; resolution=rerun; note=Need one more seed; action item `research-cycle-first-move-1`.",
+    });
+    await updateResearchState({ projectDir: dir, phase: "experiment", summary: "active move" });
+    const report = await runResearchAutopilot({
+      projectDir: dir,
+      commandText: "node -e \"console.log('score=0.43')\"",
+      metricRegex: "score=([0-9.]+)",
+      maxSteps: 1,
+    });
+    assert.equal(report.actions[0].plannedAction, "rerun-cycle");
+    assert.equal(report.actions[0].result.kind, "cycle");
+    assert.equal(report.actions[0].result.cycle.kind, "rerun");
+    assert.equal(report.actions[0].result.cycle.metric, "0.43");
+    const resultDoc = readFileSync(join(dir, "results", "first-move.md"), "utf8");
+    assert.match(resultDoc, /cycle 2(?: @[0-9a-f]+)? rerun: Need one more seed -> metric=0\.43/);
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
+
 test("vr-research-autopilot CLI help and JSON output work", async () => {
   const help = await runCli(["--help"]);
   assert.equal(help.status, 0);
@@ -271,6 +340,20 @@ test("vr-research-autopilot CLI help and JSON output work", async () => {
     assert.equal(payload.recommendation.action, "run-cycle");
     assert.equal(payload.decision.action, "continue");
     assert.match(payload.nextCommand, /node train\.js/);
+
+    const run = await runCli([
+      "run",
+      dir,
+      "--json",
+      "--command",
+      "node -e \"console.log('score=0.44')\"",
+      "--metric-regex",
+      "score=([0-9.]+)",
+    ]);
+    assert.equal(run.status, 0, run.stderr);
+    const runPayload = JSON.parse(run.stdout);
+    assert.equal(runPayload.actions[0].plannedAction, "run-cycle");
+    assert.equal(runPayload.actions[0].result.cycle.metric, "0.44");
   } finally {
     rmSync(dir, { recursive: true, force: true });
   }
