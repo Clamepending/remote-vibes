@@ -4,6 +4,7 @@ import { compileBriefToQueue, getBriefPath, readResearchState, updateResearchSta
 import { runDoctor } from "./doctor.js";
 import { judgeMove } from "./judge.js";
 import { loadProjectLog, parseProjectReadme } from "./project-readme.js";
+import { loadSweepSummaries, sweepHasRunnableRows } from "./sweep-status.js";
 
 function trimString(value) {
   return String(value || "").trim();
@@ -63,6 +64,12 @@ function recommendation(action, reason, extra = {}) {
   return { action, reason, ...extra };
 }
 
+function sweepNameForCommand(sweep) {
+  return sweep?.path && sweep.path.startsWith("runs/")
+    ? path.basename(sweep.path, ".tsv")
+    : "";
+}
+
 export async function tickResearchOrchestrator({
   projectDir,
   apply = false,
@@ -85,7 +92,9 @@ export async function tickResearchOrchestrator({
   const state = await readResearchState({ projectDir: resolvedProjectDir });
   const doctor = await runDoctor(resolvedProjectDir, { readmeText });
   const projectName = path.basename(resolvedProjectDir);
+  const libraryRoot = path.dirname(path.dirname(resolvedProjectDir));
   const doctorError = firstDoctorError(doctor);
+  const sweeps = await loadSweepSummaries(resolvedProjectDir);
 
   let rec;
   let judge = null;
@@ -132,6 +141,26 @@ export async function tickResearchOrchestrator({
     ];
     if (codeCwd) parts.push("--cwd", codeCwd);
     parts.push("--command", commandText || "<experiment-command>");
+    nextCommand = command(parts);
+  } else if (["experiment", "hillclimb"].includes(state.phase) && sweeps.some(sweepHasRunnableRows)) {
+    const sweep = sweeps.find(sweepHasRunnableRows);
+    const runnable = (sweep.statusCounts.planned || 0) + (sweep.statusCounts.running || 0) + (sweep.statusCounts.failed || 0);
+    const sweepName = sweepNameForCommand(sweep);
+    rec = recommendation(
+      "run-sweep",
+      `${sweep.name} has ${runnable} runnable row${runnable === 1 ? "" : "s"}; continue the sweep before entering review.`,
+      { sweep: sweep.name, sweepPath: sweep.path, runnableRows: runnable },
+    );
+    const parts = [
+      "vr-rl-sweep",
+      "run",
+      projectName,
+      "--library",
+      libraryRoot,
+    ];
+    if (sweepName) parts.push("--sweep-name", sweepName);
+    if (codeCwd) parts.push("--cwd", codeCwd);
+    if (commandText) parts.push("--launcher", commandText);
     nextCommand = command(parts);
   } else if (["review", "synthesis"].includes(state.phase)) {
     const latestSlug = await latestExistingResultSlug(resolvedProjectDir, parsed, logFile.rows);
@@ -259,7 +288,9 @@ export async function tickResearchOrchestrator({
       queue: (parsed.queue || []).length,
       leaderboard: (parsed.leaderboard || []).length,
       log: (logFile.rows || []).length,
+      sweeps: sweeps.length,
     },
+    sweeps,
     recommendation: rec,
     nextCommand,
     judge,

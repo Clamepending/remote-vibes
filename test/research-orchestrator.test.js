@@ -166,6 +166,17 @@ ${queueUpdates}
 `);
 }
 
+function writeRunsTsv(dir, relPath = "runs.tsv") {
+  const target = join(dir, relPath);
+  mkdirSync(path.dirname(target), { recursive: true });
+  writeFileSync(target, [
+    "started_at\tgroup\tname\tcommit\thypothesis\tmean_return\tstd_return\twandb_url\tstatus\tconfig",
+    "\tsweep\tlr1e-3-seed0\tabc\ttry lr\t\t\t\tplanned\t{\"lr\":\"1e-3\"}",
+    "2026-04-30T00:00:00.000Z\tsweep\tlr1e-4-seed0\tabc\ttry lr\t0.5\t\t\tdone\t{\"lr\":\"1e-4\"}",
+    "",
+  ].join("\n"));
+}
+
 test("tickResearchOrchestrator recommends running QUEUE row 1", async () => {
   const dir = makeProject("vr-orchestrator-queue", {
     queueRow: "| first-move | main | prove the dispatcher can see queued work |\n",
@@ -176,6 +187,26 @@ test("tickResearchOrchestrator recommends running QUEUE row 1", async () => {
     assert.equal(report.recommendation.slug, "first-move");
     assert.match(report.nextCommand, /vr-research-runner/);
     assert.match(report.nextCommand, /node train\.js/);
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+test("tickResearchOrchestrator runs planned sweeps before entering review", async () => {
+  const dir = makeProject("vr-orchestrator-sweep");
+  try {
+    writeRunsTsv(dir, "runs/lr.tsv");
+    await updateResearchState({ projectDir: dir, phase: "experiment", summary: "sweep planned" });
+    const report = await tickResearchOrchestrator({
+      projectDir: dir,
+      codeCwd: "/tmp/code",
+      commandText: "python train.py --lr=${lr}",
+    });
+    assert.equal(report.recommendation.action, "run-sweep");
+    assert.equal(report.recommendation.runnableRows, 1);
+    assert.match(report.nextCommand, /vr-rl-sweep run/);
+    assert.match(report.nextCommand, /--sweep-name lr/);
+    assert.match(report.nextCommand, /python train\.py/);
   } finally {
     rmSync(dir, { recursive: true, force: true });
   }
