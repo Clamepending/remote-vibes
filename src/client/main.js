@@ -2435,6 +2435,15 @@ const state = {
   nativeSessionStreamLog: {},
   nativeSessionStreamLogRenderFrame: null,
   richSessionComposerDrafts: {},
+  // Per-session queue of messages the user submitted while the agent was
+  // still working on the previous turn. Each entry: { id, text,
+  // attachments, queuedAt }. Auto-flushed (oldest first) when the session
+  // transitions from streamWorking=true to false. The user can edit
+  // (restore to composer) or delete any pending entry.
+  richSessionComposerQueue: {},
+  // Per-session previous streamWorking value, used to detect the
+  // working→idle transition that triggers the queue flush.
+  richSessionComposerQueueLastWorking: {},
   // Attachments queued in the composer, keyed by sessionId. Each entry:
   // { id, absolutePath, fileName, source, sizeBytes, mimeType }. The
   // composer renders a chip strip above the textarea so users see thumbnails
@@ -5263,6 +5272,91 @@ function setRichSessionComposerDraft(sessionId, value) {
   state.richSessionComposerDrafts[normalizedSessionId] = nextValue;
 }
 
+// =====================================================================
+// Composer message queue. When the user submits while the agent is still
+// working, the message is held here instead of being sent. The queue
+// auto-flushes one message at a time on every working→idle transition,
+// so multi-step prompts the user types ahead are processed in order.
+// The queue strip above the composer lets them edit/remove pending items.
+// =====================================================================
+function getRichSessionComposerQueue(sessionId) {
+  const sid = String(sessionId || "").trim();
+  if (!sid) return [];
+  const list = state.richSessionComposerQueue[sid];
+  return Array.isArray(list) ? list : [];
+}
+
+function pushRichSessionComposerQueueItem(sessionId, item) {
+  const sid = String(sessionId || "").trim();
+  if (!sid || !item) return;
+  if (!Array.isArray(state.richSessionComposerQueue[sid])) {
+    state.richSessionComposerQueue[sid] = [];
+  }
+  state.richSessionComposerQueue[sid].push(item);
+}
+
+function shiftRichSessionComposerQueue(sessionId) {
+  const sid = String(sessionId || "").trim();
+  const list = state.richSessionComposerQueue[sid];
+  if (!Array.isArray(list) || !list.length) return null;
+  const item = list.shift();
+  if (!list.length) delete state.richSessionComposerQueue[sid];
+  return item;
+}
+
+function unshiftRichSessionComposerQueueItem(sessionId, item) {
+  const sid = String(sessionId || "").trim();
+  if (!sid || !item) return;
+  if (!Array.isArray(state.richSessionComposerQueue[sid])) {
+    state.richSessionComposerQueue[sid] = [];
+  }
+  state.richSessionComposerQueue[sid].unshift(item);
+}
+
+function removeRichSessionComposerQueueItem(sessionId, itemId) {
+  const sid = String(sessionId || "").trim();
+  const list = state.richSessionComposerQueue[sid];
+  if (!Array.isArray(list)) return null;
+  const index = list.findIndex((entry) => entry?.id === itemId);
+  if (index < 0) return null;
+  const [removed] = list.splice(index, 1);
+  if (!list.length) delete state.richSessionComposerQueue[sid];
+  return removed || null;
+}
+
+// Send the next queued message for a session. Called by the working→idle
+// transition detector in refreshRichSessionSurfaceUi. If the session has
+// already started working again (a transient agent-emitted message could
+// re-flip streamWorking), the message is put back on the front of the
+// queue and we retry on the next idle.
+function flushNextRichSessionComposerQueueItem(sessionId) {
+  const sid = String(sessionId || "").trim();
+  if (!sid) return;
+  const session = state.sessions.find((s) => s.id === sid);
+  if (!session) return;
+  if (session.streamWorking) return; // Will retry on next idle.
+  const next = shiftRichSessionComposerQueue(sid);
+  if (!next) return;
+  const text = String(next.text || "").trim();
+  const attachments = Array.isArray(next.attachments) ? next.attachments : null;
+  if (!text && !(attachments && attachments.length)) return;
+  const isStreamMode = Boolean(session.streamMode);
+  const outgoing = text || (attachments && attachments.length ? "Take a look at this image." : "");
+  const sent = sendTerminalInput(`${outgoing}\r`, {
+    queueIfDisconnected: true,
+    attachments: isStreamMode && attachments && attachments.length ? attachments : null,
+  });
+  if (!sent) {
+    // WebSocket isn't ready — keep the message at the front of the queue
+    // so the next idle/connect retries. Avoids losing user messages on a
+    // brief disconnect.
+    unshiftRichSessionComposerQueueItem(sid, next);
+    return;
+  }
+  scheduleRichSessionNarrativeRefresh(sid, { immediate: true });
+  refreshRichSessionSurfaceUi({ scrollToBottom: true });
+}
+
 function appendRichSessionComposerText(sessionId, text) {
   const normalizedSessionId = String(sessionId || "").trim();
   const addition = String(text || "").trim();
@@ -6684,6 +6778,44 @@ function renderRichSessionComposerAttachmentChips(activeSession) {
   return `<div class="rich-session-composer-attachments ${attachments.length ? "" : "is-empty"}" data-rich-session-attachment-mount>${renderRichSessionComposerAttachmentTilesHtml(attachments)}</div>`;
 }
 
+function renderRichSessionQueueStripHtml(activeSession) {
+  // Live-updated mount above the composer. Empty when the queue is empty
+  // (the .is-empty class hides the wrapper entirely so it adds no gap).
+  const items = getRichSessionComposerQueue(activeSession?.id);
+  if (!items.length) return "";
+
+  const rows = items.map((item, index) => {
+    const text = String(item?.text || "").trim();
+    const preview = text || (Array.isArray(item?.attachments) && item.attachments.length
+      ? `${item.attachments.length} image${item.attachments.length === 1 ? "" : "s"}`
+      : "(empty)");
+    const status = index === 0
+      ? "next — sends after current turn"
+      : `queued · #${index + 1}`;
+    const id = String(item?.id || "");
+    return `
+      <div class="rich-session-queue-item ${index === 0 ? "is-next" : ""}" data-rich-session-queue-item="${escapeHtml(id)}">
+        <span class="rich-session-queue-icon" aria-hidden="true">⤴</span>
+        <div class="rich-session-queue-text-wrap">
+          <span class="rich-session-queue-text" title="${escapeHtml(text)}">${escapeHtml(preview)}</span>
+          <span class="rich-session-queue-meta">${escapeHtml(status)}</span>
+        </div>
+        <div class="rich-session-queue-actions">
+          <button class="rich-session-queue-action" type="button" data-rich-session-queue-edit="${escapeHtml(id)}" aria-label="Edit queued message">edit</button>
+          <button class="rich-session-queue-action is-remove" type="button" data-rich-session-queue-remove="${escapeHtml(id)}" aria-label="Remove queued message">×</button>
+        </div>
+      </div>
+    `;
+  }).join("");
+
+  return `<div class="rich-session-queue-list">${rows}</div>`;
+}
+
+function renderRichSessionQueueStrip(activeSession) {
+  const items = getRichSessionComposerQueue(activeSession?.id);
+  return `<div class="rich-session-queue ${items.length ? "" : "is-empty"}" id="rich-session-queue" data-rich-session-queue-mount aria-label="Queued messages">${renderRichSessionQueueStripHtml(activeSession)}</div>`;
+}
+
 function renderRichSessionComposerAttachmentTilesHtml(attachments) {
   if (!Array.isArray(attachments) || !attachments.length) return "";
   return attachments.map((att) => {
@@ -6740,6 +6872,7 @@ function renderRichSessionSurface(activeSession) {
         ${activeMonitors.map((m) => `<span class="rich-session-monitor-pill" title="${escapeHtml(m.tooltip)}"><span class="rich-session-monitor-dot" aria-hidden="true"></span>${escapeHtml(m.label)}</span>`).join("")}
       </div>
       <div class="rich-session-plan-panel-mount" id="rich-session-plan-panel-mount" data-rich-session-plan-panel-mount>${renderRichSessionPlanPanel(activeSession)}</div>
+      ${renderRichSessionQueueStrip(activeSession)}
       ${canSend ? `
         <form class="rich-session-composer" id="rich-session-form">
           <label class="sr-only" for="rich-session-input">Send input</label>
@@ -6945,7 +7078,10 @@ function refreshRichSessionSurfaceUi({ scrollToBottom = false } = {}) {
       input.value = draft;
     }
     input.disabled = !canSend;
-    input.placeholder = `Message ${activeSession?.providerLabel || "agent"}...`;
+    const providerLabel = activeSession?.providerLabel || "agent";
+    input.placeholder = activeSession?.streamWorking
+      ? `Queue a message for ${providerLabel}…`
+      : `Message ${providerLabel}...`;
     syncRichSessionComposerHeight(input);
   }
 
@@ -6969,6 +7105,35 @@ function refreshRichSessionSurfaceUi({ scrollToBottom = false } = {}) {
     const attachments = getRichSessionComposerAttachments(activeSession?.id);
     attachmentMount.innerHTML = renderRichSessionComposerAttachmentTilesHtml(attachments);
     attachmentMount.classList.toggle("is-empty", !attachments.length);
+  }
+
+  // Live-update the message-queue strip above the composer. Same
+  // mount-point pattern as the chip strip.
+  const queueMount = document.querySelector("[data-rich-session-queue-mount]");
+  if (queueMount instanceof HTMLElement) {
+    const items = getRichSessionComposerQueue(activeSession?.id);
+    queueMount.classList.toggle("is-empty", !items.length);
+    queueMount.innerHTML = renderRichSessionQueueStripHtml(activeSession);
+  }
+
+  // Working→idle transition detector. When a session was working on the
+  // previous refresh and is no longer working, flush the next queued
+  // message. We do it here (rather than in a server-event hook) because
+  // refreshRichSessionSurfaceUi runs on every narrative-event and on
+  // every session-list change, so any path that flips streamWorking will
+  // trigger it. Per-session memo so the transition fires once.
+  if (activeSession?.id) {
+    const sid = activeSession.id;
+    const wasWorking = state.richSessionComposerQueueLastWorking[sid] === true;
+    const nowWorking = Boolean(activeSession.streamWorking);
+    state.richSessionComposerQueueLastWorking[sid] = nowWorking;
+    if (wasWorking && !nowWorking && getRichSessionComposerQueue(sid).length) {
+      // Defer to next tick so the UI paints the "idle" state before we
+      // immediately send the next message — otherwise the activity strip
+      // can flicker straight from "thinking…" into the new turn without
+      // the user seeing the brief idle gap, which is disorienting.
+      setTimeout(() => flushNextRichSessionComposerQueueItem(sid), 0);
+    }
   }
 
   // Update the persistent activity indicator without rebuilding it.
@@ -41351,6 +41516,49 @@ function bindShellEvents() {
     });
   }
 
+  // Composer queue — edit / remove buttons on each pending row. The
+  // queue strip lives outside the form so a form-level handler doesn't
+  // catch it; bind once at the document level. "Edit" pulls the
+  // queued text back into the textarea (and removes the entry); "remove"
+  // just drops it.
+  if (!state.__richSessionComposerQueueBound) {
+    state.__richSessionComposerQueueBound = true;
+    document.addEventListener("click", (event) => {
+      const target = event.target instanceof Element ? event.target : null;
+      const editBtn = target?.closest("[data-rich-session-queue-edit]");
+      if (editBtn instanceof HTMLElement) {
+        event.preventDefault();
+        const sid = getActiveSession()?.id;
+        const itemId = editBtn.getAttribute("data-rich-session-queue-edit") || "";
+        if (!sid || !itemId) return;
+        const removed = removeRichSessionComposerQueueItem(sid, itemId);
+        if (!removed) return;
+        // Restore the queued text into the composer. If the textarea
+        // already has unsent text, prepend a newline so we don't smash
+        // them together. Attachments aren't restored — that path would
+        // need re-uploading; the user can re-attach if they want them.
+        const current = getRichSessionComposerDraft(sid);
+        const restored = current
+          ? `${removed.text}\n${current}`
+          : String(removed.text || "");
+        setRichSessionComposerDraft(sid, restored);
+        refreshRichSessionSurfaceUi();
+        focusRichSessionComposer();
+        return;
+      }
+      const removeBtn = target?.closest("[data-rich-session-queue-remove]");
+      if (removeBtn instanceof HTMLElement) {
+        event.preventDefault();
+        const sid = getActiveSession()?.id;
+        const itemId = removeBtn.getAttribute("data-rich-session-queue-remove") || "";
+        if (!sid || !itemId) return;
+        removeRichSessionComposerQueueItem(sid, itemId);
+        refreshRichSessionSurfaceUi();
+        return;
+      }
+    });
+  }
+
   // Restart-session button on exited stream-mode sessions. Spawns a
   // fresh session in the same cwd / provider as the dead one, then
   // makes it active. Uses event delegation off document so the handler
@@ -41830,6 +42038,27 @@ function bindShellEvents() {
     // to a simple "look at this" prompt so the agent knows what to do.
     const outgoing = value || (attachments.length ? "Take a look at this image." : "");
     if (!outgoing) {
+      return;
+    }
+
+    // Queueing: if the agent is still working on the previous turn, hold
+    // this message in the per-session queue instead of sending it. The
+    // queue auto-flushes (oldest first) when the session transitions
+    // back to idle. The user sees a strip above the composer with each
+    // pending message and can edit/remove them.
+    if (activeSession.streamWorking) {
+      pushRichSessionComposerQueueItem(activeSession.id, {
+        id: `q-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
+        text: outgoing,
+        attachments: isStreamMode && attachments.length ? attachments.slice() : null,
+        queuedAt: new Date().toISOString(),
+      });
+      setRichSessionComposerDraft(activeSession.id, "");
+      clearRichSessionComposerAttachments(activeSession.id);
+      input.value = "";
+      syncRichSessionComposerHeight(input);
+      refreshRichSessionSurfaceUi();
+      focusRichSessionComposer();
       return;
     }
 

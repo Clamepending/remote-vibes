@@ -14581,6 +14581,108 @@ body.is-reordering-file-tabs {
   text-decoration: underline;
 }
 
+/* Composer message queue — sits between the plan panel and the composer.
+   When the user submits while the agent is working, the message lives
+   here until the working→idle transition; then it auto-flushes (oldest
+   first). Each row exposes edit / remove affordances. */
+.rich-session-queue {
+  padding: 0 max(18px, calc((100% - 1080px) / 2));
+}
+
+.rich-session-queue.is-empty {
+  display: none;
+}
+
+.rich-session-queue-list {
+  display: grid;
+  gap: 6px;
+}
+
+.rich-session-queue-item {
+  display: grid;
+  grid-template-columns: 18px minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 10px;
+  padding: 8px 12px;
+  border: 1px solid rgba(123, 195, 255, 0.22);
+  border-radius: 12px;
+  background: linear-gradient(180deg, rgba(123, 195, 255, 0.06), rgba(123, 195, 255, 0.02));
+  color: rgba(244, 244, 242, 0.92);
+  font-size: 0.86rem;
+}
+
+.rich-session-queue-item.is-next {
+  border-color: rgba(123, 195, 255, 0.42);
+  background: linear-gradient(180deg, rgba(123, 195, 255, 0.1), rgba(123, 195, 255, 0.04));
+}
+
+.rich-session-queue-icon {
+  color: rgba(123, 195, 255, 0.92);
+  font-size: 0.92rem;
+  text-align: center;
+  line-height: 1;
+}
+
+.rich-session-queue-text-wrap {
+  display: grid;
+  gap: 1px;
+  min-width: 0;
+}
+
+.rich-session-queue-text {
+  display: -webkit-box;
+  overflow: hidden;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 2;
+  color: rgba(244, 244, 242, 0.96);
+  line-height: 1.35;
+  word-break: break-word;
+}
+
+.rich-session-queue-meta {
+  color: rgba(123, 195, 255, 0.78);
+  font-size: 0.72rem;
+  letter-spacing: 0.02em;
+}
+
+.rich-session-queue-actions {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+}
+
+.rich-session-queue-action {
+  min-height: 26px;
+  padding: 0 8px;
+  border: 1px solid rgba(255, 255, 255, 0.08);
+  border-radius: 999px;
+  background: transparent;
+  color: rgba(244, 244, 242, 0.78);
+  font: inherit;
+  font-size: 0.78rem;
+  cursor: pointer;
+  transition: background 120ms ease, color 120ms ease, border-color 120ms ease;
+}
+
+.rich-session-queue-action:hover {
+  background: rgba(255, 255, 255, 0.06);
+  color: rgba(244, 244, 242, 0.96);
+}
+
+.rich-session-queue-action.is-remove {
+  width: 26px;
+  min-width: 26px;
+  padding: 0;
+  font-size: 1rem;
+  line-height: 1;
+}
+
+.rich-session-queue-action.is-remove:hover {
+  border-color: rgba(255, 121, 109, 0.56);
+  color: rgba(255, 144, 134, 1);
+  background: rgba(255, 121, 109, 0.12);
+}
+
 /* Brief flash on a feed entry the panel jumped to — the user clicks
    "Open plan card" and sees the card pulse so they can find it visually. */
 .rich-session-entry.is-flash {
@@ -17722,6 +17824,18 @@ select:disabled {
   .rich-session-send {
     width: 40px;
     height: 40px;
+  }
+
+  /* Composer queue strip — match the plan-panel mobile gutter. */
+  .rich-session-queue {
+    padding-left: max(12px, calc(var(--safe-left) + 8px));
+    padding-right: max(12px, calc(var(--safe-right) + 8px));
+  }
+
+  .rich-session-queue-item {
+    padding: 7px 10px;
+    border-radius: 10px;
+    font-size: 0.84rem;
   }
 
   /* Active monitor pills — keep on one row so they don't push
