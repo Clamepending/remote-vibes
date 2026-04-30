@@ -358,11 +358,131 @@ test("runResearchAutopilot executes rerun decisions as rerun cycles", async () =
   }
 });
 
+test("runResearchAutopilot can complete a gated long-horizon move after synthesize review", async () => {
+  const dir = await makeProject("vr-autopilot-long-horizon", {
+    active: false,
+    queue: "| queued-move | main | run next queued work |\n",
+  });
+  const calls = [];
+  const fetchImpl = async (url, options = {}) => {
+    const body = options.body ? JSON.parse(options.body) : {};
+    calls.push({ url: String(url), body });
+    if (String(url).endsWith("/action-items")) {
+      return {
+        ok: true,
+        status: 201,
+        async json() {
+          return { actionItem: { ...body, id: body.id, status: "open" } };
+        },
+      };
+    }
+    if (String(url).endsWith("/wait")) {
+      const actionItemId = body?.predicateParams?.actionItemId || "";
+      return {
+        ok: true,
+        status: 200,
+        async json() {
+          return {
+            satisfied: true,
+            predicate: body.predicate,
+            state: {
+              actionItems: [{
+                id: actionItemId,
+                status: "completed",
+                resolution: "synthesized",
+                resolutionNote: "Enough signal for the harness; finish the move.",
+              }],
+            },
+          };
+        },
+      };
+    }
+    if (String(url).endsWith("/canvases")) {
+      return {
+        ok: true,
+        status: 201,
+        async json() {
+          return { canvas: { id: body.id, title: body.title, imagePath: body.imagePath, href: body.href } };
+        },
+      };
+    }
+    return {
+      ok: false,
+      status: 404,
+      async json() {
+        return { error: `unexpected fetch ${url}` };
+      },
+    };
+  };
+
+  try {
+    const report = await runResearchAutopilot({
+      projectDir: dir,
+      commandText: "node -e \"console.log('score=0.77')\"",
+      metricRegex: "score=([0-9.]+)",
+      maxSteps: 2,
+      askHuman: true,
+      waitHuman: true,
+      agentTownApi: "http://agent-town.test/api/agent-town",
+      timeoutMs: 5_000,
+      finishOnSynthesize: true,
+      finishApply: true,
+      finishTakeaway: "The long-horizon harness completed the move.",
+      finishAnalysis: "The review gate requested synthesis, so autopilot finalized the move.",
+      finishDecision: "do not admit",
+      finishSummary: "long-horizon harness finalized",
+      finishAggregateMetric: true,
+      finishMetricName: "score",
+      finishUpdatePaper: true,
+      finishPaperCaption: "Long-horizon harness finalized.",
+      finishPaperLimitations: "This harness uses a synthetic metric and does not test external provider quality.",
+      finishPaperDiscussion: "The harness proves the mechanics from queue to resolved paper update.",
+      finishPublishCanvas: true,
+      finishCanvasSessionId: "human-chat",
+      finishCanvasAgentId: "codex",
+      finishCanvasTitle: "Long-horizon harness",
+      finishCanvasCaption: "Resolved from a synthesized review decision.",
+      fetchImpl,
+    });
+
+    assert.equal(report.stopReason, "finished");
+    assert.equal(report.actions.length, 2);
+    assert.equal(report.actions[0].plannedAction, "orchestrator-run-next");
+    assert.equal(report.actions[0].result.kind, "run-next");
+    assert.equal(report.actions[0].result.cycle.reviewDecision.action, "synthesize");
+    assert.equal(report.actions[1].plannedAction, "finish-move");
+    assert.equal(report.actions[1].result.kind, "finish");
+    assert.equal(report.actions[1].result.finish.applied, true);
+    assert.equal(report.actions[1].result.finish.paper.figure.generated, true);
+    assert.equal(report.actions[1].result.finish.canvas.title, "Long-horizon harness");
+
+    const readme = readFileSync(join(dir, "README.md"), "utf8");
+    assert.doesNotMatch(readme, /\| queued-move \| \[queued-move\]\(results\/queued-move\.md\)/);
+    const log = readFileSync(join(dir, "LOG.md"), "utf8");
+    assert.match(log, /\| \d{4}-\d{2}-\d{2} \| resolved \| queued-move \| long-horizon harness finalized \| results\/queued-move\.md \|/);
+    const resultDoc = readFileSync(join(dir, "results", "queued-move.md"), "utf8");
+    assert.match(resultDoc, /STATUS\s*\n\nresolved/);
+    assert.match(resultDoc, /mean: 0\.77/);
+    assert.match(resultDoc, /seeds: \["1"\]/);
+    assert.match(resultDoc, /cycle 1 review: synthesize/);
+    const paper = readFileSync(join(dir, "paper.md"), "utf8");
+    assert.match(paper, /Long-horizon harness finalized\./);
+    assert.match(paper, /figures\/queued-move-summary\.svg/);
+    assert.ok(calls.some((call) => call.url.endsWith("/action-items")), "review card was created");
+    assert.ok(calls.some((call) => call.url.endsWith("/wait")), "review card was waited on");
+    assert.ok(calls.some((call) => call.url.endsWith("/canvases")), "final canvas was published");
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
+
 test("vr-research-autopilot CLI help and JSON output work", async () => {
   const help = await runCli(["--help"]);
   assert.equal(help.status, 0);
   assert.match(help.stdout, /vr-research-autopilot/);
   assert.match(help.stdout, /--agent-review-provider/);
+  assert.match(help.stdout, /--finish-paper-caption/);
+  assert.match(help.stdout, /--finish-canvas-session-id/);
 
   const dir = await makeProject("vr-autopilot-cli");
   try {

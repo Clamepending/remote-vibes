@@ -44,6 +44,12 @@ Options:
   --finish-takeaway <text> Takeaway to write when finishing.
   --finish-analysis <text> Analysis to write when finishing.
   --finish-decision <text> Decision line to write when finishing.
+  --finish-summary <text>  Summary used for LOG/README resolution.
+  --finish-score <text>    Score/verdict used when applying admission.
+  --finish-cost-compute <N>
+                           Compute cost debit to record when finishing.
+  --finish-cost-dollars <N>
+                           Dollar cost debit to record when finishing.
   --finish-aggregate-metric
                            Aggregate cycle metrics when finishing.
   --finish-metric-name <text>
@@ -54,6 +60,26 @@ Options:
   --finish-auto-admit      Run admission while finishing.
   --finish-update-paper    Update paper.md while finishing.
   --finish-publish-canvas  Publish final figure/canvas while finishing.
+  --finish-paper-figure <path-or-url>
+                           Figure to copy/link into paper.md.
+  --finish-paper-caption <text>
+                           Caption for the generated paper result section.
+  --finish-paper-limitations <text>
+                           Limitations sentence for the paper update.
+  --finish-paper-discussion <text>
+                           Discussion sentence for the paper update.
+  --finish-canvas-image <path>
+                           Final image to publish to Agent Canvas.
+  --finish-canvas-url <url>
+                           Final URL to publish to Agent Canvas.
+  --finish-canvas-title <text>
+                           Agent Canvas title.
+  --finish-canvas-caption <text>
+                           Agent Canvas caption.
+  --finish-canvas-session-id <id>
+                           Session id for the final Agent Canvas.
+  --finish-canvas-agent-id <id>
+                           Agent/provider id for the final Agent Canvas.
   --code-cwd <dir>         Code repo cwd to include in suggested runner command.
   --ask-human              Include human review gates in suggested/delegated commands.
   --wait-human             Wait when delegating to human-reviewable orchestrator actions.
@@ -92,10 +118,24 @@ function parseArgs(argv) {
     finishAnalysis: "",
     finishApply: false,
     finishAutoAdmit: false,
+    finishCanvasAgentId: "",
+    finishCanvasCaption: "",
+    finishCanvasImage: "",
+    finishCanvasSessionId: "",
+    finishCanvasTitle: "",
+    finishCanvasUrl: "",
+    finishCostCompute: "",
+    finishCostDollars: "",
     finishHigherIsBetter: undefined,
     finishMetricName: "",
     finishOnSynthesize: false,
+    finishPaperCaption: "",
+    finishPaperDiscussion: "",
+    finishPaperFigure: "",
+    finishPaperLimitations: "",
     finishPublishCanvas: false,
+    finishScore: "",
+    finishSummary: "",
     finishTakeaway: "",
     finishDecision: "",
     finishUpdatePaper: false,
@@ -140,8 +180,22 @@ function parseArgs(argv) {
     if (arg === "--command") { opts.commandText = requireValue(argv, index, arg); index += 1; continue; }
     if (arg === "--decision") { opts.decision = requireValue(argv, index, arg); index += 1; continue; }
     if (arg === "--finish-analysis") { opts.finishAnalysis = requireValue(argv, index, arg); index += 1; continue; }
+    if (arg === "--finish-canvas-agent-id") { opts.finishCanvasAgentId = requireValue(argv, index, arg); index += 1; continue; }
+    if (arg === "--finish-canvas-caption") { opts.finishCanvasCaption = requireValue(argv, index, arg); index += 1; continue; }
+    if (arg === "--finish-canvas-image") { opts.finishCanvasImage = requireValue(argv, index, arg); index += 1; continue; }
+    if (arg === "--finish-canvas-session-id") { opts.finishCanvasSessionId = requireValue(argv, index, arg); index += 1; continue; }
+    if (arg === "--finish-canvas-title") { opts.finishCanvasTitle = requireValue(argv, index, arg); index += 1; continue; }
+    if (arg === "--finish-canvas-url") { opts.finishCanvasUrl = requireValue(argv, index, arg); index += 1; continue; }
+    if (arg === "--finish-cost-compute") { opts.finishCostCompute = requireValue(argv, index, arg); index += 1; continue; }
+    if (arg === "--finish-cost-dollars") { opts.finishCostDollars = requireValue(argv, index, arg); index += 1; continue; }
     if (arg === "--finish-decision") { opts.finishDecision = requireValue(argv, index, arg); index += 1; continue; }
     if (arg === "--finish-metric-name") { opts.finishMetricName = requireValue(argv, index, arg); index += 1; continue; }
+    if (arg === "--finish-paper-caption") { opts.finishPaperCaption = requireValue(argv, index, arg); index += 1; continue; }
+    if (arg === "--finish-paper-discussion") { opts.finishPaperDiscussion = requireValue(argv, index, arg); index += 1; continue; }
+    if (arg === "--finish-paper-figure") { opts.finishPaperFigure = requireValue(argv, index, arg); index += 1; continue; }
+    if (arg === "--finish-paper-limitations") { opts.finishPaperLimitations = requireValue(argv, index, arg); index += 1; continue; }
+    if (arg === "--finish-score") { opts.finishScore = requireValue(argv, index, arg); index += 1; continue; }
+    if (arg === "--finish-summary") { opts.finishSummary = requireValue(argv, index, arg); index += 1; continue; }
     if (arg === "--finish-takeaway") { opts.finishTakeaway = requireValue(argv, index, arg); index += 1; continue; }
     if (arg === "--max-steps") { opts.maxSteps = Number(requireValue(argv, index, arg)); index += 1; continue; }
     if (arg === "--metric") { opts.metric = requireValue(argv, index, arg); index += 1; continue; }
@@ -208,12 +262,26 @@ async function main() {
       finishTakeaway: opts.finishTakeaway,
       finishAnalysis: opts.finishAnalysis,
       finishDecision: opts.finishDecision,
+      finishSummary: opts.finishSummary,
+      finishScore: opts.finishScore,
+      finishCostCompute: opts.finishCostCompute,
+      finishCostDollars: opts.finishCostDollars,
       finishAggregateMetric: opts.finishAggregateMetric,
       finishMetricName: opts.finishMetricName,
       finishHigherIsBetter: opts.finishHigherIsBetter,
       finishAutoAdmit: opts.finishAutoAdmit,
       finishUpdatePaper: opts.finishUpdatePaper,
       finishPublishCanvas: opts.finishPublishCanvas,
+      finishPaperFigure: opts.finishPaperFigure,
+      finishPaperCaption: opts.finishPaperCaption,
+      finishPaperLimitations: opts.finishPaperLimitations,
+      finishPaperDiscussion: opts.finishPaperDiscussion,
+      finishCanvasImage: opts.finishCanvasImage,
+      finishCanvasUrl: opts.finishCanvasUrl,
+      finishCanvasTitle: opts.finishCanvasTitle,
+      finishCanvasCaption: opts.finishCanvasCaption,
+      finishCanvasSessionId: opts.finishCanvasSessionId,
+      finishCanvasAgentId: opts.finishCanvasAgentId,
     })
     : await stepResearchAutopilot(common);
 

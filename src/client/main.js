@@ -6590,8 +6590,8 @@ function renderRichSessionFeedHtml(activeSession) {
   return `
     ${renderRichSessionOverviewCard(activeSession)}
     ${prompt ? renderClaudePromptCard(prompt) : ""}
-    ${filteredEntries.length ? filteredEntries.map((entry, index) => renderRichSessionEntry(entry, index)).join("") : renderRichSessionEmptyState(activeSession)}
     ${inlineActions}
+    ${filteredEntries.length ? filteredEntries.map((entry, index) => renderRichSessionEntry(entry, index)).join("") : renderRichSessionEmptyState(activeSession)}
   `;
 }
 
@@ -20093,6 +20093,26 @@ function renderResearchBriefCompileButton(item) {
   `;
 }
 
+function isResearchReviewActionItem(item) {
+  const source = String(item?.source || "").trim();
+  const id = String(item?.id || "").trim();
+  const kind = String(item?.kind || "").trim();
+  return kind === "review" || /^research-/i.test(source) || /^research-/i.test(id);
+}
+
+function renderResearchAskWhyButton(item) {
+  if (!isResearchReviewActionItem(item)) {
+    return "";
+  }
+  return `
+    <button
+      class="ghost-button toolbar-control"
+      type="button"
+      data-agent-town-action-ask-why="${escapeHtml(item.id)}"
+    >ask why</button>
+  `;
+}
+
 function renderAgentTownActionChoiceButtons(item) {
   const choices = Array.isArray(item.choices) ? item.choices : [];
   const compileTarget = getResearchBriefCompileTarget(item);
@@ -20133,7 +20153,8 @@ function renderAgentTownActionItemCard(item) {
         : "";
   const compileButton = renderResearchBriefCompileButton(item);
   const choiceButtons = renderAgentTownActionChoiceButtons(item);
-  const actionButtons = [primaryButton, compileButton, choiceButtons].filter(Boolean).join("");
+  const askWhyButton = renderResearchAskWhyButton(item);
+  const actionButtons = [primaryButton, compileButton, choiceButtons, askWhyButton].filter(Boolean).join("");
   return `
     <article class="automation-card agent-inbox-card is-action is-${escapeHtml(item.kind || "action")}${priorityClass}" data-agent-town-action-item="${escapeHtml(item.id)}"${tutorialAttr}>
       <div class="agent-inbox-card-head">
@@ -20152,6 +20173,32 @@ function renderAgentTownActionItemCard(item) {
       </div>
     </article>
   `;
+}
+
+function buildActionItemAskWhyPrompt(item) {
+  const title = String(item?.title || "this review card").trim();
+  const recommendation = String(item?.recommendation || "").trim();
+  const consequence = String(item?.consequence || "").trim();
+  const evidence = Array.isArray(item?.evidence)
+    ? item.evidence
+        .map((entry) => {
+          const label = String(entry?.label || entry?.path || entry?.href || "").trim();
+          const target = String(entry?.path || entry?.href || "").trim();
+          return target && target !== label ? `${label}: ${target}` : label;
+        })
+        .filter(Boolean)
+        .slice(0, 5)
+    : [];
+  const choices = Array.isArray(item?.choices) ? item.choices.filter(Boolean).join(", ") : "";
+  const lines = [
+    `Can you briefly explain the reasoning behind the review card "${title}"?`,
+    recommendation ? `Recommendation: ${recommendation}` : "",
+    consequence ? `Impact: ${consequence}` : "",
+    evidence.length ? `Evidence: ${evidence.join("; ")}` : "",
+    choices ? `Available decisions: ${choices}` : "",
+    "Please answer with the key evidence, the risk if we choose wrong, and your recommended next click.",
+  ].filter(Boolean);
+  return lines.join("\n");
 }
 
 const QUEST_ALERT_HINTS = new Map([
@@ -41822,6 +41869,22 @@ function bindShellEvents() {
       event.preventDefault();
       event.stopPropagation();
       openAgentTownActionHref(actionOpen.getAttribute("data-agent-town-action-open") || "");
+      return;
+    }
+
+    const actionAskWhy = target?.closest("[data-agent-town-action-ask-why]");
+    if (actionAskWhy instanceof HTMLElement) {
+      event.preventDefault();
+      event.stopPropagation();
+      const actionItemId = actionAskWhy.getAttribute("data-agent-town-action-ask-why") || "";
+      const item = state.agentTown.actionItems.find((candidate) => candidate.id === actionItemId);
+      const activeSession = getActiveSession();
+      if (!item || !activeSession) {
+        return;
+      }
+      appendRichSessionComposerText(activeSession.id, buildActionItemAskWhyPrompt(item));
+      refreshRichSessionSurfaceUi();
+      focusRichSessionComposer();
       return;
     }
 

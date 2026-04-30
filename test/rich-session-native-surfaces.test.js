@@ -42,7 +42,7 @@ async function startApp({ cwd, providers }) {
   return { app, baseUrl: `http://127.0.0.1:${app.config.port}` };
 }
 
-test("native UI renders plan card, MCP badge, image strip, /login action, thinking spinner, OSC-8 + path-with-spaces", async (t) => {
+test("native UI renders plan card, MCP badge, image strip, /login action, chat decisions, OSC-8 + path-with-spaces", async (t) => {
   const executablePath = await resolveBrowserExecutablePath({ env: process.env });
   if (!executablePath) {
     t.skip("No local Chromium/Chrome executable available for the native-surfaces smoke.");
@@ -232,10 +232,9 @@ test("native UI renders plan card, MCP badge, image strip, /login action, thinki
     await page.waitForSelector('[data-rich-session-action-panel] [data-agent-town-action-item="chat-review-card"]', { timeout: 10_000 });
 
     const surfaces = await page.evaluate(() => {
-      // Pending assistant: spinner + "is thinking…" copy.
-      const pending = document.querySelector(".rich-session-entry.is-assistant.is-pending");
-      const pendingHasSpinner = Boolean(pending?.querySelector(".rich-session-thinking-spinner"));
-      const pendingCopy = pending?.querySelector(".is-pending-copy")?.textContent || "";
+      // Empty pending assistant placeholders should stay out of the feed;
+      // the activity strip owns transient "thinking" state.
+      const pendingPlaceholderCount = document.querySelectorAll(".rich-session-entry.is-assistant.is-pending").length;
 
       // Image tiles. Should include figures/loss.png, figures/run.png, and
       // figures/loss (lr=1e-4).png (the path-with-spaces survives because
@@ -284,6 +283,11 @@ test("native UI renders plan card, MCP badge, image strip, /login action, thinki
       const evidenceTagName = evidenceLink?.tagName || "";
       const evidenceRichPath = evidenceLink?.getAttribute("data-rich-path") || "";
       const evidenceOpenPath = evidenceLink?.getAttribute("data-agent-town-evidence-path") || "";
+      const actionBeforePlan = Boolean(
+        actionPanel
+          && planCard
+          && (actionPanel.compareDocumentPosition(planCard) & Node.DOCUMENT_POSITION_FOLLOWING),
+      );
 
       // Surface toggle: native should be active, three buttons present
       // (Native | Terminal | Stream JSON).
@@ -293,8 +297,6 @@ test("native UI renders plan card, MCP badge, image strip, /login action, thinki
       );
 
       return {
-        pendingHasSpinner,
-        pendingCopy,
         tiles,
         anyEscapesVisible,
         mcpBadge,
@@ -309,13 +311,15 @@ test("native UI renders plan card, MCP badge, image strip, /login action, thinki
         evidenceTagName,
         evidenceRichPath,
         evidenceOpenPath,
+        actionBeforePlan,
         toggleButtons,
+        pendingPlaceholderCount,
       };
     });
 
-    // Thinking spinner is present and the visible copy reads "is thinking…".
-    assert.equal(surfaces.pendingHasSpinner, true, "pending entry shows the thinking spinner");
-    assert.match(surfaces.pendingCopy, /thinking/iu, "pending entry shows is-thinking copy");
+    // Pending placeholders are omitted from the transcript; the activity
+    // strip is the single current-state indicator.
+    assert.equal(surfaces.pendingPlaceholderCount, 0, "pending assistant placeholder stays out of the feed");
 
     // All three image tiles render — including the OSC-8-stripped one and
     // the path-with-spaces (which only works because the server stamped
@@ -343,9 +347,16 @@ test("native UI renders plan card, MCP badge, image strip, /login action, thinki
     assert.equal(surfaces.actionTitle, "Review latest cycle", "Agent Inbox card appears inside the chat feed");
     assert.ok(surfaces.actionButtons.includes("continue"), "chat card exposes continue choice");
     assert.ok(surfaces.actionButtons.includes("steer"), "chat card exposes steer choice");
+    assert.ok(surfaces.actionButtons.includes("ask why"), "chat card exposes ask-why follow-up");
+    assert.equal(surfaces.actionBeforePlan, true, "chat decisions are hoisted before the transcript");
     assert.equal(surfaces.evidenceTagName, "A", "chat card evidence path renders as an anchor");
     assert.equal(surfaces.evidenceRichPath, "projects/demo/results/cycle.md", "evidence link carries rich-session path metadata");
     assert.equal(surfaces.evidenceOpenPath, "projects/demo/results/cycle.md", "evidence link carries Agent Inbox path metadata");
+
+    await page.click('[data-rich-session-action-panel] [data-agent-town-action-ask-why="chat-review-card"]');
+    const askWhyDraft = await page.locator("#rich-session-input").inputValue();
+    assert.match(askWhyDraft, /explain the reasoning behind the review card "Review latest cycle"/u);
+    assert.match(askWhyDraft, /Available decisions: continue, steer/u);
 
     await page.click('[data-rich-session-action-panel] [data-agent-town-action-resolve="chat-review-card"][data-agent-town-action-resolution="continued"]');
     await page.waitForFunction(async () => {

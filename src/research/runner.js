@@ -512,7 +512,7 @@ function deriveMetricConfig(project, { metricName = "", higherIsBetter } = {}) {
 function parseArtifactLog(text) {
   const body = String(text || "");
   const readField = (name) => {
-    const m = body.match(new RegExp(`^${name}:\\s*(.*)$`, "mi"));
+    const m = body.match(new RegExp(`^${name}:[^\\S\\r\\n]*(.*)$`, "mi"));
     return m ? m[1].trim() : "";
   };
   const metric = Number(readField("metric"));
@@ -522,6 +522,15 @@ function parseArtifactLog(text) {
     seed: readField("seed"),
     metric: Number.isFinite(metric) ? metric : null,
   };
+}
+
+function extractReviewDecisionLines(text) {
+  const match = String(text || "").match(/^## Analysis\s*\n([\s\S]*?)(?=^##\s|\s*$)/m);
+  const body = match ? match[1] : "";
+  return body
+    .split(/\r?\n/u)
+    .map((line) => line.trim())
+    .filter((line) => /^-\s*cycle\s+\d+\s+review:/iu.test(line));
 }
 
 async function collectCycleMetrics(projectDir, slug) {
@@ -1656,7 +1665,15 @@ export async function finishMove({
 
   text = replaceSectionBody(text, "STATUS", normalizedStatus);
   if (takeaway) text = replaceSectionBody(text, "TAKEAWAY", takeaway);
-  if (analysis) text = replaceSectionBody(text, "Analysis", analysis);
+  if (analysis) {
+    const reviewLines = extractReviewDecisionLines(text)
+      .filter((line) => !String(analysis).includes(line));
+    text = replaceSectionBody(
+      text,
+      "Analysis",
+      [analysis, ...reviewLines].filter(Boolean).join("\n\n"),
+    );
+  }
 
   if (autoAdmit) {
     await atomicWrite(resultPath, text);
