@@ -6470,6 +6470,31 @@ export async function createVibeResearchApp({
   const websocketServer = new WebSocketServer({ noServer: true });
   const globalWebsocketClients = new Set();
 
+  // Heartbeat: detect WebSockets that are silently broken (laptop sleep,
+  // network change, intermediate proxy timeout). Without this, a stale
+  // connection can sit on the server's clients set indefinitely while
+  // narrative-event broadcasts pile into a dead socket. Every WS_HEARTBEAT_
+  // INTERVAL_MS we ping all clients; sockets that didn't respond to the
+  // previous ping (isAlive false) get terminated. The ws library handles
+  // pong responses transparently — the client doesn't need to know about
+  // this; the browser's WebSocket implementation responds to ping frames
+  // automatically.
+  const WS_HEARTBEAT_INTERVAL_MS = 30_000;
+  const heartbeatInterval = setInterval(() => {
+    for (const client of websocketServer.clients) {
+      if (client.isAlive === false) {
+        // No pong since the last ping — the connection is dead.
+        try { client.terminate(); } catch { /* best-effort */ }
+        continue;
+      }
+      client.isAlive = false;
+      try { client.ping(); } catch { /* best-effort */ }
+    }
+  }, WS_HEARTBEAT_INTERVAL_MS);
+  websocketServer.on("close", () => {
+    clearInterval(heartbeatInterval);
+  });
+
   function broadcastToAllClients(payload) {
     const message = JSON.stringify(payload);
     for (const client of globalWebsocketClients) {
@@ -6694,6 +6719,13 @@ export async function createVibeResearchApp({
       websocket.close();
       return;
     }
+
+    // Heartbeat bookkeeping. The interval set above pings all clients
+    // every 30s and terminates any that didn't pong since the previous
+    // ping. New connections start alive; the pong listener flips the
+    // flag back to true each time the browser responds.
+    websocket.isAlive = true;
+    websocket.on("pong", () => { websocket.isAlive = true; });
 
     const session = sessionManager.attachClient(sessionId, websocket);
     if (!session) {

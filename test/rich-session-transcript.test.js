@@ -333,3 +333,33 @@ test("rich session transcript filters Claude Code thinking pills across the rota
     "Real assistant content survives.\nWorked together for years",
   );
 });
+
+test("rich session transcript drops standalone SGR-residue lines (`39m`, `0m`, `[39m`, lone `m`)", () => {
+  // These are the artifacts the screenshot showed when a partial buffer
+  // capture lost the leading ESC byte. The sanitizer must drop the
+  // residue without affecting prose that mentions the same characters
+  // ("ran for 39m", "the m flag controls X").
+  const transcript = [
+    "Real assistant content above.",
+    "39m",
+    "[39m",
+    "0m",
+    "1;31m",
+    "m",
+    "K",
+    "Real prose: the run took 39m to finish.",
+    "Another paragraph about the m flag.",
+  ].join("\n\n");
+
+  const sanitized = sanitizeRichSessionTranscriptText(transcript);
+  assert.match(sanitized, /Real assistant content above\./u);
+  assert.match(sanitized, /the run took 39m to finish/u);
+  assert.match(sanitized, /the m flag/u);
+  // Standalone residue lines are gone.
+  assert.doesNotMatch(sanitized, /^\s*39m\s*$/mu);
+  assert.doesNotMatch(sanitized, /^\s*\[39m\s*$/mu);
+  assert.doesNotMatch(sanitized, /^\s*1;31m\s*$/mu);
+  // Lone "m" / "K" lines also gone.
+  assert.doesNotMatch(sanitized, /^\s*m\s*$/mu);
+  assert.doesNotMatch(sanitized, /^\s*K\s*$/mu);
+});

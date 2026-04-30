@@ -621,6 +621,15 @@ test("parseMcpToolName: a single-segment name with mcp prefix but no tool half i
   assert.equal(parseMcpToolName("mcp__"), null);
 });
 
+test("parseMcpToolName: empty server segment (mcp____tool) is rejected", () => {
+  // The non-greedy server class requires at least one char, so a
+  // pathological `mcp____foo` (server is empty between the two `__`s)
+  // does not match. Confirms the regex doesn't accept zero-width
+  // server names.
+  assert.equal(parseMcpToolName("mcp____foo"), null);
+  assert.equal(parseMcpToolName("mcp______tool"), null);
+});
+
 test("extractPlanFromToolUse pulls the plan body from an ExitPlanMode tool_use", () => {
   const toolUse = {
     type: "tool_use",
