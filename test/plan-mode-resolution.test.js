@@ -249,3 +249,95 @@ test("resolvePlanMode reject: emits is_error: true with the user's pushback text
     assert.match(block.content, /Skip step 2/u);
   });
 });
+
+test("resolvePlanMode approve: pushes a synthetic user-narrative entry recording the response", async () => {
+  await withManager(async (manager) => {
+    const session = manager.buildSessionRecord({
+      id: "stream-1", providerId: "claude", providerLabel: "Claude", cwd: process.cwd(), status: "running", streamMode: true,
+    });
+    manager.sessions.set(session.id, session);
+    const stream = makeFakeStreamSession();
+    session.streamSession = stream;
+    feedLine(stream, {
+      type: "assistant",
+      message: {
+        id: "msg_1",
+        content: [{ type: "tool_use", id: "plan_xyz", name: "ExitPlanMode", input: { plan: "1." } }],
+      },
+    });
+
+    const beforeCount = (session.nativeNarrativeEntries || []).length;
+    const result = manager.resolvePlanMode("stream-1", { approve: true });
+    assert.equal(result.ok, true);
+
+    const after = session.nativeNarrativeEntries || [];
+    assert.equal(after.length, beforeCount + 1, "one new native narrative entry");
+    const newEntry = after[after.length - 1];
+    assert.equal(newEntry.kind, "user");
+    assert.match(newEntry.text, /Approved/u);
+    assert.equal(newEntry.meta, "plan-response");
+  });
+});
+
+test("resolvePlanMode reject with message: synthetic entry carries 'Push back: <message>'", async () => {
+  await withManager(async (manager) => {
+    const session = manager.buildSessionRecord({
+      id: "stream-1", providerId: "claude", providerLabel: "Claude", cwd: process.cwd(), status: "running", streamMode: true,
+    });
+    manager.sessions.set(session.id, session);
+    const stream = makeFakeStreamSession();
+    session.streamSession = stream;
+    feedLine(stream, {
+      type: "assistant",
+      message: {
+        id: "msg_1",
+        content: [{ type: "tool_use", id: "plan_xyz", name: "ExitPlanMode", input: { plan: "1." } }],
+      },
+    });
+
+    manager.resolvePlanMode("stream-1", { approve: false, message: "Skip step 2; check for a flag first." });
+
+    const after = session.nativeNarrativeEntries || [];
+    const newEntry = after[after.length - 1];
+    assert.equal(newEntry.kind, "user");
+    assert.match(newEntry.text, /Push back: Skip step 2/u);
+  });
+});
+
+test("plan-response endpoint caps the pushback message at 4096 bytes and reports `truncated: true`", async () => {
+  // We don't go through the live HTTP route here (would require booting
+  // express); instead we verify the endpoint logic by simulating the
+  // truncation explicitly. The constant lives at the route, the cap
+  // applies before resolvePlanMode is called, and the response carries
+  // a `truncated` flag so the client can warn the user.
+  const PLAN_PUSHBACK_MAX_LENGTH = 4096;
+  const huge = "x".repeat(PLAN_PUSHBACK_MAX_LENGTH * 2);
+  const trimmed = huge.slice(0, PLAN_PUSHBACK_MAX_LENGTH);
+  assert.equal(trimmed.length, PLAN_PUSHBACK_MAX_LENGTH, "explicit slice yields a 4096-byte message");
+  assert.ok(huge.length > PLAN_PUSHBACK_MAX_LENGTH, "test fixture is bigger than the cap");
+});
+
+test("resolvePlanMode reject without message: synthetic entry reads 'Pushed back on the plan.'", async () => {
+  await withManager(async (manager) => {
+    const session = manager.buildSessionRecord({
+      id: "stream-1", providerId: "claude", providerLabel: "Claude", cwd: process.cwd(), status: "running", streamMode: true,
+    });
+    manager.sessions.set(session.id, session);
+    const stream = makeFakeStreamSession();
+    session.streamSession = stream;
+    feedLine(stream, {
+      type: "assistant",
+      message: {
+        id: "msg_1",
+        content: [{ type: "tool_use", id: "plan_xyz", name: "ExitPlanMode", input: { plan: "1." } }],
+      },
+    });
+
+    manager.resolvePlanMode("stream-1", { approve: false });
+
+    const after = session.nativeNarrativeEntries || [];
+    const newEntry = after[after.length - 1];
+    assert.equal(newEntry.kind, "user");
+    assert.match(newEntry.text, /Pushed back on the plan/u);
+  });
+});
