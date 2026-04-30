@@ -738,6 +738,17 @@ function deriveReviewDecision({ review, actionItemId } = {}) {
   };
 }
 
+function formatReviewDecisionLine({ cycleIndex, actionItemId, decision } = {}) {
+  if (!decision || decision.action === "pending") return "";
+  const parts = [
+    `cycle ${cycleIndex} review: ${decision.action}`,
+  ];
+  if (decision.resolution) parts.push(`resolution=${escapeMarkdown(decision.resolution)}`);
+  if (decision.resolutionNote) parts.push(`note=${escapeMarkdown(truncateText(decision.resolutionNote, 240))}`);
+  parts.push(`action item \`${escapeMarkdown(actionItemId)}\``);
+  return `- ${parts.join("; ")}.`;
+}
+
 function buildAgentReviewPrompt({
   agentTownApi,
   actionItemId,
@@ -1434,6 +1445,15 @@ export async function runCycle({
   const reviewSkippedReason = reviewResult?.skipped ? reviewResult.reason : "";
   const review = reviewResult?.skipped ? null : reviewResult;
   const reviewDecision = deriveReviewDecision({ review, actionItemId });
+  const reviewDecisionLine = formatReviewDecisionLine({
+    cycleIndex,
+    actionItemId,
+    decision: waitHuman ? reviewDecision : null,
+  });
+  if (reviewDecisionLine) {
+    const currentText = await readFile(resultPath, "utf8");
+    await atomicWrite(resultPath, appendSectionBullet(currentText, "Analysis", reviewDecisionLine));
+  }
 
   return {
     projectDir,
@@ -1457,6 +1477,7 @@ export async function runCycle({
     review,
     reviewWait: review?.wait || null,
     reviewDecision,
+    reviewDecisionLine,
     reviewSkippedReason,
     agentReviewSession,
     monitorCanvas,
@@ -1753,6 +1774,7 @@ export const __internal = {
   DEFAULT_TIMEOUT_MS,
   appendSectionBullet,
   deriveReviewDecision,
+  formatReviewDecisionLine,
   branchUrlForMove,
   buildAgentReviewPrompt,
   collectCycleMetrics,

@@ -277,12 +277,15 @@ test("runCycle can wait on the Agent Inbox review card", async () => {
     assert.equal(result.reviewDecision.action, "rerun");
     assert.equal(result.reviewDecision.resolution, "rerun");
     assert.match(result.reviewDecision.resolutionNote, /one more seed/);
+    assert.match(result.reviewDecisionLine, /cycle 1 review: rerun/);
     assert.equal(calls.length, 2);
     assert.equal(calls[0].body.sourceSessionId, "session-1");
     assert.equal(calls[0].body.sourceAgentId, "agent-a");
     assert.match(calls[0].body.target.id, /first-move:cycle-1/);
     assert.equal(calls[1].body.predicate, "action_item_resolved");
     assert.equal(calls[1].body.timeoutMs, 1234);
+    const doc = readFileSync(join(dir, "results", "first-move.md"), "utf8");
+    assert.match(doc, /cycle 1 review: rerun; resolution=rerun; note=Need one more seed before synthesis/);
   } finally {
     rmSync(dir, { recursive: true, force: true });
   }
