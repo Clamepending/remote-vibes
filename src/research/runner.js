@@ -524,9 +524,13 @@ async function createReviewCard({
   artifactPath,
   resultPath,
   summary,
+  waitHuman = false,
+  humanTimeoutMs = 30_000,
+  fetchImpl = globalThis.fetch,
 } = {}) {
   const endpoint = String(api || "").trim().replace(/\/$/, "");
   if (!endpoint) return { skipped: true, reason: "Agent Town API is not configured" };
+  if (typeof fetchImpl !== "function") return { skipped: true, reason: "fetch is unavailable" };
   const projectName = path.basename(path.resolve(projectDir));
   const body = {
     id: `research-cycle-${slug}-${cycleIndex}`,
@@ -553,7 +557,7 @@ async function createReviewCard({
     choices: ["continue", "rerun", "synthesize", "brainstorm", "steer"],
   };
 
-  const response = await fetch(`${endpoint}/action-items`, {
+  const response = await fetchImpl(`${endpoint}/action-items`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify(body),
@@ -562,7 +566,23 @@ async function createReviewCard({
   if (!response.ok) {
     throw new Error(payload?.error || `Agent Inbox review failed: ${response.status}`);
   }
-  return payload.actionItem || payload;
+  const actionItem = payload.actionItem || payload;
+  if (!waitHuman) return actionItem;
+
+  const waitResponse = await fetchImpl(`${endpoint}/wait`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({
+      predicate: "action_item_resolved",
+      predicateParams: { actionItemId: actionItem.id || body.id },
+      timeoutMs: humanTimeoutMs,
+    }),
+  });
+  const waitPayload = await waitResponse.json().catch(() => ({}));
+  if (!waitResponse.ok) {
+    throw new Error(waitPayload?.error || `Agent Inbox wait failed: ${waitResponse.status}`);
+  }
+  return { ...actionItem, wait: waitPayload };
 }
 
 export async function claimNextMove({
@@ -692,7 +712,10 @@ export async function runCycle({
   env = process.env,
   spawnImpl = spawn,
   askHuman = false,
+  waitHuman = false,
+  humanTimeoutMs = 30_000,
   agentTownApi = "",
+  fetchImpl = globalThis.fetch,
   gitCommit = false,
   gitCommitMessage = "",
   gitAllowEmpty = false,
@@ -788,7 +811,7 @@ export async function runCycle({
   after = appendSectionBullet(after, "Reproducibility", `- cycle ${cycleIndex}: cwd \`${runCwd.replace(/`/g, "\\`")}\`; command \`${command.replace(/`/g, "\\`")}\`; artifact \`${artifactRelativePath}\`${gitShortSha ? `; git \`${gitShortSha}\`` : ""}${commitUrl ? `; commit ${commitUrl}` : ""}.`);
   await atomicWrite(resultPath, after);
 
-  const reviewResult = askHuman
+  const reviewResult = (askHuman || waitHuman)
     ? await createReviewCard({
       api: agentTownApi || process.env.VIBE_RESEARCH_AGENT_TOWN_API || "",
       projectDir,
@@ -798,6 +821,9 @@ export async function runCycle({
       artifactPath,
       resultPath,
       summary: `Cycle ${cycleIndex} ${outcome}`,
+      waitHuman,
+      humanTimeoutMs,
+      fetchImpl,
     })
     : null;
   const reviewSkippedReason = reviewResult?.skipped ? reviewResult.reason : "";
@@ -823,6 +849,7 @@ export async function runCycle({
       commitUrl,
     },
     review,
+    reviewWait: review?.wait || null,
     reviewSkippedReason,
   };
 }
@@ -845,7 +872,10 @@ export async function runNextMove({
   seed = "",
   timeoutMs = DEFAULT_TIMEOUT_MS,
   askHuman = false,
+  waitHuman = false,
+  humanTimeoutMs = 30_000,
   agentTownApi = "",
+  fetchImpl = globalThis.fetch,
   force = false,
   codeCwd = "",
   prepareBranch = false,
@@ -888,7 +918,10 @@ export async function runNextMove({
     seed,
     timeoutMs,
     askHuman,
+    waitHuman,
+    humanTimeoutMs,
     agentTownApi,
+    fetchImpl,
     gitCommit,
     gitCommitMessage,
     gitAllowEmpty,
@@ -1019,6 +1052,7 @@ export const __internal = {
   branchUrlForMove,
   collectCycleMetrics,
   commitUrlForSha,
+  createReviewCard,
   deriveMetricConfig,
   extractMetric,
   inferGitRef,

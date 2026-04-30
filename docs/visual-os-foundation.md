@@ -88,10 +88,10 @@ vr-research-runner projects/demo run \
   --change "dropout=0.2 seed 0" \
   --seed 0 \
   --git-commit \
-  --ask-human
+  --wait-human
 ```
 
-`claim` moves the first `QUEUE` row into `ACTIVE` and creates `results/<slug>.md`; with `--prepare-branch --code-cwd <repo>` it also switches or creates the code branch. `cycle` runs a command, appends the cycle line, captures the artifact log, records seed/git provenance, and can commit/push the code repo with `--git-commit --git-push`. `run` does claim + one cycle. `finish` closes the loop by setting `STATUS`, aggregating cycle metrics into quantitative frontmatter, running admission, applying Queue updates, and removing `ACTIVE` through `vr-research-resolve`:
+`claim` moves the first `QUEUE` row into `ACTIVE` and creates `results/<slug>.md`; with `--prepare-branch --code-cwd <repo>` it also switches or creates the code branch. `cycle` runs a command, appends the cycle line, captures the artifact log, records seed/git provenance, and can commit/push the code repo with `--git-commit --git-push`. `--ask-human` posts the review card and continues; `--wait-human` posts the card and waits for a human click, returning the wait result in JSON. `run` does claim + one cycle. `finish` closes the loop by setting `STATUS`, aggregating cycle metrics into quantitative frontmatter, running admission, applying Queue updates, and removing `ACTIVE` through `vr-research-resolve`:
 
 ```sh
 vr-research-runner projects/demo finish \

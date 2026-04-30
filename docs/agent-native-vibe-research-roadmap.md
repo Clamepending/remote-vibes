@@ -134,7 +134,7 @@ Remaining work:
 - Add figure/canvas publishing hooks to `finish`.
 - Add budget debit support when a move resolves.
 - Add optional live monitor URL support for long cycles.
-- Add `--wait-human` behavior that blocks until the Agent Inbox card resolves.
+- Extend `--wait-human` beyond the current Agent Town timeout cap for truly long review windows.
 
 Success criteria:
 

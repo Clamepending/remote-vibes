@@ -203,6 +203,50 @@ test("runCycle surfaces skipped human review when Agent Town API is missing", as
   }
 });
 
+test("runCycle can wait on the Agent Inbox review card", async () => {
+  const dir = makeProject("vr-runner-review-wait");
+  const calls = [];
+  try {
+    await claimNextMove({ projectDir: dir });
+    const fetchImpl = async (url, options) => {
+      const body = JSON.parse(options.body);
+      calls.push({ url, body });
+      return {
+        ok: true,
+        status: 200,
+        async json() {
+          if (url.endsWith("/wait")) {
+            return {
+              predicate: body.predicate,
+              predicateParams: body.predicateParams,
+              satisfied: true,
+            };
+          }
+          return { actionItem: { id: body.id, title: body.title } };
+        },
+      };
+    };
+    const result = await runCycle({
+      projectDir: dir,
+      slug: "first-move",
+      command: "node -e \"console.log('score=0.76')\"",
+      metricRegex: "score=([0-9.]+)",
+      waitHuman: true,
+      humanTimeoutMs: 1234,
+      agentTownApi: "http://agent-town.test/api/agent-town",
+      fetchImpl,
+      timeoutMs: 5_000,
+    });
+    assert.equal(result.review.id, "research-cycle-first-move-1");
+    assert.equal(result.reviewWait.satisfied, true);
+    assert.equal(calls.length, 2);
+    assert.equal(calls[1].body.predicate, "action_item_resolved");
+    assert.equal(calls[1].body.timeoutMs, 1234);
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
+
 test("runNextMove combines claim and one cycle", async () => {
   const dir = makeProject("vr-runner-run");
   try {
@@ -274,6 +318,7 @@ test("vr-research-runner CLI help and run command work", async () => {
   const help = await runCli(["--help"]);
   assert.equal(help.status, 0);
   assert.match(help.stdout, /vr-research-runner/);
+  assert.match(help.stdout, /--wait-human/);
 
   const dir = makeProject("vr-runner-cli");
   try {

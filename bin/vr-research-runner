@@ -48,6 +48,9 @@ Cycle options:
   --seed <text>          Seed/id attached to this cycle metric.
   --timeout-sec <N>      Per-cycle timeout in seconds (default: 1800).
   --ask-human            Create an Agent Inbox review card after the cycle.
+  --wait-human           Create a review card and wait for it to resolve.
+  --human-timeout-sec <N>
+                         Human wait timeout in seconds (default: 30).
   --agent-town-api <url> Agent Town API base; defaults to env var.
   --git-commit           Commit code repo changes after the command.
   --git-commit-message <text>
@@ -121,6 +124,8 @@ function parseArgs(argv) {
     seed: "",
     timeoutSec: 1800,
     askHuman: false,
+    waitHuman: false,
+    humanTimeoutSec: 30,
     agentTownApi: "",
     force: false,
     codeCwd: "",
@@ -158,6 +163,7 @@ function parseArgs(argv) {
     if (arg === "--help" || arg === "-h") { opts.help = true; continue; }
     if (arg === "--json") { opts.json = true; continue; }
     if (arg === "--ask-human") { opts.askHuman = true; continue; }
+    if (arg === "--wait-human") { opts.askHuman = true; opts.waitHuman = true; continue; }
     if (arg === "--force") { opts.force = true; continue; }
     if (arg === "--prepare-branch") { opts.prepareBranch = true; continue; }
     if (arg === "--git-fetch") { opts.gitFetch = true; continue; }
@@ -185,6 +191,7 @@ function parseArgs(argv) {
     if (arg === "--qual") { opts.qual = readValue(argv, index, arg); index += 1; continue; }
     if (arg === "--seed") { opts.seed = readValue(argv, index, arg); index += 1; continue; }
     if (arg === "--timeout-sec") { opts.timeoutSec = Number(readValue(argv, index, arg)); index += 1; continue; }
+    if (arg === "--human-timeout-sec") { opts.humanTimeoutSec = Number(readValue(argv, index, arg)); index += 1; continue; }
     if (arg === "--agent-town-api") { opts.agentTownApi = readValue(argv, index, arg); index += 1; continue; }
     if (arg === "--code-cwd") { opts.codeCwd = readValue(argv, index, arg); index += 1; continue; }
     if (arg === "--start-ref") { opts.startRef = readValue(argv, index, arg); index += 1; continue; }
@@ -223,6 +230,9 @@ function printCycle(result) {
   process.stdout.write(`outcome: ${result.metric ? `metric=${result.metric}` : `exit=${result.exitCode}`}\n`);
   process.stdout.write(`artifact: ${result.artifactPath}\n`);
   if (result.review) process.stdout.write(`review: ${result.review.id || "created"}\n`);
+  if (result.reviewWait) {
+    process.stdout.write(`review wait: ${result.reviewWait.satisfied ? "resolved" : "timed out"}\n`);
+  }
   if (result.reviewSkippedReason) process.stdout.write(`review skipped: ${result.reviewSkippedReason}\n`);
   if (result.git?.committed) process.stdout.write(`commit: ${result.git.commitUrl || result.git.sha}\n`);
   if (result.git?.pushed) process.stdout.write(`pushed: ${result.git.branch || result.git.shortSha}\n`);
@@ -272,6 +282,9 @@ async function main() {
   if (!Number.isFinite(opts.timeoutSec) || opts.timeoutSec <= 0) {
     errors.push("--timeout-sec must be a positive number");
   }
+  if (!Number.isFinite(opts.humanTimeoutSec) || opts.humanTimeoutSec < 0) {
+    errors.push("--human-timeout-sec must be zero or a positive number");
+  }
   if (!Number.isFinite(opts.noiseMultiplier) || opts.noiseMultiplier <= 0) {
     errors.push("--noise-multiplier must be a positive number");
   }
@@ -299,6 +312,8 @@ async function main() {
     seed: opts.seed,
     timeoutMs: Math.max(1000, opts.timeoutSec * 1000),
     askHuman: opts.askHuman,
+    waitHuman: opts.waitHuman,
+    humanTimeoutMs: Math.max(0, opts.humanTimeoutSec * 1000),
     agentTownApi: opts.agentTownApi,
     force: opts.force,
     codeCwd: opts.codeCwd,
