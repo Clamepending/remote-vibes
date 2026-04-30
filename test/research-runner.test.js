@@ -270,6 +270,50 @@ test("runCycle can wait on the Agent Inbox review card", async () => {
   }
 });
 
+test("runCycle can pin a live monitor URL to Agent Canvas", async () => {
+  const dir = makeProject("vr-runner-monitor");
+  const calls = [];
+  try {
+    await claimNextMove({ projectDir: dir });
+    const fetchImpl = async (url, options) => {
+      const body = JSON.parse(options.body);
+      calls.push({ url, body });
+      return {
+        ok: true,
+        status: 200,
+        async json() {
+          return { canvas: { id: body.id, title: body.title, href: body.href, imageUrl: body.imageUrl } };
+        },
+      };
+    };
+
+    const result = await runCycle({
+      projectDir: dir,
+      slug: "first-move",
+      command: "node -e \"console.log('score=0.84')\"",
+      metricRegex: "score=([0-9.]+)",
+      timeoutMs: 5_000,
+      monitorUrl: "https://wandb.example.test/run/abc",
+      monitorTitle: "W&B live run",
+      monitorCaption: "Training curve is still moving.",
+      canvasSessionId: "session-1",
+      agentTownApi: "http://agent-town.test/api/agent-town",
+      fetchImpl,
+    });
+    assert.equal(result.monitorCanvas.id, "session-1");
+    assert.equal(calls[0].url, "http://agent-town.test/api/agent-town/canvases");
+    assert.equal(calls[0].body.href, "https://wandb.example.test/run/abc");
+    assert.equal(calls[0].body.imageUrl, "");
+
+    const doc = readFileSync(join(dir, "results", "first-move.md"), "utf8");
+    assert.match(doc, /live monitor: \[W&B live run\]\(https:\/\/wandb\.example\.test\/run\/abc\)/);
+    const artifact = readFileSync(result.artifactPath, "utf8");
+    assert.match(artifact, /monitor_url: https:\/\/wandb\.example\.test\/run\/abc/);
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
+
 test("runNextMove combines claim and one cycle", async () => {
   const dir = makeProject("vr-runner-run");
   try {
@@ -469,6 +513,7 @@ test("vr-research-runner CLI help and run command work", async () => {
   assert.equal(help.status, 0);
   assert.match(help.stdout, /vr-research-runner/);
   assert.match(help.stdout, /--wait-human/);
+  assert.match(help.stdout, /--monitor-url/);
   assert.match(help.stdout, /--allow-budget-cap/);
   assert.match(help.stdout, /--update-paper/);
   assert.match(help.stdout, /--cost-compute/);

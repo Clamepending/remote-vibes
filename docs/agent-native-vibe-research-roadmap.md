@@ -126,11 +126,10 @@ flowchart TD
 
 Goal: one agent can run a queued move end-to-end with minimal manual markdown editing.
 
-Status: mostly implemented. The runner now handles claim/cycle/run/finish, human wait gates, result aggregation, paper updates, generated or copied figures, Agent Canvas publishing, and project budget debits/cap gates.
+Status: mostly implemented. The runner now handles claim/cycle/run/finish, human wait gates, result aggregation, live monitor URL publishing, paper updates, generated or copied figures, Agent Canvas publishing, and project budget debits/cap gates.
 
 Remaining work:
 
-- Add optional live monitor URL support for long cycles.
 - Extend `--wait-human` beyond the current Agent Town timeout cap for truly long review windows.
 
 Success criteria:
@@ -269,8 +268,8 @@ Track these metrics across dogfood projects:
 
 ## Near-Term Build Queue
 
-1. Live monitor URL support for long cycles.
-2. Longer human wait gates for asynchronous review.
+1. Longer human wait gates for asynchronous review.
+2. Real toy-to-real project proving run.
 3. `vr-research-orchestrator tick`: phase-aware planner/reviewer.
 4. Topology metadata in result docs plus doctor validation.
 5. Program database view over results, artifacts, insights, and evaluator strength.

@@ -934,6 +934,7 @@ async function publishAgentCanvas({
   slug,
   imagePath = "",
   imageUrl = "",
+  href = "",
   title = "",
   caption = "",
   sessionId = "",
@@ -950,7 +951,7 @@ async function publishAgentCanvas({
       "",
   ).trim();
   if (!resolvedSessionId) return { skipped: true, reason: "VIBE_RESEARCH_SESSION_ID is not configured" };
-  if (!imagePath && !imageUrl) return { skipped: true, reason: "no canvas image or URL provided" };
+  if (!imagePath && !imageUrl && !href) return { skipped: true, reason: "no canvas image, URL, or href provided" };
 
   const canvasId = agentId ? `${resolvedSessionId}-${agentId}` : resolvedSessionId;
   const body = {
@@ -960,7 +961,7 @@ async function publishAgentCanvas({
     title: title || `Result: ${slug}`,
     caption,
     alt: title || `Result figure for ${slug}`,
-    href: imageUrl || "",
+    href: href || imageUrl || "",
     imagePath,
     imageUrl,
   };
@@ -1113,6 +1114,11 @@ export async function runCycle({
   humanTimeoutMs = 30_000,
   agentTownApi = "",
   fetchImpl = globalThis.fetch,
+  monitorUrl = "",
+  monitorTitle = "",
+  monitorCaption = "",
+  canvasSessionId = "",
+  canvasAgentId = "",
   gitCommit = false,
   gitCommitMessage = "",
   gitAllowEmpty = false,
@@ -1192,6 +1198,7 @@ export async function runCycle({
     `git_committed: ${git.committed ? "true" : "false"}`,
     `git_pushed: ${git.pushed ? "true" : "false"}`,
     `git_skipped: ${git.skipped || ""}`,
+    `monitor_url: ${monitorUrl || ""}`,
     "",
     "## stdout",
     "",
@@ -1206,7 +1213,29 @@ export async function runCycle({
   let after = insertIntoSection(before, "Cycles", cycleLine);
   after = appendSectionBullet(after, "Results", `- cycle ${cycleIndex}: ${outcome}; artifact \`${artifactRelativePath}\`; command \`${command.replace(/`/g, "\\`")}\`.`);
   after = appendSectionBullet(after, "Reproducibility", `- cycle ${cycleIndex}: cwd \`${runCwd.replace(/`/g, "\\`")}\`; command \`${command.replace(/`/g, "\\`")}\`; artifact \`${artifactRelativePath}\`${gitShortSha ? `; git \`${gitShortSha}\`` : ""}${commitUrl ? `; commit ${commitUrl}` : ""}.`);
+  const liveMonitorUrl = trimString(monitorUrl);
+  if (liveMonitorUrl) {
+    const liveTitle = escapeMarkdown(monitorTitle || `cycle ${cycleIndex} live monitor`);
+    const liveCaption = escapeMarkdown(monitorCaption || `Live monitor for ${slug} cycle ${cycleIndex}`);
+    after = appendSectionBullet(after, "Agent canvas", `- live monitor: [${liveTitle}](${liveMonitorUrl}) - ${liveCaption}.`);
+  }
   await atomicWrite(resultPath, after);
+
+  const monitorCanvasResult = liveMonitorUrl
+    ? await publishAgentCanvas({
+      api: agentTownApi || process.env.VIBE_RESEARCH_AGENT_TOWN_API || "",
+      projectDir,
+      slug,
+      href: liveMonitorUrl,
+      title: monitorTitle || `Live monitor: ${slug}`,
+      caption: monitorCaption || `Cycle ${cycleIndex} ${outcome}`,
+      sessionId: canvasSessionId,
+      agentId: canvasAgentId,
+      fetchImpl,
+    })
+    : null;
+  const monitorCanvasSkippedReason = monitorCanvasResult?.skipped ? monitorCanvasResult.reason : "";
+  const monitorCanvas = monitorCanvasResult?.skipped ? null : monitorCanvasResult;
 
   const reviewResult = (askHuman || waitHuman)
     ? await createReviewCard({
@@ -1248,6 +1277,8 @@ export async function runCycle({
     review,
     reviewWait: review?.wait || null,
     reviewSkippedReason,
+    monitorCanvas,
+    monitorCanvasSkippedReason,
   };
 }
 
@@ -1273,6 +1304,11 @@ export async function runNextMove({
   humanTimeoutMs = 30_000,
   agentTownApi = "",
   fetchImpl = globalThis.fetch,
+  monitorUrl = "",
+  monitorTitle = "",
+  monitorCaption = "",
+  canvasSessionId = "",
+  canvasAgentId = "",
   force = false,
   codeCwd = "",
   prepareBranch = false,
@@ -1321,6 +1357,11 @@ export async function runNextMove({
     humanTimeoutMs,
     agentTownApi,
     fetchImpl,
+    monitorUrl,
+    monitorTitle,
+    monitorCaption,
+    canvasSessionId,
+    canvasAgentId,
     gitCommit,
     gitCommitMessage,
     gitAllowEmpty,

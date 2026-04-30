@@ -53,6 +53,10 @@ Cycle options:
   --human-timeout-sec <N>
                          Human wait timeout in seconds (default: 30).
   --agent-town-api <url> Agent Town API base; defaults to env var.
+  --monitor-url <url>    Pin a live W&B/TensorBoard/Modal URL to canvas.
+  --monitor-title <text> Title for the live monitor canvas.
+  --monitor-caption <text>
+                         Caption for the live monitor canvas.
   --git-commit           Commit code repo changes after the command.
   --git-commit-message <text>
                          Override the generated cycle commit message.
@@ -146,6 +150,9 @@ function parseArgs(argv) {
     waitHuman: false,
     humanTimeoutSec: 30,
     agentTownApi: "",
+    monitorUrl: "",
+    monitorTitle: "",
+    monitorCaption: "",
     force: false,
     allowBudgetCap: false,
     codeCwd: "",
@@ -230,6 +237,9 @@ function parseArgs(argv) {
     if (arg === "--timeout-sec") { opts.timeoutSec = Number(readValue(argv, index, arg)); index += 1; continue; }
     if (arg === "--human-timeout-sec") { opts.humanTimeoutSec = Number(readValue(argv, index, arg)); index += 1; continue; }
     if (arg === "--agent-town-api") { opts.agentTownApi = readValue(argv, index, arg); index += 1; continue; }
+    if (arg === "--monitor-url") { opts.monitorUrl = readValue(argv, index, arg); index += 1; continue; }
+    if (arg === "--monitor-title") { opts.monitorTitle = readValue(argv, index, arg); index += 1; continue; }
+    if (arg === "--monitor-caption") { opts.monitorCaption = readValue(argv, index, arg); index += 1; continue; }
     if (arg === "--code-cwd") { opts.codeCwd = readValue(argv, index, arg); index += 1; continue; }
     if (arg === "--start-ref") { opts.startRef = readValue(argv, index, arg); index += 1; continue; }
     if (arg === "--git-branch") { opts.gitBranch = readValue(argv, index, arg); index += 1; continue; }
@@ -283,6 +293,8 @@ function printCycle(result) {
     process.stdout.write(`review wait: ${result.reviewWait.satisfied ? "resolved" : "timed out"}\n`);
   }
   if (result.reviewSkippedReason) process.stdout.write(`review skipped: ${result.reviewSkippedReason}\n`);
+  if (result.monitorCanvas) process.stdout.write(`monitor canvas: ${result.monitorCanvas.id || "published"}\n`);
+  if (result.monitorCanvasSkippedReason) process.stdout.write(`monitor canvas skipped: ${result.monitorCanvasSkippedReason}\n`);
   if (result.git?.committed) process.stdout.write(`commit: ${result.git.commitUrl || result.git.sha}\n`);
   if (result.git?.pushed) process.stdout.write(`pushed: ${result.git.branch || result.git.shortSha}\n`);
 }
@@ -377,6 +389,11 @@ async function main() {
     waitHuman: opts.waitHuman,
     humanTimeoutMs: Math.max(0, opts.humanTimeoutSec * 1000),
     agentTownApi: opts.agentTownApi,
+    monitorUrl: opts.monitorUrl,
+    monitorTitle: opts.monitorTitle,
+    monitorCaption: opts.monitorCaption,
+    canvasSessionId: opts.canvasSessionId,
+    canvasAgentId: opts.canvasAgentId,
     force: opts.force,
     allowBudgetCap: opts.allowBudgetCap,
     codeCwd: opts.codeCwd,

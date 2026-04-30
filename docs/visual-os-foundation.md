@@ -87,11 +87,12 @@ vr-research-runner projects/demo run \
   --metric-regex "accuracy=([0-9.]+)" \
   --change "dropout=0.2 seed 0" \
   --seed 0 \
+  --monitor-url https://wandb.ai/example/run \
   --git-commit \
   --wait-human
 ```
 
-`claim` moves the first `QUEUE` row into `ACTIVE` and creates `results/<slug>.md`; with `--prepare-branch --code-cwd <repo>` it also switches or creates the code branch. If README `BUDGET` is already capped, claim stops until a human approves `--allow-budget-cap`. `cycle` runs a command, appends the cycle line, captures the artifact log, records seed/git provenance, and can commit/push the code repo with `--git-commit --git-push`. `--ask-human` posts the review card and continues; `--wait-human` posts the card and waits for a human click, returning the wait result in JSON. `run` does claim + one cycle. `finish` closes the loop by setting `STATUS`, aggregating cycle metrics into quantitative frontmatter, running admission, updating `paper.md`, publishing the current figure to Agent Canvas, debiting README `BUDGET` when `--cost-*` is present, applying Queue updates, and removing `ACTIVE` through `vr-research-resolve`:
+`claim` moves the first `QUEUE` row into `ACTIVE` and creates `results/<slug>.md`; with `--prepare-branch --code-cwd <repo>` it also switches or creates the code branch. If README `BUDGET` is already capped, claim stops until a human approves `--allow-budget-cap`. `cycle` runs a command, appends the cycle line, captures the artifact log, records seed/git provenance, can commit/push the code repo with `--git-commit --git-push`, and can pin a live W&B/TensorBoard/Modal URL with `--monitor-url`. `--ask-human` posts the review card and continues; `--wait-human` posts the card and waits for a human click, returning the wait result in JSON. `run` does claim + one cycle. `finish` closes the loop by setting `STATUS`, aggregating cycle metrics into quantitative frontmatter, running admission, updating `paper.md`, publishing the current figure to Agent Canvas, debiting README `BUDGET` when `--cost-*` is present, applying Queue updates, and removing `ACTIVE` through `vr-research-resolve`:
 
 ```sh
 vr-research-runner projects/demo finish \
