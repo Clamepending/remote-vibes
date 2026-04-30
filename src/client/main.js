@@ -2275,6 +2275,13 @@ const state = {
   sessionRefreshFlushTimer: null,
   sessionProjectSuppressClickKey: "",
   sessionProjectSuppressClickUntil: 0,
+  sessionContextMenu: null,
+  sessionContextMenuDismissBound: false,
+  projectFileTreeOpen: {},
+  projectFileTreeEntries: {},
+  projectFileTreeExpanded: {},
+  projectFileTreeLoading: {},
+  projectFileTreeErrors: {},
   filesRootOverride: null,
   filesRoot: "",
   fileTreeEntries: {},
@@ -12734,6 +12741,97 @@ function renderFileTree() {
   return renderFileTreeNodes("");
 }
 
+function renderProjectFileTreeNodes(root, parentPath = "", depth = 0) {
+  const rootBucket = state.projectFileTreeEntries[root] || {};
+  const expandedSet = state.projectFileTreeExpanded[root] || new Set();
+  const loadingSet = state.projectFileTreeLoading[root] || new Set();
+  const pathKey = normalizeFileTreePath(parentPath);
+  const entries = rootBucket[pathKey];
+
+  if (!entries?.length) {
+    if (loadingSet.has(pathKey)) {
+      return `<div class="file-tree-status" style="--depth:${depth}">loading...</div>`;
+    }
+    return parentPath === "" ? `<div class="file-tree-status" style="--depth:${depth}">no files</div>` : "";
+  }
+
+  return entries
+    .map((entry) => {
+      if (entry.type === "directory") {
+        const isExpanded = expandedSet.has(entry.relativePath);
+        const children = isExpanded ? renderProjectFileTreeNodes(root, entry.relativePath, depth + 1) : "";
+        return `
+          <div class="file-node">
+            <button class="file-row file-row-button" type="button"
+              data-project-file-toggle="${escapeHtml(entry.relativePath)}"
+              data-project-file-root="${escapeHtml(root)}"
+              style="--depth:${depth}">
+              ${renderTreeCaret(isExpanded)}
+              ${renderDirectoryIcon(entry, isExpanded)}
+              <span class="file-label">${escapeHtml(entry.name)}</span>
+            </button>
+            ${children ? `<div class="file-children" style="--depth:${depth}">${children}</div>` : ""}
+          </div>
+        `;
+      }
+
+      const openMode = entry.isImage ? "image" : isLikelyTextFile(entry.name) ? "text" : "raw";
+      return `
+        <button
+          class="file-row file-row-button file-open-button"
+          type="button"
+          data-project-file-open="${escapeHtml(entry.relativePath)}"
+          data-project-file-root="${escapeHtml(root)}"
+          data-file-open-mode="${openMode}"
+          style="--depth:${depth}"
+        >
+          <span class="file-caret file-caret-spacer" aria-hidden="true"></span>
+          ${renderFileEntryIcon(entry, openMode)}
+          <span class="file-label">${escapeHtml(entry.name)}</span>
+        </button>
+      `;
+    })
+    .join("");
+}
+
+function renderProjectFileTree(root) {
+  if (!root) return "";
+  const errorMessage = state.projectFileTreeErrors[root];
+  const rootBucket = state.projectFileTreeEntries[root] || {};
+  const loadingSet = state.projectFileTreeLoading[root] || new Set();
+  if (errorMessage && !rootBucket[""]?.length) {
+    return `<div class="file-tree-status">${escapeHtml(errorMessage)}</div>`;
+  }
+  if (loadingSet.has("") && !rootBucket[""]) {
+    return `<div class="file-tree-status">loading files</div>`;
+  }
+  return renderProjectFileTreeNodes(root, "", 0);
+}
+
+function renderSessionProjectFiles(group) {
+  const root = normalizeWorkspaceRoot(group.cwd || "");
+  if (!root) return "";
+  const isOpen = !!state.projectFileTreeOpen[root];
+  return `
+    <div class="session-project-files ${isOpen ? "is-open" : ""}">
+      <button
+        class="session-project-files-toggle"
+        type="button"
+        data-session-project-files-toggle="${escapeHtml(root)}"
+        aria-expanded="${isOpen ? "true" : "false"}"
+      >
+        ${renderTreeCaret(isOpen)}
+        <span>Files</span>
+      </button>
+      ${
+        isOpen
+          ? `<div class="session-project-files-tree" data-project-file-tree-root="${escapeHtml(root)}">${renderProjectFileTree(root)}</div>`
+          : ""
+      }
+    </div>
+  `;
+}
+
 function getSessionProjectGroups() {
   if (!state.sessions.length) {
     return [];
@@ -12806,17 +12904,6 @@ function renderSessionCard(session) {
         </div>
       </div>
       <span class="session-time">${relativeTime(session.lastOutputAt)}</span>
-      <div class="session-actions">
-        <button class="session-action-button session-fork-button" type="button" aria-label="Fork session" ${tooltipAttributes("Fork session")} data-fork-session="${session.id}">
-          ${renderIcon(GitFork)}
-        </button>
-        <button class="session-action-button" type="button" aria-label="Rename session" ${tooltipAttributes("Rename session")} data-rename-session="${session.id}">
-          ${renderIcon(Pencil)}
-        </button>
-        <button class="session-action-button session-delete-button" type="button" aria-label="Delete session" ${tooltipAttributes("Delete session")} data-delete-session="${session.id}">
-          ${renderIcon(Trash2)}
-        </button>
-      </div>
     </article>
     ${
       visibleSubagents.length
@@ -14049,7 +14136,6 @@ function renderSessionCards() {
     .map((group) => {
       const expanded = state.sessionProjectExpanded.has(group.key);
       const active = group.sessions.some((session) => session.id === state.activeSessionId);
-      const graphSessionId = group.sessions[0]?.id || "";
       const paperNotePath = getProjectPaperNotePathForCwd(group.cwd);
       const paperButtonHtml = paperNotePath
         ? `
@@ -14089,17 +14175,7 @@ function renderSessionCards() {
                 <span class="session-project-name">${escapeHtml(group.name)}</span>
               </span>
             </button>
-            <button
-              class="session-project-graph"
-              type="button"
-              data-open-swarm-project="${escapeHtml(group.cwd)}"
-              data-swarm-project-fallback-session="${escapeHtml(graphSessionId)}"
-              data-swarm-project-name="${escapeHtml(group.name)}"
-              aria-label="Open repo graph for ${escapeHtml(group.name)}"
-              ${tooltipAttributes("Repo graph")}
-            >
-              ${renderIcon(Waypoints)}
-            </button>${paperButtonHtml}${wandbButtonHtml}
+            ${paperButtonHtml}${wandbButtonHtml}
             <button
               class="session-project-new"
               type="button"
@@ -14110,7 +14186,7 @@ function renderSessionCards() {
           </div>
           ${
             expanded
-              ? `<div class="session-project-sessions">${group.sessions.map((session) => renderSessionCard(session)).join("")}</div>`
+              ? `<div class="session-project-sessions">${group.sessions.map((session) => renderSessionCard(session)).join("")}</div>${renderSessionProjectFiles(group)}`
               : ""
           }
         </section>
@@ -33265,6 +33341,87 @@ function consumeSuppressedSessionProjectClick(projectKey) {
   return false;
 }
 
+async function loadProjectFileTree(root, relativePath = "", { force = false } = {}) {
+  if (!root) return;
+  const pathKey = normalizeFileTreePath(relativePath);
+  if (!state.projectFileTreeLoading[root]) state.projectFileTreeLoading[root] = new Set();
+  if (!state.projectFileTreeEntries[root]) state.projectFileTreeEntries[root] = {};
+
+  const loadingSet = state.projectFileTreeLoading[root];
+  const entriesByPath = state.projectFileTreeEntries[root];
+
+  if (!force && (loadingSet.has(pathKey) || entriesByPath[pathKey])) {
+    return;
+  }
+
+  loadingSet.add(pathKey);
+  if (pathKey === "") {
+    state.projectFileTreeErrors[root] = "";
+  }
+  refreshSessionsList({ force: true });
+
+  try {
+    const params = new URLSearchParams();
+    params.set("root", root);
+    if (pathKey) params.set("path", pathKey);
+    const payload = await fetchJson(`/api/files?${params.toString()}`);
+    entriesByPath[pathKey] = payload.entries;
+    state.projectFileTreeErrors[root] = "";
+  } catch (error) {
+    if (pathKey) {
+      const expandedSet = state.projectFileTreeExpanded[root];
+      if (expandedSet) expandedSet.delete(pathKey);
+    }
+    state.projectFileTreeErrors[root] = error.message;
+  } finally {
+    loadingSet.delete(pathKey);
+    refreshSessionsList({ force: true });
+  }
+}
+
+function toggleProjectFileTreeOpen(root) {
+  if (!root) return;
+  const currentlyOpen = !!state.projectFileTreeOpen[root];
+  if (currentlyOpen) {
+    state.projectFileTreeOpen[root] = false;
+    refreshSessionsList({ force: true });
+    return;
+  }
+  state.projectFileTreeOpen[root] = true;
+  if (!state.projectFileTreeExpanded[root]) {
+    state.projectFileTreeExpanded[root] = new Set();
+  }
+  refreshSessionsList({ force: true });
+  if (!state.projectFileTreeEntries[root]?.[""]) {
+    void loadProjectFileTree(root, "");
+  }
+}
+
+function toggleProjectFileTreeNode(root, relativePath) {
+  if (!root || !relativePath) return;
+  if (!state.projectFileTreeExpanded[root]) {
+    state.projectFileTreeExpanded[root] = new Set();
+  }
+  const expandedSet = state.projectFileTreeExpanded[root];
+  if (expandedSet.has(relativePath)) {
+    expandedSet.delete(relativePath);
+    refreshSessionsList({ force: true });
+    return;
+  }
+  expandedSet.add(relativePath);
+  refreshSessionsList({ force: true });
+  void loadProjectFileTree(root, relativePath);
+}
+
+async function openProjectFileFromTree(root, relativePath, mode) {
+  if (!root || !relativePath) return;
+  const normalizedRoot = normalizeWorkspaceRoot(root);
+  if (normalizedRoot && normalizedRoot !== state.filesRoot) {
+    await applyFilesRoot(normalizedRoot, { force: true });
+  }
+  await openWorkspaceFilePreview(relativePath, { mode });
+}
+
 function bindSessionEvents() {
   const sessionsList = document.querySelector("#sessions-list");
   if (sessionsList && !sessionsList.dataset.sessionRefreshBound) {
@@ -33339,6 +33496,38 @@ function bindSessionEvents() {
       } catch (error) {
         window.alert(error.message);
       }
+    });
+  });
+
+  document.querySelectorAll("[data-session-project-files-toggle]").forEach((button) => {
+    button.addEventListener("click", (event) => {
+      event.preventDefault();
+      event.stopPropagation();
+      const root = button.getAttribute("data-session-project-files-toggle") || "";
+      toggleProjectFileTreeOpen(root);
+    });
+  });
+
+  document.querySelectorAll("[data-project-file-toggle]").forEach((button) => {
+    button.addEventListener("click", (event) => {
+      event.preventDefault();
+      event.stopPropagation();
+      const root = button.getAttribute("data-project-file-root") || "";
+      const relativePath = normalizeFileTreePath(button.getAttribute("data-project-file-toggle"));
+      if (!relativePath) return;
+      toggleProjectFileTreeNode(root, relativePath);
+    });
+  });
+
+  document.querySelectorAll("[data-project-file-open]").forEach((button) => {
+    button.addEventListener("click", async (event) => {
+      event.preventDefault();
+      event.stopPropagation();
+      const root = button.getAttribute("data-project-file-root") || "";
+      const relativePath = normalizeFileTreePath(button.getAttribute("data-project-file-open"));
+      const mode = button.getAttribute("data-file-open-mode") || "text";
+      if (!relativePath) return;
+      await openProjectFileFromTree(root, relativePath, mode);
     });
   });
 
@@ -33493,10 +33682,6 @@ function bindSessionEvents() {
 
   document.querySelectorAll("[data-session-id]").forEach((element) => {
     element.addEventListener("click", (event) => {
-      if (event.target.closest("[data-delete-session]")) {
-        return;
-      }
-
       if (hasSelectedDocumentTextWithin(element)) {
         return;
       }
@@ -33508,113 +33693,234 @@ function bindSessionEvents() {
       const nextSessionId = element.getAttribute("data-session-id");
       openAgentProfileForSession(nextSessionId || "");
     });
-  });
 
-  document.querySelectorAll("[data-rename-session]").forEach((button) => {
-    button.addEventListener("click", async (event) => {
-      event.stopPropagation();
-      const sessionId = button.getAttribute("data-rename-session");
-      const session = state.sessions.find((entry) => entry.id === sessionId);
-
-      if (!sessionId || !session) {
-        return;
-      }
-
-      const nextName = window.prompt("Rename session", session.name);
-      if (nextName === null) {
-        return;
-      }
-
-      if (!nextName.trim()) {
-        window.alert("Session name cannot be empty.");
-        return;
-      }
-
-      try {
-        const payload = await fetchJson(`/api/sessions/${sessionId}`, {
-          method: "PATCH",
-          body: JSON.stringify({ name: nextName }),
-        });
-        updateSession(payload.session);
-        refreshShellUi({ sessions: true, ports: false, files: false });
-      } catch (error) {
-        window.alert(error.message);
-      }
-    });
-  });
-
-  document.querySelectorAll("[data-fork-session]").forEach((button) => {
-    button.addEventListener("click", async (event) => {
-      event.stopPropagation();
-      const sessionId = button.getAttribute("data-fork-session");
-
+    element.addEventListener("contextmenu", (event) => {
+      const sessionId = element.getAttribute("data-session-id") || "";
       if (!sessionId) {
         return;
       }
-
-      try {
-        const payload = await fetchJson(`/api/sessions/${sessionId}/fork`, {
-          method: "POST",
-        });
-
-        state.sessions = [payload.session, ...state.sessions.filter((session) => session.id !== payload.session.id)];
-        state.activeSessionId = payload.session.id;
-        expandSessionProject(payload.session.cwd);
-        setCurrentView("shell");
-        renderShell();
-        connectToSession(payload.session.id);
-        closeMobileSidebar();
-      } catch (error) {
-        window.alert(error.message);
-      }
-    });
-  });
-
-  document.querySelectorAll("[data-delete-session]").forEach((button) => {
-    button.addEventListener("click", async (event) => {
+      event.preventDefault();
       event.stopPropagation();
-      const sessionId = button.getAttribute("data-delete-session");
-
-      try {
-        try {
-          await fetchJson(`/api/sessions/${sessionId}`, { method: "DELETE" });
-        } catch (error) {
-          // 404 means the session is already gone server-side — that's the
-          // end state the user wanted, so just continue with local cleanup
-          // instead of popping an alert.
-          if (error?.status !== 404) {
-            throw error;
-          }
-        }
-        state.sessions = state.sessions.filter((session) => session.id !== sessionId);
-        const visualSelectionPruned = pruneVisualGameSessionSelection();
-
-        if (state.activeSessionId === sessionId) {
-          closeWebsocket();
-          state.activeSessionId = state.sessions[0]?.id ?? null;
-          const nextSession = state.sessions.find((session) => session.id === state.activeSessionId);
-          if (nextSession) {
-            expandSessionProject(nextSession.cwd);
-          }
-          renderShell();
-
-          if (state.activeSessionId) {
-            connectToSession(state.activeSessionId);
-          }
-          return;
-        }
-
-        if (visualSelectionPruned && isVisualInterfaceView()) {
-          renderShell();
-          return;
-        }
-
-        refreshShellUi();
-      } catch (error) {
-        window.alert(error.message);
-      }
+      openSessionContextMenu(sessionId, event.clientX, event.clientY);
     });
   });
+}
+
+async function renameSessionPrompt(sessionId) {
+  const session = state.sessions.find((entry) => entry.id === sessionId);
+  if (!sessionId || !session) {
+    return;
+  }
+
+  const nextName = window.prompt("Rename session", session.name);
+  if (nextName === null) {
+    return;
+  }
+
+  if (!nextName.trim()) {
+    window.alert("Session name cannot be empty.");
+    return;
+  }
+
+  try {
+    const payload = await fetchJson(`/api/sessions/${sessionId}`, {
+      method: "PATCH",
+      body: JSON.stringify({ name: nextName }),
+    });
+    updateSession(payload.session);
+    refreshShellUi({ sessions: true, ports: false, files: false });
+  } catch (error) {
+    window.alert(error.message);
+  }
+}
+
+async function forkSessionAction(sessionId) {
+  if (!sessionId) {
+    return;
+  }
+
+  try {
+    const payload = await fetchJson(`/api/sessions/${sessionId}/fork`, {
+      method: "POST",
+    });
+
+    state.sessions = [payload.session, ...state.sessions.filter((session) => session.id !== payload.session.id)];
+    state.activeSessionId = payload.session.id;
+    expandSessionProject(payload.session.cwd);
+    setCurrentView("shell");
+    renderShell();
+    connectToSession(payload.session.id);
+    closeMobileSidebar();
+  } catch (error) {
+    window.alert(error.message);
+  }
+}
+
+async function deleteSessionAction(sessionId) {
+  if (!sessionId) {
+    return;
+  }
+
+  try {
+    try {
+      await fetchJson(`/api/sessions/${sessionId}`, { method: "DELETE" });
+    } catch (error) {
+      if (error?.status !== 404) {
+        throw error;
+      }
+    }
+    state.sessions = state.sessions.filter((session) => session.id !== sessionId);
+    const visualSelectionPruned = pruneVisualGameSessionSelection();
+
+    if (state.activeSessionId === sessionId) {
+      closeWebsocket();
+      state.activeSessionId = state.sessions[0]?.id ?? null;
+      const nextSession = state.sessions.find((session) => session.id === state.activeSessionId);
+      if (nextSession) {
+        expandSessionProject(nextSession.cwd);
+      }
+      renderShell();
+
+      if (state.activeSessionId) {
+        connectToSession(state.activeSessionId);
+      }
+      return;
+    }
+
+    if (visualSelectionPruned && isVisualInterfaceView()) {
+      renderShell();
+      return;
+    }
+
+    refreshShellUi();
+  } catch (error) {
+    window.alert(error.message);
+  }
+}
+
+function ensureSessionContextMenuElement() {
+  let menu = document.querySelector("#session-context-menu");
+  if (menu instanceof HTMLElement) {
+    return menu;
+  }
+
+  menu = document.createElement("div");
+  menu.id = "session-context-menu";
+  menu.className = "session-context-menu";
+  menu.setAttribute("role", "menu");
+  menu.setAttribute("aria-hidden", "true");
+  document.body.appendChild(menu);
+
+  menu.addEventListener("click", async (event) => {
+    const target = event.target;
+    if (!(target instanceof Element)) {
+      return;
+    }
+    const item = target.closest("[data-session-context-action]");
+    if (!(item instanceof HTMLElement) || !menu.contains(item)) {
+      return;
+    }
+    event.preventDefault();
+    event.stopPropagation();
+    const action = item.getAttribute("data-session-context-action") || "";
+    const sessionId = item.getAttribute("data-session-context-session-id") || "";
+    closeSessionContextMenu();
+    if (!sessionId) {
+      return;
+    }
+    if (action === "rename") {
+      await renameSessionPrompt(sessionId);
+    } else if (action === "fork") {
+      await forkSessionAction(sessionId);
+    } else if (action === "delete") {
+      await deleteSessionAction(sessionId);
+    }
+  });
+
+  return menu;
+}
+
+function bindSessionContextMenuDismissOnce() {
+  if (state.sessionContextMenuDismissBound) {
+    return;
+  }
+  state.sessionContextMenuDismissBound = true;
+  document.addEventListener("pointerdown", (event) => {
+    if (!state.sessionContextMenu) {
+      return;
+    }
+    const target = event.target;
+    if (target instanceof Element && target.closest("#session-context-menu")) {
+      return;
+    }
+    closeSessionContextMenu();
+  }, true);
+  document.addEventListener("keydown", (event) => {
+    if (event.key === "Escape" && state.sessionContextMenu) {
+      closeSessionContextMenu();
+    }
+  });
+  window.addEventListener("blur", () => {
+    if (state.sessionContextMenu) {
+      closeSessionContextMenu();
+    }
+  });
+  window.addEventListener("resize", () => {
+    if (state.sessionContextMenu) {
+      closeSessionContextMenu();
+    }
+  });
+  window.addEventListener("scroll", () => {
+    if (state.sessionContextMenu) {
+      closeSessionContextMenu();
+    }
+  }, true);
+}
+
+function openSessionContextMenu(sessionId, x, y) {
+  const session = state.sessions.find((entry) => entry.id === sessionId);
+  if (!session) {
+    return;
+  }
+  const menu = ensureSessionContextMenuElement();
+  bindSessionContextMenuDismissOnce();
+
+  state.sessionContextMenu = { sessionId, x, y };
+
+  menu.innerHTML = `
+    <button class="session-context-menu-item" type="button" role="menuitem" data-session-context-action="rename" data-session-context-session-id="${escapeHtml(sessionId)}">
+      ${renderIcon(Pencil)}<span>Rename</span>
+    </button>
+    <button class="session-context-menu-item" type="button" role="menuitem" data-session-context-action="fork" data-session-context-session-id="${escapeHtml(sessionId)}">
+      ${renderIcon(GitFork)}<span>Fork</span>
+    </button>
+    <button class="session-context-menu-item is-danger" type="button" role="menuitem" data-session-context-action="delete" data-session-context-session-id="${escapeHtml(sessionId)}">
+      ${renderIcon(Trash2)}<span>Delete</span>
+    </button>
+  `;
+
+  menu.classList.add("is-open");
+  menu.setAttribute("aria-hidden", "false");
+  menu.style.left = "0px";
+  menu.style.top = "0px";
+
+  const menuRect = menu.getBoundingClientRect();
+  const viewportWidth = window.innerWidth || document.documentElement.clientWidth;
+  const viewportHeight = window.innerHeight || document.documentElement.clientHeight;
+  const left = Math.max(4, Math.min(x, viewportWidth - menuRect.width - 4));
+  const top = Math.max(4, Math.min(y, viewportHeight - menuRect.height - 4));
+  menu.style.left = `${left}px`;
+  menu.style.top = `${top}px`;
+}
+
+function closeSessionContextMenu() {
+  state.sessionContextMenu = null;
+  const menu = document.querySelector("#session-context-menu");
+  if (menu instanceof HTMLElement) {
+    menu.classList.remove("is-open");
+    menu.setAttribute("aria-hidden", "true");
+    menu.innerHTML = "";
+  }
 }
 
 function refreshSessionsList({ force = false, bindEvents = true } = {}) {

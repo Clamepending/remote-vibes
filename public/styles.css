@@ -12078,6 +12078,102 @@ button.visual-town-building:focus-visible {
   color: #ff9f99;
 }
 
+.session-context-menu {
+  position: fixed;
+  z-index: 9999;
+  min-width: 156px;
+  padding: 4px;
+  border: 1px solid rgba(255, 255, 255, 0.08);
+  border-radius: 10px;
+  background: rgba(24, 23, 28, 0.98);
+  box-shadow: 0 18px 40px rgba(0, 0, 0, 0.45);
+  display: none;
+  flex-direction: column;
+  gap: 1px;
+  font-size: 13px;
+  color: rgba(236, 240, 245, 0.92);
+}
+
+.session-context-menu.is-open {
+  display: flex;
+}
+
+.session-context-menu-item {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  padding: 7px 10px;
+  border: 0;
+  border-radius: 7px;
+  background: transparent;
+  color: inherit;
+  text-align: left;
+  cursor: pointer;
+}
+
+.session-context-menu-item:hover,
+.session-context-menu-item:focus-visible {
+  background: rgba(255, 255, 255, 0.08);
+  outline: none;
+}
+
+.session-context-menu-item .vr-icon {
+  width: 14px;
+  height: 14px;
+  stroke-width: 2;
+  flex-shrink: 0;
+}
+
+.session-context-menu-item.is-danger {
+  color: #ff9f99;
+}
+
+.session-context-menu-item.is-danger:hover,
+.session-context-menu-item.is-danger:focus-visible {
+  background: rgba(255, 141, 134, 0.14);
+  color: #ff9f99;
+}
+
+.session-project-files {
+  margin: 4px 0 6px 0;
+  padding: 0;
+}
+
+.session-project-files-toggle {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 4px 8px;
+  margin-left: 4px;
+  border: 0;
+  border-radius: 6px;
+  background: transparent;
+  color: rgba(236, 240, 245, 0.62);
+  font-size: 12px;
+  cursor: pointer;
+}
+
+.session-project-files-toggle:hover,
+.session-project-files-toggle:focus-visible {
+  background: rgba(255, 255, 255, 0.05);
+  color: rgba(236, 240, 245, 0.9);
+  outline: none;
+}
+
+.session-project-files-toggle .vr-icon {
+  width: 12px;
+  height: 12px;
+}
+
+.session-project-files-tree {
+  margin-top: 2px;
+  padding: 0 0 4px 0;
+}
+
+.session-project-files-tree .file-row {
+  font-size: 12px;
+}
+
 .danger-icon-button:hover:not(:disabled),
 .danger-icon-button:focus-visible:not(:disabled) {
   border-color: rgba(255, 141, 134, 0.22);
