@@ -24323,17 +24323,46 @@ function getAgentTownPlacedFunctionalPluginIds() {
   );
 }
 
+function getAgentTownBuildingInstallStatus(plugin) {
+  const pluginId = getPluginId(plugin);
+  if (!pluginId) return "installed";
+  if (pluginId === "buildinghub") return "installed";
+  const job = state.buildingInstallJobs && state.buildingInstallJobs[pluginId];
+  if (job) {
+    if (job.status === "starting" || job.status === "running") return "installing";
+    if (job.status === "auth-required") return "auth-required";
+    if (job.status === "failed") return "failed";
+  }
+  if (isPluginInstalled(plugin)) return "installed";
+  // Has placement record but no install in flight and not yet installed.
+  return "placed";
+}
+
+function getAgentTownInstallStatusMeta(installStatus, fallbackMeta) {
+  if (installStatus === "installing") return "installing…";
+  if (installStatus === "auth-required") return "needs setup";
+  if (installStatus === "failed") return "setup failed";
+  if (installStatus === "placed") return "needs setup";
+  return fallbackMeta;
+}
+
 function getAgentTownPluginBuildingBlueprints() {
-  const installedPlugins = PLUGIN_CATALOG
-    .filter((plugin) => isPluginInstalled(plugin))
+  // Visibility = placement, not install state. A building shows on the map
+  // the moment it's dropped; appearance reflects install status. Pending
+  // placements (user opened install dialog but hasn't dropped yet) stay
+  // excluded.
+  const visiblePlugins = PLUGIN_CATALOG
     .filter(isAgentTownPluginBuilding)
     .filter((plugin) => {
       const pluginId = getPluginId(plugin);
-      return pluginId === "buildinghub" || !isAgentTownFunctionalPending(pluginId);
+      if (isAgentTownFunctionalPending(pluginId)) return false;
+      if (pluginId === "buildinghub") return true;
+      const hasPlacement = Boolean(getAgentTownFunctionalPlacement(pluginId));
+      return hasPlacement || isPluginInstalled(plugin);
     });
 
   let autoSlotIndex = 0;
-  return installedPlugins.map((plugin) => {
+  return visiblePlugins.map((plugin) => {
     const pluginId = getPluginId(plugin);
     const issue = getPluginBuildingIssue(plugin);
     const shape = getPluginBuildingShape(plugin);
@@ -24343,15 +24372,23 @@ function getAgentTownPluginBuildingBlueprints() {
     if (!baseRect) {
       return null;
     }
+    const installStatus = getAgentTownBuildingInstallStatus(plugin);
+    const fallbackMeta = pluginId === "tailscale"
+      ? getTailscaleBuildingMeta()
+      : getPluginStatusBadgeLabel(plugin, issue) || plugin.category || "building";
+    const meta = installStatus === "installed"
+      ? fallbackMeta
+      : getAgentTownInstallStatusMeta(installStatus, fallbackMeta);
     return {
       ...getAgentTownPluginBuildingPalette(pluginId),
       id: `building-${pluginId}`,
       issue,
       pluginId,
       label: plugin.name,
-      meta: pluginId === "tailscale" ? getTailscaleBuildingMeta() : getPluginStatusBadgeLabel(plugin, issue) || plugin.category || "building",
+      meta,
       shape,
       baseRect,
+      installStatus,
       action: {
         kind: "building",
         buildingId: pluginId,
@@ -26834,6 +26871,7 @@ function drawAgentTownInstalledPluginBuildings(context, hitAreas, time = 0, { ha
         issue: blueprint.issue,
         action: blueprint.action,
       }, time);
+      drawAgentTownBuildingInstallStatusOverlay(context, building.rect || blueprint.baseRect, blueprint.installStatus, time);
       continue;
     }
     if (blueprint.shape === "lab") {
@@ -26846,6 +26884,7 @@ function drawAgentTownInstalledPluginBuildings(context, hitAreas, time = 0, { ha
         issue: blueprint.issue,
         action: blueprint.action,
       }, time, blueprint.pluginId === "harbor" ? harborAgents : []);
+      drawAgentTownBuildingInstallStatusOverlay(context, building.rect || blueprint.baseRect, blueprint.installStatus, time);
       continue;
     }
     drawVisualGameBuilding(context, hitAreas, {
@@ -26857,7 +26896,184 @@ function drawAgentTownInstalledPluginBuildings(context, hitAreas, time = 0, { ha
       issue: blueprint.issue,
       action: blueprint.action,
     });
+    drawAgentTownBuildingInstallStatusOverlay(context, building.rect || blueprint.baseRect, blueprint.installStatus, time);
   }
+}
+
+const AGENT_TOWN_BUILDING_STATUS_THEMES = {
+  installing: {
+    label: "installing…",
+    pillBody: "#1c2c46",
+    pillTrim: "#7da6e0",
+    pillText: "#e8f1ff",
+    glow: "rgba(125, 166, 224, 0.65)",
+    scaffoldA: "rgba(255, 255, 255, 0.16)",
+    scaffoldB: "rgba(15, 30, 60, 0.18)",
+    desaturateAlpha: 0,
+    pulse: true,
+  },
+  "auth-required": {
+    label: "needs setup",
+    pillBody: "#3d2a14",
+    pillTrim: "#f5b860",
+    pillText: "#fff5d8",
+    glow: "rgba(245, 184, 96, 0.55)",
+    scaffoldA: "rgba(255, 222, 156, 0.16)",
+    scaffoldB: "rgba(70, 38, 13, 0.20)",
+    desaturateAlpha: 0,
+    pulse: false,
+  },
+  failed: {
+    label: "setup failed",
+    pillBody: "#411b16",
+    pillTrim: "#ee6e63",
+    pillText: "#fff0ee",
+    glow: "rgba(238, 110, 99, 0.6)",
+    scaffoldA: "rgba(238, 110, 99, 0.15)",
+    scaffoldB: "rgba(0, 0, 0, 0.22)",
+    desaturateAlpha: 0.32,
+    pulse: false,
+  },
+  placed: {
+    label: "needs setup",
+    pillBody: "#2a2e3a",
+    pillTrim: "#a0a8b8",
+    pillText: "#eef2f8",
+    glow: "rgba(160, 168, 184, 0.45)",
+    scaffoldA: "rgba(255, 255, 255, 0.14)",
+    scaffoldB: "rgba(0, 0, 0, 0.18)",
+    desaturateAlpha: 0.22,
+    pulse: false,
+  },
+};
+
+function drawAgentTownBuildingInstallStatusOverlay(context, rect, status, time = 0) {
+  if (!rect || !status || status === "installed") return;
+  const theme = AGENT_TOWN_BUILDING_STATUS_THEMES[status];
+  if (!theme) return;
+
+  const x = Math.round(rect.x);
+  const y = Math.round(rect.y);
+  const width = Math.round(rect.width);
+  const height = Math.round(rect.height);
+
+  // 1. Desaturation wash for failed / placed-without-install. Skipped for
+  // installing + auth-required to keep them looking "live".
+  if (theme.desaturateAlpha > 0) {
+    context.save();
+    context.fillStyle = `rgba(28, 32, 40, ${theme.desaturateAlpha})`;
+    context.fillRect(x, y, width, height);
+    context.restore();
+  }
+
+  // 2. Diagonal scaffold stripes, clipped to the building footprint.
+  // Animated only while installing.
+  context.save();
+  context.beginPath();
+  context.rect(x, y, width, height);
+  context.clip();
+  const cx = x + width / 2;
+  const cy = y + height / 2;
+  context.translate(cx, cy);
+  context.rotate(Math.PI / 4);
+  const span = Math.max(width, height) * 1.4;
+  const stripeThickness = 2;
+  const gap = 6;
+  const stride = stripeThickness + gap;
+  const animOffset = theme.pulse ? (time * 0.025) % stride : 0;
+  context.fillStyle = theme.scaffoldA;
+  for (let s = -span - animOffset; s < span; s += stride) {
+    context.fillRect(-span, s, span * 2, stripeThickness);
+  }
+  context.fillStyle = theme.scaffoldB;
+  for (let s = -span - animOffset + stride / 2; s < span; s += stride) {
+    context.fillRect(-span, s, span * 2, 1);
+  }
+  context.restore();
+
+  // 3. Status frame: pulsing glow for installing, steady accent otherwise.
+  context.save();
+  if (theme.pulse) {
+    const pulse = 0.55 + 0.45 * Math.sin(time * 0.005);
+    context.globalAlpha = 0.45 + 0.45 * pulse;
+    context.strokeStyle = theme.glow;
+    context.lineWidth = 2;
+    context.strokeRect(x - 1 + 0.5, y - 1 + 0.5, width + 2, height + 2);
+  } else {
+    context.strokeStyle = theme.pillTrim;
+    context.lineWidth = 1.5;
+    context.strokeRect(x + 0.75, y + 0.75, width - 1.5, height - 1.5);
+  }
+  context.restore();
+
+  // 4. Status pill above the building.
+  drawAgentTownBuildingStatusPill(context, { x, y, width }, theme);
+
+  // 5. Failure marker corner triangle for failed.
+  if (status === "failed") {
+    drawAgentTownBuildingFailureMarker(context, { x, y, width }, theme);
+  }
+}
+
+function drawAgentTownBuildingStatusPill(context, rect, theme) {
+  if (!theme?.label) return;
+  const { x, y, width } = rect;
+  context.save();
+  context.font = "bold 7px 'IBM Plex Mono', ui-monospace, monospace";
+  const padX = 5;
+  const textWidth = Math.ceil(context.measureText(theme.label).width);
+  const pillWidth = textWidth + padX * 2;
+  const pillHeight = 11;
+  const pillX = Math.round(x + (width - pillWidth) / 2);
+  const pillY = Math.round(y - pillHeight - 3);
+  context.fillStyle = "rgba(0, 0, 0, 0.45)";
+  context.fillRect(pillX + 1, pillY + 1, pillWidth, pillHeight);
+  context.fillStyle = theme.pillBody;
+  context.fillRect(pillX, pillY, pillWidth, pillHeight);
+  context.fillStyle = theme.pillTrim;
+  context.fillRect(pillX, pillY, pillWidth, 1);
+  context.fillRect(pillX, pillY + pillHeight - 1, pillWidth, 1);
+  context.fillRect(pillX, pillY, 1, pillHeight);
+  context.fillRect(pillX + pillWidth - 1, pillY, 1, pillHeight);
+  context.fillStyle = "rgba(255, 255, 255, 0.10)";
+  context.fillRect(pillX + 1, pillY + 1, pillWidth - 2, 1);
+  context.fillStyle = theme.pillText;
+  context.textBaseline = "middle";
+  context.textAlign = "center";
+  context.fillText(theme.label, pillX + pillWidth / 2, pillY + pillHeight / 2 + 0.5);
+  context.restore();
+}
+
+function drawAgentTownBuildingFailureMarker(context, rect, theme) {
+  const size = 14;
+  const cornerX = Math.round(rect.x + rect.width - size - 3);
+  const cornerY = Math.round(rect.y + 3);
+  context.save();
+  context.fillStyle = "rgba(0, 0, 0, 0.45)";
+  context.beginPath();
+  context.moveTo(cornerX + 1, cornerY + size + 1);
+  context.lineTo(cornerX + size + 1, cornerY + size + 1);
+  context.lineTo(cornerX + size + 1, cornerY + 1);
+  context.closePath();
+  context.fill();
+  context.fillStyle = theme.pillBody;
+  context.beginPath();
+  context.moveTo(cornerX, cornerY + size);
+  context.lineTo(cornerX + size, cornerY + size);
+  context.lineTo(cornerX + size, cornerY);
+  context.closePath();
+  context.fill();
+  context.fillStyle = theme.pillTrim;
+  context.beginPath();
+  context.moveTo(cornerX + 2, cornerY + size - 1);
+  context.lineTo(cornerX + size - 1, cornerY + size - 1);
+  context.lineTo(cornerX + size - 1, cornerY + 2);
+  context.closePath();
+  context.fill();
+  context.fillStyle = theme.pillText;
+  context.fillRect(cornerX + size - 5, cornerY + 3, 2, 6);
+  context.fillRect(cornerX + size - 5, cornerY + 10, 2, 2);
+  context.restore();
 }
 
 function drawVisualGameSleepingQuarters(context, hitAreas, time, sleepingAgents) {
