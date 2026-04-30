@@ -145,6 +145,7 @@ export async function resolveMove({
   }
 
   const readmePath = path.join(projectDir, "README.md");
+  const logPath = path.join(projectDir, "LOG.md");
   const resultPath = path.join(projectDir, "results", `${slug}.md`);
 
   const [readmeText, resultText] = await Promise.all([
@@ -233,7 +234,7 @@ export async function resolveMove({
   // Eviction LOG row first (chronologically before the resolution).
   if (evicted) {
     await appendLogImpl({
-      readmePath,
+      logPath,
       row: {
         event: "evicted",
         slug: evicted.slug,
@@ -247,7 +248,7 @@ export async function resolveMove({
   // Resolution LOG row.
   const eventTag = admit ? `${event}+admitted` : event;
   await appendLogImpl({
-    readmePath,
+    logPath,
     row: {
       event: eventTag,
       slug,

@@ -1,15 +1,17 @@
 // vr-research doctor — validate the loop bookkeeping for a project.
 //
-// Walks the README's LEADERBOARD, ACTIVE, QUEUE, INSIGHTS, and LOG sections
-// and verifies that:
+// Walks the README's LEADERBOARD, ACTIVE, QUEUE, and INSIGHTS sections
+// plus the sibling LOG.md, and verifies that:
 //   - leaderboard rows point at result docs that exist and are STATUS:resolved
 //   - active rows point at result docs that exist and are STATUS:active
 //   - queue starting-point URLs are well-shaped (`<repo>/tree/<branch>` or
 //     `<repo>/tree/<branch>@<sha>`)
 //   - insights links resolve to insights/<slug>.md somewhere up the tree
-//   - log rows whose link is a relative path resolve to a real file
+//   - LOG.md exists and its rows whose link is a relative path resolve
 //   - leaderboard branch URLs follow the `<repo>/tree/r/<slug>` convention
 //   - leaderboard commit URLs follow the `<repo>/commit/<sha>` convention
+//   - the README's `## LOG` section is a pointer (no rows); a populated
+//     LOG table inside the README is a legacy-format warning.
 //
 // Each issue carries a severity (`error` | `warning` | `info`) and a one-line
 // human-readable message anchored to a section + row when applicable.
@@ -17,7 +19,7 @@
 import { readFile, readdir, stat } from "node:fs/promises";
 import { createHash } from "node:crypto";
 import path from "node:path";
-import { parseProjectReadme } from "./project-readme.js";
+import { parseProjectReadme, loadProjectLog } from "./project-readme.js";
 import { parseResultDoc } from "./result-doc.js";
 import { parseRunsTsv } from "./sweep-runner.js";
 import { readManifest, archivedPath } from "./vacuum.js";
@@ -359,6 +361,42 @@ async function checkLog(projectDir, log) {
   return issues;
 }
 
+async function checkLogFilePresence(projectDir, logFile, legacyRows) {
+  const issues = [];
+  if (!logFile.exists) {
+    issues.push(makeIssue(
+      "error",
+      "log_file_missing",
+      "LOG.md",
+      `LOG.md not found at ${logFile.path} — every project must keep its event log in a sibling LOG.md (see CLAUDE.md)`,
+    ));
+    return issues;
+  }
+  // The file exists. If the canonical 5-column header + separator is
+  // missing, the next vr-research-log will fail at runtime — surface the
+  // problem here in the doctor instead.
+  let text = "";
+  try { text = await readFile(logFile.path, "utf8"); } catch {}
+  const hasTable = /\|[^\n]*?\bdate\b[^\n]*?\bevent\b[^\n]*?\bslug\b[^\n]*?\bsummary\b[^\n]*?\blink\b[^\n]*\|\s*\n\s*\|[\s|:-]+\|/i.test(text);
+  if (!hasTable) {
+    issues.push(makeIssue(
+      "error",
+      "log_file_malformed",
+      "LOG.md",
+      "LOG.md is present but missing the canonical `| date | event | slug or ref | one-line summary | link |` header + separator — vr-research-log cannot append rows",
+    ));
+  }
+  if (Array.isArray(legacyRows) && legacyRows.length > 0) {
+    issues.push(makeIssue(
+      "warning",
+      "log_legacy_in_readme",
+      "README.md ## LOG",
+      `README's LOG section has ${legacyRows.length} row(s); the LOG lives in LOG.md now — move these rows over and replace the section body with a pointer to LOG.md`,
+    ));
+  }
+  return issues;
+}
+
 function checkLeaderboardCap(leaderboard) {
   if (leaderboard.length > 5) {
     return [makeIssue("warning", "leaderboard_overflow", "LEADERBOARD", `leaderboard has ${leaderboard.length} rows (cap is 5)`)];
@@ -695,6 +733,11 @@ export async function runDoctor(projectDir, { readmeText } = {}) {
   }
   const parsed = parseProjectReadme(text);
 
+  // The LOG lives in LOG.md (see CLAUDE.md). Merge its rows into parsed.log
+  // so downstream checks (orphan detection, link validation) see one shape.
+  const logFile = await loadProjectLog(projectDir);
+  parsed.log = logFile.rows;
+
   const benchmark = await loadBenchmark(projectDir);
 
   const issues = [];
@@ -709,6 +752,7 @@ export async function runDoctor(projectDir, { readmeText } = {}) {
   issues.push(...await checkActive(projectDir, parsed.active, benchmark));
   issues.push(...checkQueue(parsed.queue));
   issues.push(...await checkInsights(projectDir, parsed.insights));
+  issues.push(...await checkLogFilePresence(projectDir, logFile, parsed.legacyLog));
   issues.push(...await checkLog(projectDir, parsed.log));
   issues.push(...await checkRunsTsv(projectDir, parsed.active));
   issues.push(...await checkKickoffJson(projectDir));

@@ -21,8 +21,8 @@
 //   - Pin (never tier):
 //       * any file under `.archive/`, `benchmark/`, or with a TEXT_EXTENSIONS
 //         extension (.md / .tsv / .txt / .json / .yaml / .yml)
-//       * any figure referenced by a result doc whose slug appears in the
-//         README LOG with a `falsified` event tag (negative-result evidence)
+//       * any figure referenced by a result doc whose slug appears in
+//         LOG.md with a `falsified` event tag (negative-result evidence)
 //
 // Why string-walk instead of a full project-aware crawl: the doctor +
 // project-readme parser already understand README structure; vacuum is
@@ -33,7 +33,7 @@
 import { readFile, writeFile, rename, stat, readdir, mkdir, unlink, rm } from "node:fs/promises";
 import { createHash } from "node:crypto";
 import path from "node:path";
-import { parseProjectReadme } from "./project-readme.js";
+import { parseProjectReadme, loadProjectLog } from "./project-readme.js";
 
 export const BINARY_EXTENSIONS = new Set([
   ".png", ".jpg", ".jpeg", ".gif", ".webp", ".pdf",
@@ -146,10 +146,10 @@ async function* walkFiles(rootAbsPath, projectDir) {
 
 // ----- negative-result figure pinning -----
 
-// Parse the project README for slugs whose LOG event tag contains
-// `falsified`. The LOG schema lets the primary tag compound with
-// `+admitted` / `+evicted`, e.g. `falsified+admitted`. We match any
-// row whose event includes `falsified`.
+// Parse LOG.md for slugs whose event tag contains `falsified`. The LOG
+// schema lets the primary tag compound with `+admitted` / `+evicted`,
+// e.g. `falsified+admitted`. We match any row whose event includes
+// `falsified`.
 function falsifiedSlugs(parsedReadme) {
   const slugs = new Set();
   for (const row of parsedReadme.log) {
@@ -202,6 +202,14 @@ export async function planVacuum(projectDir, {
     parsed = parseProjectReadme(readmeText);
   } catch {
     parsed = { log: [], leaderboard: [], active: [], queue: [] };
+  }
+  // The LOG lives in LOG.md; missing file is non-fatal here (vacuum just
+  // misses out on falsified-figure pinning, doctor will already complain).
+  try {
+    const logFile = await loadProjectLog(projectDir);
+    parsed.log = logFile.rows;
+  } catch {
+    parsed.log = parsed.log || [];
   }
   const pinnedFigures = await collectFalsifiedFigures(projectDir, parsed);
 

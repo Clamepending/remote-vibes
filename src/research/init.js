@@ -10,7 +10,10 @@
 //   projects/<name>/
 //     README.md          ← project index (GOAL, CODE REPO, SUCCESS,
 //                          RANKING CRITERION, LEADERBOARD, INSIGHTS,
-//                          ACTIVE, QUEUE, LOG)
+//                          ACTIVE, QUEUE; LOG section is a pointer)
+//     LOG.md             ← append-only event history (separate file so
+//                          the README stays compact in the loop's hot
+//                          path; agents only read the LOG when reviewing)
 //     paper.md           ← living human-facing paper (copied from
 //                          templates/paper-template.md, title filled)
 //     results/           ← per-move result docs (created empty)
@@ -124,6 +127,17 @@ export function renderProjectReadme({
     queueBody,
     "",
     "## LOG",
+    "",
+    "See [LOG.md](./LOG.md) — append-only event history.",
+    "",
+  ].join("\n");
+}
+
+export function renderProjectLog({ name }) {
+  return [
+    `# ${name} — LOG`,
+    "",
+    "Append-only event log. Newest first. See [README.md](./README.md) for project state (LEADERBOARD, ACTIVE, QUEUE).",
     "",
     "| date | event | slug or ref | one-line summary | link |",
     "|------|-------|-------------|------------------|------|",
@@ -260,6 +274,10 @@ export async function createProject({
   });
   await writeFile(readmePath, readmeBody, "utf8");
   wrote.push(readmePath);
+
+  const logPath = path.join(projectDir, "LOG.md");
+  await writeFile(logPath, renderProjectLog({ name: trimmedName }), "utf8");
+  wrote.push(logPath);
 
   const paperPath = path.join(projectDir, "paper.md");
   const template = await loadPaperTemplate(paperTemplatePath, repoRoot);

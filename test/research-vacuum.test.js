@@ -61,8 +61,8 @@ function runCli(args, { cwd, env = {}, timeoutMs = 10_000 } = {}) {
   });
 }
 
-// Make a project with a real-ish layout. README has a falsified row in
-// LOG so we can exercise the negative-result invariant.
+// Make a project with a real-ish layout. LOG.md has a falsified row so we
+// can exercise the negative-result invariant.
 function makeProject(prefix = "vr-vacuum") {
   const dir = tmp(prefix);
   writeFileSync(join(dir, "README.md"), [
@@ -84,8 +84,16 @@ function makeProject(prefix = "vr-vacuum") {
     "",
     "## LOG",
     "",
+    "See [LOG.md](./LOG.md) — append-only event history.",
+    "",
+  ].join("\n"));
+  writeFileSync(join(dir, "LOG.md"), [
+    "# example — LOG",
+    "",
+    "Append-only event log. Newest first.",
+    "",
     "| date | event | slug or ref | one-line summary | link |",
-    "|------|-------|-------------|-------------------|------|",
+    "|------|-------|-------------|------------------|------|",
     "| 2026-04-25 | falsified | v0-bad-idea | augmentation made wibble worse | [v0-bad-idea.md](results/v0-bad-idea.md) |",
     "| 2026-04-26 | resolved+admitted | v1-good | wibble lifted | [v1-good.md](results/v1-good.md) |",
     "",

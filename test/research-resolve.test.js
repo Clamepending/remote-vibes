@@ -93,8 +93,18 @@ function makeProject(prefix, { slug, decision, queueUpdates, status = "resolved"
     "",
     "## LOG",
     "",
+    "See [LOG.md](./LOG.md) — append-only event history.",
+    "",
+  ].join("\n"));
+
+  // Sibling LOG.md.
+  writeFileSync(join(dir, "LOG.md"), [
+    "# x — LOG",
+    "",
+    "Append-only event log. Newest first.",
+    "",
     "| date | event | slug or ref | one-line summary | link |",
-    "|------|-------|-------------|-------------------|------|",
+    "|------|-------|-------------|------------------|------|",
     "",
   ].join("\n"));
 
@@ -237,7 +247,7 @@ test("resolveMove: admit + insert + active remove + queue add + eviction LOG + r
     const after = readFileSync(join(dir, "README.md"), "utf8");
     const leaderboardSection = after.split("## LEADERBOARD")[1].split("##")[0];
     const activeSection = after.split("## ACTIVE")[1].split("##")[0];
-    const logSection = after.split("## LOG")[1] || "";
+    const logBody = readFileSync(join(dir, "LOG.md"), "utf8");
     // v9 at rank 1 in LEADERBOARD.
     assert.match(leaderboardSection, /\| 1 \| \[v9-newest\]/);
     // v5 evicted from LEADERBOARD (still appears in LOG eviction row, that's fine).
@@ -245,13 +255,13 @@ test("resolveMove: admit + insert + active remove + queue add + eviction LOG + r
     // ACTIVE row for v9 gone.
     assert.equal(/v9-newest/.test(activeSection), false,
       `v9-newest should be removed from ACTIVE, got: ${activeSection}`);
-    // LOG mentions both eviction + resolution.
-    assert.match(logSection, /\| evicted \| v5-existing \|/);
-    assert.match(logSection, /\| resolved\+admitted \| v9-newest \|/);
+    // LOG.md mentions both eviction + resolution.
+    assert.match(logBody, /\| evicted \| v5-existing \|/);
+    assert.match(logBody, /\| resolved\+admitted \| v9-newest \|/);
     // QUEUE has v10-followup.
     assert.match(after, /v10-followup/);
     // Resolution summary derived from TAKEAWAY.
-    assert.match(logSection, /v9 lifted m to 0\.99/);
+    assert.match(logBody, /v9 lifted m to 0\.99/);
 
     // Steps array has the right order.
     const stepNames = result.steps.map((s) => s.step);
@@ -287,13 +297,14 @@ test("resolveMove: do not admit + falsified event", async () => {
     assert.equal(result.evicted, null);
 
     const after = readFileSync(join(dir, "README.md"), "utf8");
+    const logBody = readFileSync(join(dir, "LOG.md"), "utf8");
     // Leaderboard untouched.
     assert.match(after, /\| 1 \| \[v1-existing\]/);
     // q1-existing was removed.
     assert.equal(/\|\s*q1-existing\s*\|/.test(after), false);
-    // LOG has falsified entry.
-    assert.match(after, /\| falsified \| v6-failed \|/);
-    assert.match(after, /Augmentation hypothesis falsified/);
+    // LOG.md has falsified entry.
+    assert.match(logBody, /\| falsified \| v6-failed \|/);
+    assert.match(logBody, /Augmentation hypothesis falsified/);
   } finally {
     rmSync(dir, { recursive: true, force: true });
   }

@@ -1,5 +1,5 @@
 #!/usr/bin/env node
-// vr-research-log — append a LOG row to a project README.
+// vr-research-log — append a LOG row to a project's LOG.md.
 //
 // CLAUDE.md loop step 9: "append a LOG row whose primary tag is `resolved`,
 // `falsified`, or `abandoned`, compounded with `+admitted` if this result
@@ -7,7 +7,7 @@
 //
 // The agent calls this once per move resolution instead of hand-editing
 // the LOG table. Inserts at the top of the table (newest-first, per the
-// contract).
+// contract). The LOG lives in LOG.md, a sibling of README.md.
 //
 // Usage:
 //   vr-research-log <project-dir> --event resolved+admitted \
@@ -101,11 +101,11 @@ async function main() {
   }
 
   const projectDir = path.resolve(opts.projectDir);
-  const readmePath = path.join(projectDir, "README.md");
+  const logPath = path.join(projectDir, "LOG.md");
   let result;
   try {
     result = await appendLogRow({
-      readmePath,
+      logPath,
       row: {
         date: opts.date,
         event: opts.event,
@@ -123,7 +123,7 @@ async function main() {
     process.stdout.write(`${JSON.stringify(result, null, 2)}\n`);
     process.exit(0);
   }
-  process.stdout.write(`appended LOG row to ${result.readmePath}\n`);
+  process.stdout.write(`appended LOG row to ${result.logPath}\n`);
   process.stdout.write(`  ${result.row.date} | ${result.row.event} | ${result.row.slug}\n`);
   process.exit(0);
 }

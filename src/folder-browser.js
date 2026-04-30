@@ -54,7 +54,17 @@ _quantitative: <metric-name> (higher|lower is better) — OR — qualitative: <d
 
 ## LOG
 
+See [LOG.md](./LOG.md) — append-only event history.
+`;
+}
+
+function buildProjectLogSeed(slug) {
+  return `# ${slug} — LOG
+
+Append-only event log. Newest first. See [README.md](./README.md) for project state (LEADERBOARD, ACTIVE, QUEUE).
+
 | date | event | slug or ref | one-line summary | link |
+|------|-------|-------------|------------------|------|
 `;
 }
 
@@ -73,6 +83,7 @@ async function seedProjectSkeleton(targetPath, slug) {
 
   await writeFile(path.join(targetPath, "paper.md"), titled, "utf8");
   await writeFile(path.join(targetPath, "README.md"), buildProjectReadmeSeed(slug), "utf8");
+  await writeFile(path.join(targetPath, "LOG.md"), buildProjectLogSeed(slug), "utf8");
   await mkdir(path.join(targetPath, "results"), { recursive: true });
   await writeFile(path.join(targetPath, "results", ".gitkeep"), "", "utf8");
 }

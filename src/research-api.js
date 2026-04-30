@@ -9,7 +9,7 @@
 
 import { readFile, readdir, stat } from "node:fs/promises";
 import path from "node:path";
-import { parseProjectReadme } from "./research/project-readme.js";
+import { parseProjectReadme, loadProjectLog } from "./research/project-readme.js";
 import { parseResultDoc } from "./research/result-doc.js";
 import { loadBenchmark } from "./research/benchmark.js";
 import { runDoctor } from "./research/doctor.js";
@@ -82,6 +82,15 @@ async function summarizeProject(projectsDir, name) {
     parsed = parseProjectReadme(readmeText);
   } catch {
     return null;
+  }
+
+  // The LOG lives in LOG.md; merge its rows into parsed.log so existing
+  // call sites (logSize, latestLogDate) keep working.
+  try {
+    const logFile = await loadProjectLog(projectDir);
+    parsed.log = logFile.rows;
+  } catch {
+    parsed.log = [];
   }
 
   let benchmark = null;
@@ -229,6 +238,12 @@ export async function getProjectDetail(libraryRoot, projectName) {
   if (!readmeText) return null;
 
   const parsed = parseProjectReadme(readmeText);
+  try {
+    const logFile = await loadProjectLog(projectDir);
+    parsed.log = logFile.rows;
+  } catch {
+    parsed.log = [];
+  }
   const benchmark = await loadBenchmark(projectDir);
   const docs = await loadResultDocs(projectDir, parsed.leaderboard, parsed.active);
 

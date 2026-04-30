@@ -203,19 +203,23 @@ test("listProjects: sort prefers active rows, then most-recent LOG date", async 
   try {
     await mkdir(path.join(tmp, "projects"), { recursive: true });
     // Three projects: A has active row (newest), B has recent log, C is empty.
-    const mkReadme = (extras) => `# x\n\n## GOAL\n\ng\n\n## CODE REPO\n\nhttps://x\n\n## SUCCESS CRITERIA\n\n- y\n\n## RANKING CRITERION\n\n\`quantitative: f (higher is better)\`\n\n## LEADERBOARD\n\n| rank | result | branch | commit | score |\n|------|--------|--------|--------|-------|\n\n## INSIGHTS\n\n${extras.active || ""}## ACTIVE\n\n| move | result doc | branch | agent | started |\n|------|-----------|--------|-------|---------|\n${extras.activeRow || ""}\n## QUEUE\n\n| move | starting-point | why |\n|------|----------------|-----|\n\n## LOG\n\n| date | event | slug or ref | one-line summary | link |\n|------|-------|-------------|-------------------|------|\n${extras.logRow || ""}`;
+    const mkReadme = (extras) => `# x\n\n## GOAL\n\ng\n\n## CODE REPO\n\nhttps://x\n\n## SUCCESS CRITERIA\n\n- y\n\n## RANKING CRITERION\n\n\`quantitative: f (higher is better)\`\n\n## LEADERBOARD\n\n| rank | result | branch | commit | score |\n|------|--------|--------|--------|-------|\n\n## INSIGHTS\n\n${extras.active || ""}## ACTIVE\n\n| move | result doc | branch | agent | started |\n|------|-----------|--------|-------|---------|\n${extras.activeRow || ""}\n## QUEUE\n\n| move | starting-point | why |\n|------|----------------|-----|\n\n## LOG\n\nSee [LOG.md](./LOG.md) — append-only event history.\n`;
+    const mkLog = (logRow) => `# x — LOG\n\nAppend-only event log.\n\n| date | event | slug or ref | one-line summary | link |\n|------|-------|-------------|------------------|------|\n${logRow || ""}`;
     await mkdir(path.join(tmp, "projects", "alpha"), { recursive: true });
     await writeFile(path.join(tmp, "projects", "alpha", "README.md"), mkReadme({}));
+    await writeFile(path.join(tmp, "projects", "alpha", "LOG.md"), mkLog());
     await mkdir(path.join(tmp, "projects", "beta"), { recursive: true });
+    await writeFile(path.join(tmp, "projects", "beta", "README.md"), mkReadme({}));
     await writeFile(
-      path.join(tmp, "projects", "beta", "README.md"),
-      mkReadme({ logRow: "| 2026-05-01 | resolved | b1 | recent | r.md |\n" }),
+      path.join(tmp, "projects", "beta", "LOG.md"),
+      mkLog("| 2026-05-01 | resolved | b1 | recent | r.md |\n"),
     );
     await mkdir(path.join(tmp, "projects", "active-one"), { recursive: true });
     await writeFile(
       path.join(tmp, "projects", "active-one", "README.md"),
       mkReadme({ activeRow: "| s1 | [s1](results/s1.md) | [r/s1](https://github.com/x/y/tree/r/s1) | 0 | 2026-04-28 |\n" }),
     );
+    await writeFile(path.join(tmp, "projects", "active-one", "LOG.md"), mkLog());
     const projects = await listProjects(tmp);
     const names = projects.map((p) => p.name);
     assert.equal(names[0], "active-one", "active-one should be first (has active row)");

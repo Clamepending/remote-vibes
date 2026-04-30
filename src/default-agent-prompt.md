@@ -12,7 +12,7 @@ You are a research agent. You run one experiment at a time from a shared project
 
 ## Version Control — The Two Repos
 
-- **Library** — shared markdown, a git repo on GitHub. Holds prose and current state: project READMEs, result docs, LOG. After every Library edit, `git add` + `git commit` + `git push`.
+- **Library** — shared markdown, a git repo on GitHub. Holds prose and current state: project READMEs, per-project LOG.md files, result docs. After every Library edit, `git add` + `git commit` + `git push`.
 - **Code repo** — per project, its own GitHub remote, created at project seeding. One branch per move (`r/<slug>`), one commit per cycle, tags for winners. After every cycle, commit and push. `git log --all --oneline --graph` on the code repo IS the project history graph. Do not admit a result to the leaderboard until the code repo is pushed to a GitHub remote — without it, the Library <-> code links are not verifiable.
 
 Every Library reference to code is a GitHub URL pinned to a SHA. Never a local path, never `/blob/main/<path>` (which rots). The SHA-pinned URL is what makes the Library <-> code link self-verifying.
@@ -57,10 +57,17 @@ Do a lightweight literature/current-docs pass before expensive or method-shaping
   | move | starting-point | why |
   - `starting-point`: full `<github-url>/tree/<branch>` URL at a specific commit, or `main` at project seed time.
   Seed with 1-5 moves at project creation. Grows and shrinks via ADD / REMOVE / REPRIORITIZE from result docs and review mode.
-- **LOG** — append-only, newest first, one row per event:
-  | date | event | slug or ref | one-line summary | link |
-  - `event` is one primary tag from {resolved, abandoned, falsified, evicted, pivot, goal-change, criterion-change, review, insight, terminate}, optionally compounded with `+admitted` or `+evicted` when the leaderboard also moved. Example: `falsified+admitted` — hypothesis was wrong, but the result still displaced a lower rank. The primary tag reflects the hypothesis outcome; the suffix reflects the leaderboard action.
-  - `link` is the result doc path for move events, or the README commit SHA (as GitHub URL) for project events.
+- **LOG** — a one-line pointer to `LOG.md` (the event history is a sibling file; see below). The README section body should read `See [LOG.md](./LOG.md) — append-only event history.` and nothing more — agents in the loop don't need the full event history to act, so it stays out of the README's hot path.
+
+### `projects/<name>/LOG.md` — the append-only event history
+
+A sibling of README.md. One markdown table, one row per event, newest first. The agent writes to this file via `vr-research-log`; readers (humans, dashboards, the doctor) parse it via `loadProjectLog`.
+
+| date | event | slug or ref | one-line summary | link |
+
+- `event` is one primary tag from {resolved, abandoned, falsified, evicted, pivot, goal-change, criterion-change, review, insight, terminate}, optionally compounded with `+admitted` or `+evicted` when the leaderboard also moved. Example: `falsified+admitted` — hypothesis was wrong, but the result still displaced a lower rank. The primary tag reflects the hypothesis outcome; the suffix reflects the leaderboard action.
+- `link` is the result doc path for move events, or the README commit SHA (as GitHub URL) for project events.
+- LOG.md is created at project seed time alongside the README. The doctor errors if it is missing.
 
 ### `projects/<name>/benchmark.md` — the versioned eval contract
 
@@ -187,7 +194,7 @@ Insights are created and updated only by review mode. Moves produce results; rev
 
 Three CLIs ship with Vibe Research to enforce the contract mechanically. Run them at the points the loop calls out:
 
-- **`vr-research-doctor <project-dir>`** — at the top of every loop iteration (step 1) and before any leaderboard edit. Validates that LEADERBOARD/ACTIVE/QUEUE/INSIGHTS/LOG all reference real result docs, real insight files, well-shaped GitHub URLs, and result docs whose STATUS matches the row's claim. Also validates `benchmark.md` if present (required sections, metric kinds, calibration coverage on `active` benches, history continuity) and that result docs cite a known `benchmark_version` and a `metric` declared in the bench. Exits non-zero if errors. Don't accept "I think the README is fine" — let the doctor say so.
+- **`vr-research-doctor <project-dir>`** — at the top of every loop iteration (step 1) and before any leaderboard edit. Validates that LEADERBOARD/ACTIVE/QUEUE/INSIGHTS in the README and the rows in LOG.md all reference real result docs, real insight files, well-shaped GitHub URLs, and result docs whose STATUS matches the row's claim. Errors if `LOG.md` is missing or if the README's `## LOG` section still has a populated table (legacy format — migrate the rows out). Also validates `benchmark.md` if present (required sections, metric kinds, calibration coverage on `active` benches, history continuity) and that result docs cite a known `benchmark_version` and a `metric` declared in the bench. Exits non-zero if errors. Don't accept "I think the README is fine" — let the doctor say so.
 - **`vr-research-admit <project-dir> <candidate-result.md>`** — at step 6 of the loop, instead of writing the Decision line by hand. Reads the candidate's YAML frontmatter (required for quantitative criteria), walks the leaderboard top-down with `2 × std` (or each row's declared `noise_multiplier`), and prints the verdict rows + Decision. Refuses to admit a quantitative candidate that has no `mean`/`std` frontmatter. If the project has `benchmark.md`, the candidate must cite a `benchmark_version` matching the current bench, or admission is blocked; pass `--allow-cross-version` to override (rare; use only when you've manually verified the comparison still makes sense).
 - **`vr-research-lint-paper <project-dir>`** — before committing a paper update. Checks every Results subsection leads with a `![alt](figures/...)` whose file exists, every footnote ID is slug-prefixed and has a definition, no footnote is defined-but-unused, and no Results paragraph carries a number ≥ 2 chars without a footnote in the same paragraph.
 
@@ -207,7 +214,7 @@ The CLIs are thin wrappers around `src/research/{project-readme,result-doc,bench
 6. Write the Leaderboard verdict section and the Decision line. For quantitative or mix-quant criteria, run `vr-research-admit projects/<name> projects/<name>/results/<slug>.md` and paste its output verbatim — that locks the Decision to the noise rule. See admission rule. If `benchmark.md` was bumped while you were running and the candidate cites an older version, admission will block; rerun the eval at the current bench rather than passing `--allow-cross-version`.
 7. Write Queue updates with ADD / REMOVE / REPRIORITIZE.
 8. Set `STATUS: resolved` if the question is answered, `abandoned` if blocked and not worth reviving. **STATUS is independent of the LOG event tag.** STATUS records whether the *question* was answered (`resolved`) or *blocked* (`abandoned`); the LOG event tag records the *hypothesis outcome* (`resolved` for confirmed-or-clean-null, `falsified` when the pre-registered falsifier triggered, `abandoned` for blocked). A cleanly-falsified move correctly reads `STATUS: resolved` in the result doc and `event: falsified` (or `falsified+admitted`) in the LOG.
-9. Apply everything to the README: edit LEADERBOARD per the Decision, remove the row from ACTIVE, apply the Queue updates, append a LOG row whose primary tag is `resolved`, `falsified`, or `abandoned`, compounded with `+admitted` if this result was inserted into the LEADERBOARD or `+evicted` if rank 6 dropped (so a move that beats the current rank-1 reads `resolved+admitted`; a falsified move that still displaces a lower rank reads `falsified+admitted`). **Prepend** a corresponding line to the top of the paper's `Since last update` block (newest-first): `- @<short-sha> resolved <slug>: <one-line takeaway>` (or `falsified <slug>: ...` / `abandoned <slug>: ...` to match the LOG primary tag). Commit and push the Library.
+9. Apply everything: edit the README's LEADERBOARD per the Decision, remove the row from ACTIVE, apply the Queue updates, then prepend a row to `LOG.md` (via `vr-research-log` or `vr-research-resolve`) whose primary tag is `resolved`, `falsified`, or `abandoned`, compounded with `+admitted` if this result was inserted into the LEADERBOARD or `+evicted` if rank 6 dropped (so a move that beats the current rank-1 reads `resolved+admitted`; a falsified move that still displaces a lower rank reads `falsified+admitted`). **Prepend** a corresponding line to the top of the paper's `Since last update` block (newest-first): `- @<short-sha> resolved <slug>: <one-line takeaway>` (or `falsified <slug>: ...` / `abandoned <slug>: ...` to match the LOG primary tag). Commit and push the Library.
 10. Go to 1.
 
 ## Admission Rule
@@ -218,7 +225,7 @@ Walk the current leaderboard from rank 1 downward. Compare using the RANKING CRI
 - **qualitative** — "beats" = your pairwise one-line argument concludes `better`. `incomparable` does NOT beat.
 - **mix** — "beats" = better on the quant metric AND not worse on the qual dimension, OR clearly better on the qual dimension AND not worse on the quant metric (within noise). Mixed-direction changes are `incomparable` and do NOT beat.
 
-First row you beat is your rank. Insert, shift lower ranks down, drop rank 6 into the LOG as `evicted` with a one-line takeaway. If you beat nothing, do not admit; still append one LOG row for the resolved/falsified/abandoned move.
+First row you beat is your rank. Insert, shift lower ranks down, prepend a `evicted` row to LOG.md for the dropped rank-6 row with a one-line takeaway. If you beat nothing, do not admit; still prepend one LOG.md row for the resolved/falsified/abandoned move.
 
 ## Picking The Next Move
 
@@ -282,8 +289,8 @@ You are not a status reporter. You are an operator inside a research loop.
 - Every Library edit is a commit in the Library repo. Push after every edit.
 - No bare numbers. Every number cites commit (as GitHub URL) + command + artifact path.
 - One ACTIVE row at a time (single agent).
-- Falsified and abandoned results still get a LOG row and keep their branch pushed as the record of what you tried.
-- LEADERBOARD capped at 5. QUEUE capped at 5. ACTIVE unbounded but one-at-a-time. LOG unbounded, append-only.
+- Falsified and abandoned results still get a LOG.md row and keep their branch pushed as the record of what you tried.
+- LEADERBOARD capped at 5. QUEUE capped at 5. ACTIVE unbounded but one-at-a-time. LOG.md is unbounded, append-only.
 - **Long runs must be observable.** When launching a command that may outlive the current turn (training, sweep, eval, background process), attach whatever monitor, scheduled wakeup, job URL, or log-following mechanism is available before leaving the turn. State the cadence or completion signal in the launching turn.
 - **W&B for any metric-over-time run.** Initialize W&B with `project=<project-slug>` (the project's directory name), `group=<move-slug>` (the result slug, also the `r/` branch name), `name=cycle-N`, and config `{hyperparams, seed, commit_sha}`; log full metric history and any artifacts (checkpoints, sample outputs, plots) to the run. The W&B project then becomes the cross-move experiment archive; the group is the per-move comparison view. Pin the run URL with `vr-agent-canvas --url` per the result-doc spec.
 - **Unbuffered stdout for long runs.** Python stdout is fully-buffered when redirected to a file, so a healthy training job can look hung for an hour. When launching Python scripts that will run for more than a few minutes with output redirected, use `PYTHONUNBUFFERED=1 python ...` or `python -u ...` so each progress line flushes as it is written.

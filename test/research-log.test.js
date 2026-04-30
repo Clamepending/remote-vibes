@@ -1,7 +1,7 @@
 // Unit + CLI tests for src/research/log-append.js + bin/vr-research-log.
 //
 // The agent calls vr-research-log once per move resolution to insert a
-// LOG row at the top of the project README's LOG table. The contract:
+// LOG row at the top of the project's LOG.md table. The contract:
 // newest-first ordering, atomic writes, refuse to corrupt the table.
 
 import test from "node:test";
@@ -45,52 +45,18 @@ function runCli(args, { cwd, env = {}, timeoutMs = 10_000 } = {}) {
   });
 }
 
-const README_BOILERPLATE = `# example
+const LOG_BOILERPLATE = `# example — LOG
 
-## GOAL
-
-x
-
-## CODE REPO
-
-\`https://github.com/example/x\`
-
-## SUCCESS CRITERIA
-
-- a
-- b
-
-## RANKING CRITERION
-
-\`quantitative: m (higher is better)\`
-
-## LEADERBOARD
-
-| rank | result | branch | commit | score |
-|------|--------|--------|--------|-------|
-
-## INSIGHTS
-
-## ACTIVE
-
-| move | result doc | branch | agent | started |
-|------|-----------|--------|-------|---------|
-
-## QUEUE
-
-| move | starting-point | why |
-|------|----------------|-----|
-
-## LOG
+Append-only event log. Newest first. See [README.md](./README.md) for project state.
 
 | date | event | slug or ref | one-line summary | link |
-|------|-------|-------------|-------------------|------|
+|------|-------|-------------|------------------|------|
 | 2026-04-26 | resolved+admitted | v0-baseline | initial baseline | [v0-baseline.md](results/v0-baseline.md) |
 `;
 
 function makeProject(prefix = "vr-log") {
   const dir = tmp(prefix);
-  writeFileSync(join(dir, "README.md"), README_BOILERPLATE);
+  writeFileSync(join(dir, "LOG.md"), LOG_BOILERPLATE);
   return dir;
 }
 
@@ -133,9 +99,9 @@ test("renderLogRow: escapes pipes in summary so the table doesn't break", () => 
 test("appendLogRow: inserts the new row directly after the table separator", async () => {
   const dir = makeProject("vr-log-insert");
   try {
-    const readmePath = join(dir, "README.md");
+    const logPath = join(dir, "LOG.md");
     const result = await appendLogRow({
-      readmePath,
+      logPath,
       row: {
         date: "2026-04-29",
         event: "resolved+admitted",
@@ -145,7 +111,8 @@ test("appendLogRow: inserts the new row directly after the table separator", asy
       },
     });
     assert.equal(result.inserted, true);
-    const after = readFileSync(readmePath, "utf8");
+    assert.equal(result.logPath, logPath);
+    const after = readFileSync(logPath, "utf8");
     // The new row must appear BEFORE the existing v0-baseline row (newest-first).
     const newerIdx = after.indexOf("v1-newer");
     const olderIdx = after.indexOf("v0-baseline");
@@ -162,9 +129,9 @@ test("appendLogRow: inserts the new row directly after the table separator", asy
 test("appendLogRow: defaults date to today UTC", async () => {
   const dir = makeProject("vr-log-date");
   try {
-    const readmePath = join(dir, "README.md");
+    const logPath = join(dir, "LOG.md");
     const result = await appendLogRow({
-      readmePath,
+      logPath,
       row: { event: "resolved", slug: "auto-date", summary: "x" },
     });
     assert.equal(result.row.date, __internal.todayUtc());
@@ -176,17 +143,17 @@ test("appendLogRow: defaults date to today UTC", async () => {
 test("appendLogRow: rejects missing required fields", async () => {
   const dir = makeProject("vr-log-bad");
   try {
-    const readmePath = join(dir, "README.md");
+    const logPath = join(dir, "LOG.md");
     await assert.rejects(
-      appendLogRow({ readmePath, row: { event: "", slug: "x", summary: "y" } }),
+      appendLogRow({ logPath, row: { event: "", slug: "x", summary: "y" } }),
       /event is required/,
     );
     await assert.rejects(
-      appendLogRow({ readmePath, row: { event: "x", slug: "", summary: "y" } }),
+      appendLogRow({ logPath, row: { event: "x", slug: "", summary: "y" } }),
       /slug is required/,
     );
     await assert.rejects(
-      appendLogRow({ readmePath, row: { event: "x", slug: "y", summary: "" } }),
+      appendLogRow({ logPath, row: { event: "x", slug: "y", summary: "" } }),
       /summary is required/,
     );
   } finally {
@@ -197,13 +164,13 @@ test("appendLogRow: rejects missing required fields", async () => {
 test("appendLogRow: rejects pipe / newline in event or slug", async () => {
   const dir = makeProject("vr-log-pipe");
   try {
-    const readmePath = join(dir, "README.md");
+    const logPath = join(dir, "LOG.md");
     await assert.rejects(
-      appendLogRow({ readmePath, row: { event: "a|b", slug: "x", summary: "y" } }),
+      appendLogRow({ logPath, row: { event: "a|b", slug: "x", summary: "y" } }),
       /event contains pipe/,
     );
     await assert.rejects(
-      appendLogRow({ readmePath, row: { event: "a", slug: "x\ny", summary: "y" } }),
+      appendLogRow({ logPath, row: { event: "a", slug: "x\ny", summary: "y" } }),
       /slug contains pipe or newline/,
     );
   } finally {
@@ -211,13 +178,13 @@ test("appendLogRow: rejects pipe / newline in event or slug", async () => {
   }
 });
 
-test("appendLogRow: errors clearly when README has no LOG table", async () => {
+test("appendLogRow: errors clearly when LOG.md has no table", async () => {
   const dir = tmp("vr-log-nolog");
   try {
-    writeFileSync(join(dir, "README.md"), "# x\n\nno log section here.\n");
+    writeFileSync(join(dir, "LOG.md"), "# x\n\nno table here.\n");
     await assert.rejects(
       appendLogRow({
-        readmePath: join(dir, "README.md"),
+        logPath: join(dir, "LOG.md"),
         row: { event: "x", slug: "y", summary: "z" },
       }),
       /no LOG table/,
@@ -227,23 +194,22 @@ test("appendLogRow: errors clearly when README has no LOG table", async () => {
   }
 });
 
-test("appendLogRow: leaves prose around the LOG section untouched", async () => {
+test("appendLogRow: leaves prose around the LOG table untouched", async () => {
   const dir = makeProject("vr-log-untouched");
   try {
-    const readmePath = join(dir, "README.md");
-    const before = readFileSync(readmePath, "utf8");
+    const logPath = join(dir, "LOG.md");
+    const before = readFileSync(logPath, "utf8");
     await appendLogRow({
-      readmePath,
+      logPath,
       row: { event: "resolved", slug: "test-slug", summary: "test summary" },
     });
-    const after = readFileSync(readmePath, "utf8");
-    // GOAL section + LEADERBOARD + ACTIVE / QUEUE all unchanged.
-    assert.match(after, /## GOAL\n\nx\n/);
-    assert.match(after, /## CODE REPO\n\n`https:\/\/github\.com\/example\/x`/);
-    assert.match(after, /## RANKING CRITERION\n\n`quantitative: m \(higher is better\)`/);
+    const after = readFileSync(logPath, "utf8");
+    // Intro prose preserved verbatim.
+    assert.match(after, /Append-only event log/);
+    assert.match(after, /See \[README\.md\]/);
     // Existing v0-baseline row preserved.
     assert.match(after, /v0-baseline/);
-    // README grew (gained a row) but only the LOG section was touched.
+    // File grew (gained a row).
     assert.ok(after.length > before.length);
   } finally {
     rmSync(dir, { recursive: true, force: true });
@@ -295,7 +261,7 @@ test("vr-research-log: appends row + prints confirmation", async () => {
     ]);
     assert.equal(r.status, 0, `expected 0, got ${r.status}: ${r.stderr}`);
     assert.match(r.stdout, /appended LOG row/);
-    const after = readFileSync(join(dir, "README.md"), "utf8");
+    const after = readFileSync(join(dir, "LOG.md"), "utf8");
     assert.match(after, /\| 2026-05-01 \| resolved\+admitted \| v9-cli-test \| round trip \| results\/v9-cli-test\.md \|/);
   } finally {
     rmSync(dir, { recursive: true, force: true });
@@ -317,13 +283,13 @@ test("vr-research-log --json: returns machine-readable summary", async () => {
     assert.equal(body.inserted, true);
     assert.equal(body.row.event, "falsified");
     assert.equal(body.row.slug, "v6-fail");
-    assert.match(body.readmePath, /README\.md$/);
+    assert.match(body.logPath, /LOG\.md$/);
   } finally {
     rmSync(dir, { recursive: true, force: true });
   }
 });
 
-test("vr-research-log: missing README errors out cleanly with exit 1", async () => {
+test("vr-research-log: missing LOG.md errors out cleanly with exit 1", async () => {
   const dir = tmp("vr-log-cli-nofile");
   try {
     const r = await runCli([dir, "--event", "x", "--slug", "y", "--summary", "z"]);

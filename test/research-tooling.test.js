@@ -43,7 +43,7 @@ async function copyDir(src, dest) {
   }
 }
 
-test("parseProjectReadme: parses leaderboard / queue / log / ranking criterion", async () => {
+test("parseProjectReadme: parses leaderboard / queue / ranking criterion", async () => {
   const text = await readFile(path.join(FIXTURE_PROJECT, "README.md"), "utf8");
   const project = parseProjectReadme(text);
 
@@ -61,11 +61,20 @@ test("parseProjectReadme: parses leaderboard / queue / log / ranking criterion",
   assert.equal(project.queue[0].slug, "v3-deeper-knob");
   assert.match(project.queue[0].startingPointUrl, /\/tree\/r\/v2-tuned/);
 
-  assert.equal(project.log[0].event, "resolved+admitted");
-  assert.equal(project.log[0].slug, "v2-tuned");
+  // README's `## LOG` section is a pointer; parseProjectReadme returns no rows.
+  assert.equal(project.log.length, 0);
 
   assert.equal(project.insights.length, 1);
   assert.equal(project.insights[0].slug, "widget-knob-load-bearing");
+});
+
+test("loadProjectLog: reads sibling LOG.md", async () => {
+  const { loadProjectLog } = await import("../src/research/project-readme.js");
+  const log = await loadProjectLog(FIXTURE_PROJECT);
+  assert.equal(log.exists, true);
+  assert.ok(log.rows.length >= 2);
+  assert.equal(log.rows[0].event, "resolved+admitted");
+  assert.equal(log.rows[0].slug, "v2-tuned");
 });
 
 test("parseProjectReadme: skips placeholder rows like '—' and '*(empty ...)*'", () => {
@@ -1019,11 +1028,11 @@ test("runDoctor: STATUS:resolved result doc with no LEADERBOARD/LOG entry -> res
   try {
     const project = path.join(tmp, "widget-tuning");
     await copyDir(FIXTURE_PROJECT, project);
-    // Drop the v4-noisy LOG row so the v4-noisy doc becomes orphaned.
-    const readmePath = path.join(project, "README.md");
-    let readme = await readFile(readmePath, "utf8");
-    readme = readme.replace(/\n\| 2026-04-28 \| resolved \| v4-noisy \|[^\n]+\|/, "");
-    await writeFile(readmePath, readme);
+    // Drop the v4-noisy LOG.md row so the v4-noisy doc becomes orphaned.
+    const logPath = path.join(project, "LOG.md");
+    let log = await readFile(logPath, "utf8");
+    log = log.replace(/\n\| 2026-04-28 \| resolved \| v4-noisy \|[^\n]+\|/, "");
+    await writeFile(logPath, log);
     const report = await runDoctor(project);
     const orphan = report.issues.find((i) => i.code === "result_doc_orphan");
     assert.ok(orphan, `expected result_doc_orphan in ${report.issues.map((i) => i.code).join(",")}`);
@@ -1053,16 +1062,16 @@ test("runDoctor: STATUS:active result doc with no ACTIVE row -> result_doc_activ
 });
 
 test("runDoctor: STATUS:resolved doc whose slug is in LEADERBOARD only (no LOG row) -> no orphan", async () => {
-  // The fixture has v2-tuned in LEADERBOARD AND LOG. Remove the LOG row
+  // The fixture has v2-tuned in LEADERBOARD AND LOG.md. Remove the LOG.md row
   // and confirm that LEADERBOARD presence alone is sufficient.
   const tmp = await mkdtemp(path.join(os.tmpdir(), "vr-doctor-orphan-leaderboard-only-"));
   try {
     const project = path.join(tmp, "widget-tuning");
     await copyDir(FIXTURE_PROJECT, project);
-    const readmePath = path.join(project, "README.md");
-    let readme = await readFile(readmePath, "utf8");
-    readme = readme.replace(/\n\| 2026-04-28 \| resolved\+admitted \| v2-tuned \|[^\n]+\|/, "");
-    await writeFile(readmePath, readme);
+    const logPath = path.join(project, "LOG.md");
+    let log = await readFile(logPath, "utf8");
+    log = log.replace(/\n\| 2026-04-28 \| resolved\+admitted \| v2-tuned \|[^\n]+\|/, "");
+    await writeFile(logPath, log);
     const report = await runDoctor(project);
     const orphans = report.issues.filter((i) =>
       i.code === "result_doc_orphan" && i.where.includes("v2-tuned")

@@ -1,18 +1,20 @@
-// Surgical insert of a new LOG row at the top of the project README's LOG
+// Surgical insert of a new LOG row at the top of the project's LOG.md
 // table (newest-first, per CLAUDE.md). The agent calls this once per move
 // resolution instead of hand-editing markdown.
 //
-// We work via string surgery on the existing README rather than a full
-// parse + rebuild because:
-//   1. The README has prose around the tables (GOAL, SUCCESS CRITERIA, etc.)
-//      that the parser doesn't model.
-//   2. The current writer (init.js renderProjectReadme) only builds from
-//      scratch and would clobber any human edits.
+// LOG.md is a sibling of README.md inside projects/<name>/ and contains a
+// single markdown table. We find the table separator line and insert
+// immediately after it.
+//
+// We work via string surgery rather than a full parse + rebuild because:
+//   1. LOG.md may carry intro prose above the table that we don't model.
+//   2. The table is append-grow-only, so a targeted insert preserves
+//      every existing row's exact formatting.
 //
 // API:
 //
 //   const result = await appendLogRow({
-//     readmePath,        // absolute path to README.md
+//     logPath,           // absolute path to LOG.md
 //     row: {
 //       date,            // YYYY-MM-DD; defaults to today
 //       event,           // required, e.g. "resolved+admitted"
@@ -21,7 +23,7 @@
 //       link,            // optional
 //     },
 //   });
-//   // → { readmePath, row, inserted: true }
+//   // → { logPath, row, inserted: true }
 
 import { readFile, writeFile, rename } from "node:fs/promises";
 
@@ -62,33 +64,26 @@ function validateRow(row) {
 }
 
 // Atomic write: tmp + rename. A Ctrl-C between writes can't leave the
-// README half-edited.
+// LOG file half-edited.
 async function atomicWrite(filePath, body) {
   const tmpPath = `${filePath}.${process.pid}.${Date.now()}.tmp`;
   await writeFile(tmpPath, body, "utf8");
   await rename(tmpPath, filePath);
 }
 
-// Locate the LOG section's table separator line (the `|------|...` line
-// directly after the header). Returns the index immediately after the
-// separator's trailing newline, or -1 if not found.
+// Locate the LOG table separator line (the `|------|...` line directly
+// after the canonical 5-column header). Returns the index immediately
+// after the separator's trailing newline, or -1 if not found.
+//
+// We anchor on the canonical column names (date / event / slug / summary /
+// link, in order) rather than the first table in the file, so LOG.md can
+// carry other tables (notes, references) above the LOG without breaking
+// the insert. Case-insensitive on column names; tolerates extra whitespace.
 function findLogTableInsertPoint(text) {
-  // Anchor on a `## LOG` heading. The heading might be `# LOG` (rare) or
-  // `## LOG` (canonical); we anchor on the canonical form.
-  const headingMatch = /^(#{1,6})\s+LOG\s*$/m.exec(text);
-  if (!headingMatch) return -1;
-  const headingEnd = headingMatch.index + headingMatch[0].length;
-
-  // From the heading, scan forward looking for the table header
-  // (`| date | event | ...|`) followed by the separator (`|------|...`).
-  // We allow 1-2 blank lines between the heading and the table.
-  const tail = text.slice(headingEnd);
-  const headerMatch = /\n+(\|[^\n]+\|)\n(\|[\s|:-]+\|)\n/.exec(tail);
-  if (!headerMatch) return -1;
-
-  // Insertion point = right after the separator's trailing newline.
-  const separatorEndOffset = headerMatch.index + headerMatch[0].length;
-  return headingEnd + separatorEndOffset;
+  const re = /(\|[^\n]*?\bdate\b[^\n]*?\bevent\b[^\n]*?\bslug\b[^\n]*?\bsummary\b[^\n]*?\blink\b[^\n]*\|)\n(\|[\s|:-]+\|)\n/i;
+  const match = re.exec(text);
+  if (!match) return -1;
+  return match.index + match[0].length;
 }
 
 export function renderLogRow(row) {
@@ -100,13 +95,13 @@ export function renderLogRow(row) {
   return `| ${date} | ${event} | ${slug} | ${summary} | ${link} |`;
 }
 
-export async function appendLogRow({ readmePath, row } = {}) {
-  if (!readmePath) throw new TypeError("readmePath is required");
+export async function appendLogRow({ logPath, row } = {}) {
+  if (!logPath) throw new TypeError("logPath is required");
   validateRow(row);
-  const text = await readFile(readmePath, "utf8");
+  const text = await readFile(logPath, "utf8");
   const insertOffset = findLogTableInsertPoint(text);
   if (insertOffset < 0) {
-    throw new Error(`no LOG table found in ${readmePath} (expected '## LOG' heading + table)`);
+    throw new Error(`no LOG table found in ${logPath} (expected a markdown table with a header row)`);
   }
   const normalized = {
     date: row.date || todayUtc(),
@@ -117,8 +112,8 @@ export async function appendLogRow({ readmePath, row } = {}) {
   };
   const newRow = `${renderLogRow(normalized)}\n`;
   const out = text.slice(0, insertOffset) + newRow + text.slice(insertOffset);
-  await atomicWrite(readmePath, out);
-  return { readmePath, row: normalized, inserted: true };
+  await atomicWrite(logPath, out);
+  return { logPath, row: normalized, inserted: true };
 }
 
 export const __internal = {

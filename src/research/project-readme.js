@@ -1,10 +1,18 @@
-// Parser for projects/<name>/README.md.
+// Parser for projects/<name>/README.md and projects/<name>/LOG.md.
 //
 // Turns the structured-markdown README into a JavaScript object whose shape
 // mirrors the contract in CLAUDE.md ("The Files You Maintain In The Library").
 // We deliberately avoid a generic markdown parser dep — the shape is small
 // enough that regex + state machine is shorter, faster, and more honest about
 // what we accept.
+//
+// The LOG lives in a sibling LOG.md file (one project, one log). The README's
+// `## LOG` section is just a pointer to that file — agents in the loop don't
+// need the full event history to act, so we keep it out of the README's
+// hot path. `loadProjectLog(projectDir)` reads and parses LOG.md.
+
+import { readFile } from "node:fs/promises";
+import path from "node:path";
 
 const SECTION_HEADER = /^##\s+(.+?)\s*$/;
 const TABLE_ROW = /^\|(.*)\|\s*$/;
@@ -250,6 +258,41 @@ function parseLog(body) {
   });
 }
 
+// Parse a standalone LOG.md body. Same row schema as the legacy in-README
+// LOG section, but the table is the only first-class artifact in the file —
+// everything else is intro prose.
+export function parseLogTable(text) {
+  const lines = splitLines(text);
+  // Find the first table separator line and treat the line above it as the
+  // header. Anything before that is intro prose; anything after stops at the
+  // next blank-then-non-table line.
+  let headerIdx = -1;
+  for (let i = 0; i < lines.length - 1; i += 1) {
+    if (TABLE_DIVIDER.test(lines[i + 1]) && TABLE_ROW.test(lines[i])) {
+      headerIdx = i;
+      break;
+    }
+  }
+  if (headerIdx < 0) return [];
+  const tableBody = lines.slice(headerIdx).join("\n");
+  return parseLog(tableBody);
+}
+
+export async function loadProjectLog(projectDir) {
+  if (!projectDir) throw new TypeError("projectDir is required");
+  const logPath = path.join(projectDir, "LOG.md");
+  let text;
+  try {
+    text = await readFile(logPath, "utf8");
+  } catch (err) {
+    if (err.code === "ENOENT") {
+      return { path: logPath, exists: false, rows: [] };
+    }
+    throw err;
+  }
+  return { path: logPath, exists: true, rows: parseLogTable(text) };
+}
+
 export function parseProjectReadme(text) {
   const sections = readSections(splitLines(text));
 
@@ -262,7 +305,10 @@ export function parseProjectReadme(text) {
   const insights = parseInsights(sections.get("INSIGHTS") || "");
   const active = parseActive(sections.get("ACTIVE") || "");
   const queue = parseQueue(sections.get("QUEUE") || "");
-  const log = parseLog(sections.get("LOG") || "");
+  // The LOG lives in LOG.md; the README's `## LOG` section is just a pointer.
+  // We still parse the section body so the doctor can warn if it finds a
+  // populated table there (legacy README, needs migration).
+  const legacyLog = parseLog(sections.get("LOG") || "");
 
   return {
     goal,
@@ -276,7 +322,8 @@ export function parseProjectReadme(text) {
     insights,
     active,
     queue,
-    log,
+    log: [], // populated by loadProjectLog(projectDir) — see doctor.js
+    legacyLog,
     sections: Array.from(sections.keys()),
   };
 }
@@ -289,4 +336,5 @@ export const __internal = {
   readSections,
   readTable,
   parseRankingCriterion,
+  parseLog,
 };
