@@ -3989,6 +3989,43 @@ export class SessionManager {
   }
 
 
+  // Resolve a pending ExitPlanMode call by emitting a structured tool_result
+  // back to the stream session. Approve sends a confirming text body; reject
+  // sends an is_error: true block carrying the user's pushback text so
+  // Claude treats the plan as declined without inferring intent from prose.
+  // Returns { ok, reason } so the route can respond clearly to the client.
+  resolvePlanMode(sessionId, { approve, message } = {}) {
+    const session = this.sessions.get(sessionId);
+    if (!session) {
+      return { ok: false, reason: "session-not-found" };
+    }
+    if (!session.streamSession || typeof session.streamSession.sendToolResult !== "function") {
+      return { ok: false, reason: "not-stream-mode" };
+    }
+    const toolUseId = session.streamSession.getPendingPlanToolUseId?.() || "";
+    if (!toolUseId) {
+      return { ok: false, reason: "no-plan-awaiting" };
+    }
+
+    const isApprove = approve !== false;
+    const body = isApprove
+      ? "User approved the plan. Proceed with the proposed steps."
+      : `User pushed back on the plan${message ? `: ${String(message).trim()}` : "."}`;
+
+    try {
+      session.streamSession.sendToolResult(toolUseId, body, { isError: !isApprove });
+    } catch (error) {
+      return { ok: false, reason: error.message || "send-failed" };
+    }
+
+    session.streamWorking = true;
+    session.lastPromptAt = new Date().toISOString();
+    session.updatedAt = session.lastPromptAt;
+    this.scheduleSessionMetaBroadcast(session, { immediate: true });
+    this.schedulePersist();
+    return { ok: true, toolUseId, approved: isApprove };
+  }
+
   resize(sessionId, cols, rows) {
     const session = this.sessions.get(sessionId);
 

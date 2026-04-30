@@ -5723,6 +5723,17 @@ function renderRichSessionEntry(entry, index) {
           <button class="primary-button rich-session-plan-accept" type="button" data-rich-session-plan-accept>Approve plan</button>
           <button class="ghost-button rich-session-plan-reject" type="button" data-rich-session-plan-reject>Push back</button>
         </div>
+        <div class="rich-session-plan-pushback" data-rich-session-plan-pushback hidden>
+          <textarea
+            class="rich-session-plan-pushback-input"
+            placeholder="What should the agent do differently? (optional)"
+            rows="2"
+          ></textarea>
+          <div class="rich-session-plan-pushback-actions">
+            <button class="primary-button" type="button" data-rich-session-plan-pushback-send>Send pushback</button>
+            <button class="ghost-button" type="button" data-rich-session-plan-pushback-cancel>Cancel</button>
+          </div>
+        </div>
       </article>
     `;
   }
@@ -5898,25 +5909,44 @@ function moveRichSessionSlashMenuSelection(direction) {
 // "non-interactive" commands ("/clear") still print prompts the user has
 // to confirm, and the next command someone adds is most likely interactive
 // too. Terminal mode is the safe default for CLI control surfaces.
-function sendRichSessionPlanResponse({ approve = true, trigger = null } = {}) {
+async function sendRichSessionPlanResponse({ approve = true, message = "", trigger = null } = {}) {
   const activeSession = getActiveSession();
   if (!activeSession) {
     return false;
   }
-  const message = approve
-    ? "Yes — please proceed with this plan."
-    : "Push back: ";
-  const sent = sendTerminalInput(`${message}\r`, { queueIfDisconnected: true });
-  if (!sent) {
+
+  // Hits the structured plan-response endpoint which dispatches a
+  // tool_result content block addressed to the awaiting ExitPlanMode
+  // tool_use_id. This is the protocol-correct shape — the previous
+  // implementation typed an English approval into the composer, which
+  // worked because Claude reads the message but didn't actually mark the
+  // tool call complete.
+  try {
+    const result = await fetch(`/api/sessions/${encodeURIComponent(activeSession.id)}/plan-response`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ approve, message }),
+    });
+    if (!result.ok) {
+      const reason = (await result.json().catch(() => ({})))?.error || result.statusText;
+      throw new Error(reason);
+    }
+    scheduleRichSessionNarrativeRefresh(activeSession.id, { immediate: true });
+    return true;
+  } catch (error) {
     if (trigger instanceof HTMLButtonElement) {
       trigger.removeAttribute("disabled");
       trigger.classList.remove("is-sending");
     }
-    window.alert("That session is not connected yet.");
+    // "no-plan-awaiting" usually means the user clicked twice or the plan
+    // was already resolved; treat it as a no-op rather than alarming the
+    // user. Other failures (no-such-session, not-stream-mode) are real and
+    // get a visible alert.
+    if (!String(error.message || "").includes("no-plan-awaiting")) {
+      window.alert(`Could not send plan response: ${error.message || "unknown error"}`);
+    }
     return false;
   }
-  scheduleRichSessionNarrativeRefresh(activeSession.id, { immediate: true });
-  return true;
 }
 
 function sendRichSessionSlashCommand(command, { trigger = null, switchToTerminal = true } = {}) {
@@ -40161,12 +40191,11 @@ function bindShellEvents() {
       return;
     }
 
-    // Plan-mode card buttons. Approve sends a literal "approve" message back
-    // through the rich-session composer so the agent's ExitPlanMode tool
-    // result resolves with consent. Push back focuses the composer and pre-
-    // fills it with a leading "Push back: " template the user can edit. Both
-    // run through sendRichSessionMessage to reuse the existing send pipeline
-    // (works for stream-mode sessions too, where there is no PTY to drive).
+    // Plan-mode card buttons. Both approve and push-back POST to the
+    // /api/sessions/:id/plan-response endpoint, which dispatches a
+    // structured tool_result content block back to the awaiting
+    // ExitPlanMode tool_use. Push back expands an inline textarea so the
+    // user's reasoning rides along on the same protocol message.
     const planAccept = target?.closest("[data-rich-session-plan-accept]");
     if (planAccept instanceof HTMLButtonElement) {
       event.preventDefault();
@@ -40178,14 +40207,39 @@ function bindShellEvents() {
     const planReject = target?.closest("[data-rich-session-plan-reject]");
     if (planReject instanceof HTMLButtonElement) {
       event.preventDefault();
-      const input = document.querySelector("#rich-session-input");
-      if (input instanceof HTMLTextAreaElement) {
-        if (!input.value.trim()) {
-          input.value = "Push back: ";
-        }
-        focusRichSessionComposer();
-        const end = input.value.length;
-        try { input.setSelectionRange(end, end); } catch { /* selection may be unsupported */ }
+      const card = planReject.closest(".rich-session-plan-card");
+      const pushback = card?.querySelector("[data-rich-session-plan-pushback]");
+      const textarea = pushback?.querySelector(".rich-session-plan-pushback-input");
+      if (pushback instanceof HTMLElement) {
+        pushback.removeAttribute("hidden");
+      }
+      if (textarea instanceof HTMLTextAreaElement) {
+        textarea.focus();
+      }
+      return;
+    }
+    const planPushbackSend = target?.closest("[data-rich-session-plan-pushback-send]");
+    if (planPushbackSend instanceof HTMLButtonElement) {
+      event.preventDefault();
+      const card = planPushbackSend.closest(".rich-session-plan-card");
+      const textarea = card?.querySelector(".rich-session-plan-pushback-input");
+      const message = textarea instanceof HTMLTextAreaElement ? textarea.value.trim() : "";
+      planPushbackSend.setAttribute("disabled", "disabled");
+      planPushbackSend.classList.add("is-sending");
+      sendRichSessionPlanResponse({ approve: false, message, trigger: planPushbackSend });
+      return;
+    }
+    const planPushbackCancel = target?.closest("[data-rich-session-plan-pushback-cancel]");
+    if (planPushbackCancel instanceof HTMLButtonElement) {
+      event.preventDefault();
+      const card = planPushbackCancel.closest(".rich-session-plan-card");
+      const pushback = card?.querySelector("[data-rich-session-plan-pushback]");
+      if (pushback instanceof HTMLElement) {
+        pushback.setAttribute("hidden", "");
+      }
+      const textarea = pushback?.querySelector(".rich-session-plan-pushback-input");
+      if (textarea instanceof HTMLTextAreaElement) {
+        textarea.value = "";
       }
       return;
     }

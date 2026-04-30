@@ -70,6 +70,13 @@ export class ClaudeStreamSession extends EventEmitter {
     // arrives for the same message.
     this._partialByMessage = new Map();
     this._pendingThinking = false;
+    // The most recent ExitPlanMode tool_use_id awaiting a user response.
+    // Set when an assistant event carries an ExitPlanMode tool_use; cleared
+    // once we emit a tool_result for it (or when the turn completes via a
+    // result event without any plan response, which means Claude bailed).
+    // The session manager's resolvePlanMode reads this to know which id to
+    // address when the user clicks Approve / Push back.
+    this._pendingPlanToolUseId = "";
   }
 
   start() {
@@ -145,6 +152,51 @@ export class ClaudeStreamSession extends EventEmitter {
     };
     this._child.stdin.write(`${JSON.stringify(message)}\n`);
     return true;
+  }
+
+  // Emit a structured tool_result content block back to Claude. Used today
+  // by the plan-mode approve/reject flow: when the user clicks "Approve
+  // plan", the session manager calls sendToolResult(awaitingPlanToolUseId,
+  // "User approved the plan…") which is what Claude's CLI expects to mark
+  // the ExitPlanMode call complete.
+  //
+  // The wire shape is the user-message inverse of what the assistant
+  // emits: a `user` message whose content array contains one tool_result
+  // block referencing the original tool_use_id.
+  sendToolResult(toolUseId, content, { isError = false } = {}) {
+    if (!this._child || this.status !== "running") {
+      throw new Error(`ClaudeStreamSession ${this.sessionId} is not running`);
+    }
+    const id = String(toolUseId || "").trim();
+    if (!id) {
+      throw new Error("sendToolResult requires a non-empty toolUseId");
+    }
+    const message = {
+      type: "user",
+      message: {
+        role: "user",
+        content: [
+          {
+            type: "tool_result",
+            tool_use_id: id,
+            content: typeof content === "string" ? content : JSON.stringify(content ?? ""),
+            ...(isError ? { is_error: true } : {}),
+          },
+        ],
+      },
+    };
+    this._child.stdin.write(`${JSON.stringify(message)}\n`);
+    if (this._pendingPlanToolUseId === id) {
+      this._pendingPlanToolUseId = "";
+    }
+    return true;
+  }
+
+  // Returns the tool_use_id of the most recent ExitPlanMode call waiting
+  // on a user response, or "" if no plan is awaiting. Used by the session
+  // manager to dispatch plan-response API calls.
+  getPendingPlanToolUseId() {
+    return this._pendingPlanToolUseId || "";
   }
 
   close({ signal = "SIGTERM" } = {}) {
@@ -307,6 +359,31 @@ export class ClaudeStreamSession extends EventEmitter {
         this._partialByMessage.clear();
       }
       this._pendingThinking = false;
+      // Watch the assistant content for an ExitPlanMode tool_use — that's
+      // what's waiting on the user's plan response. The id we capture here
+      // is the tool_use_id we'll address in the corresponding tool_result.
+      const content = Array.isArray(event.message?.content) ? event.message.content : [];
+      for (const item of content) {
+        if (item?.type === "tool_use" && String(item.name || "") === "ExitPlanMode") {
+          this._pendingPlanToolUseId = String(item.id || "");
+          break;
+        }
+      }
+      return;
+    }
+
+    if (event.type === "user") {
+      // If the user already provided a tool_result for the awaiting plan
+      // (e.g. a previous resolvePlanMode call), clear our cached id so a
+      // stale Approve click doesn't double-resolve.
+      const content = Array.isArray(event.message?.content) ? event.message.content : [];
+      for (const item of content) {
+        if (item?.type === "tool_result" && this._pendingPlanToolUseId
+          && String(item.tool_use_id || "") === this._pendingPlanToolUseId) {
+          this._pendingPlanToolUseId = "";
+          break;
+        }
+      }
       return;
     }
 
