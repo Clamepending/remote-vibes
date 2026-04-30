@@ -164,6 +164,7 @@ code, .vr-mono { font-family: var(--vr-mono); font-size: 13px; }
     grid-template-columns: 2fr 1fr;
     grid-template-areas:
       "doctor doctor"
+      "next next"
       "takeaway hypothesis"
       "overview success"
       "leaderboard active"
@@ -172,6 +173,7 @@ code, .vr-mono { font-family: var(--vr-mono); font-size: 13px; }
       "log log";
   }
   .vr-card-doctor { grid-area: doctor; }
+  .vr-card-next { grid-area: next; }
   .vr-card-takeaway { grid-area: takeaway; }
   .vr-card-hypothesis { grid-area: hypothesis; }
   .vr-card-overview { grid-area: overview; }
@@ -308,6 +310,33 @@ code, .vr-mono { font-family: var(--vr-mono); font-size: 13px; }
 .vr-overview-goal {
   margin: 0 0 8px;
   color: var(--vr-text);
+}
+
+/* Next-action card */
+.vr-next-action {
+  display: grid;
+  gap: 10px;
+}
+.vr-next-header {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  align-items: center;
+}
+.vr-next-reason {
+  margin: 0;
+  color: var(--vr-text);
+}
+.vr-next-command {
+  margin: 0;
+  padding: 10px 12px;
+  border-radius: 8px;
+  border: 1px solid var(--vr-border);
+  background: #10141c;
+  color: var(--vr-text-muted);
+  overflow-x: auto;
+  white-space: pre-wrap;
+  word-break: break-word;
 }
 
 /* Bench card */

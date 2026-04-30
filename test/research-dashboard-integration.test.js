@@ -202,6 +202,7 @@ test("GET /research/<name> returns the static project page", async () => {
     const text = await res.text();
     assert.match(text, /<title>Vibe Research — Project<\/title>/);
     assert.match(text, /id="dashboard"/);
+    assert.match(text, /id="next-card"/);
   });
 });
 
@@ -220,6 +221,7 @@ test("GET /research/research.js + research.css are served", async () => {
     const js = await fetch(`${baseUrl}/research/research.js`);
     assert.equal(js.status, 200);
     assert.match(js.headers.get("content-type") || "", /javascript/);
+    assert.match(await js.text(), /orchestrator\/tick/);
     const css = await fetch(`${baseUrl}/research/research.css`);
     assert.equal(css.status, 200);
     assert.match(css.headers.get("content-type") || "", /css/);

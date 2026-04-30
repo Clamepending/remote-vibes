@@ -141,6 +141,7 @@
     document.getElementById("dashboard").hidden = false;
 
     renderDoctorCard(detail);
+    await renderNextActionCard(detail);
     renderTakeawayCard(detail);
     renderHypothesisCard(detail);
     renderOverviewCard(detail);
@@ -150,6 +151,60 @@
     renderQueueCard(detail);
     renderBenchCard(detail);
     renderLogCard(detail);
+  }
+
+  function evaluatorVariant(strength) {
+    if (strength === "strong") return "good";
+    if (strength === "blocked" || strength === "weak") return "bad";
+    if (strength === "medium") return "accent";
+    return null;
+  }
+
+  function actionVariant(action) {
+    if (/fix|blocked/.test(action || "")) return "bad";
+    if (/review|judge|brief/.test(action || "")) return "accent";
+    if (/run|continue/.test(action || "")) return "good";
+    return null;
+  }
+
+  async function renderNextActionCard(detail) {
+    const card = document.getElementById("next-card");
+    if (!card) return;
+    card.innerHTML = "";
+    card.appendChild(el("h2", null, "Next action"));
+    const body = el("div", { class: "vr-next-action" }, [
+      el("p", { class: "vr-card-empty" }, "Checking phase state…"),
+    ]);
+    card.appendChild(body);
+
+    let payload;
+    try {
+      const res = await fetch(`/api/research/projects/${encodeURIComponent(detail.name)}/orchestrator/tick`, {
+        method: "POST",
+        headers: { accept: "application/json", "Content-Type": "application/json" },
+        body: JSON.stringify({}),
+      });
+      if (!res.ok) throw new Error(`HTTP ${res.status}`);
+      payload = await res.json();
+    } catch (err) {
+      body.innerHTML = "";
+      body.appendChild(el("p", { class: "vr-card-empty" }, `Could not load next action: ${err.message}`));
+      return;
+    }
+
+    const report = payload.report || {};
+    const rec = report.recommendation || {};
+    body.innerHTML = "";
+    body.appendChild(el("div", { class: "vr-next-header" }, [
+      chip(rec.action || "unknown", actionVariant(rec.action || "")),
+      rec.slug ? chip(rec.slug) : null,
+      rec.briefSlug ? chip(rec.briefSlug) : null,
+      rec.evaluatorStrength ? chip(`evaluator ${rec.evaluatorStrength}`, evaluatorVariant(rec.evaluatorStrength)) : null,
+    ]));
+    body.appendChild(el("p", { class: "vr-next-reason" }, rec.reason || "No recommendation returned."));
+    if (report.nextCommand) {
+      body.appendChild(el("pre", { class: "vr-next-command" }, report.nextCommand));
+    }
   }
 
   function renderHypothesisCard(detail) {
@@ -421,10 +476,16 @@
   function renderBenchCard(detail) {
     const card = document.getElementById("bench-card");
     card.innerHTML = "";
+    const benchVersion = detail.benchmark && detail.benchmark.version
+      ? String(detail.benchmark.version)
+      : "";
+    const benchVersionLabel = benchVersion
+      ? (benchVersion.toLowerCase().startsWith("v") ? benchVersion : `v${benchVersion}`)
+      : "?";
     card.appendChild(el("h2", null, [
       "Benchmark",
       detail.benchmark
-        ? el("span", { class: "vr-card-count" }, `v${detail.benchmark.version} (${detail.benchmark.status})`)
+        ? el("span", { class: "vr-card-count" }, `${benchVersionLabel} (${detail.benchmark.status})`)
         : null,
       detail.paths.benchmark
         ? el("span", { class: "vr-card-action" }, detail.paths.benchmark)
