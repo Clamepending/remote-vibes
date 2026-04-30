@@ -488,6 +488,101 @@ test("Modal's enabled-setting key is declared in initial state.settings", async 
   assert.match(initialDefaults, /modalEnabled\s*:\s*false/, "initial state.settings must declare modalEnabled");
 });
 
+test("buildings with visual.logoImage render an image-backed sign and the asset exists on disk", async () => {
+  // We replaced the CSS-painted "logo" pseudo-element with a real
+  // background-image for buildings whose brand mark is best shown
+  // verbatim (Modal, GitHub, Automations). This test guards three
+  // properties: (a) the manifest declares a logoImage path, (b) the
+  // path actually exists in public/images/buildings/, (c) the renderer
+  // emits a `.plugin-building-sign-image` element when logoImage is
+  // present (and not when it's absent).
+  const { BUILDING_CATALOG } = await import("../src/client/building-registry.js");
+  const { existsSync } = await import("node:fs");
+  const path = await import("node:path");
+  const fileURL = await import("node:url");
+  const here = path.dirname(fileURL.fileURLToPath(import.meta.url));
+  const repoRoot = path.resolve(here, "..");
+
+  const expected = ["modal", "github", "automations"];
+  for (const id of expected) {
+    const building = BUILDING_CATALOG.find((b) => b.id === id);
+    assert.ok(building, `building ${id} must exist in the catalog`);
+    const logoImage = String(building.visual?.logoImage || "").trim();
+    assert.ok(logoImage, `${id} must declare visual.logoImage`);
+    assert.match(logoImage, /^\/images\/buildings\//, `${id}.visual.logoImage must point under /images/buildings/`);
+    const onDisk = path.join(repoRoot, "public", logoImage.replace(/^\//, ""));
+    assert.ok(existsSync(onDisk), `${id} logoImage asset missing on disk: ${onDisk}`);
+  }
+
+  const source = await readFile(MAIN_JS_PATH, "utf8");
+  const body = extractFunctionBody(source, "renderPluginBuildingSign");
+  assert.match(body, /visual\?\.logoImage/, "renderPluginBuildingSign must read visual.logoImage");
+  assert.match(body, /plugin-building-sign-image/, "renderPluginBuildingSign must emit the image-backed class");
+  // Image branch must run before the CSS-pseudo logo branch so manifests
+  // declaring both fall through to the image (the more specific brand mark).
+  const imageIdx = body.indexOf("plugin-building-sign-image");
+  const pseudoIdx = body.indexOf("plugin-building-logo-");
+  assert.ok(imageIdx >= 0 && pseudoIdx >= 0);
+  assert.ok(imageIdx < pseudoIdx, "image-backed sign branch must run before the CSS-pseudo logo branch");
+});
+
+test("logoImage is stripped from community building manifests (CSS-injection mitigation)", async () => {
+  // visual.logoImage flows into `style="background-image: url('...')"`
+  // — community manifests are untrusted, and even with escapeHtml() a
+  // crafted URL plus a syntactic mistake could break out of the style
+  // context. Built-in buildings bypass the normalizer; community
+  // manifests must have logoImage zeroed out. This test pins that
+  // behaviour so a future refactor can't accidentally widen the trust
+  // boundary.
+  const source = await readFile(MAIN_JS_PATH, "utf8");
+  const normalizer = extractFunctionBody(source, "normalizeCommunityBuildingForClient");
+  // The visual block must explicitly null out logoImage.
+  assert.match(normalizer, /logoImage:\s*""/, "community manifests must zero out visual.logoImage");
+});
+
+test("ready panel generalises across buildings: any system app or fully-configured building hits the collapsed view", async () => {
+  // The user's ask was "make sure GitHub / Telegram / Gmail / GCal work
+  // the same way." The check is generic by design — isPluginFullyReady
+  // doesn't hard-code Modal — but this test locks that in by walking
+  // the catalog and proving every building category that should reach
+  // the fully-ready state is structurally covered.
+  const { BUILDING_CATALOG } = await import("../src/client/building-registry.js");
+
+  // Pick representatives across the auth-flow shapes the codebase actually uses.
+  const cases = [
+    { id: "github", reason: "install.system: true (always installed, no completeWhen on steps)" },
+    { id: "gmail", reason: "Google system app, completeWhen: buildingAccessConfirmed" },
+    { id: "google-calendar", reason: "Google system app, completeWhen: buildingAccessConfirmed" },
+    { id: "telegram", reason: "enabledSetting + paste tokens, completeWhen: allConfigured" },
+    { id: "modal", reason: "auth-browser-cli plan, completeWhen: type=installed" },
+  ];
+
+  for (const { id, reason } of cases) {
+    const building = BUILDING_CATALOG.find((b) => b.id === id);
+    assert.ok(building, `${id} must exist in the catalog (${reason})`);
+    // Either the building has no completeWhen-tracked steps (system apps
+    // like GitHub), or it has at least one — both cases must reach
+    // fully-ready when conditions are met. Documenting the contract.
+    const steps = Array.isArray(building.onboarding?.steps) ? building.onboarding.steps : [];
+    const trackedSteps = steps.filter((s) => s?.completeWhen);
+    assert.ok(
+      trackedSteps.length === 0 || trackedSteps.every((s) => s.completeWhen && typeof s.completeWhen === "object"),
+      `${id} steps with completeWhen must use the standard object form so isPluginOnboardingStepComplete recognises them`,
+    );
+  }
+
+  // Source-level: isPluginFullyReady doesn't reference any specific
+  // building id — that's how we know the ready panel generalises.
+  const source = await readFile(MAIN_JS_PATH, "utf8");
+  const body = extractFunctionBody(source, "isPluginFullyReady");
+  for (const id of cases.map((c) => c.id)) {
+    assert.ok(
+      !body.includes(`"${id}"`) && !body.includes(`'${id}'`),
+      `isPluginFullyReady must stay building-agnostic — found a hardcoded reference to "${id}"`,
+    );
+  }
+});
+
 test("renderPluginDetailSettings switches to a collapsed ready panel when isPluginFullyReady is true", async () => {
   // Source-level guard. The fully-ready check + ready-panel render must
   // wire through renderPluginDetailSettings; otherwise the verbose

@@ -46,6 +46,9 @@ const CORE_BUILDING_MANIFESTS = [
     },
     status: "available in Codex",
     source: "plugin",
+    visual: {
+      logoImage: "/images/buildings/github.avif",
+    },
     access: {
       label: "Host connector",
       detail: "Available to host agents that have the GitHub connector or gh authentication. Local terminal agents need their own GitHub auth.",
@@ -465,6 +468,7 @@ const CORE_BUILDING_MANIFESTS = [
     source: "external",
     visual: {
       shape: "lab",
+      logoImage: "/images/buildings/modal.jpg",
     },
     install: {
       enabledSetting: "modalEnabled",
@@ -1269,6 +1273,89 @@ const CORE_BUILDING_MANIFESTS = [
     },
   },
   {
+    id: "zinc",
+    name: "Zinc",
+    category: "Commerce",
+    description: "Let agents place real-world retail orders (Amazon, Walmart, etc.) through Zinc's managed retail API.",
+    icon: ShoppingCart,
+    install: {
+      enabledSetting: "zincEnabled",
+      storedFallback: false,
+    },
+    status: "API key required",
+    source: "external",
+    visual: {
+      shape: "market",
+    },
+    access: {
+      label: "Zinc client token",
+      detail: "Requires a Zinc client token from app.zinc.com (Bearer auth on api.zinc.com). Real money: every successful POST /orders charges the linked retailer account. Vibe Research stores the token, never the order details — cart contents, shipping addresses, and charge approvals stay in the agent runtime and human workflow.",
+    },
+    onboarding: {
+      variables: [
+        {
+          label: "Zinc client token",
+          setting: "zincApiKey",
+          configuredSetting: "zincApiKeyConfigured",
+          secret: true,
+          required: true,
+          setupUrl: "https://app.zinc.com",
+          setupLabel: "Get a Zinc token",
+          setupHint: "Sign up at app.zinc.com, then copy the client token from the dashboard.",
+        },
+        { label: "Spend approval", value: "explicit human approval before every order", required: true },
+      ],
+      steps: [
+        { title: "Enable the building", detail: "Turn on Zinc retail orders.", completeWhen: { type: "installed" } },
+        {
+          title: "Paste the Zinc client token",
+          detail: "Copy your Zinc client token from app.zinc.com and paste it here. Vibe Research will store it locally, never in the agent prompt.",
+          completeWhen: { allConfigured: ["zincApiKeyConfigured"] },
+        },
+        { title: "Place a test order with approval", detail: "Use POST https://api.zinc.com/orders with Bearer auth — only after a human has approved the cart, max_price, and shipping address." },
+      ],
+    },
+    agentGuide: {
+      summary: "Use Zinc when an agent needs to place a real retail order on the human's behalf. Treat every Zinc call as spending real money — get explicit cart and dollar approval first.",
+      useCases: [
+        "Order a specific product from Amazon / Walmart / etc. after the human confirms the cart, max price, and shipping address.",
+        "Cancel a pending Zinc order before it ships.",
+        "Inspect order status, tracking, and charges for a specific Zinc order id.",
+      ],
+      setup: [
+        "Read this guide and check `command -v jq` plus `command -v curl` before assuming the agent environment can call Zinc.",
+        "Never call POST /orders without the human's explicit approval of: product url, max_price (cap), shipping_address, and retailer.",
+        "Quote prices in the same currency Zinc bills (USD by default) so max_price comparisons aren't misleading.",
+        "Keep the Zinc client token, full shipping address, and payment-method tokens out of the Library, agent prompts, and screenshots.",
+      ],
+      commands: [
+        {
+          label: "Place an order (with approval)",
+          command: "curl -s -X POST https://api.zinc.com/orders -H 'Authorization: Bearer $ZINC_API_KEY' -H 'Content-Type: application/json' -d @order.json",
+          detail: "POST /orders with the approved cart in order.json. Include products[], max_price, shipping_address, and retailer.",
+        },
+        {
+          label: "Check order status",
+          command: "curl -s https://api.zinc.com/orders/<order_id> -H 'Authorization: Bearer $ZINC_API_KEY'",
+          detail: "Read-only — fetches order state, tracking, and charges.",
+        },
+        {
+          label: "Cancel a pending order",
+          command: "curl -s -X POST https://api.zinc.com/orders/<order_id>/cancel -H 'Authorization: Bearer $ZINC_API_KEY'",
+          detail: "Cancels before shipment if Zinc still allows it.",
+        },
+      ],
+      env: [
+        { name: "ZINC_API_KEY", detail: "Zinc client token used as the Bearer credential. Never print or log this.", required: true },
+      ],
+      docs: [
+        { label: "Zinc docs", url: "https://www.zinc.com/docs" },
+        { label: "Quickstart", url: "https://www.zinc.com/docs/quickstart" },
+        { label: "Place an order", url: "https://www.zinc.com/docs/orders" },
+      ],
+    },
+  },
+  {
     id: "rentahuman",
     name: "RentAHuman",
     category: "Commerce",
@@ -1654,6 +1741,7 @@ const CORE_BUILDING_MANIFESTS = [
     source: "vibe-research",
     visual: {
       shape: "campanile",
+      logoImage: "/images/buildings/automations.jpg",
       specialTownPlace: true,
     },
     onboarding: {

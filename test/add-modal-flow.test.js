@@ -402,6 +402,53 @@ test("once Modal is fully installed and verified, the panel collapses to a green
   }
 });
 
+test("Zinc settings: zincEnabled + zincApiKey persist; only zincApiKeyConfigured is echoed back (no secret leak)", async () => {
+  // Plumbing test for the new Zinc building. The API key is a secret —
+  // PATCH must accept it, settings-store must persist it, but /api/state
+  // must NEVER return the raw value. Only zincApiKeyConfigured (a bool)
+  // surfaces, same pattern as telegramBotToken / wandbApiKey.
+  const tmp = await mkdtemp(path.join(os.tmpdir(), "vr-zinc-roundtrip-"));
+  const stateDir = path.join(tmp, ".vibe-research");
+  await mkdir(stateDir, { recursive: true });
+
+  const { app, baseUrl } = await startApp({ cwd: tmp, stateDir });
+  try {
+    // Pre-flight: zinc is off, no key.
+    const before = await fetch(`${baseUrl}/api/state`).then((r) => r.json());
+    assert.equal(before.settings.zincEnabled, false);
+    assert.equal(before.settings.zincApiKeyConfigured, false);
+    assert.equal(before.settings.zincApiKey, "", "raw zincApiKey must NEVER appear in /api/state");
+
+    // PATCH key + flag.
+    const patch = await fetch(`${baseUrl}/api/settings`, {
+      method: "PATCH",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ zincEnabled: true, zincApiKey: "test-zinc-token-secret-1234" }),
+    }).then((r) => r.json());
+    assert.equal(patch.settings.zincEnabled, true);
+    assert.equal(patch.settings.zincApiKeyConfigured, true);
+    assert.equal(
+      patch.settings.zincApiKey,
+      "",
+      "PATCH response must scrub the raw zincApiKey (only the configured-flag escapes the server)",
+    );
+
+    // /api/state must reflect the persisted state without leaking the key.
+    const after = await fetch(`${baseUrl}/api/state`).then((r) => r.json());
+    assert.equal(after.settings.zincEnabled, true);
+    assert.equal(after.settings.zincApiKeyConfigured, true);
+    assert.equal(after.settings.zincApiKey, "");
+    // Belt + braces: the secret must not appear anywhere in the
+    // serialised body. Catches an accidental field bleed from a future
+    // refactor that adds the raw key to a sibling field.
+    const stateBody = JSON.stringify(after);
+    assert.equal(stateBody.includes("test-zinc-token-secret-1234"), false, "zincApiKey value must never serialize anywhere in /api/state");
+  } finally {
+    await app.close();
+    await rm(tmp, { recursive: true, force: true });
+  }
+});
+
 test("settings PATCH for modalEnabled round-trips correctly through /api/state", async () => {
   // Pure server-API test, no browser. Catches the case where the server
   // settings store or PATCH route stops accepting/persisting modalEnabled.

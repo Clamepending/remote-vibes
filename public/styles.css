@@ -4215,6 +4215,22 @@ textarea.setup-target-highlight {
   pointer-events: none;
 }
 
+/* Image-backed building sign: when a building manifest provides
+   visual.logoImage, the sign is rendered with this class instead of the
+   CSS-painted .plugin-building-logo-* pseudos. Background image is set
+   inline (via style="...") so the manifest URL drives the asset.
+   Sizing matches the pseudo logos so the building's silhouette stays
+   identical between image-backed and CSS-painted signs. */
+.plugin-building-sign-image {
+  background-color: rgba(255, 255, 255, 0.92);
+  background-size: contain;
+  background-position: center;
+  background-repeat: no-repeat;
+  border: 1px solid rgba(0, 0, 0, 0.12);
+  border-radius: 7px;
+  box-shadow: 0 2px 0 rgba(0, 0, 0, 0.18);
+}
+
 .plugin-building-logo-agentmail {
   --building-logo-background: #0f172a;
   --building-logo-border: #152238;

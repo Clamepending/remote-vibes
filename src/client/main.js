@@ -2267,6 +2267,12 @@ const state = {
     // a slot for it (without one, applySettingsState would still drop the
     // value, and the "Add Modal" button would never go away).
     modalEnabled: false,
+    // Zinc retail API building — uses zincEnabled as its enabled flag
+    // and zincApiKey as the secret credential (never echoed back from
+    // the server; only zincApiKeyConfigured: bool is exposed).
+    zincEnabled: false,
+    zincApiKey: "",
+    zincApiKeyConfigured: false,
   },
   folderPicker: {
     open: false,
@@ -15449,6 +15455,14 @@ function normalizeCommunityBuildingForClient(manifest) {
       logo: normalizeBuildingId(visual.logo || ""),
       shape: normalizeBuildingId(visual.shape || "plugin") || "plugin",
       specialTownPlace: false,
+      // logoImage is the inline-style background-image URL used by the
+      // image-backed sign rendering. Community manifests are untrusted,
+      // so we strip this — an attacker-controlled URL injected into a
+      // `style="background-image: url('...')"` CSS context is one
+      // syntactic mistake away from a CSS-injection escape. Built-in
+      // buildings (BUILDING_CATALOG) bypass this normalizer and can
+      // safely declare logoImage.
+      logoImage: "",
     },
   };
 }
@@ -16839,6 +16853,17 @@ function getPluginBuildingLogo(plugin) {
 }
 
 function renderPluginBuildingSign(plugin) {
+  // Image-backed logos take precedence: when a building manifest sets
+  // `visual.logoImage` to a public asset path (e.g. /images/buildings/modal.jpg)
+  // we render the sign as a real <img>-style element instead of the
+  // CSS-pseudo painted "logo". Used for buildings whose brand mark is
+  // best shown verbatim (Modal, GitHub, Automations) rather than
+  // approximated with gradient pseudos.
+  const logoImage = String(plugin?.visual?.logoImage || "").trim();
+  if (logoImage) {
+    return `<span class="plugin-building-sign plugin-building-sign-image" role="img" aria-label="${escapeHtml(`${plugin.name} logo`)}" style="background-image: url('${escapeHtml(logoImage)}')"></span>`;
+  }
+
   const logo = getPluginBuildingLogo(plugin);
   if (!logo) {
     return `<span class="plugin-building-sign">${renderIcon(plugin.icon || Plug)}</span>`;
@@ -38598,6 +38623,14 @@ function applySettingsState(payload) {
       settings.modalEnabled === undefined
         ? state.settings.modalEnabled
         : Boolean(settings.modalEnabled),
+    zincEnabled:
+      settings.zincEnabled === undefined
+        ? state.settings.zincEnabled
+        : Boolean(settings.zincEnabled),
+    zincApiKeyConfigured:
+      settings.zincApiKeyConfigured === undefined
+        ? state.settings.zincApiKeyConfigured
+        : Boolean(settings.zincApiKeyConfigured),
   };
   if (settings.agentSpawnPath !== undefined && state.settings.agentSpawnPath) {
     state.defaultCwd = state.settings.agentSpawnPath;

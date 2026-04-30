@@ -529,6 +529,13 @@ export class SettingsStore {
       wandbApiKey: "",
       wandbEnabled: false,
       wandbEntity: String(this.env.VIBE_RESEARCH_WANDB_ENTITY || this.env.WANDB_ENTITY || "").trim(),
+      // Zinc managed retail API (zinc.com). Agents use this to place
+      // orders against retailers (Amazon etc.) on the human's behalf.
+      // The API key is a secret pasted from app.zinc.com — kept here
+      // for parity with telegramBotToken et al. so it never has to ride
+      // in the agent prompt.
+      zincApiKey: String(this.env.ZINC_API_KEY || "").trim(),
+      zincEnabled: false,
       wikiGitBackupEnabled: false,
       wikiGitRemoteBranch: "main",
       wikiGitRemoteEnabled: false,
@@ -1026,6 +1033,11 @@ export class SettingsStore {
           : normalizeSecret(payload.wandbApiKey),
       wandbEnabled: normalizeBoolean(payload.wandbEnabled, defaults.wandbEnabled),
       wandbEntity: String(payload.wandbEntity ?? defaults.wandbEntity ?? "").trim(),
+      zincApiKey:
+        payload.zincApiKey === undefined
+          ? defaults.zincApiKey
+          : normalizeSecret(payload.zincApiKey),
+      zincEnabled: normalizeBoolean(payload.zincEnabled, defaults.zincEnabled),
       wikiBackupIntervalMs: normalizeIntervalMs(
         payload.wikiBackupIntervalMs ?? defaults.wikiBackupIntervalMs,
       ),
@@ -1257,6 +1269,11 @@ export class SettingsStore {
       walletStripeWebhookSecretConfigured: Boolean(this.settings.walletStripeWebhookSecret),
       wandbApiKey: "",
       wandbApiKeyConfigured: Boolean(this.settings.wandbApiKey || this.env.WANDB_API_KEY),
+      // Never echo zincApiKey back to the client — surface only the
+      // configured-flag so the UI can show "saved" without leaking the
+      // token. Same pattern as telegramBotToken / wandbApiKey.
+      zincApiKey: "",
+      zincApiKeyConfigured: Boolean(this.settings.zincApiKey || this.env.ZINC_API_KEY),
       walletStatus,
       videoMemoryAnthropicApiKey: "",
       videoMemoryAnthropicApiKeyConfigured: Boolean(this.settings.videoMemoryAnthropicApiKey),

@@ -4278,6 +4278,8 @@ export async function createVibeResearchApp({
         modalEnabled: request.body?.modalEnabled,
         runpodEnabled: request.body?.runpodEnabled,
         harborEnabled: request.body?.harborEnabled,
+        zincEnabled: request.body?.zincEnabled,
+        zincApiKey: request.body?.zincApiKey,
         mcpHealthCheckIntervalSec: request.body?.mcpHealthCheckIntervalSec,
         mcpFilesystemEnabled: request.body?.mcpFilesystemEnabled,
         mcpFilesystemRoots: request.body?.mcpFilesystemRoots,
