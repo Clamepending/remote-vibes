@@ -11906,6 +11906,25 @@ button.visual-town-building:focus-visible {
   cursor: grabbing;
 }
 
+/* Touch-drag affordance. iOS Safari fires a long-press context menu
+   (text selection callout) on draggable elements unless suppressed.
+   We use `-webkit-touch-callout: none` + `touch-action` to free the
+   long-press for our own armed-drag handler. The `is-dragging` class
+   set by the touch handler also lifts the row visually so users see
+   what they're holding. */
+@media (pointer: coarse) {
+  .session-project[draggable="true"] {
+    -webkit-touch-callout: none;
+    -webkit-user-select: none;
+    user-select: none;
+    touch-action: pan-y;
+  }
+  .session-project.is-dragging {
+    transform: translateZ(0);
+    box-shadow: 0 6px 18px rgba(0, 0, 0, 0.32);
+  }
+}
+
 /* Drop indicator — a 2px line in the project's accent color. Inserted
    above or below the hover-target row by the renderer. */
 .session-project-drop-indicator {
@@ -15794,6 +15813,91 @@ details.rich-session-compact-output[open] .rich-session-compact-output-toggle {
 
 .rich-session-entry.is-tool .rich-session-image-strip {
   margin-top: 6px;
+}
+
+/* Browser-use widget — when a tool entry is a vr-browser screenshot,
+   render the result with a fake-browser chrome bar (3 dots + URL +
+   command tag) so it reads as a "browser preview" instead of a
+   generic image. The chat is the agent's audit trail; this gives
+   future readers (and other agents) instant context for what the
+   page looked like at the moment of inspection. */
+.rich-session-browser-widget {
+  display: grid;
+  margin: 10px 0 0;
+  border-radius: 14px;
+  overflow: hidden;
+  border: 1px solid rgba(255, 255, 255, 0.08);
+  background: rgba(8, 9, 11, 0.65);
+  max-width: min(560px, 100%);
+}
+
+.rich-session-browser-widget-chrome {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 10px;
+  padding: 8px 12px;
+  background: linear-gradient(180deg, rgba(48, 49, 56, 0.96), rgba(34, 35, 41, 0.96));
+  border-bottom: 1px solid rgba(255, 255, 255, 0.06);
+}
+
+.rich-session-browser-widget-dots {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+}
+
+.rich-session-browser-widget-dots > span {
+  width: 9px;
+  height: 9px;
+  border-radius: 999px;
+  background: rgba(255, 255, 255, 0.16);
+}
+
+.rich-session-browser-widget-dots > span:first-child { background: #ff5f56; }
+.rich-session-browser-widget-dots > span:nth-child(2) { background: #ffbd2e; }
+.rich-session-browser-widget-dots > span:last-child { background: #27c93f; }
+
+.rich-session-browser-widget-url {
+  flex: 1 1 auto;
+  min-width: 0;
+  padding: 3px 10px;
+  border-radius: 999px;
+  background: rgba(0, 0, 0, 0.32);
+  color: rgba(244, 244, 242, 0.86);
+  font-family: "IBM Plex Mono", monospace;
+  font-size: 0.78rem;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.rich-session-browser-widget-tag {
+  display: inline-flex;
+  align-items: center;
+  padding: 2px 8px;
+  border-radius: 999px;
+  background: rgba(123, 195, 255, 0.16);
+  color: rgba(168, 215, 255, 0.95);
+  font-family: "IBM Plex Mono", monospace;
+  font-size: 0.7rem;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  white-space: nowrap;
+}
+
+.rich-session-browser-widget-stage {
+  display: block;
+  background: #000;
+  text-decoration: none;
+}
+
+.rich-session-browser-widget-image {
+  display: block;
+  width: 100%;
+  max-height: 480px;
+  object-fit: contain;
+  background: #000;
 }
 
 /* Inline action buttons on status entries — used to surface the Login /

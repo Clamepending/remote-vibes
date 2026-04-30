@@ -75,6 +75,7 @@ import {
 import {
   RICH_SESSION_INLINE_IMAGE_EXTENSIONS,
   RICH_SESSION_SLASH_COMMANDS,
+  extractBrowserUseWidget,
   extractRichSessionImageRefs,
   extractRichSessionSlashAction,
   resolveRichSessionImageRefs,
@@ -5886,6 +5887,48 @@ function renderRichSessionInlineHtml(text) {
   return renderAnsiToHtml(String(text ?? ""), { escape: renderRichSessionPathLinks });
 }
 
+// Render a vr-browser screenshot as a faux-browser widget: chrome bar
+// at the top showing the URL, the screenshot below. Lifts the asset
+// from "yet another generic image tile" into a recognisable browser
+// preview so users (and other agents reading the chat scrollback)
+// instantly understand what they're looking at. Detection is the pure
+// helper extractBrowserUseWidget; this renderer is the visual
+// treatment.
+function renderBrowserUseWidget(widget) {
+  if (!widget?.screenshotPath) return "";
+  const url = String(widget.url || "").trim();
+  const screenshotUrl = getRichSessionImageUrl(widget.screenshotPath);
+  if (!screenshotUrl) return "";
+  const displayUrl = url || widget.screenshotPath.split("/").filter(Boolean).pop() || "screenshot";
+  const command = String(widget.command || "screenshot");
+  const labelByCommand = {
+    screenshot: "Screenshot",
+    run: "Browser run",
+    describe: "Browser inspection",
+  };
+  const commandLabel = labelByCommand[command] || command || "Screenshot";
+  return `
+    <figure class="rich-session-browser-widget" data-browser-widget>
+      <div class="rich-session-browser-widget-chrome" aria-hidden="true">
+        <span class="rich-session-browser-widget-dots">
+          <span></span><span></span><span></span>
+        </span>
+        <span class="rich-session-browser-widget-url" title="${escapeHtml(displayUrl)}">${escapeHtml(displayUrl)}</span>
+        <span class="rich-session-browser-widget-tag">${escapeHtml(commandLabel)}</span>
+      </div>
+      <a class="rich-session-browser-widget-stage" href="#" data-rich-path="${escapeHtml(widget.screenshotPath)}">
+        <img
+          class="rich-session-browser-widget-image"
+          src="${escapeHtml(screenshotUrl)}"
+          alt="${escapeHtml(displayUrl)}"
+          loading="lazy"
+          decoding="async"
+        />
+      </a>
+    </figure>
+  `;
+}
+
 function renderRichSessionImageStrip(refs, { caption = "" } = {}) {
   if (!Array.isArray(refs) || !refs.length) {
     return "";
@@ -6104,7 +6147,12 @@ function renderRichSessionEntry(entry, index) {
   // The legacy regex extractor stays as a fallback for entries that pre-date
   // the structured field, gated by an image-producing label allowlist so
   // grep-style tools that incidentally name a `.png` don't tile-spam.
-  const toolImageRefs = kind === "tool"
+  // vr-browser screenshots get a dedicated browser-frame widget — see
+  // renderBrowserUseWidget. When the detector matches, skip the regular
+  // image strip path (the widget already shows the screenshot in a more
+  // legible frame). Falls back to the strip for non-browser images.
+  const browserWidget = kind === "tool" ? extractBrowserUseWidget(entry) : null;
+  const toolImageRefs = kind === "tool" && !browserWidget
     ? (() => {
         if (Array.isArray(entry?.imageRefs) && entry.imageRefs.length) {
           return entry.imageRefs.slice(0, 4);
@@ -6118,7 +6166,9 @@ function renderRichSessionEntry(entry, index) {
         return resolveRichSessionImageRefs(entry, { includeMarkdown: true });
       })()
     : [];
-  const toolImageStripHtml = renderRichSessionImageStrip(toolImageRefs);
+  const toolImageStripHtml = browserWidget
+    ? renderBrowserUseWidget(browserWidget)
+    : renderRichSessionImageStrip(toolImageRefs);
 
   // User-message entries get an image strip when the shaper detected the
   // composer's explicit attachment markdown ("![dropped image: foo.png]
@@ -6624,6 +6674,19 @@ function renderRichSessionEmptyState(activeSession) {
   `;
 }
 
+// Server-side emitters now skip placeholder Thinking rows (see
+// session-native-narrative.js), but old narratives still in memory or
+// in resumed transcripts can carry rows like "Codex is thinking..."
+// with no real reasoning content. Drop them at render time so the chat
+// is clean even before the user reloads. The send-button spinner is
+// the canonical "agent is working" signal.
+function isPlaceholderThinkingEntry(entry) {
+  if (!entry || entry.kind !== "status" || entry.label !== "Thinking") return false;
+  const text = String(entry.text || "").trim();
+  if (!text) return true;
+  return /^[A-Za-z][A-Za-z\s.]{0,40}\sis\s(?:thinking|reasoning|working)(?:\.{1,3}|…)?$/u.test(text);
+}
+
 function renderRichSessionFeedHtml(activeSession) {
   if (!activeSession) {
     return "";
@@ -6632,7 +6695,8 @@ function renderRichSessionFeedHtml(activeSession) {
   const narrative = getRichSessionNarrative(activeSession.id);
   const entries = Array.isArray(narrative?.entries) ? narrative.entries : [];
   const prompt = activeSession.claudePrompt || null;
-  const filteredEntries = prompt ? filterEntriesForClaudePrompt(entries, prompt) : entries;
+  const promptFiltered = prompt ? filterEntriesForClaudePrompt(entries, prompt) : entries;
+  const filteredEntries = promptFiltered.filter((entry) => !isPlaceholderThinkingEntry(entry));
   const inlineActions = renderRichSessionActionItems(activeSession);
 
   return `
@@ -41859,6 +41923,129 @@ function bindShellEvents() {
       state.sessionProjectDrag = null;
       refreshSessionsList({ force: true });
     });
+
+    // ============================================================
+    // Touch-drag support. HTML5 drag-and-drop never fires on touch
+    // devices, so we hand-roll the equivalent: long-press to arm
+    // (~350ms hold + < 8px of movement), then track the touch and
+    // mirror the dragstart/dragover/drop transitions through the
+    // same state and reorderSessionProject() function.
+    // ============================================================
+    const TOUCH_DRAG_HOLD_MS = 350;
+    const TOUCH_DRAG_MOVE_TOLERANCE_PX = 8;
+    const touchState = {
+      candidateKey: "",
+      pointerStartX: 0,
+      pointerStartY: 0,
+      armTimer: null,
+      armed: false,
+    };
+
+    const clearTouchArm = () => {
+      if (touchState.armTimer) {
+        window.clearTimeout(touchState.armTimer);
+        touchState.armTimer = null;
+      }
+      touchState.candidateKey = "";
+      touchState.armed = false;
+    };
+
+    document.addEventListener("touchstart", (event) => {
+      if (event.touches.length !== 1) return;
+      const target = event.target instanceof Element ? event.target : null;
+      const section = target?.closest("[data-session-project]");
+      if (!(section instanceof HTMLElement)) return;
+      const interactive = target?.closest("a[href], input, textarea, select, button:not([data-session-project-drag-handle]), [contenteditable=\"true\"]");
+      if (interactive) return;
+      const key = section.getAttribute("data-session-project") || "";
+      if (!key) return;
+      const touch = event.touches[0];
+      touchState.candidateKey = key;
+      touchState.pointerStartX = touch.clientX;
+      touchState.pointerStartY = touch.clientY;
+      touchState.armed = false;
+      if (touchState.armTimer) window.clearTimeout(touchState.armTimer);
+      touchState.armTimer = window.setTimeout(() => {
+        touchState.armed = true;
+        touchState.armTimer = null;
+        state.sessionProjectDrag = { key, overKey: "", overPosition: "" };
+        // Soft haptic cue if the platform supports it — feels native.
+        if (typeof navigator !== "undefined" && typeof navigator.vibrate === "function") {
+          try { navigator.vibrate(10); } catch { /* not supported */ }
+        }
+        refreshSessionsList({ force: true });
+      }, TOUCH_DRAG_HOLD_MS);
+    }, { passive: true });
+
+    document.addEventListener("touchmove", (event) => {
+      if (!touchState.candidateKey) return;
+      const touch = event.touches[0];
+      if (!touch) return;
+      const dx = touch.clientX - touchState.pointerStartX;
+      const dy = touch.clientY - touchState.pointerStartY;
+      // While waiting for the long-press to arm, any meaningful
+      // movement cancels — the user is just scrolling the sidebar.
+      if (!touchState.armed) {
+        if (Math.hypot(dx, dy) > TOUCH_DRAG_MOVE_TOLERANCE_PX) {
+          clearTouchArm();
+        }
+        return;
+      }
+      // Armed: this is a drag. Suppress page scroll and update the
+      // drop indicator. preventDefault requires { passive: false } on
+      // the listener registration.
+      event.preventDefault();
+      const targetEl = document.elementFromPoint(touch.clientX, touch.clientY);
+      const overSection = targetEl instanceof Element ? targetEl.closest("[data-session-project]") : null;
+      const drag = state.sessionProjectDrag;
+      if (!drag) return;
+      if (!(overSection instanceof HTMLElement)) {
+        if (drag.overKey || drag.overPosition) {
+          drag.overKey = "";
+          drag.overPosition = "";
+          refreshSessionsList({ force: true });
+        }
+        return;
+      }
+      const overKey = overSection.getAttribute("data-session-project") || "";
+      if (!overKey) return;
+      const rect = overSection.getBoundingClientRect();
+      const overPosition = (touch.clientY - rect.top) < rect.height / 2 ? "before" : "after";
+      const effectiveOverKey = overKey === drag.key ? "" : overKey;
+      const effectivePosition = effectiveOverKey ? overPosition : "";
+      if (drag.overKey !== effectiveOverKey || drag.overPosition !== effectivePosition) {
+        drag.overKey = effectiveOverKey;
+        drag.overPosition = effectivePosition;
+        refreshSessionsList({ force: true });
+      }
+    }, { passive: false });
+
+    const finishTouchDrag = (commit) => {
+      if (!touchState.candidateKey && !touchState.armed) return;
+      const drag = state.sessionProjectDrag;
+      const armed = touchState.armed;
+      clearTouchArm();
+      if (!armed || !drag?.key) {
+        // Long-press never fired — let the underlying tap handlers
+        // do their job (expand the project, etc.). Nothing to clean up.
+        if (drag) {
+          state.sessionProjectDrag = null;
+          refreshSessionsList({ force: true });
+        }
+        return;
+      }
+      const movedKey = drag.key;
+      const overKey = drag.overKey;
+      const overPosition = drag.overPosition;
+      state.sessionProjectDrag = null;
+      if (commit && overKey && overKey !== movedKey && overPosition) {
+        reorderSessionProject(movedKey, overKey, overPosition);
+      }
+      refreshSessionsList({ force: true });
+    };
+
+    document.addEventListener("touchend", () => finishTouchDrag(true), { passive: true });
+    document.addEventListener("touchcancel", () => finishTouchDrag(false), { passive: true });
   }
 
   // Restart-session button on exited stream-mode sessions. Spawns a

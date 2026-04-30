@@ -2,6 +2,7 @@ import assert from "node:assert/strict";
 import test from "node:test";
 import {
   RICH_SESSION_SLASH_COMMANDS,
+  extractBrowserUseWidget,
   extractRichSessionImageRefs,
   extractRichSessionSlashAction,
   getRichSessionImageUrl,
@@ -593,4 +594,89 @@ test("resolver: reads structured imageRefs field when present", () => {
 test("resolver: returns [] when imageRefs absent (no regex fallback)", () => {
   const entry = { kind: "tool", text: "saved to figures/x.png" };
   assert.deepEqual(resolveRichSessionImageRefs(entry), []);
+});
+
+// =====================================================================
+// extractBrowserUseWidget — turns a vr-browser tool entry into the
+// shape consumed by the chat's faux-browser preview widget.
+// =====================================================================
+const SAMPLE_BROWSER_OUTPUT = '{"ok":true,"command":"screenshot","browser":"chromium","target":"http://127.0.0.1:5173/","outputPath":"/Users/me/proj/result.png","title":"My App"}';
+
+test("browser widget: parses vr-browser screenshot envelope from a Bash entry", () => {
+  const entry = {
+    kind: "tool",
+    label: "Bash",
+    input: "vr-browser screenshot 5173 result.png",
+    outputPreview: `Loaded http://127.0.0.1:5173/ in 412ms\n${SAMPLE_BROWSER_OUTPUT}`,
+  };
+  const widget = extractBrowserUseWidget(entry);
+  assert.equal(widget?.url, "http://127.0.0.1:5173/");
+  assert.equal(widget?.screenshotPath, "/Users/me/proj/result.png");
+  assert.equal(widget?.command, "screenshot");
+});
+
+test("browser widget: returns null when entry is unrelated to vr-browser", () => {
+  const entry = {
+    kind: "tool",
+    label: "Bash",
+    input: "ls -la",
+    outputPreview: "drwxr-xr-x  6 mark staff 192 Apr 30 12:00 .",
+  };
+  assert.equal(extractBrowserUseWidget(entry), null);
+});
+
+test("browser widget: returns null when JSON envelope lacks an output path", () => {
+  const entry = {
+    kind: "tool",
+    label: "Bash",
+    input: "vr-browser doctor",
+    outputPreview: '{"ok":true,"command":"doctor"}',
+  };
+  assert.equal(extractBrowserUseWidget(entry), null);
+});
+
+test("browser widget: tolerates the envelope being interleaved with stderr noise", () => {
+  const entry = {
+    kind: "tool",
+    label: "Bash",
+    input: "vr-browser screenshot http://127.0.0.1:3000/ shot.png",
+    outputPreview: [
+      "warning: Chromium headless mode active",
+      "DevTools listening on ws://127.0.0.1:54321/devtools/browser",
+      SAMPLE_BROWSER_OUTPUT,
+    ].join("\n"),
+  };
+  const widget = extractBrowserUseWidget(entry);
+  assert.equal(widget?.url, "http://127.0.0.1:5173/");
+  assert.equal(widget?.screenshotPath, "/Users/me/proj/result.png");
+});
+
+test("browser widget: detects `command: run` invocations too", () => {
+  const entry = {
+    kind: "tool",
+    label: "Bash",
+    input: "vr-browser run 7860 --steps-file plan.json --output result.png",
+    outputPreview: '{"ok":true,"command":"run","target":"http://127.0.0.1:7860/","outputPath":"/tmp/result.png"}',
+  };
+  const widget = extractBrowserUseWidget(entry);
+  assert.equal(widget?.command, "run");
+  assert.equal(widget?.url, "http://127.0.0.1:7860/");
+});
+
+test("browser widget: returns null when label is non-shell and the input doesn't mention vr-browser", () => {
+  // Defensive — a Read entry that happens to contain the literal JSON
+  // envelope (e.g. logs) should not be treated as a browser screenshot.
+  const entry = {
+    kind: "tool",
+    label: "Read",
+    input: "logs/browser-out.txt",
+    outputPreview: SAMPLE_BROWSER_OUTPUT,
+  };
+  assert.equal(extractBrowserUseWidget(entry), null);
+});
+
+test("browser widget: returns null on entries missing both input and output", () => {
+  assert.equal(extractBrowserUseWidget({ kind: "tool", label: "Bash" }), null);
+  assert.equal(extractBrowserUseWidget(null), null);
+  assert.equal(extractBrowserUseWidget(undefined), null);
 });
