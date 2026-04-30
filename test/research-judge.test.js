@@ -223,6 +223,8 @@ test("judgeMove treats existing artifact provenance as medium-strength evidence"
     const report = await judgeMove({ projectDir: dir, slug: "first-move", checkPaper: false });
     assert.equal(report.issues.some((item) => item.code === "artifact_missing"), false);
     assert.equal(report.evaluatorStrength, "medium");
+    assert.equal(report.artifactEvidence[0].kind, "log");
+    assert.match(report.artifactEvidence[0].path, /artifacts\/first-move\/cycle-1\.log$/);
     assert.match(report.summary, /evaluator=medium/);
   } finally {
     rmSync(dir, { recursive: true, force: true });
@@ -256,6 +258,44 @@ test("judgeMove can create an Agent Inbox review card", async () => {
     assert.equal(report.review.actionItem.id, "research-judge-first-move");
     assert.deepEqual(requests[0].body.choices, __internal.REVIEW_CHOICES);
     assert.match(requests[0].body.recommendation, /continue/);
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+test("judgeMove includes existing artifacts in the Agent Inbox review card", async () => {
+  const dir = makeProject("vr-judge-card-artifacts");
+  const requests = [];
+  try {
+    mkdirSync(join(dir, "figures", "first-move"), { recursive: true });
+    writeFileSync(join(dir, "figures", "first-move", "curve.png"), "fake png\n");
+    writeResult(dir, "first-move", {
+      status: "active",
+      results: "- figure `figures/first-move/curve.png` shows the latest curve.",
+      reproducibility: "- command `node toy.js`; figure `figures/first-move/curve.png`; git `abcdef0`.",
+    });
+    await judgeMove({
+      projectDir: dir,
+      slug: "first-move",
+      checkPaper: false,
+      askHuman: true,
+      agentTownApi: "http://agent-town.test/api/agent-town",
+      fetchImpl: async (_url, options) => {
+        const body = JSON.parse(options.body);
+        requests.push(body);
+        return {
+          ok: true,
+          status: 200,
+          async json() {
+            return { actionItem: { id: body.id } };
+          },
+        };
+      },
+    });
+    const artifact = requests[0].evidence.find((item) => item.kind === "figure");
+    assert.ok(artifact, "review card includes the figure evidence");
+    assert.match(artifact.path, /figures\/first-move\/curve\.png$/);
+    assert.equal(artifact.label, "figures/first-move/curve.png");
   } finally {
     rmSync(dir, { recursive: true, force: true });
   }

@@ -120,6 +120,30 @@ function extractArtifactPaths(text) {
   return Array.from(out);
 }
 
+function artifactEvidenceKind(relPath) {
+  const ext = path.extname(String(relPath || "").toLowerCase());
+  if (/^(?:\.apng|\.avif|\.gif|\.jpe?g|\.png|\.webp|\.svg)$/u.test(ext)) return "figure";
+  if (/^(?:\.log|\.out|\.txt)$/u.test(ext)) return "log";
+  if (/^(?:\.csv|\.json|\.jsonl|\.tsv|\.yaml|\.yml)$/u.test(ext)) return "artifact";
+  return "artifact";
+}
+
+async function collectArtifactEvidence({ projectDir, text, limit = 4 } = {}) {
+  const evidence = [];
+  for (const relPath of extractArtifactPaths(text)) {
+    if (!isSafeRelativeArtifactPath(relPath)) continue;
+    const absolutePath = path.join(projectDir, relPath);
+    if (!(await pathExists(absolutePath))) continue;
+    evidence.push({
+      label: relPath,
+      path: absolutePath,
+      kind: artifactEvidenceKind(relPath),
+    });
+    if (evidence.length >= limit) break;
+  }
+  return evidence;
+}
+
 async function artifactSniffIssues({ projectDir, text, slug, doc }) {
   const issues = [];
   const paths = extractArtifactPaths(text);
@@ -311,6 +335,7 @@ async function createJudgeCard({
   slug,
   resultPath,
   paperPath,
+  artifactEvidence = [],
   summary,
   recommendation,
   issues,
@@ -346,6 +371,7 @@ async function createJudgeCard({
       { label: "result doc", path: resultPath, kind: "result" },
       { label: "project README", path: path.join(projectDir, "README.md"), kind: "project" },
       ...(paperPath ? [{ label: "paper", path: paperPath, kind: "paper" }] : []),
+      ...artifactEvidence.slice(0, 4),
       ...queueUpdates.slice(0, 5).map((item) => ({
         label: `queue ${item.verb}: ${item.slug}`,
         kind: "queue-update",
@@ -415,6 +441,10 @@ export async function judgeMove({
     slug: inferredSlug,
     doc,
   }));
+  const artifactEvidence = await collectArtifactEvidence({
+    projectDir: resolvedProjectDir,
+    text: resultText,
+  });
 
   const doctorReport = await runDoctor(resolvedProjectDir, { readmeText });
   issues.push(...doctorReport.issues.map((item) => normalizeExternalIssue(item, "doctor", formatIssue)));
@@ -472,6 +502,7 @@ export async function judgeMove({
       slug: inferredSlug,
       resultPath: resolvedResultPath,
       paperPath: paperReport ? paperPath : "",
+      artifactEvidence,
       summary,
       recommendation,
       issues: sortedIssues,
@@ -492,6 +523,7 @@ export async function judgeMove({
     recommendation,
     summary,
     evaluatorStrength: strength,
+    artifactEvidence,
     queueUpdates,
     issues: sortedIssues,
     issueSummary: countBySeverity(issues),
@@ -563,6 +595,7 @@ export const __internal = {
   sectionBody,
   isPlaceholder,
   artifactSniffIssues,
+  collectArtifactEvidence,
   evaluatorStrength,
   extractArtifactPaths,
   provenanceIssues,
