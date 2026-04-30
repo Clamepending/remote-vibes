@@ -1543,6 +1543,81 @@ function getClaudeSessionIdsForSession(session) {
   );
 }
 
+// Scan the process table for orphan provider children whose command line
+// references one of OUR session ids. Returns the reaped pids (best
+// effort — failures are swallowed). Runs once on server startup before
+// any restoreSession calls. Implementation detail: we use `ps -A -o
+// pid,command` rather than walking /proc because we need to support both
+// macOS and Linux from the same code path; ps is available on both.
+//
+// We match the session id as a whole word in the command line so we
+// don't accidentally kill an unrelated process whose argv happens to
+// contain a substring of our id. Claude CLI session ids are UUIDs, so
+// the false-positive risk is already low, but the word-boundary check
+// is cheap insurance.
+export function reapOrphanProviderChildren(sessionIds, {
+  logger = console,
+  // Inject a custom ps runner + killer in tests so we don't have to
+  // spawn real processes. The defaults are the production wiring.
+  readProcessTable = () => execFileSync("ps", ["-A", "-o", "pid=,command="], {
+    encoding: "utf8",
+    maxBuffer: 8 * 1024 * 1024,
+  }),
+  killProcess = (pid, signal) => process.kill(pid, signal),
+} = {}) {
+  if (!Array.isArray(sessionIds) || sessionIds.length === 0) {
+    return [];
+  }
+  let psOutput = "";
+  try {
+    psOutput = readProcessTable();
+  } catch (error) {
+    logger?.warn?.(`[vibe-research] orphan sweep: ps failed (${error?.message || error})`);
+    return [];
+  }
+  const reaped = [];
+  const idSet = new Set(sessionIds.map((id) => String(id).trim()).filter(Boolean));
+  for (const line of psOutput.split("\n")) {
+    const trimmed = line.trim();
+    if (!trimmed) continue;
+    const spaceIdx = trimmed.indexOf(" ");
+    if (spaceIdx <= 0) continue;
+    const pidStr = trimmed.slice(0, spaceIdx);
+    const pid = Number(pidStr);
+    if (!Number.isInteger(pid) || pid <= 1) continue;
+    // Ignore our own pid + parent — the new server itself shouldn't be
+    // reaped if its command line references the session ids.
+    if (pid === process.pid || pid === process.ppid) continue;
+    const command = trimmed.slice(spaceIdx + 1);
+    // Cheap pre-filter: only inspect lines that look like they could be
+    // the Claude or Codex CLI. The `claude` and `codex` substrings are
+    // present in both the binary path and our spawn args.
+    if (!/\b(?:claude|codex)\b/i.test(command)) continue;
+    let matchedId = null;
+    for (const id of idSet) {
+      // Word-boundary match: hyphen-aware. Plain \b doesn't honor the
+      // hyphens UUIDs use, so we anchor explicitly.
+      const escaped = id.replace(/[-/\\^$*+?.()|[\]{}]/g, "\\$&");
+      if (new RegExp(`(?:^|[\\s=])${escaped}(?:$|[\\s])`).test(command)) {
+        matchedId = id;
+        break;
+      }
+    }
+    if (!matchedId) continue;
+    try {
+      killProcess(pid, "SIGTERM");
+      reaped.push({ pid, sessionId: matchedId });
+      logger?.warn?.(`[vibe-research] reaped orphan provider child pid=${pid} for session ${matchedId}`);
+    } catch (error) {
+      // ESRCH = process already exited; ignore. EPERM = not ours; warn.
+      if (error?.code !== "ESRCH") {
+        logger?.warn?.(`[vibe-research] orphan sweep: kill ${pid} failed (${error?.message || error})`);
+      }
+    }
+  }
+  return reaped;
+}
+
 function listClaudeSessionsForCwd(cwd, homeDirOrEnv = process.env) {
   const projectDir = getClaudeProjectDirForCwd(cwd, homeDirOrEnv);
   if (!projectDir) {
@@ -2842,6 +2917,20 @@ export class SessionManager {
   async initialize() {
     await this.workspaceStore.load();
     const persistedSessions = await this.sessionStore.load();
+
+    // Reap orphan provider children that survived the previous server's
+    // exit. Without this, two children can end up writing to the same
+    // ~/.claude/projects/<cwd>/<id>.jsonl after a `kill -9` of the parent:
+    // the orphan from before, plus the new `--resume <id>` spawn we are
+    // about to launch. Both consume credits and risk transcript
+    // corruption. The sweep matches our session ids against running
+    // processes' command lines and SIGTERMs the matches.
+    const sessionIds = persistedSessions
+      .map((snapshot) => String(snapshot?.id || "").trim())
+      .filter(Boolean);
+    if (sessionIds.length) {
+      reapOrphanProviderChildren(sessionIds);
+    }
 
     for (const snapshot of persistedSessions) {
       this.restoreSession(snapshot);
