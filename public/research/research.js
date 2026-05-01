@@ -61,21 +61,90 @@
 
   // ----- Project list page -----
 
-  async function postOrgBenchRun(preset) {
-    const res = await fetch("/api/research/org-bench/run", {
+  function sleep(ms) {
+    return new Promise((resolve) => setTimeout(resolve, ms));
+  }
+
+  async function postOrgBenchJob(requestPayload) {
+    const res = await fetch("/api/research/org-bench/jobs", {
       method: "POST",
       headers: { accept: "application/json", "Content-Type": "application/json" },
-      body: JSON.stringify({ preset }),
+      body: JSON.stringify(requestPayload || {}),
     });
     const payload = await res.json().catch(() => ({}));
     if (!res.ok) throw new Error(payload.error || `HTTP ${res.status}`);
     return payload;
   }
 
+  async function fetchOrgBenchJob(jobId) {
+    const res = await fetch(`/api/research/org-bench/jobs/${encodeURIComponent(jobId)}`, {
+      headers: { accept: "application/json" },
+    });
+    const payload = await res.json().catch(() => ({}));
+    if (!res.ok) throw new Error(payload.error || `HTTP ${res.status}`);
+    return payload;
+  }
+
+  async function fetchOrgBenchRuns() {
+    const res = await fetch("/api/research/org-bench/runs?limit=6", {
+      headers: { accept: "application/json" },
+    });
+    const payload = await res.json().catch(() => ({}));
+    if (!res.ok) throw new Error(payload.error || `HTTP ${res.status}`);
+    return payload;
+  }
+
+  async function waitForOrgBenchJob(jobId, onUpdate) {
+    let delay = 700;
+    for (let attempt = 0; attempt < 720; attempt += 1) {
+      const payload = await fetchOrgBenchJob(jobId);
+      if (onUpdate) onUpdate(payload.job);
+      if (payload.job.status === "succeeded" || payload.job.status === "failed") return payload;
+      await sleep(delay);
+      delay = Math.min(2500, delay + 250);
+    }
+    throw new Error("benchmark job did not finish before the browser wait limit");
+  }
+
   function formatBenchNumber(value, digits) {
     const numeric = Number(value);
     if (!Number.isFinite(numeric)) return "—";
     return numeric.toFixed(digits);
+  }
+
+  function findBenchRow(report, strategy) {
+    return (report.summary || []).find((row) => row.strategy === strategy) || null;
+  }
+
+  function formatBenchPercent(value) {
+    return `${formatBenchNumber(Number(value) * 100, 0)}%`;
+  }
+
+  function bestBenchRow(report) {
+    const rows = Array.isArray(report.summary) ? report.summary : [];
+    return rows.reduce((best, row) =>
+      !best || Number(row.holdoutMean) > Number(best.holdoutMean) ? row : best,
+    null);
+  }
+
+  function renderOrgBenchStats(report) {
+    const single = findBenchRow(report, "single-agent-provider");
+    const reviewed = findBenchRow(report, "org-provider-reviewed");
+    const best = bestBenchRow(report);
+    const lift = single && reviewed
+      ? Number(reviewed.holdoutMean) - Number(single.holdoutMean)
+      : NaN;
+    const stat = (label, value, variant) =>
+      el("div", { class: `vr-org-bench-stat${variant ? " is-" + variant : ""}` }, [
+        el("span", null, label),
+        el("strong", null, value),
+      ]);
+    return el("div", { class: "vr-org-bench-stats" }, [
+      stat("best holdout", best ? `${best.strategy} ${formatBenchNumber(best.holdoutMean, 4)}` : "—", "accent"),
+      stat("reviewed lift", Number.isFinite(lift) ? `${lift >= 0 ? "+" : ""}${lift.toFixed(4)}` : "—", lift > 0 ? "good" : lift < 0 ? "bad" : null),
+      stat("integrity", reviewed ? formatBenchPercent(reviewed.integrityPassRate) : "—", reviewed && Number(reviewed.integrityPassRate) >= 1 ? "good" : null),
+      stat("timeouts", reviewed ? formatBenchPercent(reviewed.timeoutRate) : "—", reviewed && Number(reviewed.timeoutRate) > 0 ? "bad" : "good"),
+    ]);
   }
 
   function renderOrgBenchReport(container, payload) {
@@ -93,6 +162,7 @@
       container.appendChild(el("p", { class: "vr-card-empty" }, "No benchmark rows returned."));
       return;
     }
+    container.appendChild(renderOrgBenchStats(report));
     container.appendChild(el("table", { class: "vr-table vr-org-bench-table" }, [
       el("thead", null, el("tr", null, [
         el("th", null, "strategy"),
@@ -120,26 +190,95 @@
   function renderOrgBenchPanel() {
     const card = document.getElementById("org-bench-section");
     if (!card) return;
+    const state = { preset: "local-smoke" };
     card.innerHTML = "";
-    card.appendChild(el("h2", null, "Organization benchmark"));
-    card.appendChild(el(
-      "p",
-      { class: "vr-org-bench-copy" },
-      "Run the PostTrainBench-lite proxy from the browser and compare one-shot agents against the reviewed organization loop.",
-    ));
-
+    card.appendChild(el("h2", null, [
+      "Organization benchmark",
+      el("span", { class: "vr-card-count" }, "posttrain-lite"),
+    ]));
     const result = el("div", { class: "vr-org-bench-result" });
-    const controls = el("div", { class: "vr-next-actions" });
-    const run = async (preset, label, event) => {
+    const history = el("div", { class: "vr-org-bench-history" });
+    const seedsInput = el("input", { class: "vr-org-bench-input", type: "text", value: "0,1", "aria-label": "Seeds" });
+    const timeoutInput = el("input", { class: "vr-org-bench-input", type: "number", min: "1000", step: "1000", value: "30000", "aria-label": "Timeout milliseconds" });
+    const modelInput = el("input", { class: "vr-org-bench-input", type: "text", value: "gpt-5.4-mini", "aria-label": "Codex model" });
+    const codexFields = el("div", { class: "vr-org-bench-fields is-hidden" }, [
+      el("label", null, [el("span", null, "Model"), modelInput]),
+    ]);
+    const localPreset = button("Local proxy", () => setPreset("local-smoke"));
+    const codexPreset = button("Codex reviewed", () => setPreset("codex-reviewed"));
+    const startButton = button("Start run", (event) => run(event), "primary");
+
+    function setPreset(preset) {
+      state.preset = preset;
+      localPreset.classList.toggle("is-selected", preset === "local-smoke");
+      codexPreset.classList.toggle("is-selected", preset === "codex-reviewed");
+      codexFields.classList.toggle("is-hidden", preset !== "codex-reviewed");
+      seedsInput.value = preset === "codex-reviewed" ? "0" : "0,1";
+      timeoutInput.value = preset === "codex-reviewed" ? "240000" : "30000";
+    }
+
+    async function refreshHistory() {
+      history.innerHTML = "";
+      history.appendChild(el("p", { class: "vr-card-empty" }, "Loading recent runs…"));
+      try {
+        const payload = await fetchOrgBenchRuns();
+        const reports = Array.isArray(payload.reports) ? payload.reports : [];
+        history.innerHTML = "";
+        history.appendChild(el("h3", null, "Recent runs"));
+        if (!reports.length) {
+          history.appendChild(el("p", { class: "vr-card-empty" }, "No saved benchmark reports yet."));
+          return;
+        }
+        history.appendChild(el("ol", { class: "vr-org-bench-run-list" }, reports.map((report) => {
+          const best = bestBenchRow(report);
+          return el("li", null, [
+            el("button", {
+              class: "vr-org-bench-run-link",
+              type: "button",
+              onclick: () => renderOrgBenchReport(result, { preset: report.name, report }),
+            }, [
+              el("span", { class: "vr-mono" }, report.name),
+              best ? el("span", null, `best ${best.strategy} ${formatBenchNumber(best.holdoutMean, 4)}`) : null,
+            ]),
+          ]);
+        })));
+      } catch (err) {
+        history.innerHTML = "";
+        history.appendChild(el("p", { class: "vr-next-status is-error" }, `Could not load recent runs: ${err.message}`));
+      }
+    }
+
+    const run = async (event) => {
       const target = event.currentTarget;
-      const buttons = Array.from(controls.querySelectorAll("button"));
+      const buttons = Array.from(card.querySelectorAll("button"));
       buttons.forEach((buttonNode) => { buttonNode.disabled = true; });
       card.setAttribute("aria-busy", "true");
       result.innerHTML = "";
-      result.appendChild(el("p", { class: "vr-next-status" }, `${label} running…`));
+      result.appendChild(el("p", { class: "vr-next-status" }, "Starting benchmark job…"));
       try {
-        const payload = await postOrgBenchRun(preset);
-        renderOrgBenchReport(result, payload);
+        const jobStart = await postOrgBenchJob({
+          preset: state.preset,
+          seeds: seedsInput.value,
+          timeoutMs: Number(timeoutInput.value) || undefined,
+          model: modelInput.value,
+        });
+        const jobId = jobStart.job.id;
+        result.innerHTML = "";
+        result.appendChild(el("div", { class: "vr-org-bench-job" }, [
+          chip(`job ${jobId.slice(0, 8)}`, "accent"),
+          chip(jobStart.job.status),
+        ]));
+        const final = await waitForOrgBenchJob(jobId, (job) => {
+          const status = result.querySelector(".vr-org-bench-job");
+          if (status) {
+            status.innerHTML = "";
+            status.appendChild(chip(`job ${job.id.slice(0, 8)}`, "accent"));
+            status.appendChild(chip(job.status, job.status === "failed" ? "bad" : job.status === "succeeded" ? "good" : null));
+          }
+        });
+        if (final.job.status === "failed") throw new Error(final.job.error || "benchmark job failed");
+        renderOrgBenchReport(result, { preset: final.job.preset, report: final.job.report });
+        await refreshHistory();
       } catch (err) {
         result.innerHTML = "";
         result.appendChild(el("p", { class: "vr-next-status is-error" }, `Benchmark failed: ${err.message}`));
@@ -150,11 +289,22 @@
       }
     };
 
-    controls.appendChild(button("Run local smoke", (event) => run("local-smoke", "Local smoke", event), "primary"));
-    controls.appendChild(button("Run Codex canary", (event) => run("codex-reviewed", "Codex canary", event)));
-    card.appendChild(controls);
-    card.appendChild(el("p", { class: "vr-card-empty vr-org-bench-note" }, "Local smoke usually finishes in under a second. Codex canary can take a few minutes."));
+    card.appendChild(el("div", { class: "vr-org-bench-toolbar" }, [
+      el("div", { class: "vr-org-bench-presets" }, [localPreset, codexPreset]),
+      el("div", { class: "vr-org-bench-fields" }, [
+        el("label", null, [el("span", null, "Seeds"), seedsInput]),
+        el("label", null, [el("span", null, "Timeout ms"), timeoutInput]),
+      ]),
+      codexFields,
+      el("div", { class: "vr-next-actions" }, [
+        startButton,
+        button("Recent runs", () => refreshHistory()),
+      ]),
+    ]));
     card.appendChild(result);
+    card.appendChild(history);
+    setPreset("local-smoke");
+    refreshHistory();
   }
 
   async function renderProjectList() {

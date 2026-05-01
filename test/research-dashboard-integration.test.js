@@ -259,6 +259,42 @@ test("POST /api/research/org-bench/run executes local benchmark smoke", async ()
   });
 });
 
+test("POST /api/research/org-bench/jobs runs benchmark asynchronously", async () => {
+  await withLibraryServer(async ({ baseUrl }) => {
+    const start = await fetch(`${baseUrl}/api/research/org-bench/jobs`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ preset: "local-smoke", seeds: "0" }),
+    });
+    assert.equal(start.status, 202);
+    const started = await start.json();
+    assert.equal(started.ok, true);
+    assert.equal(started.job.preset, "local-smoke");
+
+    let job = started.job;
+    try {
+      for (let attempt = 0; attempt < 20 && !["succeeded", "failed"].includes(job.status); attempt += 1) {
+        await new Promise((resolve) => setTimeout(resolve, 50));
+        const poll = await fetch(`${baseUrl}/api/research/org-bench/jobs/${job.id}`);
+        assert.equal(poll.status, 200);
+        job = (await poll.json()).job;
+      }
+      assert.equal(job.status, "succeeded", job.error || "job did not complete");
+      assert.equal(job.report.summary.some((row) => row.strategy === "org-provider-reviewed"), true);
+
+      const runs = await fetch(`${baseUrl}/api/research/org-bench/runs?limit=3`);
+      assert.equal(runs.status, 200);
+      const history = await runs.json();
+      assert.equal(history.ok, true);
+      assert.equal(history.reports.some((row) => row.outputDir === job.report.outputDir), true);
+    } finally {
+      if (job.report?.outputDir) {
+        await rm(job.report.outputDir, { recursive: true, force: true });
+      }
+    }
+  });
+});
+
 test("GET /research returns the static index page", async () => {
   await withLibraryServer(async ({ baseUrl }) => {
     const res = await fetch(`${baseUrl}/research`);
@@ -302,7 +338,8 @@ test("GET /research/research.js + research.css are served", async () => {
     assert.match(jsText, /autopilot\/step/);
     assert.match(jsText, /orchestrator\/tick/);
     assert.match(jsText, /briefs\/.*compile/);
-    assert.match(jsText, /org-bench\/run/);
+    assert.match(jsText, /org-bench\/jobs/);
+    assert.match(jsText, /org-bench\/runs/);
     assert.match(jsText, /vr-next-candidates/);
     assert.match(jsText, /renderSweepsCard/);
     const css = await fetch(`${baseUrl}/research/research.css`);

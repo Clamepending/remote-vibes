@@ -10,7 +10,7 @@
 // in vibe-research.test.js, which also skip on machines without a browser).
 
 import assert from "node:assert/strict";
-import { mkdtemp, mkdir, rm } from "node:fs/promises";
+import { chmod, mkdtemp, mkdir, rm, writeFile } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import test from "node:test";
@@ -32,6 +32,36 @@ async function startApp({ cwd, stateDir }) {
       new SleepPreventionService({ enabled: settings.preventSleepEnabled, platform: "test" }),
   });
   return { app, baseUrl: `http://127.0.0.1:${app.config.port}` };
+}
+
+async function installFakeModalCli(root) {
+  const fakeHome = path.join(root, "fake-vibe-home");
+  const binDir = path.join(fakeHome, "bin");
+  await mkdir(binDir, { recursive: true });
+  const modalPath = path.join(binDir, "modal");
+  await writeFile(
+    modalPath,
+    [
+      "#!/bin/sh",
+      "case \"$1 $2\" in",
+      "  \"token new\"|\"token info\") exit 0 ;;",
+      "  *) exit 0 ;;",
+      "esac",
+      "",
+    ].join("\n"),
+  );
+  await chmod(modalPath, 0o755);
+
+  const previousPath = process.env.PATH;
+  const previousHome = process.env.VIBE_RESEARCH_HOME;
+  process.env.VIBE_RESEARCH_HOME = fakeHome;
+  process.env.PATH = `${binDir}${previousPath ? `:${previousPath}` : ""}`;
+  return () => {
+    if (previousPath === undefined) delete process.env.PATH;
+    else process.env.PATH = previousPath;
+    if (previousHome === undefined) delete process.env.VIBE_RESEARCH_HOME;
+    else process.env.VIBE_RESEARCH_HOME = previousHome;
+  };
 }
 
 test("clicking Add Modal flips modalEnabled and the 'Add Modal' button disappears", async (t) => {
@@ -152,6 +182,7 @@ test("POST /api/buildings/:id/install and /authenticate are rate-limited (CodeQL
   const tmp = await mkdtemp(path.join(os.tmpdir(), "vr-rate-limit-"));
   const stateDir = path.join(tmp, ".vibe-research");
   await mkdir(stateDir, { recursive: true });
+  const restoreModalEnv = await installFakeModalCli(tmp);
 
   const { app, baseUrl } = await startApp({ cwd: tmp, stateDir });
   try {
@@ -172,6 +203,7 @@ test("POST /api/buildings/:id/install and /authenticate are rate-limited (CodeQL
     assert.ok(saw429, "/authenticate must return 429 once BUILDING_INSTALL_RATE_LIMIT_MAX is exceeded");
   } finally {
     await app.close();
+    restoreModalEnv();
     await rm(tmp, { recursive: true, force: true });
   }
 });
@@ -179,13 +211,13 @@ test("POST /api/buildings/:id/install and /authenticate are rate-limited (CodeQL
 test("POST /api/buildings/modal/authenticate exists and runs only the auth phase", async () => {
   // Server-API contract for the deferred auth flow. The endpoint must
   // exist and accept POST; calling it on Modal kicks off a job that runs
-  // ONLY the auth + verify phases (no preflight, no install). We don't
-  // actually run `modal token new --source web` here — we trust the
-  // executeAuthPhase unit tests to cover the runner behaviour, and use
-  // this test to lock in the API surface.
+  // ONLY the auth + verify phases (no preflight, no install). Use a fake
+  // Modal CLI so this server-contract test never opens the real browser
+  // auth flow on a developer machine.
   const tmp = await mkdtemp(path.join(os.tmpdir(), "vr-auth-endpoint-"));
   const stateDir = path.join(tmp, ".vibe-research");
   await mkdir(stateDir, { recursive: true });
+  const restoreModalEnv = await installFakeModalCli(tmp);
 
   const { app, baseUrl } = await startApp({ cwd: tmp, stateDir });
   try {
@@ -205,6 +237,7 @@ test("POST /api/buildings/modal/authenticate exists and runs only the auth phase
     assert.equal(wrong.status, 400);
   } finally {
     await app.close();
+    restoreModalEnv();
     await rm(tmp, { recursive: true, force: true });
   }
 });

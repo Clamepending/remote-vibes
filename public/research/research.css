@@ -83,14 +83,52 @@ code, .vr-mono { font-family: var(--vr-mono); font-size: 13px; }
 .vr-org-bench {
   margin-bottom: 14px;
 }
-.vr-org-bench-copy {
-  margin: 0 0 12px;
-  color: var(--vr-text-muted);
-  font-size: 13px;
+.vr-org-bench-toolbar {
+  display: grid;
+  grid-template-columns: 1fr;
+  gap: 12px;
 }
-.vr-org-bench-note {
-  margin: 10px 0 0;
-  font-size: 12px;
+@media (min-width: 760px) {
+  .vr-org-bench-toolbar {
+    grid-template-columns: 220px 1fr 1fr auto;
+    align-items: end;
+  }
+}
+.vr-org-bench-presets {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 8px;
+}
+@media (min-width: 760px) {
+  .vr-org-bench-presets {
+    grid-template-columns: 1fr;
+  }
+}
+.vr-org-bench-fields {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(130px, 1fr));
+  gap: 8px;
+}
+.vr-org-bench-fields.is-hidden {
+  display: none;
+}
+.vr-org-bench-fields label {
+  display: grid;
+  gap: 4px;
+  color: var(--vr-text-muted);
+  font-size: 11px;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+}
+.vr-org-bench-input {
+  width: 100%;
+  min-height: 34px;
+  padding: 7px 9px;
+  border-radius: 6px;
+  border: 1px solid var(--vr-border);
+  background: #10141c;
+  color: var(--vr-text);
+  font: 13px/1.2 var(--vr-mono);
 }
 .vr-org-bench-result {
   display: grid;
@@ -107,6 +145,72 @@ code, .vr-mono { font-family: var(--vr-mono); font-size: 13px; }
   .vr-org-bench-result {
     overflow-x: auto;
   }
+}
+.vr-org-bench-stats {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(150px, 1fr));
+  gap: 8px;
+}
+.vr-org-bench-stat {
+  border: 1px solid var(--vr-border);
+  border-radius: 8px;
+  padding: 9px 10px;
+}
+.vr-org-bench-stat span {
+  display: block;
+  color: var(--vr-text-muted);
+  font-size: 11px;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+}
+.vr-org-bench-stat strong {
+  display: block;
+  margin-top: 3px;
+  font-family: var(--vr-mono);
+  font-size: 13px;
+  color: var(--vr-text);
+}
+.vr-org-bench-stat.is-good { border-color: var(--vr-good); background: var(--vr-good-soft); }
+.vr-org-bench-stat.is-bad { border-color: var(--vr-bad); background: var(--vr-bad-soft); }
+.vr-org-bench-stat.is-accent { border-color: var(--vr-accent); background: var(--vr-accent-soft); }
+.vr-org-bench-job {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+.vr-org-bench-history {
+  margin-top: 12px;
+}
+.vr-org-bench-history h3 {
+  margin: 0 0 8px;
+  color: var(--vr-text-muted);
+  font-size: 12px;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+}
+.vr-org-bench-run-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: grid;
+  gap: 6px;
+}
+.vr-org-bench-run-link {
+  width: 100%;
+  display: flex;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 8px 10px;
+  border-radius: 6px;
+  border: 1px solid var(--vr-border);
+  background: transparent;
+  color: var(--vr-text);
+  cursor: pointer;
+  text-align: left;
+}
+.vr-org-bench-run-link:hover {
+  border-color: var(--vr-accent);
+  background: var(--vr-bg-card-hover);
 }
 
 .vr-status {
@@ -391,6 +495,11 @@ code, .vr-mono { font-family: var(--vr-mono); font-size: 13px; }
 .vr-action-button.is-primary {
   border-color: var(--vr-accent);
   background: var(--vr-accent-soft);
+}
+.vr-action-button.is-selected {
+  border-color: var(--vr-accent);
+  background: var(--vr-accent-soft);
+  color: var(--vr-text);
 }
 .vr-action-button:disabled {
   cursor: wait;

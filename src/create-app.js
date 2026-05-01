@@ -175,6 +175,85 @@ function parseOrgBenchSeeds(value, fallback = [0]) {
     .slice(0, 5);
   return seeds.length ? seeds : fallback;
 }
+
+function buildOrgBenchRunOptions(body = {}) {
+  const preset = trimText(body.preset || "local-smoke");
+  const timestamp = new Date().toISOString().replace(/[-:.TZ]/g, "").slice(0, 14);
+  const runId = `${timestamp}-${randomUUID().slice(0, 8)}`;
+
+  if (preset === "local-smoke") {
+    return {
+      preset,
+      options: {
+        outputDir: path.join(appRootDir, "output", "org-bench", `ui-local-smoke-${runId}`),
+        seeds: parseOrgBenchSeeds(body.seeds, [0, 1]),
+        strategies: ["single-agent-provider", "org-provider-reviewed"],
+        timeoutMs: Number(body.timeoutMs) || 30_000,
+        providerId: "local-proxy",
+        providerCommand: `${shellQuote(process.execPath)} scripts/provider-agent-proxy.mjs`,
+        reviewerProviderId: "local-reviewer-proxy",
+        reviewerCommand: `${shellQuote(process.execPath)} scripts/provider-reviewer-proxy.mjs`,
+      },
+    };
+  }
+
+  if (preset === "codex-reviewed") {
+    const model = trimText(body.model || process.env.VIBE_RESEARCH_ORG_BENCH_CODEX_MODEL || "gpt-5.4-mini");
+    const codexCommand = trimText(body.codexCommand || process.env.VIBE_RESEARCH_CODEX_COMMAND || "codex");
+    const workerTemplate = [
+      shellQuote(codexCommand),
+      "exec",
+      "--model", shellQuote(model),
+      "--sandbox", "workspace-write",
+      "--skip-git-repo-check",
+      "--cd", "{scenarioDir}",
+      "\"$(cat {promptFile})\"",
+      "</dev/null",
+    ].join(" ");
+    return {
+      preset,
+      options: {
+        outputDir: path.join(appRootDir, "output", "org-bench", `ui-codex-reviewed-${runId}`),
+        seeds: parseOrgBenchSeeds(body.seeds, [0]).slice(0, 3),
+        strategies: ["single-agent-provider", "org-provider-reviewed"],
+        timeoutMs: Number(body.timeoutMs) || 240_000,
+        providerId: "codex-worker",
+        providerCommand: workerTemplate,
+        reviewerProviderId: "codex-reviewer",
+        reviewerCommand: workerTemplate,
+      },
+    };
+  }
+
+  throw new Error(`unknown org benchmark preset: ${preset}`);
+}
+
+async function listOrgBenchReports({ limit = 12 } = {}) {
+  const root = path.join(appRootDir, "output", "org-bench");
+  const entries = await readdir(root, { withFileTypes: true }).catch(() => []);
+  const reports = [];
+  for (const entry of entries) {
+    if (!entry.isDirectory()) continue;
+    const reportPath = path.join(root, entry.name, "report.json");
+    const reportStat = await stat(reportPath).catch(() => null);
+    if (!reportStat?.isFile()) continue;
+    try {
+      const report = JSON.parse(await readFile(reportPath, "utf8"));
+      reports.push({
+        name: entry.name,
+        path: reportPath,
+        outputDir: report.outputDir || path.dirname(reportPath),
+        generatedAt: report.generatedAt || "",
+        mtimeMs: reportStat.mtimeMs,
+        strategies: report.strategies || [],
+        seeds: report.seeds || [],
+        summary: report.summary || [],
+      });
+    } catch {}
+  }
+  reports.sort((a, b) => b.mtimeMs - a.mtimeMs);
+  return reports.slice(0, Math.max(1, Math.min(50, Number(limit) || 12)));
+}
 const LIBRARY_SYNC_SETTING_KEYS = new Set([
   "wikiGitBackupEnabled",
   "wikiGitRemoteBranch",
@@ -6878,55 +6957,95 @@ export async function createVibeResearchApp({
     }
   });
 
+  const orgBenchJobs = new Map();
+  function serializeOrgBenchJob(job) {
+    return {
+      id: job.id,
+      preset: job.preset,
+      status: job.status,
+      createdAt: job.createdAt,
+      startedAt: job.startedAt,
+      finishedAt: job.finishedAt,
+      report: job.report || null,
+      text: job.text || "",
+      error: job.error || "",
+    };
+  }
+  function pruneOrgBenchJobs() {
+    const jobs = Array.from(orgBenchJobs.values()).sort((a, b) => String(b.createdAt).localeCompare(String(a.createdAt)));
+    for (const job of jobs.slice(30)) {
+      if (job.status !== "running") orgBenchJobs.delete(job.id);
+    }
+  }
+  function startOrgBenchJob(body) {
+    const { preset, options } = buildOrgBenchRunOptions(body);
+    const job = {
+      id: randomUUID(),
+      preset,
+      status: "queued",
+      createdAt: new Date().toISOString(),
+      startedAt: "",
+      finishedAt: "",
+      report: null,
+      text: "",
+      error: "",
+    };
+    orgBenchJobs.set(job.id, job);
+    pruneOrgBenchJobs();
+    Promise.resolve().then(async () => {
+      job.status = "running";
+      job.startedAt = new Date().toISOString();
+      const report = await runOrgBench(options);
+      job.report = report;
+      job.text = formatOrgBenchReport(report);
+      job.status = "succeeded";
+      job.finishedAt = new Date().toISOString();
+    }).catch((error) => {
+      job.status = "failed";
+      job.error = error?.message || "Could not run organization benchmark.";
+      job.finishedAt = new Date().toISOString();
+    });
+    return job;
+  }
+
+  app.get("/api/research/org-bench/runs", async (request, response) => {
+    try {
+      response.json({
+        ok: true,
+        reports: await listOrgBenchReports({ limit: request.query.limit }),
+      });
+    } catch (error) {
+      response.status(500).json({ error: error.message || "Could not list organization benchmark reports." });
+    }
+  });
+
+  app.post("/api/research/org-bench/jobs", async (request, response) => {
+    try {
+      const body = request.body && typeof request.body === "object" && !Array.isArray(request.body)
+        ? request.body
+        : {};
+      response.status(202).json({ ok: true, job: serializeOrgBenchJob(startOrgBenchJob(body)) });
+    } catch (error) {
+      const status = /unknown org benchmark preset/i.test(error.message || "") ? 400 : 500;
+      response.status(status).json({ error: error.message || "Could not start organization benchmark." });
+    }
+  });
+
+  app.get("/api/research/org-bench/jobs/:jobId", async (request, response) => {
+    const job = orgBenchJobs.get(String(request.params.jobId || ""));
+    if (!job) {
+      response.status(404).json({ error: "organization benchmark job not found" });
+      return;
+    }
+    response.json({ ok: true, job: serializeOrgBenchJob(job) });
+  });
+
   app.post("/api/research/org-bench/run", async (request, response) => {
     try {
       const body = request.body && typeof request.body === "object" && !Array.isArray(request.body)
         ? request.body
         : {};
-      const preset = trimText(body.preset || "local-smoke");
-      const timestamp = new Date().toISOString().replace(/[-:.TZ]/g, "").slice(0, 14);
-      const runId = `${timestamp}-${randomUUID().slice(0, 8)}`;
-      let options;
-
-      if (preset === "local-smoke") {
-        options = {
-          outputDir: path.join(appRootDir, "output", "org-bench", `ui-local-smoke-${runId}`),
-          seeds: parseOrgBenchSeeds(body.seeds, [0, 1]),
-          strategies: ["single-agent-provider", "org-provider-reviewed"],
-          timeoutMs: Number(body.timeoutMs) || 30_000,
-          providerId: "local-proxy",
-          providerCommand: `${shellQuote(process.execPath)} scripts/provider-agent-proxy.mjs`,
-          reviewerProviderId: "local-reviewer-proxy",
-          reviewerCommand: `${shellQuote(process.execPath)} scripts/provider-reviewer-proxy.mjs`,
-        };
-      } else if (preset === "codex-reviewed") {
-        const model = trimText(body.model || process.env.VIBE_RESEARCH_ORG_BENCH_CODEX_MODEL || "gpt-5.4-mini");
-        const codexCommand = trimText(body.codexCommand || process.env.VIBE_RESEARCH_CODEX_COMMAND || "codex");
-        const workerTemplate = [
-          shellQuote(codexCommand),
-          "exec",
-          "--model", shellQuote(model),
-          "--sandbox", "workspace-write",
-          "--skip-git-repo-check",
-          "--cd", "{scenarioDir}",
-          "\"$(cat {promptFile})\"",
-          "</dev/null",
-        ].join(" ");
-        options = {
-          outputDir: path.join(appRootDir, "output", "org-bench", `ui-codex-reviewed-${runId}`),
-          seeds: parseOrgBenchSeeds(body.seeds, [0]).slice(0, 3),
-          strategies: ["single-agent-provider", "org-provider-reviewed"],
-          timeoutMs: Number(body.timeoutMs) || 240_000,
-          providerId: "codex-worker",
-          providerCommand: workerTemplate,
-          reviewerProviderId: "codex-reviewer",
-          reviewerCommand: workerTemplate,
-        };
-      } else {
-        response.status(400).json({ error: `unknown org benchmark preset: ${preset}` });
-        return;
-      }
-
+      const { preset, options } = buildOrgBenchRunOptions(body);
       const report = await runOrgBench(options);
       response.json({
         ok: true,
@@ -6935,7 +7054,8 @@ export async function createVibeResearchApp({
         text: formatOrgBenchReport(report),
       });
     } catch (error) {
-      response.status(500).json({ error: error.message || "Could not run organization benchmark." });
+      const status = /unknown org benchmark preset/i.test(error.message || "") ? 400 : 500;
+      response.status(status).json({ error: error.message || "Could not run organization benchmark." });
     }
   });
 
