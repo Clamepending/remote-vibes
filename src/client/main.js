@@ -7656,6 +7656,7 @@ function renderRichSessionAutopilotPanel(activeSession) {
   const enabled = Boolean(config.enabled);
   const pending = getChatAutopilotPending(activeSession.id);
   const sessionDriver = isChatAutopilotSessionDriver(config);
+  const sessionExited = activeSession.status === "exited";
   const running = isResearchAutopilotRunning(job) || (enabled && sessionDriver && Boolean(activeSession.streamWorking));
   const projectName = getChatAutopilotSelectedProjectName(config, activeSession);
   const projectSource = getChatAutopilotProjectSource(activeSession, config);
@@ -7670,7 +7671,9 @@ function renderRichSessionAutopilotPanel(activeSession) {
   const projectLabel = projectName ? summarizeChatAutopilotProjectName(projectName) : "No project";
   const status = pending
     || (enabled && sessionDriver
-      ? activeSession.streamWorking
+      ? sessionExited
+        ? "agent stopped"
+        : activeSession.streamWorking
         ? "watching current turn"
         : objectivePreview
           ? `next: ${objectivePreview}`
@@ -7692,6 +7695,10 @@ function renderRichSessionAutopilotPanel(activeSession) {
   const projectTitle = projectName
     ? `Autopilot will use ${projectName}${projectSource ? ` (${projectSource})` : ""}.${objectivePreview ? ` Objective: ${objectivePreview}` : ""} Click to change.`
     : "Choose the research project for this chat.";
+  const nextActionLabel = sessionExited && sessionDriver ? "Resume" : "Next";
+  const nextActionTitle = sessionExited && sessionDriver
+    ? "Start a fresh chat in the same folder and let the supervisor continue."
+    : "Ask the supervisor to take the next research step.";
   return `
     <section class="rich-session-autopilot ${enabled ? "is-enabled" : ""} ${running ? "is-running" : ""}" id="rich-session-autopilot" data-rich-session-autopilot-mount>
       <div class="rich-session-autopilot-main">
@@ -7720,7 +7727,7 @@ function renderRichSessionAutopilotPanel(activeSession) {
         `}
         ${showSteeringActions ? `
           <span class="rich-session-autopilot-supervisor-pill" title="${escapeHtml(supervisorSummary.title)}">${escapeHtml(supervisorSummary.label)}</span>
-          <button class="rich-session-autopilot-action is-primary" type="button" data-chat-autopilot-action="continue" title="Ask the supervisor to take the next research step.">Next</button>
+          <button class="rich-session-autopilot-action is-primary" type="button" data-chat-autopilot-action="continue" title="${escapeHtml(nextActionTitle)}">${escapeHtml(nextActionLabel)}</button>
           <button class="rich-session-autopilot-action" type="button" data-chat-autopilot-action="brainstorm" title="Ask the supervisor to pause execution and propose next directions.">Plan</button>
           <button class="rich-session-autopilot-action" type="button" data-chat-autopilot-action="synthesize" title="Ask the supervisor for a checkpoint summary, evidence, risks, and recommendation.">Review</button>
           <button class="rich-session-autopilot-action is-danger" type="button" data-chat-autopilot-action="pause" title="Pause the autonomous run attached to this chat.">Pause</button>
@@ -9896,13 +9903,14 @@ async function createSessionInFolder(
     state.visualGame.selectedSessionId = payload.session.id;
     renderShell();
     closeMobileSidebar();
-    return;
+    return payload.session;
   }
 
   setCurrentView("shell");
   renderShell();
   connectToSession(payload.session.id);
   closeMobileSidebar();
+  return payload.session;
 }
 
 async function startNewAgentInDefaultFolder({ openInTown = false } = {}) {
@@ -39077,6 +39085,106 @@ async function tickChatAutopilotSupervisor(activeSession, event = {}, { pendingT
   }
 }
 
+function getChatAutopilotFallbackDirective(action, { projectName = "", objective = "" } = {}) {
+  const projectPhrase = projectName ? ` for ${projectName}` : "";
+  const objectivePhrase = objective ? ` Use the project objective as the north star: ${objective}` : "";
+  if (action === "synthesize") {
+    return [
+      `Synthesize the current research state${projectPhrase} for review.`,
+      "Cover findings, evidence, risks, open questions, and the next recommended move.",
+      "Keep it concise and link durable artifacts, result docs, or project notes when relevant.",
+      objectivePhrase,
+    ].join(" ").trim();
+  }
+  if (action === "brainstorm") {
+    return [
+      `Replan from the current project state${projectPhrase}.`,
+      "Brainstorm the next research directions, identify the most evidence-backed move, and write the plan or brief before running expensive work.",
+      objectivePhrase,
+    ].join(" ").trim();
+  }
+  return [
+    `Continue the research loop${projectPhrase} from the durable project state.`,
+    "Inspect ACTIVE, QUEUE, LOG, and recent artifacts, run the next safe step, and checkpoint only if a real human gate is required.",
+    objectivePhrase,
+  ].join(" ").trim();
+}
+
+async function recoverChatAutopilotExitedSession(activeSession, { action = "continue" } = {}) {
+  const sessionId = activeSession?.id || "";
+  if (!sessionId) return null;
+  const config = getChatAutopilotSessionConfig(sessionId);
+  if (!config.enabled || !isChatAutopilotSessionDriver(config)) return null;
+  setChatAutopilotPending(sessionId, "resuming chat");
+  refreshRichSessionSurfaceUi();
+  await ensureChatAutopilotResources();
+  const latestConfig = getChatAutopilotSessionConfig(sessionId);
+  const projectName = getChatAutopilotSelectedProjectName(latestConfig, activeSession);
+  const objective = getChatAutopilotDefaultObjective(latestConfig, activeSession);
+  if (!projectName || !objective) {
+    updateChatAutopilotSessionConfig(sessionId, {
+      ...latestConfig,
+      statusText: projectName ? "needs project objective" : "choose a project",
+    });
+    setChatAutopilotPending(sessionId, "");
+    refreshRichSessionSurfaceUi();
+    return null;
+  }
+  const event = action === "continue"
+    ? { type: "recover-exited", source: "session" }
+    : { type: "manual-action", action, source: "human" };
+  try {
+    const tick = await tickChatAutopilotSupervisor(activeSession, event, {
+      pendingText: "preparing handoff",
+      sendDirective: false,
+    });
+    const directiveText = String(tick?.directive?.text || "").trim()
+      || getChatAutopilotFallbackDirective(action, { projectName, objective });
+    const providerId = activeSession.providerId || getSelectedSessionProviderId();
+    const promptForNewSession = `${directiveText}\n`;
+    const nextSession = await createSessionInFolder(activeSession.cwd || getAgentSpawnPath(), {
+      providerId,
+      name: activeSession.name ? `${activeSession.name} continued` : "",
+      initialPrompt: providerId === "shell" ? "" : directiveText,
+      initialPromptDelayMs: 1200,
+      initialInput: providerId === "shell" ? promptForNewSession : "",
+      initialInputDelayMs: 1200,
+      rememberProvider: false,
+    });
+    if (nextSession?.id) {
+      const supervisor = tick?.attachment?.supervisor || latestConfig.supervisor;
+      await updateChatAutopilotAttachment(nextSession.id, {
+        ...latestConfig,
+        enabled: true,
+        driver: "session",
+        projectName,
+        objective,
+        jobId: "",
+        statusText: "resumed in this chat",
+        lastMessage: directiveText,
+        supervisor,
+      }, { render: false });
+      await updateChatAutopilotAttachment(sessionId, {
+        ...getChatAutopilotSessionConfig(sessionId),
+        enabled: false,
+        driver: "session",
+        jobId: "",
+        statusText: "continued in new chat",
+      }, { render: false });
+    }
+    return nextSession || null;
+  } catch (error) {
+    updateChatAutopilotSessionConfig(sessionId, {
+      ...getChatAutopilotSessionConfig(sessionId),
+      statusText: error.message || "Could not resume supervisor.",
+    });
+    return null;
+  } finally {
+    setChatAutopilotPending(sessionId, "");
+    refreshRichSessionSurfaceUi();
+  }
+}
+
 async function startChatAutopilotSupervisorForSession(activeSession) {
   const sessionId = activeSession?.id || "";
   if (!sessionId) return null;
@@ -44787,6 +44895,10 @@ function bindShellEvents() {
         }
         const config = getChatAutopilotSessionConfig(activeSession.id);
         if (isChatAutopilotSessionDriver(config)) {
+          if (activeSession.status === "exited") {
+            void recoverChatAutopilotExitedSession(activeSession, { action });
+            return;
+          }
           const pendingText = action === "synthesize"
             ? "preparing checkpoint"
             : action === "brainstorm"

@@ -101,7 +101,7 @@ function manualDirective(action) {
     return {
       text: [
         "Synthesize the current research state for review.",
-        "Summarize findings, evidence, risks, open questions, and the next recommended move.",
+        "Cover findings, evidence, risks, open questions, and the next recommended move.",
         "Keep it concise and link durable artifacts, result docs, or project notes when relevant.",
       ].join(" "),
       reason: "manual checkpoint requested",
@@ -307,7 +307,8 @@ export function decideResearchSupervisorIntervention({
     report: orchestratorReport,
     reason: automatic.reason,
   });
-  if (signature && signature === state.lastDirectiveSignature) {
+  const allowRepeat = normalizedEvent.type === "recover-exited";
+  if (!allowRepeat && signature && signature === state.lastDirectiveSignature) {
     return {
       action: "silent",
       shouldSend: false,

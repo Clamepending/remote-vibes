@@ -994,9 +994,14 @@ test("main app bundle exposes the native research workspace", async () => {
     assert.match(jsText, /data-chat-autopilot-change-project/);
     assert.match(jsText, /Supervisor on/);
     assert.match(jsText, /Human driving/);
+    assert.match(jsText, /agent stopped/);
+    assert.match(jsText, /Resume/);
     assert.match(jsText, /Next/);
     assert.match(jsText, /Plan/);
     assert.match(jsText, /Review/);
+    assert.doesNotMatch(jsText, /Autopilot driving/);
+    assert.doesNotMatch(jsText, /Plan next/);
+    assert.doesNotMatch(jsText, /Summarize/);
     assert.match(jsText, /\/api\/research\/org-bench\/jobs/);
 
     const css = await fetch(`${baseUrl}/styles.css`);
@@ -1007,6 +1012,7 @@ test("main app bundle exposes the native research workspace", async () => {
     assert.match(cssText, /rich-session-autopilot/);
     assert.match(cssText, /rich-session-autopilot-project-pill/);
     assert.match(cssText, /rich-session-autopilot-supervisor-pill/);
+    assert.match(cssText, /rich-session-autopilot-action\.is-primary/);
     assert.match(cssText, /research-org-bench-card/);
     assert.match(cssText, /research-bench-table/);
   });

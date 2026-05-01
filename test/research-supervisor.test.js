@@ -82,6 +82,15 @@ test("research supervisor emits immediate takeover directives and dedupes later 
   assert.equal(duplicate.shouldSend, false);
   assert.match(duplicate.reason, /already sent/);
   assert.equal(supervisor.interventionCount, 1);
+
+  const recovered = decideResearchSupervisorIntervention({
+    attachment: attachment({ supervisor }),
+    event: { type: "recover-exited", source: "session" },
+    orchestratorReport: report,
+  });
+  assert.equal(recovered.action, "directive");
+  assert.equal(recovered.shouldSend, true);
+  assert.match(recovered.directive.text, /Claim QUEUE row 1/);
 });
 
 test("research supervisor gates missing project instead of messaging worker", () => {
