@@ -7609,6 +7609,12 @@ function summarizeChatAutopilotObjective(value, limit = 96) {
   return text.length > limit ? `${text.slice(0, Math.max(0, limit - 3))}...` : text;
 }
 
+function summarizeChatAutopilotProjectName(value, limit = 34) {
+  const text = String(value || "").trim();
+  if (!text) return "";
+  return text.length > limit ? `${text.slice(0, Math.max(0, limit - 3))}...` : text;
+}
+
 function summarizeChatAutopilotSupervisor(config = {}) {
   const projectSupervisor = sanitizeChatAutopilotProjectSupervisor(config.projectSupervisor);
   const supervisor = projectSupervisor.supervisor.lastObservedAt
@@ -7616,10 +7622,8 @@ function summarizeChatAutopilotSupervisor(config = {}) {
     : sanitizeChatAutopilotSupervisor(config.supervisor);
   const interventions = Math.max(0, Number(supervisor.interventionCount) || 0);
   const chats = projectSupervisor.sessionIds.length;
-  const parts = ["Project supervisor"];
-  if (interventions) parts.push(`${interventions} directive${interventions === 1 ? "" : "s"}`);
-  if (chats) parts.push(`${chats} chat${chats === 1 ? "" : "s"}`);
-  if (!interventions && !chats) parts.push("ready");
+  const parts = [interventions ? `${interventions} move${interventions === 1 ? "" : "s"}` : "ready"];
+  if (chats > 1) parts.push(`${chats} chats`);
   return {
     label: parts.join(" · "),
     title: supervisor.lastDirectiveReason || supervisor.lastObservedEvent || "Project-scoped supervisor state for this research handoff.",
@@ -7661,22 +7665,25 @@ function renderRichSessionAutopilotPanel(activeSession) {
   const supervisorSummary = summarizeChatAutopilotSupervisor(config);
   const pickerOpen = Boolean(state.chatAutopilotProjectPickerOpen[activeSession.id]) || !projectName;
   const title = enabled
-    ? sessionDriver ? "Autopilot driving" : "Autopilot running"
-    : "Autopilot off";
+    ? sessionDriver ? "Supervisor on" : "Runner on"
+    : "Human driving";
+  const projectLabel = projectName ? summarizeChatAutopilotProjectName(projectName) : "No project";
   const status = pending
     || (enabled && sessionDriver
       ? activeSession.streamWorking
-        ? "driving this chat in the current agent context"
+        ? "watching current turn"
         : objectivePreview
-          ? `ready in this chat: ${objectivePreview}`
-          : "waiting for a project objective"
+          ? `next: ${objectivePreview}`
+          : "needs project objective"
       : job
       ? `${job.status || "running"} · step ${job.stepCount || 0}/${job.maxSteps || "?"}${job.stopReason ? ` · ${job.stopReason}` : ""}`
       : enabled
         ? objectivePreview
-          ? `ready with ${objectiveSource === "wiki" ? "wiki" : "saved"} objective: ${objectivePreview}`
-          : "waiting for your research objective"
-        : "click to hand this chat to the research loop");
+          ? `${objectiveSource === "wiki" ? "wiki" : "saved"} objective: ${objectivePreview}`
+          : "needs research objective"
+        : projectName
+          ? "ready to hand off"
+          : "choose a project");
   const toggleTitle = enabled
     ? "Pause Autopilot for this chat."
     : "Let Autopilot drive this same chat from the project's wiki objective.";
@@ -7708,14 +7715,14 @@ function renderRichSessionAutopilotPanel(activeSession) {
           </select>
         ` : `
           <button class="rich-session-autopilot-project-pill" type="button" data-chat-autopilot-change-project title="${escapeHtml(projectTitle)}">
-            ${escapeHtml(projectName ? `Project: ${projectName}` : "Choose project")}
+            ${escapeHtml(projectLabel)}
           </button>
         `}
         ${showSteeringActions ? `
           <span class="rich-session-autopilot-supervisor-pill" title="${escapeHtml(supervisorSummary.title)}">${escapeHtml(supervisorSummary.label)}</span>
-          <button class="rich-session-autopilot-action" type="button" data-chat-autopilot-action="continue" title="Ask the project supervisor to take the next research step.">Continue</button>
-          <button class="rich-session-autopilot-action" type="button" data-chat-autopilot-action="brainstorm" title="Ask Autopilot to stop executing and propose the next research directions.">Plan next</button>
-          <button class="rich-session-autopilot-action" type="button" data-chat-autopilot-action="synthesize" title="Ask Autopilot to summarize findings, evidence, risks, and the recommended next move.">Summarize</button>
+          <button class="rich-session-autopilot-action is-primary" type="button" data-chat-autopilot-action="continue" title="Ask the supervisor to take the next research step.">Next</button>
+          <button class="rich-session-autopilot-action" type="button" data-chat-autopilot-action="brainstorm" title="Ask the supervisor to pause execution and propose next directions.">Plan</button>
+          <button class="rich-session-autopilot-action" type="button" data-chat-autopilot-action="synthesize" title="Ask the supervisor for a checkpoint summary, evidence, risks, and recommendation.">Review</button>
           <button class="rich-session-autopilot-action is-danger" type="button" data-chat-autopilot-action="pause" title="Pause the autonomous run attached to this chat.">Pause</button>
         ` : enabled ? `
           <span class="rich-session-autopilot-supervisor-pill" title="${escapeHtml(supervisorSummary.title)}">${escapeHtml(supervisorSummary.label)}</span>

@@ -989,13 +989,14 @@ test("main app bundle exposes the native research workspace", async () => {
     assert.match(jsText, /supervisor on; context unchanged/);
     assert.doesNotMatch(jsText, /Autopilot is ON for this chat/);
     assert.doesNotMatch(jsText, /Autopilot is OFF for this chat/);
-    assert.match(jsText, /driving this chat in the current agent context/);
+    assert.match(jsText, /watching current turn/);
     assert.match(jsText, /ready with project objective/);
     assert.match(jsText, /data-chat-autopilot-change-project/);
-    assert.match(jsText, /Project supervisor/);
-    assert.match(jsText, /Continue/);
-    assert.match(jsText, /Plan next/);
-    assert.match(jsText, /Summarize/);
+    assert.match(jsText, /Supervisor on/);
+    assert.match(jsText, /Human driving/);
+    assert.match(jsText, /Next/);
+    assert.match(jsText, /Plan/);
+    assert.match(jsText, /Review/);
     assert.match(jsText, /\/api\/research\/org-bench\/jobs/);
 
     const css = await fetch(`${baseUrl}/styles.css`);
