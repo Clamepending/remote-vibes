@@ -5673,6 +5673,16 @@ function removeRichSessionComposerQueueItem(sessionId, itemId) {
   return removed || null;
 }
 
+function isSessionInputConnected(sessionId) {
+  const sid = String(sessionId || "").trim();
+  return Boolean(
+    sid
+      && state.connectedSessionId === sid
+      && state.websocket
+      && state.websocket.readyState === WebSocket.OPEN,
+  );
+}
+
 // Send the next queued message for a session. Called by the working→idle
 // transition detector in refreshRichSessionSurfaceUi. If the session has
 // already started working again (a transient agent-emitted message could
@@ -5684,6 +5694,7 @@ function flushNextRichSessionComposerQueueItem(sessionId) {
   const session = state.sessions.find((s) => s.id === sid);
   if (!session) return;
   if (session.streamWorking) return; // Will retry on next idle.
+  if (session.status === "exited" || !isSessionInputConnected(sid)) return;
   const next = shiftRichSessionComposerQueue(sid);
   if (!next) return;
   const text = String(next.text || "").trim();
@@ -5692,7 +5703,7 @@ function flushNextRichSessionComposerQueueItem(sessionId) {
   const isStreamMode = Boolean(session.streamMode);
   const outgoing = text || (attachments && attachments.length ? "Take a look at this image." : "");
   const sent = sendTerminalInput(`${outgoing}\r`, {
-    queueIfDisconnected: true,
+    queueIfDisconnected: false,
     attachments: isStreamMode && attachments && attachments.length ? attachments : null,
   });
   if (!sent) {
@@ -38945,27 +38956,44 @@ function buildChatAutopilotStartBody(config, objective, options = {}) {
   };
 }
 
+function queueChatAutopilotSupervisorMessage(sessionId, message, pendingText) {
+  const sid = String(sessionId || "").trim();
+  const text = String(message || "").trim();
+  if (!sid || !text) {
+    return false;
+  }
+
+  pushRichSessionComposerQueueItem(sid, {
+    id: `autopilot-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
+    text,
+    attachments: null,
+    queuedAt: new Date().toISOString(),
+  });
+  setChatAutopilotPending(sid, pendingText || "queued supervisor message");
+  refreshRichSessionSurfaceUi();
+  return true;
+}
+
 function sendChatAutopilotSupervisorMessage(activeSession, message, { pendingText = "queued supervisor message" } = {}) {
   const sessionId = activeSession?.id || "";
   const text = String(message || "").trim();
-  if (!sessionId || !text) return false;
-  if (activeSession.streamWorking) {
-    pushRichSessionComposerQueueItem(sessionId, {
-      id: `autopilot-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
-      text,
-      attachments: null,
-      queuedAt: new Date().toISOString(),
-    });
-    setChatAutopilotPending(sessionId, pendingText);
-    refreshRichSessionSurfaceUi();
-    return true;
+  if (!sessionId || !text) return { accepted: false, queued: false };
+  if (activeSession.streamWorking || activeSession.status === "exited" || !isSessionInputConnected(sessionId)) {
+    return {
+      accepted: queueChatAutopilotSupervisorMessage(sessionId, text, pendingText),
+      queued: true,
+    };
   }
-  const sent = sendTerminalInput(`${text}\r`, { queueIfDisconnected: true });
+  const sent = sendTerminalInput(`${text}\r`, { queueIfDisconnected: false });
   if (sent) {
     scheduleRichSessionNarrativeRefresh(sessionId, { immediate: true });
     refreshRichSessionSurfaceUi({ scrollToBottom: true });
+    return { accepted: true, queued: false };
   }
-  return sent;
+  return {
+    accepted: queueChatAutopilotSupervisorMessage(sessionId, text, pendingText),
+    queued: true,
+  };
 }
 
 async function tickChatAutopilotSupervisor(activeSession, event = {}, { pendingText = "", sendDirective = true } = {}) {
@@ -38991,21 +39019,22 @@ async function tickChatAutopilotSupervisor(activeSession, event = {}, { pendingT
     applyChatAutopilotAttachment(sessionId, payload);
     const directiveText = String(payload?.directive?.text || "").trim();
     if (sendDirective && payload?.decision?.shouldSend && directiveText) {
-      const sent = sendChatAutopilotSupervisorMessage(activeSession, directiveText, {
+      const sendResult = sendChatAutopilotSupervisorMessage(activeSession, directiveText, {
         pendingText: event?.type === "agent-idle" ? "queued supervisor next step" : "queued supervisor message",
       });
+      const statusText = sendResult.queued ? "supervisor directive queued" : "supervisor directive sent";
       updateChatAutopilotSessionConfig(sessionId, {
         ...getChatAutopilotSessionConfig(sessionId),
         enabled: true,
         driver: "session",
         jobId: "",
-        statusText: sent ? "supervisor directive sent" : "supervisor directive ready",
+        statusText: sendResult.accepted ? statusText : "supervisor directive ready",
         lastMessage: directiveText,
       });
-      if (sent) {
+      if (sendResult.accepted) {
         void updateChatAutopilotAttachment(sessionId, {
           ...getChatAutopilotSessionConfig(sessionId),
-          statusText: "supervisor directive sent",
+          statusText,
           lastMessage: directiveText,
         }, { render: false });
       }
@@ -46836,6 +46865,11 @@ function connectToSession(sessionId) {
     scheduleRichSessionSurfaceRender({ scrollToBottom: true });
     scheduleRichSessionNarrativeRefresh(sessionId, { immediate: true });
     flushPendingSessionInputs(sessionId, socket);
+    window.setTimeout(() => {
+      if (state.websocket === socket && state.connectedSessionId === sessionId) {
+        flushNextRichSessionComposerQueueItem(sessionId);
+      }
+    }, 0);
   });
 
   socket.addEventListener("message", (event) => {
