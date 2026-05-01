@@ -12697,6 +12697,16 @@ button.visual-town-building:focus-visible {
   background: rgba(140, 137, 150, 0.24);
 }
 
+.session-card.is-autopilot {
+  border-color: rgba(120, 180, 255, 0.55);
+  box-shadow: inset 0 0 0 1px rgba(120, 180, 255, 0.28);
+}
+
+.session-card.is-autopilot.is-active {
+  border-color: rgba(140, 195, 255, 0.7);
+  background: rgba(120, 180, 255, 0.16);
+}
+
 .session-card.has-profile {
   grid-template-columns: 17px 42px minmax(0, 1fr) 82px;
   align-items: center;

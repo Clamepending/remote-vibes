@@ -14481,11 +14481,13 @@ function renderSessionCard(session) {
   );
   const profile = getAgentProfileForSession(session, { sessionId: session.id });
   const canvasBadge = renderSessionCanvasBadge(session);
+  const autopilotConfig = getChatAutopilotSessionConfig(session.id);
+  const onAutopilot = Boolean(autopilotConfig.enabled);
   const displayName = profile?.name || session.name || session.providerLabel || "Agent";
   const subtitle = profile?.occupationLabel || session.providerLabel || session.providerId || "Agent";
 
   return `
-    <article class="session-card ${session.id === state.activeSessionId ? "is-active" : ""} ${profile ? "has-profile" : ""} ${canvasBadge ? "has-canvas" : ""}" data-session-id="${session.id}">
+    <article class="session-card ${session.id === state.activeSessionId ? "is-active" : ""} ${profile ? "has-profile" : ""} ${canvasBadge ? "has-canvas" : ""} ${onAutopilot ? "is-autopilot" : ""}" data-session-id="${session.id}">
       ${renderSessionActivityButton(session, status)}
       ${
         profile
