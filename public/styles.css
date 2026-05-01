@@ -3430,6 +3430,26 @@ input[readonly][data-folder-picker-target] {
   min-width: 0;
 }
 
+.plugin-onboarding-actions [data-agent-town-action-shortcut] {
+  gap: 8px;
+}
+
+.plugin-onboarding-actions [data-agent-town-action-shortcut]::after {
+  content: attr(data-agent-town-action-shortcut);
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 1.35em;
+  height: 1.35em;
+  padding: 0 4px;
+  border: 1px solid rgba(255, 255, 255, 0.12);
+  border-radius: 6px;
+  background: rgba(255, 255, 255, 0.07);
+  color: rgba(238, 243, 248, 0.64);
+  font-size: 0.72em;
+  line-height: 1;
+}
+
 /* Collapsed view shown when a building is fully installed + verified.
    Replaces the verbose 4-step / 4-card setup panel with a green ready
    pill and the building's doc links. See renderPluginReadyPanel. */

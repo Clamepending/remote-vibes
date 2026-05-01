@@ -2026,6 +2026,7 @@ const state = {
   agentSetupInstalling: {},
   agentSetupRefreshing: false,
   agentSetupError: "",
+  richSessionActionShortcutsBound: false,
   sessionProviderPickerGlobalListenersBound: false,
   sessions: [],
   sessionReadAt: loadSessionReadState(),
@@ -19968,6 +19969,9 @@ function renderAgentTownActionChoiceButtons(item) {
           data-agent-town-action-resolve="${escapeHtml(item.id)}"
           data-agent-town-action-resolution="${escapeHtml(choice.resolution)}"
           data-agent-town-action-status="${escapeHtml(choice.status)}"
+          data-agent-town-action-shortcut="${escapeHtml(String(index + 1))}"
+          aria-keyshortcuts="${escapeHtml(String(index + 1))}"
+          title="${escapeHtml(`Press ${index + 1} to ${choice.label}`)}"
         >${escapeHtml(choice.label)}</button>
       `;
     });
@@ -34871,7 +34875,60 @@ async function openProjectFileFromTree(root, relativePath, mode) {
   await openWorkspaceFilePreview(relativePath, { mode });
 }
 
+function ensureRichSessionActionShortcutListener() {
+  if (state.richSessionActionShortcutsBound) {
+    return;
+  }
+  state.richSessionActionShortcutsBound = true;
+  document.addEventListener("keydown", handleRichSessionActionShortcutKeydown);
+}
+
+function handleRichSessionActionShortcutKeydown(event) {
+  if (
+    event.defaultPrevented
+      || event.metaKey
+      || event.ctrlKey
+      || event.altKey
+      || !/^[1-9]$/u.test(event.key)
+      || state.currentView !== "shell"
+  ) {
+    return;
+  }
+
+  const target = event.target instanceof HTMLElement ? event.target : null;
+  const activeElement = document.activeElement instanceof HTMLElement ? document.activeElement : null;
+  if (
+    (target && isEditableClipboardTarget(target))
+      || (activeElement && isEditableClipboardTarget(activeElement))
+  ) {
+    return;
+  }
+
+  const activeSurface = document.querySelector(".rich-session-surface.is-active");
+  const actionPanel = activeSurface?.querySelector("[data-rich-session-action-panel]");
+  if (!(actionPanel instanceof HTMLElement)) {
+    return;
+  }
+
+  const shortcutButton = Array.from(
+    actionPanel.querySelectorAll("[data-agent-town-action-shortcut]"),
+  ).find((button) => (
+    button instanceof HTMLButtonElement
+      && button.getAttribute("data-agent-town-action-shortcut") === event.key
+      && !button.disabled
+      && button.getClientRects().length > 0
+  ));
+
+  if (!(shortcutButton instanceof HTMLButtonElement)) {
+    return;
+  }
+
+  event.preventDefault();
+  shortcutButton.click();
+}
+
 function bindSessionEvents() {
+  ensureRichSessionActionShortcutListener();
   const sessionsList = document.querySelector("#sessions-list");
   if (sessionsList && !sessionsList.dataset.sessionRefreshBound) {
     sessionsList.dataset.sessionRefreshBound = "true";

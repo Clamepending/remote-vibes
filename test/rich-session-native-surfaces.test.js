@@ -291,6 +291,15 @@ test("native UI renders plan card, MCP badge, image strip, /login action, chat d
         actionCard?.querySelectorAll("button") || [],
         (button) => button.textContent?.trim() || "",
       );
+      const actionShortcuts = Array.from(
+        actionCard?.querySelectorAll("[data-agent-town-action-shortcut]") || [],
+        (button) => ({
+          label: button.textContent?.trim() || "",
+          key: button.getAttribute("data-agent-town-action-shortcut") || "",
+          aria: button.getAttribute("aria-keyshortcuts") || "",
+          title: button.getAttribute("title") || "",
+        }),
+      );
       const evidenceLink = actionCard?.querySelector(".agent-inbox-evidence-link");
       const evidenceTagName = evidenceLink?.tagName || "";
       const evidenceRichPath = evidenceLink?.getAttribute("data-rich-path") || "";
@@ -322,6 +331,7 @@ test("native UI renders plan card, MCP badge, image strip, /login action, chat d
         researchStripText,
         researchFields,
         actionButtons,
+        actionShortcuts,
         evidenceTagName,
         evidenceRichPath,
         evidenceOpenPath,
@@ -369,6 +379,14 @@ test("native UI renders plan card, MCP badge, image strip, /login action, chat d
     assert.ok(surfaces.actionButtons.includes("continue"), "chat card exposes continue choice");
     assert.ok(surfaces.actionButtons.includes("steer"), "chat card exposes steer choice");
     assert.ok(surfaces.actionButtons.includes("ask why"), "chat card exposes ask-why follow-up");
+    assert.deepEqual(
+      surfaces.actionShortcuts,
+      [
+        { label: "continue", key: "1", aria: "1", title: "Press 1 to continue" },
+        { label: "steer", key: "2", aria: "2", title: "Press 2 to steer" },
+      ],
+      "chat review choices expose number-key shortcuts",
+    );
     assert.equal(surfaces.actionBeforePlan, true, "chat decisions are hoisted before the transcript");
     assert.equal(surfaces.evidenceTagName, "A", "chat card evidence path renders as an anchor");
     assert.equal(surfaces.evidenceRichPath, "projects/demo/results/cycle.md", "evidence link carries rich-session path metadata");
@@ -379,7 +397,24 @@ test("native UI renders plan card, MCP badge, image strip, /login action, chat d
     assert.match(askWhyDraft, /explain the reasoning behind the review card "Review cycle 1: chat-review"/u);
     assert.match(askWhyDraft, /Available decisions: continue, steer/u);
 
-    await page.click('[data-rich-session-action-panel] [data-agent-town-action-resolve="chat-review-card"][data-agent-town-action-resolution="continued"]');
+    await page.locator("#rich-session-input").focus();
+    const activeBeforeShortcut = await page.evaluate(() => ({
+      id: document.activeElement?.id || "",
+      tag: document.activeElement?.tagName || "",
+      disabled: Boolean(document.querySelector("#rich-session-input")?.disabled),
+    }));
+    assert.deepEqual(activeBeforeShortcut, { id: "rich-session-input", tag: "TEXTAREA", disabled: false });
+    await page.keyboard.press("1");
+    const stillUnresolvedAfterComposerShortcut = await page.evaluate(async () => {
+      const response = await fetch("/api/agent-town/action-items");
+      const payload = await response.json();
+      const item = payload.actionItems.find((entry) => entry.id === "chat-review-card");
+      return Boolean(item && item.status !== "completed" && !item.resolution);
+    });
+    assert.equal(stillUnresolvedAfterComposerShortcut, true, "number shortcuts do not fire while typing in the composer");
+
+    await page.locator("#rich-session-input").blur();
+    await page.keyboard.press("1");
     await page.waitForFunction(async () => {
       const response = await fetch("/api/agent-town/action-items");
       const payload = await response.json();
