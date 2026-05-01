@@ -34,7 +34,7 @@ test("same-chat supervisor Start creates project memory and queues takeover whil
 
   const workspaceDir = await mkdtemp(path.join(os.tmpdir(), "vibe-research-chat-supervisor-ui-"));
   const providers = [
-    { id: "claude", label: "Claude Code", available: true, command: "claude", launchCommand: "claude", defaultName: "Claude" },
+    { id: "claude", label: "Claude Code", available: true, command: "/bin/sh", launchCommand: "/bin/sh", defaultName: "Claude" },
     { id: "shell", label: "Shell", available: true, command: null, launchCommand: null, defaultName: "Shell" },
   ];
   const { app, baseUrl } = await startApp({ cwd: workspaceDir, providers });
@@ -142,6 +142,43 @@ test("same-chat supervisor Start creates project memory and queues takeover whil
     assert.equal(attachmentPayload.attachment.driver, "session");
     assert.equal(attachmentPayload.attachment.projectName, projectName);
     assert.match(attachmentPayload.attachment.lastMessage, /Claim QUEUE row 1/);
+
+    session.status = "exited";
+    session.streamWorking = false;
+    session.exitCode = 143;
+    session.updatedAt = "2026-05-01T10:05:00.000Z";
+    app.sessionManager.broadcastSessionMeta(session);
+
+    let sessionsPayload = { sessions: [] };
+    let continuedSession = null;
+    for (let attempt = 0; attempt < 80; attempt += 1) {
+      sessionsPayload = await (await fetch(`${baseUrl}/api/sessions`)).json();
+      continuedSession = sessionsPayload.sessions.find((entry) => entry.id !== session.id && /continued/i.test(entry.name || ""));
+      if (continuedSession) break;
+      await new Promise((resolve) => setTimeout(resolve, 250));
+    }
+    assert.ok(
+      continuedSession,
+      `recovery created a continued session: ${JSON.stringify(sessionsPayload.sessions.map((entry) => ({ id: entry.id, name: entry.name, status: entry.status })))}`,
+    );
+    assert.equal(continuedSession.cwd, workspaceDir);
+
+    const oldAttachment = await (await fetch(`${baseUrl}/api/sessions/${session.id}/research-autopilot`)).json();
+    assert.equal(oldAttachment.attachment.enabled, false);
+    assert.equal(oldAttachment.attachment.statusText, "continued in new chat");
+
+    const continuedAttachment = await (await fetch(`${baseUrl}/api/sessions/${continuedSession.id}/research-autopilot`)).json();
+    assert.equal(continuedAttachment.attachment.enabled, true);
+    assert.equal(continuedAttachment.attachment.driver, "session");
+    assert.equal(continuedAttachment.attachment.projectName, projectName);
+    assert.equal(continuedAttachment.attachment.lastMessage, uiState.queuedText);
+
+    const queueAfterRecovery = await page.evaluate((oldSessionId) => {
+      const rawQueue = window.localStorage.getItem("vibe-research-composer-queue-v1") || "{}";
+      const queue = JSON.parse(rawQueue);
+      return Array.isArray(queue[oldSessionId]) ? queue[oldSessionId] : [];
+    }, session.id);
+    assert.equal(queueAfterRecovery.some((entry) => /^autopilot-/.test(entry?.id || "")), false);
   } finally {
     await browser?.close().catch(() => {});
     await app.close?.().catch(() => {});
