@@ -34,7 +34,7 @@ import { buildKnowledgeBaseGraph } from "./knowledge-base-graph-data.js";
 // clusters don't visually overlap. Applied uniformly to both the rendered
 // size (via nodeReducer) and to the d3 physics radius (collide + charge
 // scaling) so node spacing stays proportional to what the user sees.
-const NODE_SIZE_SCALE = 0.7;
+const NODE_SIZE_SCALE = 0.55;
 
 // Sigma's default hover renderer paints a hardcoded white rounded-rect
 // behind the label, which looks like a foreign sticker on a dark
@@ -96,6 +96,12 @@ export function createKnowledgeBaseGraphRenderer(container, options = {}) {
   let d3Links = [];
   let hasStartedSimulation = false;
   let cameraFitOnEnd = false;
+  // After a drag ends, sigma still fires clickNode/clickStage. Without a
+  // suppression window, releasing a drag would navigate (or
+  // deselect-on-stage), which re-runs setData and visibly re-initializes
+  // the layout. We block any click that lands within this many ms after
+  // the drag's mouseup.
+  let suppressClickUntil = 0;
 
   function recomputeConnected() {
     connectedKeys = new Set();
@@ -170,10 +176,11 @@ export function createKnowledgeBaseGraphRenderer(container, options = {}) {
     });
 
     sigma.on("clickNode", ({ node }) => {
-      if (dragging?.moved) return; // suppress click after drag
+      if (Date.now() < suppressClickUntil) return;
       handlers.onNodeClick(node);
     });
     sigma.on("clickStage", () => {
+      if (Date.now() < suppressClickUntil) return;
       handlers.onSurfaceClick();
     });
     sigma.on("enterNode", ({ node }) => {
@@ -220,7 +227,13 @@ export function createKnowledgeBaseGraphRenderer(container, options = {}) {
       node.fx = null;
       node.fy = null;
       simulation?.alphaTarget(0);
+      const wasMoved = dragging.moved;
       dragging = null;
+      if (wasMoved) {
+        // Sigma fires clickNode/clickStage AFTER mouseup; block them so
+        // releasing a drag doesn't navigate or re-render the graph.
+        suppressClickUntil = Date.now() + 350;
+      }
     };
     sigma.getMouseCaptor().on("mousemovebody", onMove);
     sigma.getMouseCaptor().on("mouseup", onUp);
@@ -359,10 +372,11 @@ export function createKnowledgeBaseGraphRenderer(container, options = {}) {
       .theta(0.9);
 
     const collideForce = forceCollide()
-      // Generous collision radius prevents visual overlap and gives each
-      // leaf a personal-space halo, which is most of what makes hub
-      // flowers READ as a flower instead of a smudge.
-      .radius((n) => (n.radius || 5) * 1.6 + 8)
+      // Big collision halo relative to node radius — this is what gives
+      // the airy "lots of whitespace between nodes" Obsidian look. Camera
+      // auto-fit normalizes the overall extent, so the only thing that
+      // changes density is the gap-to-node-size ratio.
+      .radius((n) => (n.radius || 5) * 2.4 + 12)
       .strength(0.95)
       .iterations(2);
 
