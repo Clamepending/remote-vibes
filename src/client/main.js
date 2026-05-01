@@ -6795,6 +6795,22 @@ function parseResearchMetric(item) {
   return `${metricMatch[1]}=${metricMatch[2]}`;
 }
 
+function parseResearchEvidenceSummary(item) {
+  const evidence = Array.isArray(item?.evidence) ? item.evidence : [];
+  const entry = evidence.find((candidate) => (
+    candidate
+      && (candidate.label || candidate.path || candidate.href || candidate.kind)
+  ));
+  if (!entry) return "";
+  const label = String(entry.label || entry.kind || "evidence").trim();
+  const target = String(entry.path || entry.href || "").trim();
+  const filename = target.replaceAll("\\", "/").split("/").filter(Boolean).pop() || "";
+  if (label && filename && label !== filename) {
+    return `${label}: ${filename}`;
+  }
+  return label || filename;
+}
+
 function getResearchGateLabel(item) {
   const action = String(item?.target?.action || "").trim();
   if (action === "review-research-cycle") return "cycle review";
@@ -6816,6 +6832,7 @@ function getRichSessionResearchLoopSummary(items) {
   const move = parseResearchMoveSlug(item);
   const cycle = parseResearchCycleNumber(item);
   const metric = parseResearchMetric(item);
+  const evidence = parseResearchEvidenceSummary(item);
   const nextClick = getResearchNextClick(item);
   return {
     gate: getResearchGateLabel(item),
@@ -6823,6 +6840,7 @@ function getRichSessionResearchLoopSummary(items) {
     move,
     cycle,
     metric,
+    evidence,
     nextClick,
     title: String(item.title || "Research review").trim(),
   };
@@ -6853,6 +6871,7 @@ function renderRichSessionResearchLoopStrip(items) {
         ${renderResearchLoopField("move", summary.move)}
         ${renderResearchLoopField("cycle", summary.cycle)}
         ${renderResearchLoopField("metric", summary.metric)}
+        ${renderResearchLoopField("evidence", summary.evidence)}
         ${renderResearchLoopField("next click", summary.nextClick)}
       </div>
     </div>

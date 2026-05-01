@@ -384,6 +384,7 @@ test("native UI renders plan card, MCP badge, image strip, /login action, chat d
     assert.ok(surfaces.researchFields.includes("move chat-review"), "research strip shows the move");
     assert.ok(surfaces.researchFields.includes("cycle 1"), "research strip shows the cycle");
     assert.ok(surfaces.researchFields.includes("metric metric=0.71"), "research strip shows the metric");
+    assert.ok(surfaces.researchFields.includes("evidence result doc: cycle.md"), "research strip shows the first evidence artifact");
     assert.ok(surfaces.researchFields.includes("next click continue"), "research strip shows the suggested next click");
     assert.ok(surfaces.actionButtons.includes("continue"), "chat card exposes continue choice");
     assert.ok(surfaces.actionButtons.includes("steer"), "chat card exposes steer choice");
