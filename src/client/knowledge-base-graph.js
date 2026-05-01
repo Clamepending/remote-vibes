@@ -106,10 +106,15 @@ export function createKnowledgeBaseGraphRenderer(container, options = {}) {
   // run during the same animation window — by the time the last node pops
   // in, the layout is settled and stable.
   let revealAnimationHandle = 0;
-  let revealedNodes = new Set();
-  // When this is null, every node is treated as revealed (the post-animation
-  // steady state). When it's a Set, only nodes in the set render.
+  // Map of revealed node key -> performance.now() timestamp when it popped in.
+  // The reducer reads this to compute a per-node pop scale (back/overshoot
+  // easing) so each node bounces into existence at its already-settled
+  // position. When revealMask is null, every node renders normally.
+  let revealedNodes = new Map();
   let revealMask = null;
+  // Each individual node's pop is fast — the user reads the cascade by the
+  // gaps BETWEEN pops, not by the pop animation itself.
+  const POP_DURATION_MS = 180;
   // We only run the reveal on the FIRST non-trivial setData call within a
   // single mount — subsequent re-renders from main.js (which fire often as
   // the user navigates) just rebuild silently.
@@ -135,11 +140,20 @@ export function createKnowledgeBaseGraphRenderer(container, options = {}) {
   // graphology data here; that way fa2 can keep its source of truth and we
   // just decorate.
   function nodeReducer(key, attrs) {
-    // Reveal mask: hide nodes that haven't popped in yet during the BFS
-    // initial-reveal animation. After the animation completes revealMask is
-    // nulled and every node renders normally.
-    if (revealMask && !revealMask.has(key)) {
-      return { ...attrs, hidden: true };
+    let popScale = 1;
+    if (revealMask) {
+      const revealedAt = revealMask.get(key);
+      if (revealedAt === undefined) {
+        return { ...attrs, hidden: true };
+      }
+      const elapsed = performance.now() - revealedAt;
+      if (elapsed < POP_DURATION_MS) {
+        // easeOutBack: overshoots to ~110% then settles to 100%.
+        const t = elapsed / POP_DURATION_MS;
+        const c1 = 1.70158;
+        const c3 = c1 + 1;
+        popScale = 1 + c3 * Math.pow(t - 1, 3) + c1 * Math.pow(t - 1, 2);
+      }
     }
     const isSelected = key === selectedKey;
     const isHovered = key === hoveredKey;
@@ -149,16 +163,16 @@ export function createKnowledgeBaseGraphRenderer(container, options = {}) {
     // Labels: only the directly active node(s) get a label by default, even
     // when "connected" highlighting is on. Showing labels for the entire
     // 1-hop neighbourhood floods the canvas at hub nodes.
-    const showLabel = labelAlwaysOn || isSelected || isHovered;
+    const showLabel = (labelAlwaysOn || isSelected || isHovered) && popScale >= 0.99;
     const baseSize = Number(attrs.size) || 5;
-    const size = isSelected ? baseSize * 1.55 : isHovered ? baseSize * 1.3 : isConnected ? baseSize * 1.12 : baseSize;
+    const stateSize = isSelected ? baseSize * 1.55 : isHovered ? baseSize * 1.3 : isConnected ? baseSize * 1.12 : baseSize;
     return {
       ...attrs,
       label: showLabel ? attrs.title : "",
       color: isSelected || isHovered || isConnected ? attrs.connectedColor : attrs.color,
-      size,
+      size: stateSize * popScale,
       zIndex: isSelected ? 3 : isHovered ? 2 : isConnected ? 1 : 0,
-      forceLabel: isSelected || isHovered,
+      forceLabel: (isSelected || isHovered) && popScale >= 0.99,
     };
   }
 
@@ -373,55 +387,59 @@ export function createKnowledgeBaseGraphRenderer(container, options = {}) {
     return order;
   }
 
-  // Animated initial settle + BFS reveal. Spreads the work over ~3 seconds
-  // of RAF ticks so:
-  //   - the user sees fa2 actually converge (instead of a synchronous block
-  //     followed by a snapped paint of the final state)
-  //   - nodes pop in one-by-one in BFS order from the hub, which gives the
-  //     graph a "growing from the seed" feel on first view
-  // Both effects share the same animation window — by the time the last
-  // node pops in, the layout has fully settled.
+  // Obsidian-style reveal: settle the layout SYNCHRONOUSLY first so positions
+  // are fixed, then BFS-pop each node into existence at its final spot with an
+  // overshoot ease (see nodeReducer). No fa2 runs during the animation, so the
+  // graph never appears to "expand outward" — it just blooms from the hub
+  // outward at static positions.
   function runRevealAnimation() {
     cancelRevealAnimation();
     if (graph.order === 0) return;
 
-    const totalNodes = graph.order;
-    const totalIterations = iterationsFor(totalNodes);
-    // Target reveal duration. Capped because past 4s the user just wants
-    // the graph to be there.
-    const targetDurationMs = Math.min(3500, 1200 + totalNodes * 8);
-    const targetFrames = Math.max(20, Math.round(targetDurationMs / 16));
-    const nodesPerFrame = Math.max(1, Math.ceil(totalNodes / targetFrames));
-    // We use slightly fewer iterations during the reveal than the final
-    // budget so the layout still has visible motion late in the animation;
-    // a final post-reveal refresh is implicit (the loop just falls off).
-    const itersPerFrame = Math.max(2, Math.ceil(totalIterations / targetFrames));
+    // 1. Fully settle layout before showing anything. Sub-second on Library
+    //    scale thanks to Barnes-Hut.
+    forceAtlas2.assign(graph, {
+      iterations: iterationsFor(graph.order),
+      settings: fa2SettingsFor(graph),
+    });
 
+    // 2. Compute reveal order from the now-settled graph and fit camera to
+    //    the final extent before any node appears, so the camera never moves
+    //    during the pop-in.
     const bfsOrder = computeBfsOrder();
-    revealedNodes = new Set();
+    revealedNodes = new Map();
     revealMask = revealedNodes;
+    sigma?.refresh({ skipIndexation: false });
+    sigma?.getCamera().animatedReset({ duration: 0 });
+
+    // 3. Stagger the pop-ins. The "pop... pop... pop" feel comes from the
+    //    GAP between nodes, not from the pop animation itself, so keep the
+    //    interval generous on small graphs. Scale down for bigger graphs to
+    //    keep total reveal under a few seconds, but never below ~12ms or the
+    //    cascade blurs into a wash.
+    const totalNodes = bfsOrder.length;
+    const stagger = totalNodes > 500 ? 12 : totalNodes > 200 ? 22 : totalNodes > 80 ? 50 : totalNodes > 30 ? 90 : 130;
+    const startTime = performance.now();
     let nodeIdx = 0;
-    let iter = 0;
 
     const tick = () => {
-      // Reveal next batch of nodes in BFS order.
-      for (let i = 0; i < nodesPerFrame && nodeIdx < bfsOrder.length; i += 1) {
-        revealedNodes.add(bfsOrder[nodeIdx++]);
+      const now = performance.now();
+      const elapsed = now - startTime;
+
+      // Reveal every node whose stagger window has passed.
+      while (nodeIdx < bfsOrder.length && elapsed >= nodeIdx * stagger) {
+        revealedNodes.set(bfsOrder[nodeIdx], now);
+        nodeIdx += 1;
       }
-      // Run a chunk of fa2 so the layout visibly converges as nodes appear.
-      if (iter < totalIterations) {
-        const step = Math.min(itersPerFrame, totalIterations - iter);
-        forceAtlas2.assign(graph, { iterations: step, settings: fa2SettingsFor(graph) });
-        iter += step;
-      }
+
       sigma?.refresh({ skipIndexation: true });
 
-      const done = nodeIdx >= bfsOrder.length && iter >= totalIterations;
-      if (done) {
+      const allRevealed = nodeIdx >= bfsOrder.length;
+      const lastPopAge = allRevealed ? now - (revealedNodes.get(bfsOrder[bfsOrder.length - 1]) || now) : 0;
+      if (allRevealed && lastPopAge >= POP_DURATION_MS) {
         revealMask = null;
         revealAnimationHandle = 0;
         sigma?.refresh({ skipIndexation: false });
-        sigma?.getCamera().animatedReset({ duration: 350 });
       } else {
         revealAnimationHandle = window.requestAnimationFrame(tick);
       }

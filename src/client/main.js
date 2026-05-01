@@ -258,6 +258,7 @@ const VISUAL_GAME_SYSTEM_BUILDING_ID = "system";
 const VISUAL_GAME_DOGHOUSE_BUILDING_ID = "doghouse";
 const VISUAL_GAME_GPU_ACTIVE_THRESHOLD = 5;
 const VISUAL_GAME_MIN_ZOOM = 0.5;
+const VISUAL_GAME_MIN_ZOOM_FLOOR = 0.15;
 const VISUAL_GAME_MAX_ZOOM = 3.2;
 const VISUAL_GAME_ZOOM_STEP = 1.22;
 const VISUAL_GAME_DRAG_SLOP_PX = 5;
@@ -27355,16 +27356,21 @@ function getVisualGameCenteredCamera(viewport = getVisualGameDefaultViewport(), 
   };
 }
 
+function getVisualGameMinZoom(viewport = getVisualGameDefaultViewport()) {
+  const fit = Math.min(viewport.width / VISUAL_GAME_WIDTH, viewport.height / VISUAL_GAME_HEIGHT);
+  return Math.max(VISUAL_GAME_MIN_ZOOM_FLOOR, Math.min(VISUAL_GAME_MIN_ZOOM, fit));
+}
+
 function getVisualGameFitZoom(viewport = getVisualGameDefaultViewport()) {
   return clamp(
     Math.min(1, viewport.width / VISUAL_GAME_WIDTH, viewport.height / VISUAL_GAME_HEIGHT),
-    VISUAL_GAME_MIN_ZOOM,
+    getVisualGameMinZoom(viewport),
     VISUAL_GAME_MAX_ZOOM,
   );
 }
 
 function normalizeVisualGameCamera(camera = {}, viewport = getVisualGameDefaultViewport()) {
-  const zoom = clamp(Number(camera.zoom || 1), VISUAL_GAME_MIN_ZOOM, VISUAL_GAME_MAX_ZOOM);
+  const zoom = clamp(Number(camera.zoom || 1), getVisualGameMinZoom(viewport), VISUAL_GAME_MAX_ZOOM);
   const visibleWidth = viewport.width / zoom;
   const visibleHeight = viewport.height / zoom;
   const bounds = getVisualGameCameraBounds(visibleWidth, visibleHeight);
@@ -27388,7 +27394,7 @@ function getVisualGameCamera(viewport = state.visualGame.viewport || getVisualGa
 function syncVisualGameCameraToViewport(viewport) {
   const previousViewport = state.visualGame.viewport;
   const currentCamera = state.visualGame.camera || getVisualGameCenteredCamera(viewport);
-  const zoom = clamp(Number(currentCamera.zoom || 1), VISUAL_GAME_MIN_ZOOM, VISUAL_GAME_MAX_ZOOM);
+  const zoom = clamp(Number(currentCamera.zoom || 1), getVisualGameMinZoom(viewport), VISUAL_GAME_MAX_ZOOM);
 
   if (!previousViewport) {
     state.visualGame.viewport = viewport;
@@ -27425,7 +27431,7 @@ function getVisualGameCameraWorldPoint(viewportPoint, viewport = state.visualGam
 function zoomVisualGameCameraAt(viewportPoint, zoomFactor, viewport = state.visualGame.viewport || getVisualGameDefaultViewport()) {
   const camera = getVisualGameCamera(viewport);
   const worldPoint = getVisualGameCameraWorldPoint(viewportPoint, viewport);
-  const nextZoom = clamp(camera.zoom * zoomFactor, VISUAL_GAME_MIN_ZOOM, VISUAL_GAME_MAX_ZOOM);
+  const nextZoom = clamp(camera.zoom * zoomFactor, getVisualGameMinZoom(viewport), VISUAL_GAME_MAX_ZOOM);
   return setVisualGameCamera({
     x: worldPoint.x - viewportPoint.x / nextZoom,
     y: worldPoint.y - viewportPoint.y / nextZoom,
@@ -27471,7 +27477,7 @@ function centerVisualGameCameraOnWorldRect(rect, { paddingWorld = 56, maxZoom = 
   const fitZoom = Math.min(viewport.width / paddedWidth, viewport.height / paddedHeight);
   const zoom = clamp(
     Math.min(Number.isFinite(fitZoom) ? fitZoom : getVisualGameFitZoom(viewport), maxZoom),
-    VISUAL_GAME_MIN_ZOOM,
+    getVisualGameMinZoom(viewport),
     VISUAL_GAME_MAX_ZOOM,
   );
 
@@ -28213,9 +28219,24 @@ function drawVisualGameGround(context, time, visibleWorld = null) {
   context.fillStyle = ground.base || "#2f6849";
   context.fillRect(left, top, right - left, bottom - top);
 
+  const waterTiles = ["#27536f", "#2a5b78", "#234c66"];
+
   for (let y = top; y < bottom; y += VISUAL_GAME_TILE) {
     for (let x = left; x < right; x += VISUAL_GAME_TILE) {
       const hash = getVisualGameHash(Math.floor(x / VISUAL_GAME_TILE), Math.floor(y / VISUAL_GAME_TILE));
+      const isOcean = x < 0 || y < 0 || x >= VISUAL_GAME_WIDTH || y >= VISUAL_GAME_HEIGHT;
+
+      if (isOcean) {
+        context.fillStyle = waterTiles[hash % waterTiles.length];
+        context.fillRect(x, y, VISUAL_GAME_TILE, VISUAL_GAME_TILE);
+
+        context.fillStyle = "rgba(146, 211, 218, 0.22)";
+        const waveX = x + ((hash * 3) % (VISUAL_GAME_TILE - 6));
+        const waveY = y + 4 + Math.floor(Math.sin(time / 700 + hash) * 1) + ((hash * 5) % (VISUAL_GAME_TILE - 8));
+        context.fillRect(waveX, waveY, 5, 1);
+        continue;
+      }
+
       context.fillStyle = tiles[hash % tiles.length];
       context.fillRect(x, y, VISUAL_GAME_TILE, VISUAL_GAME_TILE);
 
