@@ -5676,6 +5676,27 @@ function removeRichSessionComposerQueueItem(sessionId, itemId) {
   return removed || null;
 }
 
+function getQueuedChatAutopilotSupervisorMessage(sessionId) {
+  return getRichSessionComposerQueue(sessionId)
+    .find((entry) => String(entry?.id || "").startsWith("autopilot-")) || null;
+}
+
+function removeQueuedChatAutopilotSupervisorMessages(sessionId) {
+  const sid = String(sessionId || "").trim();
+  const list = state.richSessionComposerQueue[sid];
+  if (!sid || !Array.isArray(list) || !list.length) return 0;
+  const next = list.filter((entry) => !String(entry?.id || "").startsWith("autopilot-"));
+  const removed = list.length - next.length;
+  if (!removed) return 0;
+  if (next.length) {
+    state.richSessionComposerQueue[sid] = next;
+  } else {
+    delete state.richSessionComposerQueue[sid];
+  }
+  saveComposerQueue();
+  return removed;
+}
+
 function isSessionInputConnected(sessionId) {
   const sid = String(sessionId || "").trim();
   return Boolean(
@@ -8214,10 +8235,11 @@ function refreshRichSessionSurfaceUi({ scrollToBottom = false } = {}) {
     }
     if (previousStatus && previousStatus !== "exited" && nowStatus === "exited") {
       const config = getChatAutopilotSessionConfig(sid);
+      const queuedSupervisorMessage = getQueuedChatAutopilotSupervisorMessage(sid);
       if (
         config.enabled
         && isChatAutopilotSessionDriver(config)
-        && !queuedMessages.length
+        && (!queuedMessages.length || queuedSupervisorMessage)
         && claimChatAutopilotAutoRecovery(activeSession, config)
       ) {
         setTimeout(() => {
@@ -39308,11 +39330,13 @@ async function recoverChatAutopilotExitedSession(activeSession, { action = "cont
     ? { type: "recover-exited", source: "session" }
     : { type: "manual-action", action, source: "human" };
   try {
+    const queuedDirectiveText = String(getQueuedChatAutopilotSupervisorMessage(sessionId)?.text || "").trim();
     const tick = await tickChatAutopilotSupervisor(activeSession, event, {
       pendingText: "preparing handoff",
       sendDirective: false,
     });
-    const directiveText = String(tick?.directive?.text || "").trim()
+    const directiveText = queuedDirectiveText
+      || String(tick?.directive?.text || "").trim()
       || getChatAutopilotFallbackDirective(action, { projectName, objective });
     const providerId = activeSession.providerId || getSelectedSessionProviderId();
     const promptForNewSession = `${directiveText}\n`;
@@ -39338,6 +39362,7 @@ async function recoverChatAutopilotExitedSession(activeSession, { action = "cont
         lastMessage: directiveText,
         supervisor,
       }, { render: false });
+      removeQueuedChatAutopilotSupervisorMessages(sessionId);
       await updateChatAutopilotAttachment(sessionId, {
         ...getChatAutopilotSessionConfig(sessionId),
         enabled: false,
