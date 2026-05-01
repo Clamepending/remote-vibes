@@ -479,6 +479,105 @@ test("session research autopilot attachment persists chat-native control state",
   });
 });
 
+test("session research autopilot job resumes after app restart", async () => {
+  const tmp = await mkdtemp(path.join(os.tmpdir(), "vr-research-dashboard-restart-"));
+  const cwd = tmp;
+  const libraryRoot = path.join(cwd, WORKSPACE_LIBRARY_RELATIVE);
+  await copyDir(FIXTURE_LIBRARY, libraryRoot);
+
+  const prevEnv = process.env.VIBE_RESEARCH_WORKSPACE_DIR;
+  process.env.VIBE_RESEARCH_WORKSPACE_DIR = cwd;
+  let app;
+  try {
+    let started = await startApp({ cwd, persistSessions: true });
+    app = started.app;
+    let baseUrl = started.baseUrl;
+
+    const sessionRes = await fetch(`${baseUrl}/api/sessions`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ providerId: "shell", name: "Durable research chat" }),
+    });
+    assert.equal(sessionRes.status, 201);
+    const session = (await sessionRes.json()).session;
+
+    const start = await fetch(`${baseUrl}/api/sessions/${session.id}/research-autopilot/start`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        projectName: "prose-style",
+        objective: "resume this concise prose experiment after restart",
+        mode: "experiment",
+        commandText: "node -e \"console.log('score=0.65')\"",
+        metricRegex: "score=([0-9.]+)",
+        maxSteps: 3,
+        intervalMs: 10_000,
+        checkPaper: false,
+      }),
+    });
+    assert.equal(start.status, 202);
+    const startedJob = (await start.json()).job;
+    let job = startedJob;
+    for (let attempt = 0; attempt < 60 && !(job.status === "running" && job.stepCount >= 1); attempt += 1) {
+      await new Promise((resolve) => setTimeout(resolve, 50));
+      const poll = await fetch(`${baseUrl}/api/research/autopilot/jobs/${job.id}`);
+      assert.equal(poll.status, 200);
+      job = (await poll.json()).job;
+    }
+    assert.equal(job.status, "running", job.error || job.stopSummary);
+    assert.equal(job.stepCount, 1);
+
+    await app.close();
+    app = null;
+
+    started = await startApp({ cwd, persistSessions: true });
+    app = started.app;
+    baseUrl = started.baseUrl;
+
+    const sessions = await fetch(`${baseUrl}/api/sessions`);
+    assert.equal(sessions.status, 200);
+    assert.equal((await sessions.json()).sessions.some((entry) => entry.id === session.id), true);
+
+    const attached = await fetch(`${baseUrl}/api/sessions/${session.id}/research-autopilot`);
+    assert.equal(attached.status, 200);
+    const attachedBody = await attached.json();
+    assert.equal(attachedBody.attachment.jobId, startedJob.id);
+    assert.equal(attachedBody.attachment.job.id, startedJob.id);
+
+    job = attachedBody.job;
+    for (let attempt = 0; attempt < 80 && !(job.stepCount >= 2 && job.status === "running"); attempt += 1) {
+      await new Promise((resolve) => setTimeout(resolve, 50));
+      const poll = await fetch(`${baseUrl}/api/research/autopilot/jobs/${startedJob.id}`);
+      assert.equal(poll.status, 200);
+      job = (await poll.json()).job;
+    }
+    assert.equal(job.status, "running", job.error || job.stopSummary);
+    assert.ok(job.stepCount >= 2);
+    assert.ok(job.resumeCount >= 1);
+    assert.ok(job.events.some((event) => event.type === "resumed"));
+
+    const stop = await fetch(`${baseUrl}/api/sessions/${session.id}/research-autopilot/stop`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ source: "chat" }),
+    });
+    assert.equal(stop.status, 200);
+    job = (await stop.json()).job;
+    for (let attempt = 0; attempt < 40 && !["succeeded", "failed", "stopped"].includes(job.status); attempt += 1) {
+      await new Promise((resolve) => setTimeout(resolve, 50));
+      const poll = await fetch(`${baseUrl}/api/research/autopilot/jobs/${startedJob.id}`);
+      assert.equal(poll.status, 200);
+      job = (await poll.json()).job;
+    }
+    assert.equal(job.status, "stopped");
+  } finally {
+    if (app) await app.close();
+    if (prevEnv === undefined) delete process.env.VIBE_RESEARCH_WORKSPACE_DIR;
+    else process.env.VIBE_RESEARCH_WORKSPACE_DIR = prevEnv;
+    await rm(tmp, { recursive: true, force: true });
+  }
+});
+
 test("POST /api/research/org-bench/run executes local benchmark smoke", async () => {
   await withLibraryServer(async ({ baseUrl }) => {
     const res = await fetch(`${baseUrl}/api/research/org-bench/run`, {

@@ -7111,7 +7111,11 @@ export async function createVibeResearchApp({
   });
 
   const researchAutopilotJobs = new Map();
+  const researchAutopilotJobsPath = path.join(stateDir, "research-autopilot-jobs.json");
+  let researchAutopilotJobsSaveTimer = null;
+  let researchAutopilotJobsSavePromise = Promise.resolve();
   const RESEARCH_AUTOPILOT_TERMINAL_STATUSES = new Set(["succeeded", "failed", "stopped"]);
+  const RESEARCH_AUTOPILOT_STATUSES = new Set(["queued", "running", "stopping", "succeeded", "failed", "stopped"]);
   const RESEARCH_AUTOPILOT_MODES = new Set(["auto", "brainstorm", "experiment", "synthesize"]);
   const RESEARCH_AUTOPILOT_STOP_ACTIONS = new Set(["stop", "pause", "interrupt"]);
   const chatAutopilotAttachmentPath = path.join(stateDir, "research-chat-autopilot.json");
@@ -7139,6 +7143,143 @@ export async function createVibeResearchApp({
     const text = trimText(value).replace(/\s+/g, " ");
     if (!text) return "";
     return text.length > limit ? `${text.slice(0, Math.max(0, limit - 3))}...` : text;
+  }
+
+  function serializableResearchAutopilotJob(job) {
+    return {
+      id: job.id,
+      projectName: job.projectName,
+      projectDir: job.projectDir,
+      objective: job.objective,
+      mode: job.mode,
+      status: job.status,
+      stopRequested: Boolean(job.stopRequested),
+      createdAt: job.createdAt,
+      startedAt: job.startedAt,
+      heartbeatAt: job.heartbeatAt,
+      finishedAt: job.finishedAt,
+      stepCount: job.stepCount,
+      maxSteps: job.maxSteps,
+      failureCount: job.failureCount,
+      maxFailures: job.maxFailures,
+      intervalMs: job.intervalMs,
+      maxWallClockMs: job.maxWallClockMs,
+      resumeCount: numberInRange(job.resumeCount, 0, 0, 10_000),
+      currentAction: job.currentAction,
+      stopReason: job.stopReason,
+      stopSummary: job.stopSummary,
+      error: job.error,
+      lastReport: job.lastReport || null,
+      events: Array.isArray(job.events) ? job.events.slice(-80) : [],
+      runOptions: job.runOptions && typeof job.runOptions === "object" ? job.runOptions : {},
+      steering: Array.isArray(job.steering) ? job.steering.slice(-40) : [],
+    };
+  }
+
+  function sanitizePersistedResearchAutopilotJob(value = {}) {
+    if (!value || typeof value !== "object" || Array.isArray(value)) return null;
+    const id = trimText(value.id) || randomUUID();
+    const projectName = trimText(value.projectName);
+    const projectDir = trimText(value.projectDir || value.runOptions?.projectDir);
+    if (!projectName || !projectDir) return null;
+    const rawStatus = trimText(value.status).toLowerCase();
+    const wasTerminal = RESEARCH_AUTOPILOT_TERMINAL_STATUSES.has(rawStatus);
+    const status = wasTerminal && RESEARCH_AUTOPILOT_STATUSES.has(rawStatus) ? rawStatus : "queued";
+    const runOptions = value.runOptions && typeof value.runOptions === "object" && !Array.isArray(value.runOptions)
+      ? { ...value.runOptions }
+      : {};
+    runOptions.projectDir = runOptions.projectDir || projectDir;
+    return {
+      id,
+      projectName,
+      projectDir,
+      objective: trimText(value.objective),
+      mode: normalizeResearchAutopilotMode(value.mode),
+      status,
+      stopRequested: wasTerminal ? Boolean(value.stopRequested) : false,
+      shutdownRequested: false,
+      createdAt: typeof value.createdAt === "string" && value.createdAt ? value.createdAt : new Date().toISOString(),
+      startedAt: wasTerminal && typeof value.startedAt === "string" ? value.startedAt : "",
+      heartbeatAt: typeof value.heartbeatAt === "string" ? value.heartbeatAt : "",
+      finishedAt: wasTerminal && typeof value.finishedAt === "string" ? value.finishedAt : "",
+      stepCount: numberInRange(value.stepCount, 0, 0, 10_000),
+      maxSteps: numberInRange(value.maxSteps, 24, 1, 10_000),
+      failureCount: numberInRange(value.failureCount, 0, 0, 100),
+      maxFailures: numberInRange(value.maxFailures, 3, 1, 100),
+      intervalMs: numberInRange(value.intervalMs, 5_000, 0, 60 * 60 * 1000),
+      maxWallClockMs: numberInRange(value.maxWallClockMs, 8 * 60 * 60 * 1000, 60 * 1000, 7 * 24 * 60 * 60 * 1000),
+      currentAction: wasTerminal ? trimText(value.currentAction) : "",
+      stopReason: wasTerminal ? trimText(value.stopReason) : "server-restart",
+      stopSummary: wasTerminal ? trimText(value.stopSummary) : "restored after server restart",
+      error: trimText(value.error),
+      lastReport: value.lastReport && typeof value.lastReport === "object" ? value.lastReport : null,
+      events: Array.isArray(value.events)
+        ? value.events.filter((event) => event && typeof event === "object").slice(-80)
+        : [],
+      runOptions,
+      steering: Array.isArray(value.steering)
+        ? value.steering.filter((entry) => entry && typeof entry === "object").slice(-40)
+        : [],
+      resumeCount: numberInRange(value.resumeCount, 0, 0, 10_000),
+      runPromise: null,
+    };
+  }
+
+  async function saveResearchAutopilotJobs() {
+    const payload = {
+      version: 1,
+      savedAt: new Date().toISOString(),
+      jobs: Array.from(researchAutopilotJobs.values())
+        .sort((a, b) => String(b.createdAt).localeCompare(String(a.createdAt)))
+        .slice(0, 40)
+        .map(serializableResearchAutopilotJob),
+    };
+    const write = async () => {
+      await mkdir(stateDir, { recursive: true });
+      await writeFile(researchAutopilotJobsPath, `${JSON.stringify(payload, null, 2)}\n`, "utf8");
+    };
+    researchAutopilotJobsSavePromise = researchAutopilotJobsSavePromise.then(write, write);
+    await researchAutopilotJobsSavePromise;
+  }
+
+  function saveResearchAutopilotJobsSoon() {
+    if (researchAutopilotJobsSaveTimer) return;
+    researchAutopilotJobsSaveTimer = setTimeout(() => {
+      researchAutopilotJobsSaveTimer = null;
+      saveResearchAutopilotJobs().catch((error) => {
+        console.warn("[vibe-research] could not save research autopilot jobs:", error.message);
+      });
+    }, 25);
+    researchAutopilotJobsSaveTimer.unref?.();
+  }
+
+  async function flushResearchAutopilotJobs() {
+    if (researchAutopilotJobsSaveTimer) {
+      clearTimeout(researchAutopilotJobsSaveTimer);
+      researchAutopilotJobsSaveTimer = null;
+    }
+    await saveResearchAutopilotJobs();
+  }
+
+  async function loadResearchAutopilotJobs() {
+    researchAutopilotJobs.clear();
+    let parsed = null;
+    try {
+      parsed = JSON.parse(await readFile(researchAutopilotJobsPath, "utf8"));
+    } catch (error) {
+      if (error?.code !== "ENOENT") {
+        console.warn("[vibe-research] could not load research autopilot jobs:", error.message);
+      }
+      return;
+    }
+    const rawJobs = Array.isArray(parsed?.jobs) ? parsed.jobs : Array.isArray(parsed) ? parsed : [];
+    for (const rawJob of rawJobs) {
+      const job = sanitizePersistedResearchAutopilotJob(rawJob);
+      if (job) {
+        researchAutopilotJobs.set(job.id, job);
+      }
+    }
+    pruneResearchAutopilotJobs();
   }
 
   function defaultChatAutopilotAttachment(sessionId) {
@@ -7304,6 +7445,7 @@ export async function createVibeResearchApp({
       detail: event.detail || "",
     });
     job.events = job.events.slice(-80);
+    saveResearchAutopilotJobsSoon();
   }
 
   function serializeResearchAutopilotJob(job) {
@@ -7324,6 +7466,7 @@ export async function createVibeResearchApp({
       maxFailures: job.maxFailures,
       intervalMs: job.intervalMs,
       maxWallClockMs: job.maxWallClockMs,
+      resumeCount: numberInRange(job.resumeCount, 0, 0, 10_000),
       currentAction: job.currentAction,
       stopReason: job.stopReason,
       stopSummary: job.stopSummary,
@@ -7347,15 +7490,19 @@ export async function createVibeResearchApp({
     };
   }
 
+  await loadResearchAutopilotJobs();
   await loadChatAutopilotAttachments();
 
   function pruneResearchAutopilotJobs() {
     const jobs = Array.from(researchAutopilotJobs.values()).sort((a, b) => String(b.createdAt).localeCompare(String(a.createdAt)));
+    let removed = false;
     for (const job of jobs.slice(40)) {
       if (RESEARCH_AUTOPILOT_TERMINAL_STATUSES.has(job.status)) {
         researchAutopilotJobs.delete(job.id);
+        removed = true;
       }
     }
+    if (removed) saveResearchAutopilotJobsSoon();
   }
 
   function researchAutopilotMadeProgress(report) {
@@ -7451,7 +7598,7 @@ export async function createVibeResearchApp({
 
   async function waitBetweenResearchAutopilotSteps(job) {
     const target = Date.now() + job.intervalMs;
-    while (!job.stopRequested && Date.now() < target) {
+    while (!job.stopRequested && !job.shutdownRequested && Date.now() < target) {
       await new Promise((resolve) => setTimeout(resolve, Math.min(1_000, Math.max(0, target - Date.now()))));
     }
   }
@@ -7563,6 +7710,7 @@ export async function createVibeResearchApp({
   }
 
   async function runResearchAutopilotJob(job) {
+    job.shutdownRequested = false;
     job.status = "running";
     job.startedAt = new Date().toISOString();
     job.heartbeatAt = job.startedAt;
@@ -7572,11 +7720,12 @@ export async function createVibeResearchApp({
     });
 
     const deadline = Date.now() + job.maxWallClockMs;
-    while (!job.stopRequested && job.stepCount < job.maxSteps && Date.now() < deadline) {
+    while (!job.stopRequested && !job.shutdownRequested && job.stepCount < job.maxSteps && Date.now() < deadline) {
       const stepIndex = job.stepCount + 1;
       try {
         job.currentAction = `step ${stepIndex}`;
         job.heartbeatAt = new Date().toISOString();
+        saveResearchAutopilotJobsSoon();
         const report = await runResearchAutopilot(job.runOptions);
         job.lastReport = report;
         job.stepCount = stepIndex;
@@ -7621,12 +7770,18 @@ export async function createVibeResearchApp({
         }
       }
 
-      if (!job.stopRequested && job.stepCount < job.maxSteps && Date.now() < deadline) {
+      if (!job.stopRequested && !job.shutdownRequested && job.stepCount < job.maxSteps && Date.now() < deadline) {
         await waitBetweenResearchAutopilotSteps(job);
       }
     }
 
-    if (job.stopRequested) {
+    if (job.shutdownRequested) {
+      job.status = "queued";
+      job.stopRequested = false;
+      job.stopReason = "server-shutdown";
+      job.stopSummary = "server stopped; job will resume when Vibe Research starts again";
+      appendResearchAutopilotEvent(job, { type: "checkpoint", action: "resume", summary: job.stopSummary });
+    } else if (job.stopRequested) {
       job.status = "stopped";
       job.stopReason = "user-stop";
       job.stopSummary = "stop requested from the Research workspace";
@@ -7640,8 +7795,25 @@ export async function createVibeResearchApp({
       appendResearchAutopilotEvent(job, { type: "succeeded", summary: job.stopSummary });
     }
     job.currentAction = "";
-    job.finishedAt = new Date().toISOString();
-    job.heartbeatAt = job.finishedAt;
+    job.finishedAt = job.status === "queued" ? "" : new Date().toISOString();
+    job.heartbeatAt = job.status === "queued" ? new Date().toISOString() : job.finishedAt;
+    saveResearchAutopilotJobsSoon();
+  }
+
+  function launchResearchAutopilotJob(job) {
+    if (!job || job.runPromise) return;
+    job.shutdownRequested = false;
+    job.runPromise = Promise.resolve().then(() => runResearchAutopilotJob(job)).catch((error) => {
+      job.status = "failed";
+      job.error = error?.message || "autopilot job failed";
+      job.stopReason = "unhandled-error";
+      job.stopSummary = job.error;
+      job.finishedAt = new Date().toISOString();
+      appendResearchAutopilotEvent(job, { type: "error", status: "failed", summary: job.error });
+    }).finally(() => {
+      job.runPromise = null;
+      saveResearchAutopilotJobsSoon();
+    });
   }
 
   function startResearchAutopilotJob({ projectName, projectDir, body, request }) {
@@ -7654,6 +7826,7 @@ export async function createVibeResearchApp({
       mode: options.mode,
       status: "queued",
       stopRequested: false,
+      shutdownRequested: false,
       createdAt: new Date().toISOString(),
       startedAt: "",
       heartbeatAt: "",
@@ -7672,19 +7845,67 @@ export async function createVibeResearchApp({
       events: [],
       runOptions: options.runOptions,
       steering: [],
+      resumeCount: 0,
+      runPromise: null,
     };
     researchAutopilotJobs.set(job.id, job);
     pruneResearchAutopilotJobs();
-    Promise.resolve().then(() => runResearchAutopilotJob(job)).catch((error) => {
-      job.status = "failed";
-      job.error = error?.message || "autopilot job failed";
-      job.stopReason = "unhandled-error";
-      job.stopSummary = job.error;
-      job.finishedAt = new Date().toISOString();
-      appendResearchAutopilotEvent(job, { type: "error", status: "failed", summary: job.error });
-    });
+    saveResearchAutopilotJobsSoon();
+    launchResearchAutopilotJob(job);
     return job;
   }
+
+  function resumeResearchAutopilotJobs() {
+    for (const job of researchAutopilotJobs.values()) {
+      if (RESEARCH_AUTOPILOT_TERMINAL_STATUSES.has(job.status)) continue;
+      job.resumeCount = numberInRange(job.resumeCount, 0, 0, 10_000) + 1;
+      job.status = "queued";
+      job.stopRequested = false;
+      job.shutdownRequested = false;
+      job.currentAction = "";
+      job.finishedAt = "";
+      job.heartbeatAt = new Date().toISOString();
+      job.stopReason = "server-restart";
+      job.stopSummary = `resumed after server restart (${job.resumeCount})`;
+      appendResearchAutopilotEvent(job, {
+        type: "resumed",
+        action: "resume",
+        summary: job.stopSummary,
+      });
+      launchResearchAutopilotJob(job);
+    }
+  }
+
+  async function shutdownResearchAutopilotJobs() {
+    const running = [];
+    let touched = false;
+    for (const job of researchAutopilotJobs.values()) {
+      if (RESEARCH_AUTOPILOT_TERMINAL_STATUSES.has(job.status)) continue;
+      job.shutdownRequested = true;
+      job.stopRequested = false;
+      job.status = "queued";
+      job.currentAction = "";
+      job.finishedAt = "";
+      job.heartbeatAt = new Date().toISOString();
+      job.stopReason = "server-shutdown";
+      job.stopSummary = "server stopped; job will resume when Vibe Research starts again";
+      appendResearchAutopilotEvent(job, { type: "checkpoint", action: "resume", summary: job.stopSummary });
+      if (job.runPromise) running.push(job.runPromise.catch(() => null));
+      touched = true;
+    }
+    if (touched) {
+      await flushResearchAutopilotJobs();
+    }
+    if (running.length) {
+      await Promise.race([
+        Promise.allSettled(running),
+        new Promise((resolve) => setTimeout(resolve, 1_500)),
+      ]);
+      await flushResearchAutopilotJobs();
+    }
+  }
+
+  resumeResearchAutopilotJobs();
 
   function requireChatAutopilotSession(sessionId) {
     const sid = trimText(sessionId);
@@ -8691,6 +8912,8 @@ export async function createVibeResearchApp({
 
     closePromise = (async () => {
       stopLibraryActivityWatcher();
+      await shutdownResearchAutopilotJobs();
+      await flushResearchAutopilotJobs();
       await sessionManager.shutdown({ preserveSessions: persistSessions });
       await browserUseService.shutdown();
       await removeServerInfo(stateDir);
