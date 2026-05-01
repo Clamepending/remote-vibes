@@ -327,30 +327,42 @@ export function createKnowledgeBaseGraphRenderer(container, options = {}) {
 
     const linkForce = forceLink(d3Links)
       .id((n) => n.id)
-      // Distance scales with both endpoints' radii so a fat hub keeps its
-      // satellites pushed out beyond its own visual edge.
-      .distance((link) => 30 + (link.source.radius || 5) + (link.target.radius || 5))
-      // Outbound-attraction-distribution: link strength = 1 / min(degree).
-      // Leaf-to-leaf links keep full pull; hub-side links weaken so the
-      // hub doesn't crush its neighborhood.
+      // Link distance has to scale with HUB DEGREE, not just radii. A node
+      // with 30 leaves needs each leaf far enough out that the leaves can
+      // form a circle without colliding with each other. The leaf-count
+      // term (sqrt(maxDeg) * 14) is what gives Obsidian-style hub flowers
+      // their open shape instead of a sunflower-disc collapse.
+      .distance((link) => {
+        const a = degree.get(link.source.id) || 1;
+        const b = degree.get(link.target.id) || 1;
+        const maxDeg = Math.max(a, b);
+        return 36 + (link.source.radius || 5) + (link.target.radius || 5) + Math.sqrt(maxDeg) * 14;
+      })
+      // Outbound-attraction-distribution-style: weaken link pull as the
+      // hub's degree grows, so a 30-leaf hub doesn't get yanked toward
+      // every leaf at full strength. Squared-min-degree converges noticeably
+      // faster than plain 1/min(degree).
       .strength((link) => {
         const a = degree.get(link.source.id) || 1;
         const b = degree.get(link.target.id) || 1;
-        return 1 / Math.max(1, Math.min(a, b));
+        const minDeg = Math.max(1, Math.min(a, b));
+        return 1 / Math.pow(minDeg, 0.85);
       });
 
     const chargeForce = forceManyBody()
-      // Stronger base + bigger size scaling so leaves actually have room
-      // to spread around their hubs.
-      .strength((n) => -260 - (n.radius || 5) * 18)
-      .distanceMax(1400)
+      // Strong, long-range repulsion. Without enough reach, packed leaves
+      // around a hub feel charge from immediate neighbors only and stay
+      // crushed; with reach, the whole hub neighborhood inflates.
+      .strength((n) => -320 - (n.radius || 5) * 24)
+      .distanceMax(1800)
       .theta(0.9);
 
     const collideForce = forceCollide()
-      // Generous collision radius prevents visual overlap; ~1.4x the
-      // node radius leaves a comfortable gap.
-      .radius((n) => (n.radius || 5) * 1.4 + 6)
-      .strength(0.9)
+      // Generous collision radius prevents visual overlap and gives each
+      // leaf a personal-space halo, which is most of what makes hub
+      // flowers READ as a flower instead of a smudge.
+      .radius((n) => (n.radius || 5) * 1.6 + 8)
+      .strength(0.95)
       .iterations(2);
 
     const centerForce = forceCenter(0, 0).strength(0.05);
@@ -360,13 +372,14 @@ export function createKnowledgeBaseGraphRenderer(container, options = {}) {
       .force("charge", chargeForce)
       .force("collide", collideForce)
       .force("center", centerForce)
-      // Custom drift toward origin. Connected nodes barely feel it (their
-      // links handle positioning); zero-degree orphans get yanked in hard
-      // so they don't sit stranded on the initial-spread perimeter.
+      // Mild origin drift. Orphans get pulled in modestly so they don't
+      // strand on the perimeter, but not so hard that they pile into a
+      // single dot at (0,0) — the manyBody charge then spreads them into
+      // a loose disconnected halo around the connected components.
       .force("originDrift", (alpha) => {
         for (const n of d3Nodes) {
           const deg = degree.get(n.id) || 0;
-          const k = deg === 0 ? 0.18 : 0.015;
+          const k = deg === 0 ? 0.05 : 0.012;
           n.vx += -n.x * k * alpha;
           n.vy += -n.y * k * alpha;
         }
