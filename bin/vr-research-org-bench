@@ -16,11 +16,17 @@ Usage:
 Options:
   --suite <name>          Benchmark suite (default: posttrain-lite).
   --strategy <name>       Strategy to run. Repeatable.
-                          Built-ins: baseline, single-proxy, org-autopilot-proxy.
+                          Built-ins: baseline, single-proxy, org-autopilot-proxy,
+                          single-agent-provider, org-provider.
   --seeds <list>          Comma-separated seed list (default: 0,1,2).
   --timeout-ms <ms>       Per-command timeout (default: 30000).
   --org-cycles <N>        Cycles for org-autopilot-proxy (default: 2).
   --command <text>        Override strategy command for command-backed strategies.
+  --agent-provider <id>   Provider label recorded for provider-backed strategies.
+  --provider-command <text>
+                          Provider command template for single-agent-provider/org-provider.
+                          Placeholders: {promptFile}, {scenarioDir}, {strategy},
+                          {cycle}, {seed}, {provider}.
   --json                  Print JSON instead of a markdown table.
   --help, -h              Show this help.
 `);
@@ -48,6 +54,8 @@ function parseArgs(argv) {
     json: false,
     orgCycles: 2,
     outputDir: "",
+    providerCommand: process.env.VIBE_RESEARCH_ORG_BENCH_PROVIDER_COMMAND || "",
+    providerId: process.env.VIBE_RESEARCH_ORG_BENCH_PROVIDER || "",
     seeds: [0, 1, 2],
     strategies: [],
     subcommand: "run",
@@ -59,8 +67,10 @@ function parseArgs(argv) {
     const arg = argv[index];
     if (arg === "--help" || arg === "-h") { opts.help = true; continue; }
     if (arg === "--json") { opts.json = true; continue; }
+    if (arg === "--agent-provider") { opts.providerId = requireValue(argv, index, arg); index += 1; continue; }
     if (arg === "--command") { opts.commandText = requireValue(argv, index, arg); index += 1; continue; }
     if (arg === "--org-cycles") { opts.orgCycles = Number(requireValue(argv, index, arg)); index += 1; continue; }
+    if (arg === "--provider-command") { opts.providerCommand = requireValue(argv, index, arg); index += 1; continue; }
     if (arg === "--seeds") { opts.seeds = parseSeeds(requireValue(argv, index, arg)); index += 1; continue; }
     if (arg === "--strategy") { opts.strategies.push(requireValue(argv, index, arg)); index += 1; continue; }
     if (arg === "--suite") { opts.suite = requireValue(argv, index, arg); index += 1; continue; }
@@ -108,6 +118,8 @@ async function main() {
       timeoutMs: opts.timeoutMs,
       orgCycles: opts.orgCycles,
       commandText: opts.commandText,
+      providerCommand: opts.providerCommand,
+      providerId: opts.providerId,
     });
     process.stdout.write(opts.json
       ? `${JSON.stringify(report, null, 2)}\n`
@@ -119,4 +131,3 @@ async function main() {
 }
 
 await main();
-

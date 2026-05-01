@@ -34,9 +34,37 @@ Built-in strategies:
 | `baseline` | No edits; scores the seed recipe. |
 | `single-proxy` | One-shot dev optimizer; simulates an individual agent grabbing the visible dev optimum. |
 | `org-autopilot-proxy` | Runs the same scenario through `runResearchAutopilot` for two cycles; simulates review-driven correction toward a more robust recipe. |
+| `single-agent-provider` | Runs a provider command template once in the scenario repo. Use this for real Codex/Claude one-shot baselines. |
+| `org-provider` | Runs the provider command template through the Vibe autopilot loop for multiple cycles, recording result-doc evidence. |
 
 Each run writes `report.json` with per-seed dev score, holdout score, recipe,
 integrity result, wall time, and strategy metadata.
+
+Provider-backed example:
+
+```bash
+vr-research-org-bench run output/org-bench/provider-smoke \
+  --seeds 0 \
+  --strategy single-agent-provider \
+  --strategy org-provider \
+  --agent-provider codex \
+  --provider-command 'codex exec --sandbox workspace-write --skip-git-repo-check --cd {scenarioDir} "$(cat {promptFile})" </dev/null'
+```
+
+The `</dev/null` matters for `codex exec`: without it, the runner's shell can
+leave stdin open and Codex may wait for additional input until the cycle times
+out.
+
+The provider command runs with these environment variables:
+
+| variable | meaning |
+| --- | --- |
+| `VIBE_RESEARCH_ORG_BENCH_PROMPT_FILE` | Prompt file for the current run/cycle. |
+| `VIBE_RESEARCH_ORG_BENCH_SCENARIO_DIR` | Scenario working directory. |
+| `VIBE_RESEARCH_ORG_BENCH_STRATEGY` | Strategy name. |
+| `VIBE_RESEARCH_ORG_BENCH_CYCLE` | Cycle number. |
+| `VIBE_RESEARCH_ORG_BENCH_SEED` | Seed id. |
+| `VIBE_RESEARCH_ORG_BENCH_PROVIDER` | Provider label passed by `--agent-provider`. |
 
 ## What This Tests
 
@@ -50,15 +78,14 @@ integrity result, wall time, and strategy metadata.
 - Real fine-tuning.
 - Real GPU scheduling.
 - Real model quality.
-- Real single-agent provider performance.
 - Reward-hacking resistance against a malicious agent with filesystem access.
 
 ## Next Benchmark Steps
 
-1. Add a `single-agent-provider` strategy that launches a real Codex/Claude
-   session in the generated scenario repo and asks it to improve `recipe.json`.
-2. Add an `org-provider` strategy that lets Vibe create the move, run a worker,
-   launch a reviewer agent, and finish the result doc.
+1. Run `single-agent-provider` and `org-provider` against real Codex/Claude
+   on several seeds, then inspect failure modes.
+2. Make `org-provider` launch a separate reviewer agent through Agent Inbox,
+   not just run provider-backed worker cycles.
 3. Add telemetry columns: human review latency, artifact opens, ask-why usage,
    rerun rate, doctor clean-rate, and paper-lint clean-rate.
 4. Add a heavier optional `posttrain-mini` suite using an actual small model or

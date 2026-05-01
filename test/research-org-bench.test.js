@@ -80,6 +80,34 @@ test("runOrgBench compares baseline, single proxy, and org-autopilot proxy", asy
   }
 });
 
+test("runOrgBench can compare provider-backed single-agent and org strategies", async () => {
+  const dir = tmp("vr-org-bench-provider");
+  try {
+    const providerCommand = `${process.execPath} scripts/provider-agent-proxy.mjs`;
+    const report = await runOrgBench({
+      outputDir: dir,
+      strategies: ["single-agent-provider", "org-provider"],
+      seeds: [0, 1],
+      timeoutMs: 10_000,
+      providerCommand,
+      providerId: "require-env",
+    });
+    const byStrategy = new Map(report.summary.map((row) => [row.strategy, row]));
+    assert.equal(report.providerId, "require-env");
+    assert.equal(byStrategy.get("single-agent-provider")?.integrityPassRate, 1);
+    assert.equal(byStrategy.get("org-provider")?.integrityPassRate, 1);
+    assert.ok(
+      byStrategy.get("org-provider").holdoutMean > byStrategy.get("single-agent-provider").holdoutMean,
+      "provider-backed org strategy should beat the provider single-pass baseline in the proxy",
+    );
+    const orgRun = report.results.find((row) => row.strategy === "org-provider");
+    assert.equal(orgRun.execution.providerId, "require-env");
+    assert.ok(orgRun.execution.reports?.length >= 2);
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
+
 test("vr-research-org-bench CLI writes a report", async () => {
   const dir = tmp("vr-org-bench-cli");
   try {
@@ -89,6 +117,32 @@ test("vr-research-org-bench CLI writes a report", async () => {
     assert.match(result.stdout, /single-proxy/);
     const report = JSON.parse(readFileSync(join(dir, "report.json"), "utf8"));
     assert.deepEqual(report.strategies, ["baseline", "single-proxy"]);
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+test("vr-research-org-bench CLI accepts provider command templates", async () => {
+  const dir = tmp("vr-org-bench-cli-provider");
+  try {
+    const providerCommand = `${process.execPath} scripts/provider-agent-proxy.mjs`;
+    const result = await runCli([
+      "run",
+      dir,
+      "--seeds",
+      "0",
+      "--strategy",
+      "single-agent-provider",
+      "--agent-provider",
+      "require-env",
+      "--provider-command",
+      providerCommand,
+    ]);
+    assert.equal(result.status, 0, result.stderr);
+    assert.match(result.stdout, /single-agent-provider/);
+    const report = JSON.parse(readFileSync(join(dir, "report.json"), "utf8"));
+    assert.equal(report.providerId, "require-env");
+    assert.equal(report.results[0].execution.kind, "single-agent-provider");
   } finally {
     rmSync(dir, { recursive: true, force: true });
   }
