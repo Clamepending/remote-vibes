@@ -55,6 +55,7 @@ function normalizeSupervisorEvent(event = {}) {
     type: trimString(input.type || input.event || "tick").toLowerCase() || "tick",
     action: trimString(input.action).toLowerCase(),
     source: trimString(input.source || "chat").toLowerCase(),
+    turnMarker: boundedText(input.turnMarker || input.turnId || input.observedTurn || "", 120),
   };
 }
 
@@ -76,6 +77,7 @@ function directiveSignature({ event, action, report, reason }) {
     action,
     event.type,
     event.action,
+    event.turnMarker,
     trimString(rec.action).toLowerCase(),
     projectSlugFromRecommendation(rec),
     reason,

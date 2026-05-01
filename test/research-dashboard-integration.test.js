@@ -992,6 +992,7 @@ test("main app bundle exposes the native research workspace", async () => {
     assert.match(jsText, /queueChatAutopilotSupervisorMessage/);
     assert.match(jsText, /chatAutopilotAutoRecoveryLastAt/);
     assert.match(jsText, /claimChatAutopilotAutoRecovery/);
+    assert.match(jsText, /getChatAutopilotTurnMarker/);
     assert.match(jsText, /research-autopilot-steer-form/);
     assert.match(jsText, /data-chat-autopilot-toggle/);
     assert.match(jsText, /getChatAutopilotInferredProjectName/);

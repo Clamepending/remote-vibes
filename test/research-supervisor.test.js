@@ -140,6 +140,45 @@ test("research supervisor falls back to the project goal when no chat objective 
   assert.match(decision.directive.text, /Goal: Use the wiki goal as the supervisor north star/);
 });
 
+test("research supervisor dedupes automatic directives by completed turn marker", () => {
+  const report = {
+    recommendation: {
+      action: "continue-active",
+      reason: "ACTIVE has v070; continue or finish that move before claiming another.",
+      slug: "v070",
+    },
+  };
+  const first = decideResearchSupervisorIntervention({
+    attachment: attachment(),
+    event: { type: "agent-idle", source: "session", turnMarker: "turn-1" },
+    orchestratorReport: report,
+  });
+  assert.equal(first.action, "directive");
+  assert.equal(first.shouldSend, true);
+
+  const supervisor = updateResearchSupervisorState(
+    normalizeResearchSupervisorState(),
+    first,
+    { type: "agent-idle", source: "session", turnMarker: "turn-1" },
+    { now: "2026-05-01T12:00:00.000Z" },
+  );
+  const duplicateSameTurn = decideResearchSupervisorIntervention({
+    attachment: attachment({ supervisor }),
+    event: { type: "agent-idle", source: "session", turnMarker: "turn-1" },
+    orchestratorReport: report,
+  });
+  assert.equal(duplicateSameTurn.action, "silent");
+  assert.equal(duplicateSameTurn.shouldSend, false);
+
+  const nextTurn = decideResearchSupervisorIntervention({
+    attachment: attachment({ supervisor }),
+    event: { type: "agent-idle", source: "session", turnMarker: "turn-2" },
+    orchestratorReport: report,
+  });
+  assert.equal(nextTurn.action, "directive");
+  assert.equal(nextTurn.shouldSend, true);
+});
+
 test("research supervisor gives active-move execution briefs", () => {
   const decision = decideResearchSupervisorIntervention({
     attachment: attachment(),

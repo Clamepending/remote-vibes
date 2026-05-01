@@ -39063,6 +39063,31 @@ function claimChatAutopilotAutoRecovery(activeSession, config = {}, cooldownMs =
   return true;
 }
 
+function getChatAutopilotTurnMarker(activeSession) {
+  const sessionId = String(activeSession?.id || "").trim();
+  if (!sessionId) return "";
+  const narrative = getRichSessionNarrative(sessionId);
+  const entries = Array.isArray(narrative?.entries) ? narrative.entries : [];
+  let latestEntry = null;
+  for (let index = entries.length - 1; index >= 0; index -= 1) {
+    const entry = entries[index];
+    if (!entry || typeof entry !== "object") continue;
+    if (entry.status === "running" || entry.meta === "running" || entry.meta === "streaming") continue;
+    latestEntry = entry;
+    break;
+  }
+  const entryMarker = latestEntry
+    ? [latestEntry.id, latestEntry.seq, latestEntry.kind, latestEntry.status].filter((part) => part !== undefined && part !== "").join(":")
+    : "";
+  return [
+    sessionId,
+    activeSession.lastOutputAt || "",
+    activeSession.updatedAt || "",
+    activeSession.status || "",
+    entryMarker,
+  ].filter(Boolean).join("|").slice(0, 120);
+}
+
 async function tickChatAutopilotSupervisor(activeSession, event = {}, { pendingText = "", sendDirective = true } = {}) {
   const sessionId = activeSession?.id || "";
   if (!sessionId || state.chatAutopilotSupervisorTicking[sessionId]) return null;
@@ -39074,10 +39099,13 @@ async function tickChatAutopilotSupervisor(activeSession, event = {}, { pendingT
     refreshRichSessionSurfaceUi();
   }
   try {
+    const eventWithTurn = event?.type === "agent-idle" && !event.turnMarker && !event.turnId
+      ? { ...event, turnMarker: getChatAutopilotTurnMarker(activeSession) }
+      : event;
     const payload = await fetchJson(`/api/sessions/${encodeURIComponent(sessionId)}/research-autopilot/supervisor/tick`, {
       method: "POST",
       body: JSON.stringify({
-        event,
+        event: eventWithTurn,
         projectName: getChatAutopilotSelectedProjectName(config, activeSession),
         objective: getChatAutopilotDefaultObjective(config, activeSession),
       }),
