@@ -187,6 +187,7 @@ Current implementation:
 - In `review` / `synthesis`, it invokes `vr-research-judge` logic and can open the human Agent Inbox card with `--ask-human`.
 - `vr-research-autopilot step <project-dir>` routes the latest durable `reviewDecision` into the next bounded action: continue cycle, rerun cycle, finish/synthesize, return to ideation, or delegate back to orchestrator when no move is active.
 - It does not yet synthesize new LLM-written briefs; that remains the next planner layer.
+- `vr-research-org-bench run <output-dir>` now provides a cheap `posttrain-lite` proxy benchmark for comparing baseline, single-pass, and org-autopilot strategies before spending PostTrainBench-scale GPU budgets.
 
 Success criteria:
 
@@ -281,13 +282,14 @@ Track these metrics across dogfood projects:
 
 ## Near-Term Build Queue
 
-1. Longer human wait gates for asynchronous review.
-2. Real toy-to-real project proving run.
-3. `vr-research-orchestrator tick`: phase-aware planner/reviewer.
-4. Topology metadata in result docs plus doctor validation.
-5. Program database view over results, artifacts, insights, and evaluator strength.
-6. Worker pool with concurrency caps and stale-worker recovery.
-7. `agent-org-design` dogfood project to evaluate prompt/topology changes.
+1. Run `vr-research-org-bench` nightly on `posttrain-lite` and track whether org-loop changes improve holdout score without lowering integrity.
+2. Add real provider strategies to `vr-research-org-bench`: single-agent session vs org worker+reviewer loop on the same generated scenario.
+3. Longer human wait gates for asynchronous review.
+4. Real toy-to-real project proving run.
+5. Topology metadata in result docs plus doctor validation.
+6. Program database view over results, artifacts, insights, and evaluator strength.
+7. Worker pool with concurrency caps and stale-worker recovery.
+8. `agent-org-design` dogfood project to evaluate prompt/topology changes.
 
 ## Open Questions To Refine
 

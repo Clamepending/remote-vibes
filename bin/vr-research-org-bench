@@ -1,0 +1,122 @@
+#!/usr/bin/env node
+
+import path from "node:path";
+import process from "node:process";
+import { formatOrgBenchReport, runOrgBench } from "../src/research/org-bench.js";
+
+function printHelp() {
+  process.stdout.write(`vr-research-org-bench
+
+Run cheap benchmark suites for comparing a plain agent strategy with the
+Vibe Research organization loop.
+
+Usage:
+  vr-research-org-bench run <output-dir> [options]
+
+Options:
+  --suite <name>          Benchmark suite (default: posttrain-lite).
+  --strategy <name>       Strategy to run. Repeatable.
+                          Built-ins: baseline, single-proxy, org-autopilot-proxy.
+  --seeds <list>          Comma-separated seed list (default: 0,1,2).
+  --timeout-ms <ms>       Per-command timeout (default: 30000).
+  --org-cycles <N>        Cycles for org-autopilot-proxy (default: 2).
+  --command <text>        Override strategy command for command-backed strategies.
+  --json                  Print JSON instead of a markdown table.
+  --help, -h              Show this help.
+`);
+}
+
+function requireValue(args, index, flag) {
+  const value = args[index + 1];
+  if (!value || value.startsWith("--")) {
+    throw new Error(`${flag} requires a value.`);
+  }
+  return value;
+}
+
+function parseSeeds(value) {
+  return String(value || "")
+    .split(",")
+    .map((entry) => Number(entry.trim()))
+    .filter(Number.isFinite);
+}
+
+function parseArgs(argv) {
+  const opts = {
+    commandText: "",
+    help: false,
+    json: false,
+    orgCycles: 2,
+    outputDir: "",
+    seeds: [0, 1, 2],
+    strategies: [],
+    subcommand: "run",
+    suite: "posttrain-lite",
+    timeoutMs: 30_000,
+  };
+
+  for (let index = 0; index < argv.length; index += 1) {
+    const arg = argv[index];
+    if (arg === "--help" || arg === "-h") { opts.help = true; continue; }
+    if (arg === "--json") { opts.json = true; continue; }
+    if (arg === "--command") { opts.commandText = requireValue(argv, index, arg); index += 1; continue; }
+    if (arg === "--org-cycles") { opts.orgCycles = Number(requireValue(argv, index, arg)); index += 1; continue; }
+    if (arg === "--seeds") { opts.seeds = parseSeeds(requireValue(argv, index, arg)); index += 1; continue; }
+    if (arg === "--strategy") { opts.strategies.push(requireValue(argv, index, arg)); index += 1; continue; }
+    if (arg === "--suite") { opts.suite = requireValue(argv, index, arg); index += 1; continue; }
+    if (arg === "--timeout-ms") { opts.timeoutMs = Number(requireValue(argv, index, arg)); index += 1; continue; }
+    if (arg.startsWith("--")) throw new Error(`unknown flag: ${arg}`);
+    if (arg === "run" && !opts.outputDir) { opts.subcommand = "run"; continue; }
+    if (!opts.outputDir) { opts.outputDir = arg; continue; }
+    throw new Error(`unexpected positional arg: ${arg}`);
+  }
+
+  if (!opts.strategies.length) {
+    opts.strategies = ["baseline", "single-proxy", "org-autopilot-proxy"];
+  }
+  if (!opts.seeds.length) {
+    opts.seeds = [0, 1, 2];
+  }
+  return opts;
+}
+
+async function main() {
+  let opts;
+  try {
+    opts = parseArgs(process.argv.slice(2));
+  } catch (error) {
+    process.stderr.write(`${error.message}\n\n`);
+    printHelp();
+    process.exit(1);
+  }
+
+  if (opts.help) {
+    printHelp();
+    return;
+  }
+  if (opts.subcommand !== "run" || !opts.outputDir) {
+    printHelp();
+    process.exit(opts.outputDir ? 0 : 1);
+  }
+
+  try {
+    const report = await runOrgBench({
+      outputDir: path.resolve(opts.outputDir),
+      suite: opts.suite,
+      strategies: opts.strategies,
+      seeds: opts.seeds,
+      timeoutMs: opts.timeoutMs,
+      orgCycles: opts.orgCycles,
+      commandText: opts.commandText,
+    });
+    process.stdout.write(opts.json
+      ? `${JSON.stringify(report, null, 2)}\n`
+      : `${formatOrgBenchReport(report)}\n`);
+  } catch (error) {
+    process.stderr.write(`${error.stack || error.message}\n`);
+    process.exit(1);
+  }
+}
+
+await main();
+
