@@ -84,10 +84,13 @@ import { compileBriefToQueue, updateResearchState } from "./research/brief.js";
 import { formatOrgBenchReport, runOrgBench } from "./research/org-bench.js";
 import { tickResearchOrchestrator } from "./research/orchestrator.js";
 import {
+  createEmptyWorkspaceFile,
   ensureWorkspaceDirectory,
   isImageFile,
   listWorkspaceEntries,
   readWorkspaceTextFile,
+  removeWorkspaceEntry,
+  renameWorkspaceEntry,
   resolveWorkspaceEntry,
   uploadWorkspaceFile,
   writeWorkspaceTextFile,
@@ -6398,6 +6401,54 @@ export async function createVibeResearchApp({
       });
 
       response.json(payload);
+    } catch (error) {
+      response.status(error.statusCode || 400).json({ error: error.message });
+    }
+  });
+
+  // Right-click "New File" in the workspace tree. Creates an empty file
+  // at <root>/<path>/<name>. Path is the parent directory (relative);
+  // name is a single leaf segment (sanitized server-side).
+  app.post("/api/files/file", async (request, response) => {
+    try {
+      const result = await createEmptyWorkspaceFile({
+        root: typeof request.body?.root === "string" && request.body.root ? request.body.root : cwd,
+        relativePath: typeof request.body?.path === "string" ? request.body.path : "",
+        name: request.body?.name,
+        fallbackCwd: cwd,
+      });
+      response.status(201).json({ file: result });
+    } catch (error) {
+      response.status(error.statusCode || 400).json({ error: error.message });
+    }
+  });
+
+  // Right-click "Rename". Body: { root, path, name } where path is the
+  // current relative path of the entry and name is the new leaf segment.
+  app.patch("/api/files", async (request, response) => {
+    try {
+      const result = await renameWorkspaceEntry({
+        root: typeof request.body?.root === "string" && request.body.root ? request.body.root : cwd,
+        relativePath: typeof request.body?.path === "string" ? request.body.path : "",
+        newName: request.body?.name,
+        fallbackCwd: cwd,
+      });
+      response.json(result);
+    } catch (error) {
+      response.status(error.statusCode || 400).json({ error: error.message });
+    }
+  });
+
+  // Right-click "Delete". Body: { root, path }. Directories removed
+  // recursively; the client confirmed the action before calling.
+  app.delete("/api/files", async (request, response) => {
+    try {
+      const result = await removeWorkspaceEntry({
+        root: typeof request.body?.root === "string" && request.body.root ? request.body.root : cwd,
+        relativePath: typeof request.body?.path === "string" ? request.body.path : "",
+        fallbackCwd: cwd,
+      });
+      response.json(result);
     } catch (error) {
       response.status(error.statusCode || 400).json({ error: error.message });
     }

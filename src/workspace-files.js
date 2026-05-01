@@ -488,3 +488,155 @@ export async function ensureWorkspaceDirectory({
     name: folderName,
   };
 }
+
+// Creates a new empty file in `relativePath` (a directory inside the
+// workspace) with `name`. Refuses to overwrite an existing entry — pick
+// a different name instead. Same workspace-safety checks as
+// `uploadWorkspaceFile`, so callers can't escape the root or clobber
+// managed top-level files (AGENTS.md, CLAUDE.md).
+export async function createEmptyWorkspaceFile({
+  root,
+  relativePath = "",
+  name,
+  fallbackCwd,
+}) {
+  const safeName = sanitizeUploadFileName(name);
+  const parentEntry = await resolveWorkspaceEntry({
+    root,
+    relativePath,
+    fallbackCwd,
+  });
+  if (!parentEntry.stats.isDirectory()) {
+    throw buildHttpError("Parent path is not a directory.", 400);
+  }
+
+  if (INTERNAL_PATH_SEGMENTS.has(safeName)) {
+    throw buildHttpError("File name is reserved by the workspace.", 400);
+  }
+
+  const candidateRelative = parentEntry.relativePath
+    ? `${parentEntry.relativePath}/${safeName}`
+    : safeName;
+  if (isManagedWorkspaceFile(candidateRelative)) {
+    throw buildHttpError("Cannot overwrite a managed workspace file.", 400);
+  }
+
+  const targetPath = path.join(parentEntry.targetPath, safeName);
+  try {
+    // wx flag: fail (EEXIST) if a file with this name is already there
+    // — silent overwrite would lose the user's existing content.
+    await writeFile(targetPath, "", { flag: "wx" });
+  } catch (error) {
+    if (error?.code === "EEXIST") {
+      throw buildHttpError("An entry with that name already exists.", 409);
+    }
+    throw error;
+  }
+
+  return {
+    root: parentEntry.rootPath,
+    relativePath: candidateRelative,
+    name: safeName,
+    type: "file",
+    isImage: isImageFile(safeName),
+  };
+}
+
+// Renames a single workspace entry (file or directory) within the same
+// parent directory. Cross-directory moves are deliberately unsupported —
+// the client would have to rebuild the destination path, and the only
+// caller (right-click rename) is a leaf-name change. Refuses to
+// overwrite an existing entry at the new name.
+export async function renameWorkspaceEntry({
+  root,
+  relativePath = "",
+  newName,
+  fallbackCwd,
+}) {
+  const entry = await resolveWorkspaceEntry({ root, relativePath, fallbackCwd });
+  if (!entry.relativePath) {
+    throw buildHttpError("Cannot rename the workspace root.", 400);
+  }
+  if (isManagedWorkspaceFile(entry.relativePath)) {
+    throw buildHttpError("Cannot rename a managed workspace file.", 400);
+  }
+
+  const safeName = sanitizeUploadFileName(newName);
+  if (INTERNAL_PATH_SEGMENTS.has(safeName)) {
+    throw buildHttpError("Name is reserved by the workspace.", 400);
+  }
+
+  const parentDirectory = path.dirname(entry.targetPath);
+  const targetPath = path.join(parentDirectory, safeName);
+
+  // No-op if the user re-typed the same name; treat as success so the
+  // UI can dismiss the prompt without an error toast.
+  if (targetPath === entry.targetPath) {
+    return {
+      root: entry.rootPath,
+      relativePath: entry.relativePath,
+      previousRelativePath: entry.relativePath,
+      name: safeName,
+      type: entry.stats.isDirectory() ? "directory" : "file",
+    };
+  }
+
+  // Belt-and-suspenders: target must still sit inside the workspace
+  // root after the rename. resolveWorkspaceEntry already validated the
+  // parent, but the new leaf name shouldn't be allowed to escape it.
+  ensurePathInsideRoot(entry.rootPath, targetPath);
+
+  // Refuse silent overwrite. We can't use rename's `wx` flag (Node's
+  // rename has no such option), so stat first and reject EEXIST.
+  try {
+    await stat(targetPath);
+    throw buildHttpError("An entry with that name already exists.", 409);
+  } catch (error) {
+    if (error?.statusCode) throw error;
+    if (error?.code !== "ENOENT") throw error;
+  }
+
+  await rename(entry.targetPath, targetPath);
+
+  const parentRelative = normalizeRelativePath(
+    path.relative(entry.rootPath, parentDirectory),
+  );
+  const finalRelative = parentRelative ? `${parentRelative}/${safeName}` : safeName;
+
+  return {
+    root: entry.rootPath,
+    relativePath: finalRelative,
+    previousRelativePath: entry.relativePath,
+    name: safeName,
+    type: entry.stats.isDirectory() ? "directory" : "file",
+  };
+}
+
+// Removes a workspace entry. Directories are removed recursively so the
+// caller doesn't have to walk the tree first. Same safety net as
+// rename/upload — refuses to touch the workspace root or the managed
+// top-level files.
+export async function removeWorkspaceEntry({
+  root,
+  relativePath = "",
+  fallbackCwd,
+}) {
+  const entry = await resolveWorkspaceEntry({ root, relativePath, fallbackCwd });
+  if (!entry.relativePath) {
+    throw buildHttpError("Cannot remove the workspace root.", 400);
+  }
+  if (isManagedWorkspaceFile(entry.relativePath)) {
+    throw buildHttpError("Cannot remove a managed workspace file.", 400);
+  }
+
+  await rm(entry.targetPath, {
+    recursive: entry.stats.isDirectory(),
+    force: false,
+  });
+
+  return {
+    root: entry.rootPath,
+    relativePath: entry.relativePath,
+    type: entry.stats.isDirectory() ? "directory" : "file",
+  };
+}

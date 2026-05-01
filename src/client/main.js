@@ -15,6 +15,7 @@ import {
   Cpu,
   File,
   FilePenLine,
+  FilePlus,
   FileText,
   Folder,
   FolderCog,
@@ -35925,9 +35926,190 @@ function openProjectContextMenu(group, x, y) {
   openContextMenu(items, x, y);
 }
 
+// Per-project mirror of forgetWorkspaceFileTreeSubtree — drops cached
+// listings + expanded/loading flags for `relativePath` (and any
+// descendants) inside the sidebar's per-project file tree state.
+function forgetProjectFileTreeSubtree(root, relativePath) {
+  const normalized = normalizeFileTreePath(relativePath);
+  if (!root || !normalized) return;
+  const prefix = `${normalized}/`;
+  const entries = state.projectFileTreeEntries[root];
+  if (entries) {
+    for (const key of Object.keys(entries)) {
+      if (key === normalized || key.startsWith(prefix)) {
+        delete entries[key];
+      }
+    }
+  }
+  const expanded = state.projectFileTreeExpanded[root];
+  if (expanded) {
+    for (const value of Array.from(expanded)) {
+      if (value === normalized || value.startsWith(prefix)) {
+        expanded.delete(value);
+      }
+    }
+  }
+  const loading = state.projectFileTreeLoading[root];
+  if (loading) {
+    for (const value of Array.from(loading)) {
+      if (value === normalized || value.startsWith(prefix)) {
+        loading.delete(value);
+      }
+    }
+  }
+}
+
+async function createProjectFolderInDir(root, parentRelativePath = "") {
+  if (!root) return;
+  const folderName = window.prompt("New folder name", "");
+  if (folderName === null) return;
+  const trimmed = folderName.trim();
+  if (!trimmed) {
+    window.alert("Folder name cannot be empty.");
+    return;
+  }
+  try {
+    await fetchJson("/api/files/folder", {
+      method: "POST",
+      body: JSON.stringify({
+        root,
+        path: parentRelativePath || "",
+        name: trimmed,
+      }),
+    });
+    if (parentRelativePath) {
+      if (!state.projectFileTreeExpanded[root]) {
+        state.projectFileTreeExpanded[root] = new Set();
+      }
+      state.projectFileTreeExpanded[root].add(parentRelativePath);
+    }
+    await loadProjectFileTree(root, parentRelativePath || "", { force: true });
+    refreshSessionsList({ force: true });
+  } catch (error) {
+    window.alert(error.message);
+  }
+}
+
+async function createProjectFileInDir(root, parentRelativePath = "") {
+  if (!root) return;
+  const fileName = window.prompt("New file name", "");
+  if (fileName === null) return;
+  const trimmed = fileName.trim();
+  if (!trimmed) {
+    window.alert("File name cannot be empty.");
+    return;
+  }
+  try {
+    const payload = await fetchJson("/api/files/file", {
+      method: "POST",
+      body: JSON.stringify({
+        root,
+        path: parentRelativePath || "",
+        name: trimmed,
+      }),
+    });
+    if (parentRelativePath) {
+      if (!state.projectFileTreeExpanded[root]) {
+        state.projectFileTreeExpanded[root] = new Set();
+      }
+      state.projectFileTreeExpanded[root].add(parentRelativePath);
+    }
+    await loadProjectFileTree(root, parentRelativePath || "", { force: true });
+    refreshSessionsList({ force: true });
+    const newPath = payload?.file?.relativePath;
+    if (newPath) {
+      void openProjectFileFromTree(root, newPath, "text");
+    }
+  } catch (error) {
+    window.alert(error.message);
+  }
+}
+
+async function renameProjectEntryAction(root, relativePath, isDirectory) {
+  if (!root || !relativePath) return;
+  const currentName = leafFileTreeName(relativePath);
+  const nextName = window.prompt(
+    `Rename ${isDirectory ? "folder" : "file"}`,
+    currentName,
+  );
+  if (nextName === null) return;
+  const trimmed = nextName.trim();
+  if (!trimmed) {
+    window.alert("Name cannot be empty.");
+    return;
+  }
+  if (trimmed === currentName) return;
+  try {
+    const payload = await fetchJson("/api/files", {
+      method: "PATCH",
+      body: JSON.stringify({ root, path: relativePath, name: trimmed }),
+    });
+    const newRelativePath = payload?.relativePath || "";
+    forgetProjectFileTreeSubtree(root, relativePath);
+    if (isDirectory && newRelativePath) {
+      if (!state.projectFileTreeExpanded[root]) {
+        state.projectFileTreeExpanded[root] = new Set();
+      }
+      state.projectFileTreeExpanded[root].add(newRelativePath);
+    }
+    // The sidebar tree's "open" hand-off shares the workspace tabs, so
+    // a rename here also has to fix up any tab pointing at the old path
+    // (only matters if the user previously opened the file from this
+    // sidebar tree under the same workspace root that's currently
+    // active in the main editor).
+    if (newRelativePath && root === state.filesRoot) {
+      rewriteOpenFileTabsForRename(relativePath, newRelativePath);
+    }
+    await loadProjectFileTree(root, parentFileTreePath(relativePath), { force: true });
+    refreshSessionsList({ force: true });
+  } catch (error) {
+    window.alert(error.message);
+  }
+}
+
+async function deleteProjectEntryAction(root, relativePath, isDirectory) {
+  if (!root || !relativePath) return;
+  const label = isDirectory ? "folder and everything inside it" : "file";
+  const confirmed = window.confirm(
+    `Delete this ${label}?\n\n${relativePath}\n\nThis cannot be undone.`,
+  );
+  if (!confirmed) return;
+  try {
+    await fetchJson("/api/files", {
+      method: "DELETE",
+      body: JSON.stringify({ root, path: relativePath }),
+    });
+    forgetProjectFileTreeSubtree(root, relativePath);
+    if (root === state.filesRoot) {
+      dropOpenFileTabsForRemovedPath(relativePath);
+    }
+    await loadProjectFileTree(root, parentFileTreePath(relativePath), { force: true });
+    refreshSessionsList({ force: true });
+  } catch (error) {
+    window.alert(error.message);
+  }
+}
+
 function openProjectFileContextMenu({ root, relativePath, isDirectory, mode }, x, y) {
   if (!relativePath) return;
   const items = [];
+
+  if (isDirectory) {
+    items.push({
+      label: "New File",
+      icon: FilePlus,
+      onClick: () => {
+        void createProjectFileInDir(root, relativePath);
+      },
+    });
+    items.push({
+      label: "New Folder",
+      icon: FolderPlus,
+      onClick: () => {
+        void createProjectFolderInDir(root, relativePath);
+      },
+    });
+  }
 
   if (!isDirectory) {
     items.push({
@@ -35948,6 +36130,22 @@ function openProjectFileContextMenu({ root, relativePath, isDirectory, mode }, x
     });
   }
 
+  items.push({
+    label: "Rename",
+    icon: Pencil,
+    onClick: () => {
+      void renameProjectEntryAction(root, relativePath, isDirectory);
+    },
+  });
+  items.push({
+    label: "Delete",
+    icon: Trash2,
+    danger: true,
+    onClick: () => {
+      void deleteProjectEntryAction(root, relativePath, isDirectory);
+    },
+  });
+
   const absolutePath = joinWorkspacePath(root, relativePath);
   items.push({
     label: "Copy path",
@@ -35963,9 +36161,257 @@ function openProjectFileContextMenu({ root, relativePath, isDirectory, mode }, x
   openContextMenu(items, x, y);
 }
 
+// Returns the parent directory's relative path. "" for top-level
+// entries (siblings of the workspace root). Used to figure out which
+// file-tree bucket to invalidate after a create/rename/delete so the
+// row lists re-fetch from disk.
+function parentFileTreePath(relativePath) {
+  const normalized = normalizeFileTreePath(relativePath);
+  if (!normalized || !normalized.includes("/")) return "";
+  return normalized.slice(0, normalized.lastIndexOf("/"));
+}
+
+// Returns the leaf segment (file/folder name) of a relative path. Used
+// to seed the rename prompt with the entry's current name.
+function leafFileTreeName(relativePath) {
+  const normalized = normalizeFileTreePath(relativePath);
+  if (!normalized) return "";
+  const slash = normalized.lastIndexOf("/");
+  return slash >= 0 ? normalized.slice(slash + 1) : normalized;
+}
+
+// Drops cached entries / expanded / loading flags for `relativePath`
+// and any descendants. Called after rename or delete so the next
+// `loadFileTree(parent)` rebuilds the subtree from disk.
+function forgetWorkspaceFileTreeSubtree(relativePath) {
+  const normalized = normalizeFileTreePath(relativePath);
+  if (!normalized) return;
+  const prefix = `${normalized}/`;
+  for (const key of Object.keys(state.fileTreeEntries)) {
+    if (key === normalized || key.startsWith(prefix)) {
+      delete state.fileTreeEntries[key];
+    }
+  }
+  for (const value of Array.from(state.fileTreeExpanded)) {
+    if (value === normalized || value.startsWith(prefix)) {
+      state.fileTreeExpanded.delete(value);
+    }
+  }
+  for (const value of Array.from(state.fileTreeLoading)) {
+    if (value === normalized || value.startsWith(prefix)) {
+      state.fileTreeLoading.delete(value);
+    }
+  }
+}
+
+// After a delete: drop any open-file tabs that pointed at the removed
+// entry (or anything underneath it). Done silently — the user already
+// confirmed the delete in window.confirm; we don't want a second
+// "save before closing?" prompt.
+function dropOpenFileTabsForRemovedPath(relativePath) {
+  const normalized = normalizeFileTreePath(relativePath);
+  if (!normalized) return;
+  const prefix = `${normalized}/`;
+  const survivors = state.openFileTabs.filter(
+    (tab) => tab.relativePath !== normalized && !tab.relativePath.startsWith(prefix),
+  );
+  if (survivors.length === state.openFileTabs.length) return;
+  state.openFileTabs = survivors;
+  rememberOpenFileTabOrder();
+  if (
+    state.openFileRelativePath === normalized ||
+    (state.openFileRelativePath || "").startsWith(prefix)
+  ) {
+    syncOpenFileStateFromTab(state.openFileTabs[0] || null);
+  }
+  refreshOpenFileUi();
+}
+
+// After a rename: rewrite the relativePath on any open-file tab that
+// pointed at the renamed entry (or any descendant of it, in the case
+// of a directory rename). Keeps the editor pane glued to the same
+// file under its new name instead of forcing a close + reopen.
+function rewriteOpenFileTabsForRename(oldPath, newPath) {
+  const oldNormalized = normalizeFileTreePath(oldPath);
+  const newNormalized = normalizeFileTreePath(newPath);
+  if (!oldNormalized || !newNormalized) return;
+  const prefix = `${oldNormalized}/`;
+  let touched = false;
+  for (const tab of state.openFileTabs) {
+    if (tab.relativePath === oldNormalized) {
+      tab.relativePath = newNormalized;
+      touched = true;
+    } else if (tab.relativePath.startsWith(prefix)) {
+      tab.relativePath = `${newNormalized}/${tab.relativePath.slice(prefix.length)}`;
+      touched = true;
+    }
+  }
+  if (state.openFileRelativePath === oldNormalized) {
+    state.openFileRelativePath = newNormalized;
+    touched = true;
+  } else if ((state.openFileRelativePath || "").startsWith(prefix)) {
+    state.openFileRelativePath = `${newNormalized}/${state.openFileRelativePath.slice(prefix.length)}`;
+    touched = true;
+  }
+  if (touched) {
+    rememberOpenFileTabOrder();
+    refreshOpenFileUi();
+  }
+}
+
+async function createWorkspaceFolderInDir(parentRelativePath = "") {
+  if (!state.filesRoot) {
+    window.alert("No workspace selected.");
+    return;
+  }
+  const folderName = window.prompt("New folder name", "");
+  if (folderName === null) return;
+  const trimmed = folderName.trim();
+  if (!trimmed) {
+    window.alert("Folder name cannot be empty.");
+    return;
+  }
+  try {
+    await fetchJson("/api/files/folder", {
+      method: "POST",
+      body: JSON.stringify({
+        root: state.filesRoot,
+        path: parentRelativePath || "",
+        name: trimmed,
+      }),
+    });
+    if (parentRelativePath) {
+      state.fileTreeExpanded.add(parentRelativePath);
+    }
+    await loadFileTree(parentRelativePath || "", { force: true });
+    refreshFileTreeUi();
+  } catch (error) {
+    window.alert(error.message);
+  }
+}
+
+async function createWorkspaceFileInDir(parentRelativePath = "") {
+  if (!state.filesRoot) {
+    window.alert("No workspace selected.");
+    return;
+  }
+  const fileName = window.prompt("New file name", "");
+  if (fileName === null) return;
+  const trimmed = fileName.trim();
+  if (!trimmed) {
+    window.alert("File name cannot be empty.");
+    return;
+  }
+  try {
+    const payload = await fetchJson("/api/files/file", {
+      method: "POST",
+      body: JSON.stringify({
+        root: state.filesRoot,
+        path: parentRelativePath || "",
+        name: trimmed,
+      }),
+    });
+    if (parentRelativePath) {
+      state.fileTreeExpanded.add(parentRelativePath);
+    }
+    await loadFileTree(parentRelativePath || "", { force: true });
+    refreshFileTreeUi();
+    // Open the freshly-created file in the preview pane so the user can
+    // start editing it right away — matches VS Code's behavior on
+    // "New File".
+    const newPath = payload?.file?.relativePath;
+    if (newPath) {
+      void openWorkspaceFilePreview(newPath, { mode: "text" });
+    }
+  } catch (error) {
+    window.alert(error.message);
+  }
+}
+
+async function renameWorkspaceEntryAction(relativePath, isDirectory) {
+  if (!relativePath || !state.filesRoot) return;
+  const currentName = leafFileTreeName(relativePath);
+  const nextName = window.prompt(
+    `Rename ${isDirectory ? "folder" : "file"}`,
+    currentName,
+  );
+  if (nextName === null) return;
+  const trimmed = nextName.trim();
+  if (!trimmed) {
+    window.alert("Name cannot be empty.");
+    return;
+  }
+  if (trimmed === currentName) return;
+  try {
+    const payload = await fetchJson("/api/files", {
+      method: "PATCH",
+      body: JSON.stringify({
+        root: state.filesRoot,
+        path: relativePath,
+        name: trimmed,
+      }),
+    });
+    const newRelativePath = payload?.relativePath || "";
+    forgetWorkspaceFileTreeSubtree(relativePath);
+    if (isDirectory && newRelativePath) {
+      // Preserve expanded state on a directory rename so the new node
+      // shows up already expanded if the old one was.
+      state.fileTreeExpanded.add(newRelativePath);
+    }
+    if (newRelativePath) {
+      rewriteOpenFileTabsForRename(relativePath, newRelativePath);
+    }
+    await loadFileTree(parentFileTreePath(relativePath), { force: true });
+    refreshFileTreeUi();
+  } catch (error) {
+    window.alert(error.message);
+  }
+}
+
+async function deleteWorkspaceEntryAction(relativePath, isDirectory) {
+  if (!relativePath || !state.filesRoot) return;
+  const label = isDirectory ? "folder and everything inside it" : "file";
+  const confirmed = window.confirm(
+    `Delete this ${label}?\n\n${relativePath}\n\nThis cannot be undone.`,
+  );
+  if (!confirmed) return;
+  try {
+    await fetchJson("/api/files", {
+      method: "DELETE",
+      body: JSON.stringify({
+        root: state.filesRoot,
+        path: relativePath,
+      }),
+    });
+    forgetWorkspaceFileTreeSubtree(relativePath);
+    dropOpenFileTabsForRemovedPath(relativePath);
+    await loadFileTree(parentFileTreePath(relativePath), { force: true });
+    refreshFileTreeUi();
+  } catch (error) {
+    window.alert(error.message);
+  }
+}
+
 function openGlobalFileContextMenu({ relativePath, isDirectory, mode }, x, y) {
   if (!relativePath) return;
   const items = [];
+
+  if (isDirectory) {
+    items.push({
+      label: "New File",
+      icon: FilePlus,
+      onClick: () => {
+        void createWorkspaceFileInDir(relativePath);
+      },
+    });
+    items.push({
+      label: "New Folder",
+      icon: FolderPlus,
+      onClick: () => {
+        void createWorkspaceFolderInDir(relativePath);
+      },
+    });
+  }
 
   if (!isDirectory) {
     items.push({
@@ -35995,6 +36441,22 @@ function openGlobalFileContextMenu({ relativePath, isDirectory, mode }, x, y) {
     });
   }
 
+  items.push({
+    label: "Rename",
+    icon: Pencil,
+    onClick: () => {
+      void renameWorkspaceEntryAction(relativePath, isDirectory);
+    },
+  });
+  items.push({
+    label: "Delete",
+    icon: Trash2,
+    danger: true,
+    onClick: () => {
+      void deleteWorkspaceEntryAction(relativePath, isDirectory);
+    },
+  });
+
   const absolutePath = joinWorkspacePath(state.filesRoot, relativePath);
   items.push({
     label: "Copy path",
@@ -36008,6 +36470,32 @@ function openGlobalFileContextMenu({ relativePath, isDirectory, mode }, x, y) {
   });
 
   openContextMenu(items, x, y);
+}
+
+// Right-click on the file tree's empty space: only the workspace root
+// is in scope, so the menu only offers create-here actions.
+function openWorkspaceFileTreeRootContextMenu(x, y) {
+  if (!state.filesRoot) return;
+  openContextMenu(
+    [
+      {
+        label: "New File",
+        icon: FilePlus,
+        onClick: () => {
+          void createWorkspaceFileInDir("");
+        },
+      },
+      {
+        label: "New Folder",
+        icon: FolderPlus,
+        onClick: () => {
+          void createWorkspaceFolderInDir("");
+        },
+      },
+    ],
+    x,
+    y,
+  );
 }
 
 function refreshSessionsList({ force = false, bindEvents = true } = {}) {
@@ -38131,6 +38619,16 @@ function bindFileTreeEvents() {
       event.preventDefault();
       event.stopPropagation();
       openGlobalFileContextMenu({ relativePath, isDirectory: false, mode }, event.clientX, event.clientY);
+      return;
+    }
+
+    // Right-click on the tree background (not on any row): show the
+    // root-level create-here menu so the user can scaffold a file or
+    // folder at the workspace root without expanding any subdir first.
+    if (filesTree.contains(target)) {
+      event.preventDefault();
+      event.stopPropagation();
+      openWorkspaceFileTreeRootContextMenu(event.clientX, event.clientY);
     }
   });
 }
