@@ -14130,6 +14130,20 @@ function renderAgentProfileAvatar(profile) {
     `;
   }
 
+  if (isCodexProviderAgent(profile)) {
+    return `
+      <span
+        class="agent-profile-avatar agent-profile-avatar-codex agent-profile-avatar-${escapeHtml(profile.statusClass || "read")}"
+        style="${escapeHtml(getAgentProfilePaletteStyle(profile))}"
+        aria-hidden="true"
+      >
+        <span class="agent-profile-avatar-backdrop"></span>
+        <span class="agent-profile-avatar-headshot">${renderCodexAvatarMarkup()}</span>
+        <span class="agent-profile-avatar-initials">${escapeHtml(profile.initials || "CX")}</span>
+      </span>
+    `;
+  }
+
   const hatKind = getOccupationHatKind({
     id: profile?.occupationId || "",
     label: profile?.occupationLabel || "",

@@ -150,6 +150,7 @@ const CORE_BUILDING_MANIFESTS = [
     source: "vibe-research",
     visual: {
       shape: "portal",
+      logoImage: "/images/buildings/tailscale.jpg",
     },
     access: {
       label: "Tailnet portal",

@@ -14007,6 +14007,24 @@ button.visual-town-building:focus-visible {
   display: none;
 }
 
+.agent-profile-avatar-codex {
+  background: #000;
+}
+
+.agent-profile-avatar-codex .agent-profile-avatar-backdrop {
+  background: #000;
+  opacity: 1;
+}
+
+.agent-profile-avatar-headshot .codex-avatar {
+  width: 100%;
+  height: 100%;
+}
+
+.agent-profile-avatar-codex .agent-profile-avatar-initials {
+  display: none;
+}
+
 .agent-profile-avatar-portrait {
   position: relative;
   width: 48px;
