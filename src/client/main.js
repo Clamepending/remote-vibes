@@ -2769,6 +2769,7 @@ const state = {
   chatAutopilotAttachmentLoading: {},
   chatAutopilotAttachmentLoaded: {},
   chatAutopilotProjectPickerOpen: {},
+  chatAutopilotSupervisorDrawerOpen: {},
   chatAutopilotPending: {},
   chatAutopilotSupervisorTicking: {},
   chatAutopilotAutoRecoveryLastAt: {},
@@ -7783,6 +7784,23 @@ function summarizeChatAutopilotSupervisor(config = {}) {
   };
 }
 
+function getChatAutopilotSupervisorDisplayState(config = {}) {
+  const projectSupervisor = sanitizeChatAutopilotProjectSupervisor(config.projectSupervisor);
+  const sessionSupervisor = sanitizeChatAutopilotSupervisor(config.supervisor);
+  const projectState = projectSupervisor.supervisor;
+  const useProjectState = Boolean(
+    projectState.lastObservedAt
+    || projectState.lastDirectiveAt
+    || projectState.interventionCount
+    || projectState.audit.length,
+  );
+  return {
+    projectSupervisor,
+    supervisor: useProjectState ? projectState : sessionSupervisor,
+    scope: useProjectState ? "project" : "chat",
+  };
+}
+
 function renderChatAutopilotSupervisorPolicy(supervisorSummary = {}) {
   const card = supervisorSummary.card;
   if (!card) return "";
@@ -7794,6 +7812,87 @@ function renderChatAutopilotSupervisorPolicy(supervisorSummary = {}) {
     card.continuity ? `Continuity: ${card.continuity}` : "",
   ].filter(Boolean).join("\n");
   return `<span class="rich-session-autopilot-policy" data-chat-autopilot-policy title="${escapeHtml(title)}">evidence · integrity · compute</span>`;
+}
+
+function renderChatAutopilotSupervisorDrawer(activeSession) {
+  const sessionId = activeSession?.id || "";
+  if (!sessionId) return "";
+  const open = Boolean(state.chatAutopilotSupervisorDrawerOpen[sessionId]);
+  const config = getChatAutopilotSessionConfig(sessionId);
+  const { projectSupervisor, supervisor, scope } = getChatAutopilotSupervisorDisplayState(config);
+  const card = supervisor.lastDirectiveCard || {};
+  const auditRows = supervisor.audit.slice(-12).reverse();
+  const ticking = Boolean(state.chatAutopilotSupervisorTicking[sessionId]);
+  const pending = getChatAutopilotPending(sessionId);
+  const enabled = Boolean(config.enabled && isChatAutopilotSessionDriver(config));
+  const status = ticking
+    ? "reviewing"
+    : pending
+      ? pending
+      : enabled
+        ? "resting"
+        : "manual";
+  const projectName = getChatAutopilotSelectedProjectName(config, activeSession) || projectSupervisor.projectName || "this chat";
+  const lastAt = supervisor.lastDirectiveAt || supervisor.lastObservedAt || "";
+  const lastTime = lastAt ? relativeTimeAgo(lastAt) || formatRichSessionTimestamp(lastAt) : "";
+  const lastPreview = supervisor.lastDirectivePreview
+    || (enabled ? "Waiting for the next worker pause before sending a directive." : "Supervisor is paused for this chat.");
+  const decisionTitle = card.action || card.mode || (supervisor.lastDirectiveAt ? "last directive" : "ready");
+  const history = auditRows.length
+    ? auditRows.map((entry) => {
+      const eventLabel = [entry.event, entry.action].filter(Boolean).join(" · ") || "tick";
+      const timeLabel = relativeTimeAgo(entry.at) || formatRichSessionTimestamp(entry.at);
+      return `
+        <li class="rich-session-supervisor-event">
+          <div class="rich-session-supervisor-event-top">
+            <span>${escapeHtml(eventLabel)}</span>
+            ${timeLabel ? `<time>${escapeHtml(timeLabel)}</time>` : ""}
+          </div>
+          ${entry.reason ? `<p>${escapeHtml(entry.reason)}</p>` : ""}
+        </li>
+      `;
+    }).join("")
+    : `<li class="rich-session-supervisor-event is-empty">No supervisor decisions yet.</li>`;
+
+  return `
+    <aside class="rich-session-supervisor-drawer ${open ? "is-open" : ""}" data-chat-autopilot-supervisor-drawer aria-hidden="${open ? "false" : "true"}">
+      <div class="rich-session-supervisor-drawer-head">
+        <div>
+          <span class="rich-session-supervisor-kicker">${escapeHtml(scope)} supervisor</span>
+          <strong>Supervisor</strong>
+        </div>
+        <div class="rich-session-supervisor-head-actions">
+          <span class="rich-session-supervisor-state ${ticking ? "is-live" : ""}">${escapeHtml(status)}</span>
+          <button class="rich-session-supervisor-close" type="button" data-chat-autopilot-supervisor-close aria-label="Close supervisor history">x</button>
+        </div>
+      </div>
+      <div class="rich-session-supervisor-drawer-body">
+        <section class="rich-session-supervisor-card">
+          <span class="rich-session-supervisor-kicker">${escapeHtml(projectName)}${lastTime ? ` · ${escapeHtml(lastTime)}` : ""}</span>
+          <strong>${escapeHtml(decisionTitle)}</strong>
+          <p>${escapeHtml(lastPreview)}</p>
+          ${card.evidence || card.integrity || card.compute || card.continuity ? `
+            <dl class="rich-session-supervisor-principles">
+              ${card.evidence ? `<div><dt>Evidence</dt><dd>${escapeHtml(card.evidence)}</dd></div>` : ""}
+              ${card.integrity ? `<div><dt>Integrity</dt><dd>${escapeHtml(card.integrity)}</dd></div>` : ""}
+              ${card.compute ? `<div><dt>Compute</dt><dd>${escapeHtml(card.compute)}</dd></div>` : ""}
+              ${card.continuity ? `<div><dt>Continuity</dt><dd>${escapeHtml(card.continuity)}</dd></div>` : ""}
+            </dl>
+          ` : ""}
+        </section>
+        ${ticking ? `
+          <section class="rich-session-supervisor-processing">
+            <span class="rich-session-supervisor-dot" aria-hidden="true"></span>
+            Reviewing durable state, recent trace, artifacts, and continuity.
+          </section>
+        ` : ""}
+        <section class="rich-session-supervisor-history">
+          <div class="rich-session-supervisor-section-title">History</div>
+          <ol>${history}</ol>
+        </section>
+      </div>
+    </aside>
+  `;
 }
 
 function renderChatAutopilotProjectOptions(config = {}, activeSession = getActiveSession()) {
@@ -7881,6 +7980,8 @@ function renderRichSessionAutopilotPanel(activeSession) {
     ? "Start a fresh chat in the same folder and let the supervisor continue."
     : "Ask the supervisor to take the next research step.";
   const actionDisabled = pending || projectCreating ? "disabled" : "";
+  const historyOpen = Boolean(state.chatAutopilotSupervisorDrawerOpen[activeSession.id]);
+  const historyButton = `<button class="rich-session-autopilot-action" type="button" data-chat-autopilot-supervisor-history aria-expanded="${historyOpen ? "true" : "false"}" title="Show supervisor review history and latest decision." ${actionDisabled}>Trace</button>`;
   return `
     <section class="rich-session-autopilot ${enabled ? "is-enabled" : ""} ${running ? "is-running" : ""}" id="rich-session-autopilot" data-rich-session-autopilot-mount>
       <div class="rich-session-autopilot-main">
@@ -7914,6 +8015,7 @@ function renderRichSessionAutopilotPanel(activeSession) {
         ${showSteeringActions ? `
           <span class="rich-session-autopilot-supervisor-pill" title="${escapeHtml(supervisorSummary.title)}">${escapeHtml(supervisorSummary.label)}</span>
           ${renderChatAutopilotSupervisorPolicy(supervisorSummary)}
+          ${historyButton}
           <button class="rich-session-autopilot-action is-primary" type="button" data-chat-autopilot-action="continue" title="${escapeHtml(nextActionTitle)}" ${actionDisabled}>${escapeHtml(nextActionLabel)}</button>
           <button class="rich-session-autopilot-action" type="button" data-chat-autopilot-action="brainstorm" title="Ask the supervisor to pause execution and propose next directions." ${actionDisabled}>Replan</button>
           <button class="rich-session-autopilot-action" type="button" data-chat-autopilot-action="synthesize" title="Ask the supervisor for a checkpoint summary, evidence, risks, and recommendation." ${actionDisabled}>Checkpoint</button>
@@ -7921,6 +8023,7 @@ function renderRichSessionAutopilotPanel(activeSession) {
         ` : enabled ? `
           <span class="rich-session-autopilot-supervisor-pill" title="${escapeHtml(supervisorSummary.title)}">${escapeHtml(supervisorSummary.label)}</span>
           ${renderChatAutopilotSupervisorPolicy(supervisorSummary)}
+          ${historyButton}
           <button class="rich-session-autopilot-action is-danger" type="button" data-chat-autopilot-action="pause" title="Turn Autopilot off for this chat." ${actionDisabled}>Pause</button>
         ` : ""}
       </div>
@@ -7979,6 +8082,7 @@ function renderRichSessionSurface(activeSession) {
       </div>
       <div class="rich-session-plan-panel-mount" id="rich-session-plan-panel-mount" data-rich-session-plan-panel-mount>${renderRichSessionPlanPanel(activeSession)}</div>
       <div class="rich-session-autopilot-mount" id="rich-session-autopilot-mount" data-rich-session-autopilot-mount>${renderRichSessionAutopilotPanel(activeSession)}</div>
+      <div class="rich-session-supervisor-drawer-mount" data-rich-session-supervisor-drawer-mount>${renderChatAutopilotSupervisorDrawer(activeSession)}</div>
       ${renderRichSessionQueueStrip(activeSession)}
       ${canSend ? `
         <form class="rich-session-composer" id="rich-session-form">
@@ -8230,6 +8334,11 @@ function refreshRichSessionSurfaceUi({ scrollToBottom = false } = {}) {
   const autopilotMount = document.querySelector("[data-rich-session-autopilot-mount]");
   if (autopilotMount instanceof HTMLElement) {
     autopilotMount.innerHTML = renderRichSessionAutopilotPanel(activeSession);
+  }
+
+  const supervisorDrawerMount = document.querySelector("[data-rich-session-supervisor-drawer-mount]");
+  if (supervisorDrawerMount instanceof HTMLElement) {
+    supervisorDrawerMount.innerHTML = renderChatAutopilotSupervisorDrawer(activeSession);
   }
 
   // Live-update the composer's image-attachment chip strip. Without this,
@@ -39196,7 +39305,7 @@ function buildChatAutopilotStartBody(config, objective, options = {}) {
 
 function queueChatAutopilotSupervisorMessage(sessionId, message, pendingText) {
   const sid = String(sessionId || "").trim();
-  const text = String(message || "").trim();
+  const text = formatChatAutopilotSupervisorDirective(message);
   if (!sid || !text) {
     return false;
   }
@@ -39212,9 +39321,14 @@ function queueChatAutopilotSupervisorMessage(sessionId, message, pendingText) {
   return true;
 }
 
+function formatChatAutopilotSupervisorDirective(message) {
+  const text = String(message || "").replace(/\s+/g, " ").trim();
+  return text.length > 1_200 ? `${text.slice(0, 1_197).trimEnd()}...` : text;
+}
+
 function sendChatAutopilotSupervisorMessage(activeSession, message, { pendingText = "queued supervisor message" } = {}) {
   const sessionId = activeSession?.id || "";
-  const text = String(message || "").trim();
+  const text = formatChatAutopilotSupervisorDirective(message);
   if (!sessionId || !text) return { accepted: false, queued: false };
   if (activeSession.streamWorking || activeSession.status === "exited" || !isSessionInputConnected(sessionId)) {
     return {
@@ -39298,7 +39412,7 @@ async function tickChatAutopilotSupervisor(activeSession, event = {}, { pendingT
       timeoutMs: 30_000,
     });
     applyChatAutopilotAttachment(sessionId, payload);
-    const directiveText = String(payload?.directive?.text || "").trim();
+    const directiveText = formatChatAutopilotSupervisorDirective(payload?.directive?.text);
     if (sendDirective && payload?.decision?.shouldSend && directiveText) {
       const sendResult = sendChatAutopilotSupervisorMessage(activeSession, directiveText, {
         pendingText: event?.type === "agent-idle" ? "queued supervisor next step" : "queued supervisor message",
@@ -39385,13 +39499,13 @@ async function recoverChatAutopilotExitedSession(activeSession, { action = "cont
     ? { type: "recover-exited", source: "session" }
     : { type: "manual-action", action, source: "human" };
   try {
-    const queuedDirectiveText = String(getQueuedChatAutopilotSupervisorMessage(sessionId)?.text || "").trim();
+    const queuedDirectiveText = formatChatAutopilotSupervisorDirective(getQueuedChatAutopilotSupervisorMessage(sessionId)?.text);
     const tick = await tickChatAutopilotSupervisor(activeSession, event, {
       pendingText: "preparing handoff",
       sendDirective: false,
     });
     const directiveText = queuedDirectiveText
-      || String(tick?.directive?.text || "").trim()
+      || formatChatAutopilotSupervisorDirective(tick?.directive?.text)
       || getChatAutopilotFallbackDirective(action, { projectName, objective });
     const providerId = activeSession.providerId || getSelectedSessionProviderId();
     const promptForNewSession = `${directiveText}\n`;
@@ -45138,6 +45252,26 @@ function bindShellEvents() {
         if (!activeSession?.id) return;
         state.chatAutopilotProjectPickerOpen[activeSession.id] = true;
         void ensureChatAutopilotResources().finally(() => refreshRichSessionSurfaceUi());
+        refreshRichSessionSurfaceUi();
+        return;
+      }
+
+      const supervisorHistoryButton = target?.closest("[data-chat-autopilot-supervisor-history]");
+      if (supervisorHistoryButton instanceof HTMLElement) {
+        event.preventDefault();
+        const activeSession = getActiveSession();
+        if (!activeSession?.id) return;
+        state.chatAutopilotSupervisorDrawerOpen[activeSession.id] = !state.chatAutopilotSupervisorDrawerOpen[activeSession.id];
+        refreshRichSessionSurfaceUi();
+        return;
+      }
+
+      const supervisorCloseButton = target?.closest("[data-chat-autopilot-supervisor-close]");
+      if (supervisorCloseButton instanceof HTMLElement) {
+        event.preventDefault();
+        const activeSession = getActiveSession();
+        if (!activeSession?.id) return;
+        delete state.chatAutopilotSupervisorDrawerOpen[activeSession.id];
         refreshRichSessionSurfaceUi();
         return;
       }

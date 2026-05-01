@@ -108,6 +108,7 @@ test("same-chat supervisor Start creates project memory and queues takeover whil
       const projectLabel = document.querySelector(".rich-session-autopilot-project-pill")?.textContent?.trim() || "";
       const policyLabel = document.querySelector("[data-chat-autopilot-policy]")?.textContent?.trim() || "";
       const policyTitle = document.querySelector("[data-chat-autopilot-policy]")?.getAttribute("title") || "";
+      const traceButton = document.querySelector("[data-chat-autopilot-supervisor-history]");
       const queuePreview = document.querySelector(".rich-session-queue-text")?.textContent?.trim() || "";
       const queueMeta = document.querySelector(".rich-session-queue-meta")?.textContent?.trim() || "";
       return {
@@ -115,6 +116,8 @@ test("same-chat supervisor Start creates project memory and queues takeover whil
         projectLabel,
         policyLabel,
         policyTitle,
+        traceTitle: traceButton?.getAttribute("title") || "",
+        traceExpanded: traceButton?.getAttribute("aria-expanded") || "",
         queuePreview,
         queueMeta,
         queuedId: first?.id || "",
@@ -129,13 +132,34 @@ test("same-chat supervisor Start creates project memory and queues takeover whil
     assert.match(uiState.policyTitle, /Integrity:/);
     assert.match(uiState.policyTitle, /Compute:/);
     assert.match(uiState.policyTitle, /Continuity:/);
+    assert.match(uiState.traceTitle, /supervisor review history/i);
+    assert.equal(uiState.traceExpanded, "false");
     assert.match(uiState.queuedId, /^autopilot-/);
     assert.match(uiState.queuePreview, /Claim QUEUE row 1/);
     assert.equal(uiState.queueMeta, "supervisor next step - sends after current turn");
     assert.match(uiState.queuedText, /Claim QUEUE row 1 \(initial-research-loop\)/);
-    assert.match(uiState.queuedText, /Use the project objective as the north star/);
-    assert.match(uiState.queuedText, /set a monitor, scheduled wakeup, or log watcher/);
+    assert.match(uiState.queuedText, /Use the README\/project goal as the north star/);
+    assert.match(uiState.queuedText, /set a monitor\/wakeup\/log watcher/);
+    assert.doesNotMatch(uiState.queuedText, /\n/);
     assert.doesNotMatch(uiState.queuedText, /Autopilot/i);
+
+    await page.click("[data-chat-autopilot-supervisor-history]");
+    await page.waitForSelector("[data-chat-autopilot-supervisor-drawer].is-open", { timeout: 10_000 });
+    const drawerState = await page.evaluate(() => ({
+      title: document.querySelector(".rich-session-supervisor-drawer-head strong")?.textContent?.trim() || "",
+      status: document.querySelector(".rich-session-supervisor-state")?.textContent?.trim() || "",
+      preview: document.querySelector(".rich-session-supervisor-card p")?.textContent?.trim() || "",
+      history: Array.from(document.querySelectorAll(".rich-session-supervisor-event"))
+        .map((entry) => entry.textContent?.trim() || "")
+        .join(" "),
+      expanded: document.querySelector("[data-chat-autopilot-supervisor-history]")?.getAttribute("aria-expanded") || "",
+    }));
+    assert.equal(drawerState.title, "Supervisor");
+    assert.equal(drawerState.status, "resting");
+    assert.match(drawerState.preview, /Claim QUEUE row 1/);
+    assert.match(drawerState.history, /takeover/);
+    assert.match(drawerState.history, /directive/);
+    assert.equal(drawerState.expanded, "true");
 
     const projectsResponse = await fetch(`${baseUrl}/api/research/projects`);
     assert.equal(projectsResponse.status, 200);

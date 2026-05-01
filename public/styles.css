@@ -14947,6 +14947,7 @@ body.is-reordering-file-tabs {
 
 .rich-session-surface {
   display: none;
+  position: relative;
   grid-area: 1 / 1;
   min-height: 0;
   padding: 0;
@@ -15136,6 +15137,208 @@ body.is-reordering-file-tabs {
   border-radius: 8px;
   background: rgba(10, 12, 14, 0.78);
   color: rgba(244, 244, 242, 0.78);
+  font-family: "IBM Plex Mono", monospace;
+  font-size: 0.7rem;
+}
+
+.rich-session-supervisor-drawer-mount {
+  display: contents;
+}
+
+.rich-session-supervisor-drawer {
+  position: absolute;
+  top: 16px;
+  right: 16px;
+  bottom: 104px;
+  z-index: 38;
+  display: grid;
+  grid-template-rows: auto minmax(0, 1fr);
+  width: min(380px, calc(100% - 32px));
+  min-height: 0;
+  overflow: hidden;
+  border: 1px solid rgba(255, 255, 255, 0.09);
+  border-radius: 10px;
+  background: rgba(16, 17, 19, 0.96);
+  box-shadow: 0 24px 80px rgba(0, 0, 0, 0.42);
+  opacity: 0;
+  pointer-events: none;
+  transform: translateX(calc(100% + 24px));
+  transition: opacity 160ms ease, transform 160ms ease;
+}
+
+.rich-session-supervisor-drawer.is-open {
+  opacity: 1;
+  pointer-events: auto;
+  transform: translateX(0);
+}
+
+.rich-session-supervisor-drawer-head,
+.rich-session-supervisor-head-actions,
+.rich-session-supervisor-event-top {
+  display: flex;
+  align-items: center;
+}
+
+.rich-session-supervisor-drawer-head {
+  justify-content: space-between;
+  gap: 12px;
+  padding: 14px 14px 12px;
+  border-bottom: 1px solid rgba(255, 255, 255, 0.075);
+}
+
+.rich-session-supervisor-drawer-head strong,
+.rich-session-supervisor-card strong {
+  display: block;
+  color: rgba(244, 244, 242, 0.9);
+  font-size: 0.94rem;
+  font-weight: 650;
+}
+
+.rich-session-supervisor-head-actions {
+  gap: 8px;
+}
+
+.rich-session-supervisor-state {
+  display: inline-flex;
+  align-items: center;
+  min-height: 24px;
+  padding: 0 8px;
+  border-radius: 999px;
+  background: rgba(255, 255, 255, 0.055);
+  color: rgba(244, 244, 242, 0.66);
+  font-family: "IBM Plex Mono", monospace;
+  font-size: 0.68rem;
+  white-space: nowrap;
+}
+
+.rich-session-supervisor-state.is-live {
+  background: rgba(142, 210, 185, 0.12);
+  color: rgba(224, 248, 237, 0.86);
+}
+
+.rich-session-supervisor-close {
+  width: 28px;
+  height: 28px;
+  border: 1px solid rgba(255, 255, 255, 0.075);
+  border-radius: 8px;
+  background: rgba(255, 255, 255, 0.035);
+  color: rgba(244, 244, 242, 0.7);
+  cursor: pointer;
+}
+
+.rich-session-supervisor-drawer-body {
+  display: grid;
+  align-content: start;
+  gap: 12px;
+  min-height: 0;
+  overflow-y: auto;
+  padding: 12px;
+  scrollbar-color: rgba(230, 234, 240, 0.3) rgba(255, 255, 255, 0.035);
+  scrollbar-width: thin;
+}
+
+.rich-session-supervisor-card,
+.rich-session-supervisor-processing,
+.rich-session-supervisor-history {
+  border: 1px solid rgba(255, 255, 255, 0.075);
+  border-radius: 8px;
+  background: rgba(255, 255, 255, 0.035);
+}
+
+.rich-session-supervisor-card {
+  display: grid;
+  gap: 8px;
+  padding: 12px;
+}
+
+.rich-session-supervisor-kicker,
+.rich-session-supervisor-section-title,
+.rich-session-supervisor-event-top time {
+  color: rgba(244, 244, 242, 0.48);
+  font-family: "IBM Plex Mono", monospace;
+  font-size: 0.66rem;
+  text-transform: uppercase;
+}
+
+.rich-session-supervisor-card p,
+.rich-session-supervisor-event p,
+.rich-session-supervisor-processing,
+.rich-session-supervisor-principles dd {
+  margin: 0;
+  color: rgba(244, 244, 242, 0.68);
+  font-size: 0.78rem;
+  line-height: 1.45;
+}
+
+.rich-session-supervisor-principles {
+  display: grid;
+  gap: 8px;
+  margin: 2px 0 0;
+}
+
+.rich-session-supervisor-principles div {
+  display: grid;
+  gap: 2px;
+}
+
+.rich-session-supervisor-principles dt {
+  color: rgba(142, 210, 185, 0.72);
+  font-family: "IBM Plex Mono", monospace;
+  font-size: 0.64rem;
+  text-transform: uppercase;
+}
+
+.rich-session-supervisor-processing {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 10px 12px;
+}
+
+.rich-session-supervisor-dot {
+  width: 7px;
+  height: 7px;
+  border-radius: 999px;
+  background: #8ed2b9;
+  box-shadow: 0 0 0 5px rgba(142, 210, 185, 0.1);
+}
+
+.rich-session-supervisor-history {
+  overflow: hidden;
+}
+
+.rich-session-supervisor-section-title {
+  padding: 10px 12px 0;
+}
+
+.rich-session-supervisor-history ol {
+  display: grid;
+  gap: 0;
+  margin: 0;
+  padding: 8px 0;
+  list-style: none;
+}
+
+.rich-session-supervisor-event {
+  display: grid;
+  gap: 4px;
+  padding: 9px 12px;
+  border-top: 1px solid rgba(255, 255, 255, 0.055);
+}
+
+.rich-session-supervisor-event:first-child {
+  border-top: 0;
+}
+
+.rich-session-supervisor-event.is-empty {
+  color: rgba(244, 244, 242, 0.48);
+  font-size: 0.78rem;
+}
+
+.rich-session-supervisor-event-top {
+  justify-content: space-between;
+  gap: 8px;
+  color: rgba(244, 244, 242, 0.76);
   font-family: "IBM Plex Mono", monospace;
   font-size: 0.7rem;
 }
@@ -18948,6 +19151,15 @@ select:disabled {
   .rich-session-autopilot-policy {
     max-width: none;
     flex: 1 1 100%;
+  }
+
+  .rich-session-supervisor-drawer {
+    top: 10px;
+    left: max(10px, calc(var(--safe-left) + 8px));
+    right: max(10px, calc(var(--safe-right) + 8px));
+    bottom: 92px;
+    width: auto;
+    border-radius: 10px;
   }
 
   .rich-session-plan-panel {

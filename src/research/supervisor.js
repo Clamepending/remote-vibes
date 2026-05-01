@@ -267,26 +267,7 @@ function projectPhraseFor(project) {
 
 function objectiveSentence(objective) {
   const text = trimString(objective);
-  if (!text) return "Infer the objective from the project README before acting.";
-  if (text.length <= 220) {
-    return `Use the project objective as the north star: ${text}`;
-  }
-  return `Use the project objective as the north star (full text is in README): ${compactDirectiveText(text, 260)}`;
-}
-
-function benchmarkLine(benchmark) {
-  if (!benchmark?.exists) return "";
-  const head = [
-    benchmark.version ? `version ${benchmark.version}` : "",
-    benchmark.status ? `status ${benchmark.status}` : "",
-  ].filter(Boolean).join(", ");
-  const metrics = Array.isArray(benchmark.metrics) && benchmark.metrics.length
-    ? `metrics ${benchmark.metrics.join(", ")}`
-    : "";
-  const datasets = Array.isArray(benchmark.datasets) && benchmark.datasets.length
-    ? `datasets ${benchmark.datasets.join(", ")}`
-    : "";
-  return [`Benchmark: ${head || "declared"}`, metrics, datasets].filter(Boolean).join("; ");
+  return text ? "Use the README/project goal as the north star." : "Infer the objective from the project README before acting.";
 }
 
 function supervisorDecisionChecklistBlock() {
@@ -300,19 +281,41 @@ function supervisorDecisionChecklistBlock() {
   ].join("\n");
 }
 
-function compactProjectStateLine(context = {}) {
+function compactRowLabel(value = "") {
+  const text = trimString(value);
+  if (!text) return "";
+  return compactDirectiveText(text.split(";")[0] || text, 90);
+}
+
+function conciseStateHint(context = {}) {
   const pieces = [
-    context.activeHead ? `Active: ${context.activeHead}` : "",
-    context.queueHead ? `Queue: ${context.queueHead}` : "",
-    context.latestLog ? `Latest: ${context.latestLog}` : "",
-    context.benchmark?.exists
-      ? `Benchmark: ${[
-          context.benchmark.version ? `version ${context.benchmark.version}` : "",
-          context.benchmark.status ? `status ${context.benchmark.status}` : "",
-        ].filter(Boolean).join(", ") || "declared"}`
-      : "",
+    context.activeHead ? `ACTIVE ${compactRowLabel(context.activeHead)}` : "",
+    !context.activeHead && context.queueHead ? `QUEUE ${compactRowLabel(context.queueHead)}` : "",
+    context.latestLog ? `latest LOG ${compactRowLabel(context.latestLog)}` : "",
+    context.benchmark?.version ? `bench ${context.benchmark.version}` : "",
   ].filter(Boolean);
-  return compactDirectiveText(pieces.join(" | "), 520);
+  return pieces.length ? pieces.join(", ") : "README/ACTIVE/QUEUE/LOG";
+}
+
+function conciseContinuityLine({ action = "", runtime = {} } = {}) {
+  const status = normalizeSupervisorRuntime(runtime);
+  if (status.hasContinuity) {
+    return `Monitor/wakeup is visible; keep the completion signal attached.`;
+  }
+  if (!actionNeedsContinuityReminder(action)) return "";
+  if (status.activeBackgroundTasks || status.activeSubagents) {
+    const backgroundCount = status.activeBackgroundTasks + status.activeSubagents;
+    return `${status.summary} ${backgroundCount === 1 ? "is" : "are"} visible, but I do not see a monitor/wakeup; set one before leaving long-running work.`;
+  }
+  return "If any long run is active or launched, set a monitor/wakeup/log watcher with a clear completion signal.";
+}
+
+function conciseCommandHint(command = "") {
+  const text = trimString(command);
+  if (!text) return "";
+  const tool = text.match(/\bvr-research-[a-z-]+\b/u)?.[0] || "";
+  if (tool) return `${tool} ...`;
+  return compactDirectiveText(text, 120);
 }
 
 function operatingBrief({
@@ -327,37 +330,23 @@ function operatingBrief({
   action = "",
   runtime = {},
 } = {}) {
-  const stateLine = compactProjectStateLine(context);
-  const continuityLine = continuityInstructionLine({ action, runtime });
-  const goal = trimString(context.goal);
-  const objectiveText = trimString(objective);
-  const goalLine = goal && goal !== objectiveText
-    ? `Goal: ${compactDirectiveText(goal, 260)}`
-    : "";
-  const rankingLine = context.rankingCriterion
-    ? `Ranking: ${compactDirectiveText(context.rankingCriterion, 220)}`
-    : "";
-  const successLine = Array.isArray(context.successCriteria) && context.successCriteria.length
-    ? `Success: ${compactDirectiveText(context.successCriteria.join(" | "), 240)}`
-    : "";
+  const continuityLine = conciseContinuityLine({ action, runtime });
+  const stateHint = conciseStateHint(context);
+  const commandHint = conciseCommandHint(command);
   const lines = [
     headline,
-    `First inspect the durable project state and recent trace/artifacts: README, ACTIVE, QUEUE, LOG, result doc, commits, metrics, and qualitative outputs. ${objectiveSentence(objective)}`,
+    `Check ${stateHint}, the result doc, recent commits, metrics, and qualitative artifacts first.`,
+    objectiveSentence(objective),
   ];
-  if (goalLine) lines.push(goalLine);
-  if (stateLine) lines.push(`State: ${stateLine}`);
-  if (rankingLine || successLine) lines.push([rankingLine, successLine].filter(Boolean).join("\n"));
   if (reason) {
-    lines.push(`Current routing signal${projectPhraseFor(project)}: ${reason}`);
+    lines.push(`Why: ${reason}`);
   }
-  lines.push(supervisorDecisionChecklistBlock());
+  lines.push("Keep it evidence-first: use current metrics plus samples/heatmaps/failure cases; audit stale or cherry-picked artifacts; preserve provenance.");
   if (continuityLine) lines.push(continuityLine);
-  if (focus) {
-    lines.push(`Next instruction: ${focus}`);
-  }
-  if (command) lines.push(`Useful command path: ${compactDirectiveText(command, 340)}`);
-  lines.push(`Stop condition: ${finish || "Update durable state after the bounded step, run the project doctor when state changed, commit/push if relevant, and stop only for a true human gate."}`);
-  return lines.join("\n\n");
+  if (focus) lines.push(compactDirectiveText(focus, 190));
+  if (commandHint) lines.push(`Command if useful: ${commandHint}.`);
+  lines.push(compactDirectiveText(finish || "Update durable state after the bounded step and stop only for a true human gate.", 150));
+  return compactDirectiveText(lines.join(" "), 760);
 }
 
 function supervisorModeForAction(action = "") {

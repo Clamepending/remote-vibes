@@ -35,6 +35,21 @@ async function copyDir(src, dest) {
   }
 }
 
+async function rmTreeWithRetry(target) {
+  let lastError = null;
+  for (let attempt = 0; attempt < 5; attempt += 1) {
+    try {
+      await rm(target, { recursive: true, force: true });
+      return;
+    } catch (error) {
+      lastError = error;
+      if (!["ENOTEMPTY", "EBUSY", "EPERM"].includes(error?.code)) throw error;
+      await new Promise((resolve) => setTimeout(resolve, 50 * (attempt + 1)));
+    }
+  }
+  if (lastError) throw lastError;
+}
+
 async function startApp(options) {
   const cwd = options.cwd;
   const stateDir = path.join(cwd, ".vibe-research");
@@ -71,7 +86,7 @@ async function withLibraryServer(fn) {
     if (app) await app.close();
     if (prevEnv === undefined) delete process.env.VIBE_RESEARCH_WORKSPACE_DIR;
     else process.env.VIBE_RESEARCH_WORKSPACE_DIR = prevEnv;
-    await rm(tmp, { recursive: true, force: true });
+    await rmTreeWithRetry(tmp);
   }
 }
 
@@ -632,12 +647,12 @@ test("chat research supervisor tick is silent on toggle and takes over on demand
     assert.equal(takeoverBody.decision.action, "directive");
     assert.equal(takeoverBody.decision.shouldSend, true);
     assert.match(takeoverBody.directive.text, /Claim QUEUE row 1/);
-    assert.match(takeoverBody.directive.text, /State:/);
-    assert.match(takeoverBody.directive.text, /Goal: Find the prompt scaffold/);
-    assert.match(takeoverBody.directive.text, /Benchmark: version v1, status active/);
-    assert.match(takeoverBody.directive.text, /Supervisor policy:/);
-    assert.match(takeoverBody.directive.text, /no active monitor\/wakeup is visible/);
-    assert.match(takeoverBody.directive.text, /set a monitor, scheduled wakeup, or log watcher/);
+    assert.match(takeoverBody.directive.text, /Check QUEUE (baseline|v3-fewshot)/);
+    assert.match(takeoverBody.directive.text, /bench v1/);
+    assert.match(takeoverBody.directive.text, /Use the README\/project goal as the north star/);
+    assert.match(takeoverBody.directive.text, /set a monitor\/wakeup\/log watcher/);
+    assert.doesNotMatch(takeoverBody.directive.text, /\n/);
+    assert.doesNotMatch(takeoverBody.directive.text, /^(State|Goal|Ranking|Success|Supervisor policy):/m);
     assert.equal(takeoverBody.decision.card.mode, "experiment");
     assert.match(takeoverBody.decision.card.integrity, /evaluator tampering/);
     assert.match(takeoverBody.decision.card.continuity, /no active monitor\/wakeup is visible/);
@@ -698,10 +713,10 @@ test("chat research supervisor tick is silent on toggle and takes over on demand
     assert.equal(manualBody.decision.action, "directive");
     assert.equal(manualBody.decision.shouldSend, true);
     assert.match(manualBody.directive.text, /Synthesize the current research state/);
-    assert.match(manualBody.directive.text, /State:/);
-    assert.match(manualBody.directive.text, /Goal: Find the prompt scaffold/);
-    assert.match(manualBody.directive.text, /Queue: v3-fewshot/);
+    assert.match(manualBody.directive.text, /Check QUEUE v3-fewshot/);
+    assert.match(manualBody.directive.text, /Use the README\/project goal as the north star/);
     assert.match(manualBody.directive.text, /qualitative sample\/heatmap status/);
+    assert.doesNotMatch(manualBody.directive.text, /\n/);
     assert.equal(manualBody.decision.card.mode, "review");
     assert.doesNotMatch(manualBody.directive.text, /Autopilot/i);
     assert.equal(manualBody.attachment.supervisor.interventionCount, 2);
@@ -772,7 +787,7 @@ test("chat research supervisor ignores its own continuity reminder until the wor
     });
     assert.equal(takeoverTick.status, 200);
     const takeoverBody = await takeoverTick.json();
-    assert.match(takeoverBody.directive.text, /set a monitor, scheduled wakeup, or log watcher/);
+    assert.match(takeoverBody.directive.text, /set a monitor\/wakeup\/log watcher/);
     assert.equal(takeoverBody.runtime.hasContinuity, false);
 
     const serverSession = app.sessionManager.getSession(session.id);
@@ -1195,6 +1210,10 @@ test("main app bundle exposes the native research workspace", async () => {
     assert.match(jsText, /data-chat-autopilot-change-project/);
     assert.match(jsText, /Supervisor on/);
     assert.match(jsText, /data-chat-autopilot-policy/);
+    assert.match(jsText, /data-chat-autopilot-supervisor-history/);
+    assert.match(jsText, /data-chat-autopilot-supervisor-drawer/);
+    assert.match(jsText, /renderChatAutopilotSupervisorDrawer/);
+    assert.match(jsText, /formatChatAutopilotSupervisorDirective/);
     assert.match(jsText, /evidence.*integrity.*compute/);
     assert.match(jsText, /Continuity:/);
     assert.match(jsText, /Human driving/);
@@ -1224,6 +1243,8 @@ test("main app bundle exposes the native research workspace", async () => {
     assert.match(cssText, /rich-session-autopilot-supervisor-pill/);
     assert.match(cssText, /rich-session-autopilot-policy/);
     assert.match(cssText, /rich-session-autopilot-action\.is-primary/);
+    assert.match(cssText, /rich-session-supervisor-drawer/);
+    assert.match(cssText, /rich-session-supervisor-history/);
     assert.match(cssText, /research-org-bench-card/);
     assert.match(cssText, /research-bench-table/);
   });
