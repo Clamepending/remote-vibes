@@ -187,6 +187,11 @@ test("tickResearchOrchestrator recommends running QUEUE row 1", async () => {
     assert.equal(report.recommendation.slug, "first-move");
     assert.match(report.nextCommand, /vr-research-runner/);
     assert.match(report.nextCommand, /node train\.js/);
+    assert.equal(report.projectContext.goal, "Find a better setting.");
+    assert.match(report.projectContext.rankingCriterion, /quantitative: score/);
+    assert.equal(report.projectContext.successCriteria[0], "score improves.");
+    assert.match(report.projectContext.queueHead, /first-move/);
+    assert.equal(report.projectContext.benchmark, null);
   } finally {
     rmSync(dir, { recursive: true, force: true });
   }

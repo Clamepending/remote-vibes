@@ -186,6 +186,10 @@ test("POST /api/research/projects/<name>/orchestrator/tick returns next phase ac
     assert.equal(body.report.recommendation.slug, "v3-fewshot");
     assert.match(body.report.nextCommand, /vr-research-runner/);
     assert.match(body.report.nextCommand, /node eval\.js/);
+    assert.equal(body.report.projectContext.goal, "Find the prompt scaffold that produces the most readable short-form answers.");
+    assert.match(body.report.projectContext.queueHead, /v3-fewshot/);
+    assert.equal(body.report.projectContext.benchmark.version, "v1");
+    assert.deepEqual(body.report.projectContext.benchmark.metrics, ["readability"]);
   });
 });
 
@@ -532,10 +536,14 @@ test("chat research supervisor tick is silent on toggle and takes over on demand
     assert.equal(takeoverBody.decision.action, "directive");
     assert.equal(takeoverBody.decision.shouldSend, true);
     assert.match(takeoverBody.directive.text, /Claim QUEUE row 1/);
+    assert.match(takeoverBody.directive.text, /Project contract:/);
+    assert.match(takeoverBody.directive.text, /Goal: Find the prompt scaffold/);
+    assert.match(takeoverBody.directive.text, /Benchmark: version v1, status active/);
     assert.doesNotMatch(takeoverBody.directive.text, /Autopilot/i);
     assert.equal(takeoverBody.attachment.supervisor.interventionCount, 1);
     assert.equal(takeoverBody.projectSupervisor.projectName, "prose-style");
     assert.equal(takeoverBody.projectSupervisor.supervisor.interventionCount, 1);
+    assert.equal(takeoverBody.orchestrator.projectContext.goal, "Find the prompt scaffold that produces the most readable short-form answers.");
 
     const secondSessionRes = await fetch(`${baseUrl}/api/sessions`, {
       method: "POST",

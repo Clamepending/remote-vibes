@@ -2,6 +2,7 @@ import { access, readFile } from "node:fs/promises";
 import path from "node:path";
 import { compileBriefToQueue, createResearchBrief, getBriefPath, readResearchBrief, readResearchState, updateResearchState } from "./brief.js";
 import { createBriefReviewCard, getActionItemFromWait, waitForBriefReview } from "./brief-review.js";
+import { benchmarkVersionString } from "./benchmark.js";
 import { runDoctor } from "./doctor.js";
 import { judgeMove } from "./judge.js";
 import { loadProjectLog, parseProjectReadme } from "./project-readme.js";
@@ -9,6 +10,12 @@ import { loadSweepSummaries, sweepHasRunnableRows } from "./sweep-status.js";
 
 function trimString(value) {
   return String(value || "").trim();
+}
+
+function compactText(value, limit = 240) {
+  const text = trimString(value).replace(/\s+/g, " ");
+  if (!limit || text.length <= limit) return text;
+  return `${text.slice(0, Math.max(0, limit - 3)).trimEnd()}...`;
 }
 
 async function pathExists(filePath) {
@@ -83,6 +90,84 @@ async function latestExistingResultSlug(projectDir, parsed, logRows) {
 
 function recommendation(action, reason, extra = {}) {
   return { action, reason, ...extra };
+}
+
+function summarizeActiveRow(row = {}) {
+  if (!row?.slug) return "";
+  const pieces = [
+    row.slug,
+    row.agent ? `agent ${row.agent}` : "",
+    row.started ? `started ${row.started}` : "",
+    row.resultPath ? `result ${row.resultPath}` : "",
+  ].filter(Boolean);
+  return compactText(pieces.join("; "));
+}
+
+function summarizeQueueRow(row = {}) {
+  if (!row?.slug) return "";
+  const start = row.startingPointLabel || row.startingPointUrl || "";
+  const pieces = [
+    row.slug,
+    start ? `from ${start}` : "",
+    row.why ? `why ${row.why}` : "",
+  ].filter(Boolean);
+  return compactText(pieces.join("; "));
+}
+
+function summarizeLeaderboardRow(row = {}) {
+  if (!row?.slug) return "";
+  return compactText([
+    `rank ${row.rank || "?"}`,
+    row.slug,
+    row.score ? `score ${row.score}` : "",
+  ].filter(Boolean).join("; "));
+}
+
+function summarizeLogRow(row = {}) {
+  if (!row) return "";
+  return compactText([
+    row.date || "",
+    row.event || "",
+    row.slug || "",
+    row.summary || "",
+  ].filter(Boolean).join("; "));
+}
+
+function summarizeBenchmark(benchmark) {
+  if (!benchmark) return null;
+  const metrics = (benchmark.metrics || [])
+    .map((metric) => metric?.name)
+    .filter(Boolean)
+    .slice(0, 5);
+  const datasets = (benchmark.datasets || [])
+    .map((dataset) => dataset?.split)
+    .filter(Boolean)
+    .slice(0, 5);
+  return {
+    exists: true,
+    version: benchmarkVersionString(benchmark),
+    status: trimString(benchmark.frontmatter?.status || ""),
+    metrics,
+    datasets,
+  };
+}
+
+function buildProjectContext({ parsed, logRows = [], benchmark = null } = {}) {
+  const ranking = compactText(
+    parsed?.rankingCriterion?.raw
+      || [parsed?.rankingCriterion?.kind, parsed?.rankingCriterion?.description].filter(Boolean).join(": "),
+  );
+  return {
+    goal: compactText(parsed?.goal),
+    codeRepo: compactText(parsed?.codeRepo?.url),
+    rankingCriterion: ranking,
+    successCriteria: (parsed?.successCriteria || []).map((line) => compactText(line, 180)).slice(0, 3),
+    activeHead: summarizeActiveRow(parsed?.active?.[0]),
+    queueHead: summarizeQueueRow(parsed?.queue?.[0]),
+    leaderboardHead: summarizeLeaderboardRow(parsed?.leaderboard?.[0]),
+    latestLog: summarizeLogRow(logRows?.[0]),
+    benchmark: summarizeBenchmark(benchmark),
+  };
 }
 
 function defaultStartingPoint(parsed) {
@@ -209,6 +294,11 @@ export async function tickResearchOrchestrator({
   const libraryRoot = path.dirname(path.dirname(resolvedProjectDir));
   const doctorError = firstDoctorError(doctor);
   const sweeps = await loadSweepSummaries(resolvedProjectDir);
+  const projectContext = buildProjectContext({
+    parsed,
+    logRows: logFile.rows,
+    benchmark: doctor.benchmark,
+  });
 
   let rec;
   let judge = null;
@@ -513,6 +603,7 @@ export async function tickResearchOrchestrator({
       summary: doctor.summary,
       issues: doctor.issues,
     },
+    projectContext,
     counts: {
       active: (parsed.active || []).length,
       queue: (parsed.queue || []).length,
@@ -555,6 +646,18 @@ export function formatOrchestratorReport(report) {
   }
   if (report.recommendation.nextCandidates) {
     lines.push(`next candidates: ${report.recommendation.nextCandidates}`);
+  }
+  if (report.projectContext?.goal) {
+    lines.push(`goal: ${report.projectContext.goal}`);
+  }
+  if (report.projectContext?.queueHead) {
+    lines.push(`queue head: ${report.projectContext.queueHead}`);
+  }
+  if (report.projectContext?.activeHead) {
+    lines.push(`active head: ${report.projectContext.activeHead}`);
+  }
+  if (report.projectContext?.benchmark?.version) {
+    lines.push(`benchmark: ${report.projectContext.benchmark.version}${report.projectContext.benchmark.status ? ` (${report.projectContext.benchmark.status})` : ""}`);
   }
   if (report.judge?.review?.actionItem?.id) {
     lines.push(`agent-inbox: ${report.judge.review.actionItem.id}`);

@@ -8460,6 +8460,7 @@ export async function createVibeResearchApp({
               recommendation: orchestrator.recommendation,
               counts: orchestrator.counts,
               phase: orchestrator.phase,
+              projectContext: orchestrator.projectContext,
             }
           : null,
       });

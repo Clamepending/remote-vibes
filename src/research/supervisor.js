@@ -138,10 +138,42 @@ function objectiveSentence(objective) {
     : "Infer the objective from the project README before acting.";
 }
 
+function benchmarkLine(benchmark) {
+  if (!benchmark?.exists) return "";
+  const head = [
+    benchmark.version ? `version ${benchmark.version}` : "",
+    benchmark.status ? `status ${benchmark.status}` : "",
+  ].filter(Boolean).join(", ");
+  const metrics = Array.isArray(benchmark.metrics) && benchmark.metrics.length
+    ? `metrics ${benchmark.metrics.join(", ")}`
+    : "";
+  const datasets = Array.isArray(benchmark.datasets) && benchmark.datasets.length
+    ? `datasets ${benchmark.datasets.join(", ")}`
+    : "";
+  return [`Benchmark: ${head || "declared"}`, metrics, datasets].filter(Boolean).join("; ");
+}
+
+function projectContractLines(context = {}) {
+  const lines = [];
+  if (context.goal) lines.push(`Goal: ${context.goal}`);
+  if (context.rankingCriterion) lines.push(`Ranking: ${context.rankingCriterion}`);
+  if (Array.isArray(context.successCriteria) && context.successCriteria.length) {
+    lines.push(`Success criteria: ${context.successCriteria.join(" | ")}`);
+  }
+  if (context.activeHead) lines.push(`Active: ${context.activeHead}`);
+  if (context.queueHead) lines.push(`Queue head: ${context.queueHead}`);
+  if (context.leaderboardHead) lines.push(`Leaderboard head: ${context.leaderboardHead}`);
+  if (context.latestLog) lines.push(`Latest log: ${context.latestLog}`);
+  const bench = benchmarkLine(context.benchmark);
+  if (bench) lines.push(bench);
+  return lines;
+}
+
 function operatingBrief({
   headline,
   project = "",
   objective = "",
+  context = {},
   reason = "",
   command = "",
   focus = "",
@@ -155,6 +187,10 @@ function operatingBrief({
       objectiveSentence(objective),
     ].join(" "),
   ];
+  const contract = projectContractLines(context);
+  if (contract.length) {
+    lines.push(["Project contract:", ...contract.map((line) => `- ${line}`)].join("\n"));
+  }
   if (reason) {
     lines.push(`Current routing signal${projectPhraseFor(project)}: ${reason}`);
   }
@@ -181,7 +217,8 @@ function automaticDirective({ action, report, attachment }) {
   const reason = recommendationReason(report);
   const slug = projectSlugFromRecommendation(rec);
   const project = trimString(attachment?.projectName);
-  const objective = trimString(attachment?.objective);
+  const context = report?.projectContext || {};
+  const objective = trimString(attachment?.objective) || trimString(context.goal);
   const projectPhrase = projectPhraseFor(project);
   const nextCommand = trimString(report?.nextCommand);
 
@@ -191,6 +228,7 @@ function automaticDirective({ action, report, attachment }) {
         headline: `Before doing new research${projectPhrase}, fix the blocking project-integrity issue.`,
         project,
         objective,
+        context,
         reason,
         command: nextCommand || `vr-research-doctor <project-dir>`,
         focus: "Do not start experiments while the project contract is corrupt; repair the README/LOG/result-doc shape first.",
@@ -206,6 +244,7 @@ function automaticDirective({ action, report, attachment }) {
         headline: `Resume the active research move${slug ? ` ${slug}` : ""}${projectPhrase}.`,
         project,
         objective,
+        context,
         reason,
         command: nextCommand,
         focus: "If a cycle is already running, verify process/GPU/artifact state and wait or monitor rather than launching a conflicting cycle. If evidence is complete, finish the move with the registered verdict instead of drifting into new work.",
@@ -220,6 +259,7 @@ function automaticDirective({ action, report, attachment }) {
         headline: `Claim QUEUE row 1${slug ? ` (${slug})` : ""}${projectPhrase} and run one bounded research cycle.`,
         project,
         objective,
+        context,
         reason,
         command: nextCommand,
         focus: "Create or resume the result doc before expensive work, move the row into ACTIVE, and make the pre-flight/falsifier explicit.",
@@ -234,6 +274,7 @@ function automaticDirective({ action, report, attachment }) {
         headline: `Continue the planned sweep${projectPhrase}.`,
         project,
         objective,
+        context,
         reason,
         command: nextCommand,
         focus: "Run the next runnable sweep row, preserve per-row artifacts and metrics, and do not collapse distinct recipes into one undocumented comparison.",
@@ -248,6 +289,7 @@ function automaticDirective({ action, report, attachment }) {
         headline: `The experiment queue is exhausted${projectPhrase}; enter review mode before launching new work.`,
         project,
         objective,
+        context,
         reason,
         command: nextCommand,
         focus: "Judge the latest result, distill what changed, identify failure modes and qualitative evidence, then propose the next move with a falsifier.",
@@ -263,6 +305,7 @@ function automaticDirective({ action, report, attachment }) {
         headline: `Create a grounded research brief${projectPhrase}.`,
         project,
         objective,
+        context,
         reason,
         command: nextCommand,
         focus: "Use the README, LOG, leaderboard, prior result docs, and current artifacts to propose one small next move with a falsifier before running it.",
@@ -278,6 +321,7 @@ function automaticDirective({ action, report, attachment }) {
         headline: `Brainstorm the next research directions${projectPhrase}.`,
         project,
         objective,
+        context,
         reason,
         command: nextCommand,
         focus: "Use the latest negative and positive evidence to propose a few candidate moves, then pick the smallest one that would change a decision.",
@@ -293,6 +337,7 @@ function automaticDirective({ action, report, attachment }) {
         headline: `Review the existing brief${slug ? ` ${slug}` : ""}${projectPhrase}.`,
         project,
         objective,
+        context,
         reason,
         command: nextCommand,
         focus: "If it is already fit to run, compile it into QUEUE; otherwise tighten the question, grounding, expected artifact, and falsifier first.",
@@ -309,6 +354,7 @@ function automaticDirective({ action, report, attachment }) {
           headline: `The latest result needs a rerun or noise check${projectPhrase}.`,
           project,
           objective,
+          context,
           reason,
           command: nextCommand,
           focus: "Inspect the judge issues, run the narrowest confirming cycle, and keep the leaderboard unchanged until evidence is strong.",
@@ -322,6 +368,7 @@ function automaticDirective({ action, report, attachment }) {
           headline: `Synthesize the latest judged result${projectPhrase}.`,
           project,
           objective,
+          context,
           reason,
           command: nextCommand,
           focus: "Update the narrative, limitations, and durable project state according to the judge evidence before choosing new work.",
@@ -335,6 +382,7 @@ function automaticDirective({ action, report, attachment }) {
           headline: `Plan the next research move${projectPhrase}.`,
           project,
           objective,
+          context,
           reason,
           command: nextCommand,
           focus: "Use judge output, negative results, leaderboard state, and qualitative artifact review to propose the smallest useful follow-up.",
@@ -348,6 +396,7 @@ function automaticDirective({ action, report, attachment }) {
           headline: `Continue the active research thread${projectPhrase}.`,
           project,
           objective,
+          context,
           reason,
           command: nextCommand,
           focus: "Use the judge evidence to choose the next safe cycle and keep the result doc current.",

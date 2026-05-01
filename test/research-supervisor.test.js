@@ -57,6 +57,21 @@ test("research supervisor emits immediate takeover directives and dedupes later 
       reason: "QUEUE row 1 is baseline; claim it and run the next cycle.",
       slug: "baseline",
     },
+    projectContext: {
+      goal: "Find the prompt scaffold that produces the most readable short-form answers.",
+      rankingCriterion: "qualitative: readability (1-5 rubric, higher is better)",
+      successCriteria: ["Readability score >= 4.0 mean.", "Judge agreement >= 0.6."],
+      queueHead: "baseline; from main; why establish the first reproducible baseline",
+      leaderboardHead: "rank 1; v2-scaffold; score 4.1 mean",
+      latestLog: "2026-04-28; resolved+admitted; v2-scaffold; scaffold improved readability",
+      benchmark: {
+        exists: true,
+        version: "v1",
+        status: "active",
+        metrics: ["readability"],
+        datasets: ["golden", "dev"],
+      },
+    },
   };
   const first = decideResearchSupervisorIntervention({
     attachment: attachment(),
@@ -67,6 +82,12 @@ test("research supervisor emits immediate takeover directives and dedupes later 
   assert.equal(first.shouldSend, true);
   assert.match(first.directive.text, /Claim QUEUE row 1/);
   assert.match(first.directive.text, /First inspect the durable project state/);
+  assert.match(first.directive.text, /Project contract:/);
+  assert.match(first.directive.text, /Goal: Find the prompt scaffold/);
+  assert.match(first.directive.text, /Ranking: qualitative: readability/);
+  assert.match(first.directive.text, /Queue head: baseline/);
+  assert.match(first.directive.text, /Latest log: 2026-04-28/);
+  assert.match(first.directive.text, /Benchmark: version v1, status active/);
   assert.match(first.directive.text, /Use the project objective as the north star: Improve concise prose style/);
   assert.match(first.directive.text, /representative project photos\/videos, samples, and heatmaps/);
   assert.match(first.directive.text, /idle GPUs or sibling runs/);
@@ -95,6 +116,28 @@ test("research supervisor emits immediate takeover directives and dedupes later 
   assert.equal(recovered.action, "directive");
   assert.equal(recovered.shouldSend, true);
   assert.match(recovered.directive.text, /Claim QUEUE row 1/);
+});
+
+test("research supervisor falls back to the project goal when no chat objective is set", () => {
+  const decision = decideResearchSupervisorIntervention({
+    attachment: attachment({ objective: "" }),
+    event: { type: "takeover", source: "session" },
+    orchestratorReport: {
+      recommendation: {
+        action: "run-next",
+        reason: "QUEUE row 1 is ready.",
+        slug: "baseline",
+      },
+      projectContext: {
+        goal: "Use the wiki goal as the supervisor north star.",
+        queueHead: "baseline; from main; why establish a baseline",
+      },
+    },
+  });
+  assert.equal(decision.action, "directive");
+  assert.equal(decision.shouldSend, true);
+  assert.match(decision.directive.text, /Use the project objective as the north star: Use the wiki goal/);
+  assert.match(decision.directive.text, /Goal: Use the wiki goal as the supervisor north star/);
 });
 
 test("research supervisor gives active-move execution briefs", () => {
