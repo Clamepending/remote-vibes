@@ -2998,6 +2998,19 @@ input[readonly][data-folder-picker-target] {
   resize: vertical;
 }
 
+.research-autopilot-steer {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  align-items: end;
+  gap: 8px;
+  min-width: 0;
+}
+
+.research-autopilot-steer-input {
+  min-height: 64px;
+  resize: vertical;
+}
+
 .research-preset-group {
   display: grid;
   grid-template-columns: repeat(2, minmax(0, 1fr));
@@ -3250,6 +3263,7 @@ input[readonly][data-folder-picker-target] {
 
 @media (max-width: 760px) {
   .research-autopilot-form,
+  .research-autopilot-steer,
   .research-bench-form {
     grid-template-columns: 1fr;
   }
@@ -3263,6 +3277,7 @@ input[readonly][data-folder-picker-target] {
   }
 
   .research-autopilot-actions,
+  .research-autopilot-steer,
   .research-autopilot-event {
     grid-template-columns: 1fr;
   }

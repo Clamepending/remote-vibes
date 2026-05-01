@@ -314,6 +314,71 @@ test("POST /api/research/autopilot/jobs/<id>/stop interrupts background loop", a
   });
 });
 
+test("POST /api/research/autopilot/jobs/<id>/steer queues human steering", async () => {
+  await withLibraryServer(async ({ baseUrl }) => {
+    const start = await fetch(`${baseUrl}/api/research/projects/prose-style/autopilot/jobs`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        objective: "keep testing concise prose improvements until interrupted",
+        mode: "experiment",
+        commandText: "node -e \"console.log('score=0.63')\"",
+        metricRegex: "score=([0-9.]+)",
+        maxSteps: 3,
+        intervalMs: 10_000,
+        checkPaper: false,
+      }),
+    });
+    assert.equal(start.status, 202);
+    const started = await start.json();
+    let job = started.job;
+
+    for (let attempt = 0; attempt < 60 && !(job.status === "running" && job.stepCount >= 1); attempt += 1) {
+      await new Promise((resolve) => setTimeout(resolve, 50));
+      const poll = await fetch(`${baseUrl}/api/research/autopilot/jobs/${job.id}`);
+      assert.equal(poll.status, 200);
+      job = (await poll.json()).job;
+    }
+    assert.equal(job.status, "running", job.error || job.stopSummary);
+    assert.equal(job.stepCount, 1);
+
+    const steer = await fetch(`${baseUrl}/api/research/autopilot/jobs/${job.id}/steer`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        message: "Switch to synthesis and explain whether the current cycle is worth admitting.",
+        mode: "synthesize",
+        objective: "synthesize the concise prose experiment for human review",
+        source: "test-chat",
+      }),
+    });
+    assert.equal(steer.status, 200);
+    const steered = await steer.json();
+    assert.equal(steered.ok, true);
+    assert.equal(steered.job.mode, "synthesize");
+    assert.equal(steered.job.objective, "synthesize the concise prose experiment for human review");
+    assert.equal(steered.job.lastSteering.source, "test-chat");
+    assert.equal(steered.job.lastSteering.decision, "synthesize");
+    assert.match(steered.job.lastSteering.message, /Switch to synthesis/);
+    assert.ok(steered.job.events.some((event) => event.type === "steering"));
+
+    const stop = await fetch(`${baseUrl}/api/research/autopilot/jobs/${job.id}/stop`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({}),
+    });
+    assert.equal(stop.status, 200);
+    job = (await stop.json()).job;
+    for (let attempt = 0; attempt < 40 && !["succeeded", "failed", "stopped"].includes(job.status); attempt += 1) {
+      await new Promise((resolve) => setTimeout(resolve, 50));
+      const poll = await fetch(`${baseUrl}/api/research/autopilot/jobs/${job.id}`);
+      assert.equal(poll.status, 200);
+      job = (await poll.json()).job;
+    }
+    assert.equal(job.status, "stopped");
+  });
+});
+
 test("POST /api/research/org-bench/run executes local benchmark smoke", async () => {
   await withLibraryServer(async ({ baseUrl }) => {
     const res = await fetch(`${baseUrl}/api/research/org-bench/run`, {
@@ -438,12 +503,14 @@ test("main app bundle exposes the native research workspace", async () => {
     assert.match(jsText, /view: "research"/);
     assert.match(jsText, /renderResearchAutopilotPanel/);
     assert.match(jsText, /\/api\/research\/autopilot\/jobs/);
+    assert.match(jsText, /research-autopilot-steer-form/);
     assert.match(jsText, /\/api\/research\/org-bench\/jobs/);
 
     const css = await fetch(`${baseUrl}/styles.css`);
     assert.equal(css.status, 200);
     const cssText = await css.text();
     assert.match(cssText, /research-autopilot-card/);
+    assert.match(cssText, /research-autopilot-steer/);
     assert.match(cssText, /research-org-bench-card/);
     assert.match(cssText, /research-bench-table/);
   });

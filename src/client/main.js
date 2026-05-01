@@ -2183,6 +2183,8 @@ const state = {
     commandText: "",
     metricRegex: "(?:score|metric)=([0-9.]+)",
     commandTimeoutMs: "1800000",
+    steerText: "",
+    steering: false,
     apply: true,
     askHuman: false,
     status: "idle",
@@ -20862,6 +20864,21 @@ function renderResearchAutopilotPanel() {
         </div>
       </form>
       ${renderResearchAutopilotStatus()}
+      <form class="research-autopilot-steer" id="research-autopilot-steer-form">
+        <label class="research-field">
+          <span>steer active run</span>
+          <textarea
+            class="file-root-input research-autopilot-steer-input"
+            name="steerText"
+            rows="2"
+            spellcheck="true"
+            ${running ? "" : "disabled"}
+          >${escapeHtml(autopilot.steerText)}</textarea>
+        </label>
+        <button class="ghost-button toolbar-control" type="submit" ${running && !autopilot.steering ? "" : "disabled"}>
+          ${renderIcon(MessageSquarePlus)}<span>${autopilot.steering ? "sending..." : "send steer"}</span>
+        </button>
+      </form>
       <div class="research-stat-grid">
         <div class="research-stat is-accent">
           <span>status</span>
@@ -38111,6 +38128,14 @@ function syncResearchAutopilotFormDraft(form) {
   state.researchAutopilot.askHuman = formData.get("askHuman") === "on";
 }
 
+function syncResearchAutopilotSteerDraft(form) {
+  if (!(form instanceof HTMLFormElement)) {
+    return;
+  }
+  const formData = new FormData(form);
+  state.researchAutopilot.steerText = String(formData.get("steerText") || "").trim();
+}
+
 function setResearchAutopilotMode(mode) {
   const normalized = RESEARCH_AUTOPILOT_MODES.some((entry) => entry.value === mode) ? mode : "auto";
   state.researchAutopilot.mode = normalized;
@@ -38278,6 +38303,59 @@ async function stopResearchAutopilotRun() {
     void pollResearchAutopilotJob(jobId);
   } catch (error) {
     state.researchAutopilot.error = error.message || "Could not interrupt autopilot.";
+    renderShell();
+  }
+}
+
+async function steerResearchAutopilotRun(form) {
+  syncResearchAutopilotSteerDraft(form);
+  const settingsForm = document.querySelector("#research-autopilot-form");
+  if (settingsForm instanceof HTMLFormElement) {
+    syncResearchAutopilotFormDraft(settingsForm);
+  }
+
+  const autopilot = state.researchAutopilot;
+  const jobId = autopilot.jobId;
+  if (!jobId || !isResearchAutopilotRunning(autopilot.job)) {
+    autopilot.error = "Start an autopilot run before sending steering.";
+    renderShell();
+    return;
+  }
+  if (!autopilot.steerText) {
+    const input = form?.querySelector?.('textarea[name="steerText"]');
+    if (input instanceof HTMLTextAreaElement) input.focus();
+    return;
+  }
+
+  autopilot.steering = true;
+  autopilot.statusText = "sending steering";
+  autopilot.error = "";
+  renderShell();
+
+  try {
+    const payload = await fetchJson(`/api/research/autopilot/jobs/${encodeURIComponent(jobId)}/steer`, {
+      method: "POST",
+      body: JSON.stringify({
+        message: autopilot.steerText,
+        mode: autopilot.mode,
+        objective: autopilot.objective,
+        commandText: autopilot.commandText,
+        metricRegex: autopilot.metricRegex,
+        commandTimeoutMs: Number(autopilot.commandTimeoutMs) || undefined,
+        source: "research-ui",
+      }),
+      timeoutMs: 30_000,
+    });
+    applyResearchAutopilotJob(payload?.job || null);
+    autopilot.steerText = "";
+    autopilot.statusText = "steering queued";
+    renderShell();
+    void pollResearchAutopilotJob(jobId);
+  } catch (error) {
+    autopilot.error = error.message || "Could not steer autopilot.";
+    renderShell();
+  } finally {
+    autopilot.steering = false;
     renderShell();
   }
 }
@@ -38461,6 +38539,21 @@ function bindResearchEvents() {
     const form = event.currentTarget;
     if (form instanceof HTMLFormElement && !isResearchAutopilotRunning(state.researchAutopilot.job)) {
       void startResearchAutopilotRun(form);
+    }
+  });
+
+  document.querySelector("#research-autopilot-steer-form")?.addEventListener("input", (event) => {
+    const form = event.currentTarget;
+    if (form instanceof HTMLFormElement) {
+      syncResearchAutopilotSteerDraft(form);
+    }
+  });
+
+  document.querySelector("#research-autopilot-steer-form")?.addEventListener("submit", (event) => {
+    event.preventDefault();
+    const form = event.currentTarget;
+    if (form instanceof HTMLFormElement) {
+      void steerResearchAutopilotRun(form);
     }
   });
 

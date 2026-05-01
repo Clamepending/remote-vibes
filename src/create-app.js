@@ -7113,6 +7113,7 @@ export async function createVibeResearchApp({
   const researchAutopilotJobs = new Map();
   const RESEARCH_AUTOPILOT_TERMINAL_STATUSES = new Set(["succeeded", "failed", "stopped"]);
   const RESEARCH_AUTOPILOT_MODES = new Set(["auto", "brainstorm", "experiment", "synthesize"]);
+  const RESEARCH_AUTOPILOT_STOP_ACTIONS = new Set(["stop", "pause", "interrupt"]);
 
   function numberInRange(value, fallback, min, max) {
     const numeric = Number(value);
@@ -7130,6 +7131,23 @@ export async function createVibeResearchApp({
     if (mode === "experiment") return "continue";
     if (mode === "synthesize") return "synthesize";
     return "";
+  }
+
+  function summarizeAutopilotText(value, limit = 180) {
+    const text = trimText(value).replace(/\s+/g, " ");
+    if (!text) return "";
+    return text.length > limit ? `${text.slice(0, Math.max(0, limit - 3))}...` : text;
+  }
+
+  function buildResearchAutopilotReviewPrompt({ objective = "", steering = "" } = {}) {
+    const lines = [];
+    if (objective) {
+      lines.push(`Review this autonomous research loop against the current objective: ${objective}`);
+    }
+    if (steering) {
+      lines.push(`Latest human steering: ${steering}`);
+    }
+    return lines.join("\n\n");
   }
 
   function requestServerBaseUrl(request) {
@@ -7200,6 +7218,8 @@ export async function createVibeResearchApp({
       stopReason: job.stopReason,
       stopSummary: job.stopSummary,
       error: job.error,
+      steeringCount: Array.isArray(job.steering) ? job.steering.length : 0,
+      lastSteering: Array.isArray(job.steering) && job.steering.length ? job.steering[job.steering.length - 1] : null,
       lastReport: job.lastReport || null,
       events: [...job.events].reverse().slice(0, 30),
     };
@@ -7245,7 +7265,7 @@ export async function createVibeResearchApp({
     const wallClockMinutes = numberInRange(body.wallClockMinutes || body.maxWallClockMinutes, 8 * 60, 1, 7 * 24 * 60);
     const commandText = trimText(body.commandText || body.command);
     const agentReviewPrompt = trimText(body.agentReviewPrompt)
-      || (objective ? `Review this autonomous research loop against the current objective: ${objective}` : "");
+      || buildResearchAutopilotReviewPrompt({ objective });
 
     return {
       mode,
@@ -7310,6 +7330,112 @@ export async function createVibeResearchApp({
     while (!job.stopRequested && Date.now() < target) {
       await new Promise((resolve) => setTimeout(resolve, Math.min(1_000, Math.max(0, target - Date.now()))));
     }
+  }
+
+  function applyResearchAutopilotSteering(job, body = {}) {
+    if (!job) {
+      throw routeError("research autopilot job not found", 404);
+    }
+    if (RESEARCH_AUTOPILOT_TERMINAL_STATUSES.has(job.status)) {
+      throw routeError("research autopilot job has already finished", 409);
+    }
+
+    const action = trimText(body.action).toLowerCase();
+    const message = trimText(body.message || body.note || body.steering);
+    const nextObjective = trimText(body.objective);
+    const nextMode = body.mode === undefined ? job.mode : normalizeResearchAutopilotMode(body.mode);
+    const decision = trimText(body.decision) || decisionForResearchAutopilotMode(nextMode);
+    const commandText = trimText(body.commandText || body.command);
+    const metricRegex = trimText(body.metricRegex);
+    const metric = trimText(body.metric);
+    const qual = trimText(body.qual);
+    const seed = trimText(body.seed);
+    const commandTimeoutMs = body.commandTimeoutMs;
+    const shouldStop = RESEARCH_AUTOPILOT_STOP_ACTIONS.has(action);
+
+    if (!message && !nextObjective && !decision && !commandText && !metricRegex && !metric && !qual && !seed && !shouldStop) {
+      throw routeError("steering message, mode, objective, command, or stop action is required", 400);
+    }
+
+    if (nextObjective) {
+      job.objective = nextObjective;
+    }
+    job.mode = nextMode;
+    if (decision) {
+      job.runOptions.decision = decision;
+    }
+    if (message) {
+      job.runOptions.change = message;
+    } else if (nextObjective) {
+      job.runOptions.change = nextObjective;
+    }
+    if (commandText) {
+      job.runOptions.commandText = commandText;
+    }
+    if (metricRegex) {
+      job.runOptions.metricRegex = metricRegex;
+    }
+    if (metric) {
+      job.runOptions.metric = metric;
+    }
+    if (qual) {
+      job.runOptions.qual = qual;
+    }
+    if (seed) {
+      job.runOptions.seed = seed;
+    }
+    if (commandTimeoutMs !== undefined) {
+      job.runOptions.commandTimeoutMs = commandTimeoutMs;
+    }
+    job.runOptions.agentReviewPrompt = trimText(body.agentReviewPrompt)
+      || buildResearchAutopilotReviewPrompt({
+        objective: job.objective,
+        steering: message,
+      });
+
+    if (!Array.isArray(job.steering)) {
+      job.steering = [];
+    }
+    const steering = {
+      id: randomUUID(),
+      at: new Date().toISOString(),
+      source: trimText(body.source) || "human",
+      action: shouldStop ? "stop" : "steer",
+      mode: job.mode,
+      decision,
+      objective: job.objective,
+      message,
+    };
+    job.steering.push(steering);
+    job.steering = job.steering.slice(-40);
+
+    if (shouldStop) {
+      job.stopRequested = true;
+      if (job.status === "queued") {
+        job.status = "stopped";
+        job.stopReason = "user-stop";
+        job.stopSummary = "stop requested before the first step";
+        job.finishedAt = new Date().toISOString();
+      } else if (job.status === "running") {
+        job.status = "stopping";
+        job.stopReason = "user-stop";
+        job.stopSummary = "stop requested; waiting for the current step to finish";
+      }
+    } else {
+      job.stopSummary = message
+        ? `steering queued: ${summarizeAutopilotText(message, 120)}`
+        : `steering queued for ${job.mode} mode`;
+    }
+    job.heartbeatAt = new Date().toISOString();
+    appendResearchAutopilotEvent(job, {
+      type: shouldStop ? "stop-requested" : "steering",
+      action: shouldStop ? "stop" : (decision || job.mode),
+      summary: shouldStop
+        ? (job.stopSummary || "stop requested")
+        : (message ? summarizeAutopilotText(message) : `mode set to ${job.mode}`),
+      detail: nextObjective && nextObjective !== message ? summarizeAutopilotText(nextObjective) : "",
+    });
+    return steering;
   }
 
   async function runResearchAutopilotJob(job) {
@@ -7421,6 +7547,7 @@ export async function createVibeResearchApp({
       lastReport: null,
       events: [],
       runOptions: options.runOptions,
+      steering: [],
     };
     researchAutopilotJobs.set(job.id, job);
     pruneResearchAutopilotJobs();
@@ -7472,6 +7599,19 @@ export async function createVibeResearchApp({
     }
     appendResearchAutopilotEvent(job, { type: "stop-requested", summary: job.stopSummary || "stop requested" });
     response.json({ ok: true, job: serializeResearchAutopilotJob(job) });
+  });
+
+  app.post("/api/research/autopilot/jobs/:jobId/steer", async (request, response) => {
+    try {
+      const job = researchAutopilotJobs.get(String(request.params.jobId || ""));
+      const body = request.body && typeof request.body === "object" && !Array.isArray(request.body)
+        ? request.body
+        : {};
+      const steering = applyResearchAutopilotSteering(job, body);
+      response.json({ ok: true, steering, job: serializeResearchAutopilotJob(job) });
+    } catch (error) {
+      response.status(error.statusCode || 500).json({ error: error.message || "Could not steer research autopilot." });
+    }
   });
 
   app.post("/api/research/projects/:name/autopilot/jobs", async (request, response) => {
