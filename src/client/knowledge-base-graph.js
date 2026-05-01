@@ -26,7 +26,48 @@ import {
   forceSimulation,
 } from "d3-force";
 import Sigma from "sigma";
+import { drawDiscNodeLabel } from "sigma/rendering";
 import { buildKnowledgeBaseGraph } from "./knowledge-base-graph-data.js";
+
+// Single knob for visual + physics node size. The data layer sizes nodes
+// based on their backlink count; this scales the result down so dense
+// clusters don't visually overlap. Applied uniformly to both the rendered
+// size (via nodeReducer) and to the d3 physics radius (collide + charge
+// scaling) so node spacing stays proportional to what the user sees.
+const NODE_SIZE_SCALE = 0.7;
+
+// Sigma's default hover renderer paints a hardcoded white rounded-rect
+// behind the label, which looks like a foreign sticker on a dark
+// graph canvas. Replace it with a dark translucent backdrop sized to the
+// label, then delegate to sigma's built-in label renderer for the text.
+function drawNodeHoverDark(context, data, settings) {
+  const size = settings.labelSize;
+  const font = settings.labelFont;
+  const weight = settings.labelWeight;
+  context.font = `${weight} ${size}px ${font}`;
+
+  if (typeof data.label === "string" && data.label.length > 0) {
+    const padding = 4;
+    const textWidth = context.measureText(data.label).width;
+    const boxWidth = textWidth + padding * 2;
+    const boxHeight = size + padding * 2;
+    const radius = Math.max(data.size, size / 2) + 2;
+    const angleRadian = Math.asin(boxHeight / 2 / radius);
+    const xDeltaCoord = Math.sqrt(Math.max(0, radius * radius - (boxHeight / 2) * (boxHeight / 2)));
+
+    context.fillStyle = "rgba(18, 22, 30, 0.92)";
+    context.beginPath();
+    context.moveTo(data.x + xDeltaCoord, data.y + boxHeight / 2);
+    context.lineTo(data.x + radius + boxWidth, data.y + boxHeight / 2);
+    context.lineTo(data.x + radius + boxWidth, data.y - boxHeight / 2);
+    context.lineTo(data.x + xDeltaCoord, data.y - boxHeight / 2);
+    context.arc(data.x, data.y, radius, angleRadian, -angleRadian);
+    context.closePath();
+    context.fill();
+  }
+
+  drawDiscNodeLabel(context, data, settings);
+}
 
 export function createKnowledgeBaseGraphRenderer(container, options = {}) {
   if (!(container instanceof HTMLElement)) {
@@ -82,7 +123,9 @@ export function createKnowledgeBaseGraphRenderer(container, options = {}) {
     // when "connected" highlighting is on. Showing labels for the entire
     // 1-hop neighbourhood floods the canvas at hub nodes.
     const showLabel = labelAlwaysOn || isSelected || isHovered;
-    const baseSize = Number(attrs.size) || 5;
+    // Visual scale-down (must match NODE_SIZE_SCALE applied to physics radii
+    // in buildD3Inputs so layout spacing tracks rendered size).
+    const baseSize = (Number(attrs.size) || 5) * NODE_SIZE_SCALE;
     const size = isSelected ? baseSize * 1.55 : isHovered ? baseSize * 1.3 : isConnected ? baseSize * 1.12 : baseSize;
     return {
       ...attrs,
@@ -123,6 +166,7 @@ export function createKnowledgeBaseGraphRenderer(container, options = {}) {
       labelRenderedSizeThreshold: 6,
       zIndex: true,
       allowInvalidContainer: false,
+      defaultDrawNodeHover: drawNodeHoverDark,
     });
 
     sigma.on("clickNode", ({ node }) => {
@@ -219,7 +263,7 @@ export function createKnowledgeBaseGraphRenderer(container, options = {}) {
         y: previous ? previous.y : Number.isFinite(attrs.y) ? attrs.y : 0,
         vx: previous?.vx ?? 0,
         vy: previous?.vy ?? 0,
-        radius: Number(attrs.size) || 5,
+        radius: (Number(attrs.size) || 5) * NODE_SIZE_SCALE,
       };
       d3Nodes.push(node);
       d3NodeById.set(key, node);
@@ -309,26 +353,23 @@ export function createKnowledgeBaseGraphRenderer(container, options = {}) {
       .strength(0.9)
       .iterations(2);
 
-    // Center pull, plus separate forceX/forceY at higher strength to drag
-    // disconnected orphans out of the initial-spread ring and toward the
-    // middle. Pure forceCenter is too weak to overcome the velocityDecay
-    // for nodes that have no links anchoring them.
     const centerForce = forceCenter(0, 0).strength(0.05);
-    const xPull = (n) => -n.x * 0.02;
-    const yPull = (n) => -n.y * 0.02;
 
     simulation
       .force("link", linkForce)
       .force("charge", chargeForce)
       .force("collide", collideForce)
       .force("center", centerForce)
-      // Custom drift toward origin: like forceX(0).strength(0.02) but
-      // applied by hand so we don't need an extra import.
-      .force("xCenter", (alpha) => {
-        for (const n of d3Nodes) n.vx += xPull(n) * alpha;
-      })
-      .force("yCenter", (alpha) => {
-        for (const n of d3Nodes) n.vy += yPull(n) * alpha;
+      // Custom drift toward origin. Connected nodes barely feel it (their
+      // links handle positioning); zero-degree orphans get yanked in hard
+      // so they don't sit stranded on the initial-spread perimeter.
+      .force("originDrift", (alpha) => {
+        for (const n of d3Nodes) {
+          const deg = degree.get(n.id) || 0;
+          const k = deg === 0 ? 0.18 : 0.015;
+          n.vx += -n.x * k * alpha;
+          n.vy += -n.y * k * alpha;
+        }
       });
   }
 
