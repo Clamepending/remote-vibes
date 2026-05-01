@@ -7672,12 +7672,12 @@ function renderRichSessionAutopilotPanel(activeSession) {
   const status = pending
     || (enabled && sessionDriver
       ? sessionExited
-        ? "agent stopped"
+        ? "agent stopped; ready to resume"
         : activeSession.streamWorking
         ? "watching current turn"
         : objectivePreview
-          ? `next: ${objectivePreview}`
-          : "needs project objective"
+          ? `using ${objectiveSource === "wiki" ? "wiki goal" : "goal"}: ${objectivePreview}`
+          : "needs project goal"
       : job
       ? `${job.status || "running"} · step ${job.stepCount || 0}/${job.maxSteps || "?"}${job.stopReason ? ` · ${job.stopReason}` : ""}`
       : enabled
@@ -7688,12 +7688,12 @@ function renderRichSessionAutopilotPanel(activeSession) {
           ? "ready to hand off"
           : "choose a project");
   const toggleTitle = enabled
-    ? "Pause Autopilot for this chat."
-    : "Let Autopilot drive this same chat from the project's wiki objective.";
+    ? "Pause the supervisor for this chat."
+    : "Let the supervisor take the next research step in this same chat.";
   const showProjectPicker = !running && pickerOpen;
   const showSteeringActions = enabled && (sessionDriver || (job && !isResearchAutopilotTerminalStatus(job.status)));
   const projectTitle = projectName
-    ? `Autopilot will use ${projectName}${projectSource ? ` (${projectSource})` : ""}.${objectivePreview ? ` Objective: ${objectivePreview}` : ""} Click to change.`
+    ? `The supervisor will use ${projectName}${projectSource ? ` (${projectSource})` : ""}.${objectivePreview ? ` Objective: ${objectivePreview}` : ""} Click to change.`
     : "Choose the research project for this chat.";
   const nextActionLabel = sessionExited && sessionDriver ? "Resume" : "Next";
   const nextActionTitle = sessionExited && sessionDriver
@@ -7729,8 +7729,8 @@ function renderRichSessionAutopilotPanel(activeSession) {
         ${showSteeringActions ? `
           <span class="rich-session-autopilot-supervisor-pill" title="${escapeHtml(supervisorSummary.title)}">${escapeHtml(supervisorSummary.label)}</span>
           <button class="rich-session-autopilot-action is-primary" type="button" data-chat-autopilot-action="continue" title="${escapeHtml(nextActionTitle)}" ${actionDisabled}>${escapeHtml(nextActionLabel)}</button>
-          <button class="rich-session-autopilot-action" type="button" data-chat-autopilot-action="brainstorm" title="Ask the supervisor to pause execution and propose next directions." ${actionDisabled}>Plan</button>
-          <button class="rich-session-autopilot-action" type="button" data-chat-autopilot-action="synthesize" title="Ask the supervisor for a checkpoint summary, evidence, risks, and recommendation." ${actionDisabled}>Review</button>
+          <button class="rich-session-autopilot-action" type="button" data-chat-autopilot-action="brainstorm" title="Ask the supervisor to pause execution and propose next directions." ${actionDisabled}>Replan</button>
+          <button class="rich-session-autopilot-action" type="button" data-chat-autopilot-action="synthesize" title="Ask the supervisor for a checkpoint summary, evidence, risks, and recommendation." ${actionDisabled}>Checkpoint</button>
           <button class="rich-session-autopilot-action is-danger" type="button" data-chat-autopilot-action="pause" title="Pause the autonomous run attached to this chat." ${actionDisabled}>Pause</button>
         ` : enabled ? `
           <span class="rich-session-autopilot-supervisor-pill" title="${escapeHtml(supervisorSummary.title)}">${escapeHtml(supervisorSummary.label)}</span>
@@ -44945,7 +44945,7 @@ function bindShellEvents() {
         objective: shouldUseProjectGoal ? nextGoal : currentObjective,
         jobId: isChatAutopilotSessionDriver(current) ? "" : current.jobId,
         statusText: select.value
-          ? (shouldUseProjectGoal && nextGoal ? "ready with project objective" : `using ${select.value}`)
+          ? (shouldUseProjectGoal && nextGoal ? "ready with wiki goal" : `using ${select.value}`)
           : "choose a research project",
       });
       refreshRichSessionSurfaceUi();
