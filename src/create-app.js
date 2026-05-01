@@ -7127,6 +7127,8 @@ export async function createVibeResearchApp({
   const CHAT_AUTOPILOT_DRIVERS = new Set(["session", "runner"]);
   const chatAutopilotAttachmentPath = path.join(stateDir, "research-chat-autopilot.json");
   const chatAutopilotAttachments = new Map();
+  const researchProjectSupervisorPath = path.join(stateDir, "research-project-supervisors.json");
+  const researchProjectSupervisors = new Map();
 
   function numberInRange(value, fallback, min, max) {
     const numeric = Number(value);
@@ -7143,6 +7145,53 @@ export async function createVibeResearchApp({
     const driver = trimText(value).toLowerCase();
     if (CHAT_AUTOPILOT_DRIVERS.has(driver)) return driver;
     return CHAT_AUTOPILOT_DRIVERS.has(fallback) ? fallback : "session";
+  }
+
+  function normalizeResearchProjectSupervisorSessionIds(value, fallback = []) {
+    const ids = Array.isArray(value) ? value : fallback;
+    return [...new Set(ids.map((id) => trimText(id)).filter(Boolean))].slice(-20);
+  }
+
+  function defaultResearchProjectSupervisor(projectName) {
+    return {
+      projectName: trimText(projectName),
+      enabled: false,
+      objective: "",
+      primarySessionId: "",
+      sessionIds: [],
+      createdAt: "",
+      updatedAt: "",
+      state: normalizeResearchSupervisorState(),
+    };
+  }
+
+  function sanitizeResearchProjectSupervisor(value = {}, projectName = "") {
+    if (!value || typeof value !== "object" || Array.isArray(value)) {
+      value = {};
+    }
+    const cleanProjectName = trimText(value.projectName || projectName);
+    if (!cleanProjectName) return null;
+    return {
+      projectName: cleanProjectName,
+      enabled: Boolean(value.enabled),
+      objective: trimText(value.objective).slice(0, 4_000),
+      primarySessionId: trimText(value.primarySessionId),
+      sessionIds: normalizeResearchProjectSupervisorSessionIds(value.sessionIds),
+      createdAt: typeof value.createdAt === "string" ? value.createdAt : "",
+      updatedAt: typeof value.updatedAt === "string" ? value.updatedAt : "",
+      state: normalizeResearchSupervisorState(value.state || value.supervisor),
+    };
+  }
+
+  function shouldPersistResearchProjectSupervisor(supervisor) {
+    return Boolean(
+      supervisor?.enabled
+      || supervisor?.objective
+      || supervisor?.primarySessionId
+      || supervisor?.sessionIds?.length
+      || supervisor?.state?.lastObservedAt
+      || supervisor?.state?.lastDirectiveAt
+    );
   }
 
   function decisionForResearchAutopilotMode(mode) {
@@ -7386,6 +7435,112 @@ export async function createVibeResearchApp({
     await writeFile(chatAutopilotAttachmentPath, `${JSON.stringify(payload, null, 2)}\n`, "utf8");
   }
 
+  async function loadResearchProjectSupervisors() {
+    researchProjectSupervisors.clear();
+    let parsed = null;
+    try {
+      parsed = JSON.parse(await readFile(researchProjectSupervisorPath, "utf8"));
+    } catch (error) {
+      if (error?.code !== "ENOENT") {
+        console.warn("[vibe-research] could not load research project supervisors:", error.message);
+      }
+      return;
+    }
+    const entries = Array.isArray(parsed?.supervisors)
+      ? parsed.supervisors.map((entry) => [entry?.projectName, entry])
+      : Object.entries(parsed && typeof parsed === "object" ? parsed : {});
+    for (const [rawProjectName, rawSupervisor] of entries) {
+      const supervisor = sanitizeResearchProjectSupervisor(rawSupervisor, rawProjectName);
+      if (supervisor && shouldPersistResearchProjectSupervisor(supervisor)) {
+        researchProjectSupervisors.set(supervisor.projectName, supervisor);
+      }
+    }
+  }
+
+  async function saveResearchProjectSupervisors() {
+    const payload = {};
+    for (const [projectName, supervisor] of researchProjectSupervisors.entries()) {
+      if (shouldPersistResearchProjectSupervisor(supervisor)) {
+        payload[projectName] = supervisor;
+      }
+    }
+    await mkdir(stateDir, { recursive: true });
+    await writeFile(researchProjectSupervisorPath, `${JSON.stringify(payload, null, 2)}\n`, "utf8");
+  }
+
+  function getResearchProjectSupervisor(projectName) {
+    const cleanProjectName = trimText(projectName);
+    if (!cleanProjectName) return null;
+    return researchProjectSupervisors.get(cleanProjectName) || defaultResearchProjectSupervisor(cleanProjectName);
+  }
+
+  async function setResearchProjectSupervisor(projectName, patch = {}) {
+    const cleanProjectName = trimText(projectName);
+    if (!cleanProjectName) return null;
+    const now = new Date().toISOString();
+    const previous = researchProjectSupervisors.get(cleanProjectName) || defaultResearchProjectSupervisor(cleanProjectName);
+    const sessionIds = normalizeResearchProjectSupervisorSessionIds(
+      patch.sessionIds,
+      previous.sessionIds,
+    );
+    const next = sanitizeResearchProjectSupervisor({
+      ...previous,
+      ...patch,
+      projectName: cleanProjectName,
+      sessionIds,
+      createdAt: previous.createdAt || now,
+      updatedAt: now,
+    }, cleanProjectName);
+    if (!next || !shouldPersistResearchProjectSupervisor(next)) {
+      researchProjectSupervisors.delete(cleanProjectName);
+    } else {
+      researchProjectSupervisors.set(cleanProjectName, next);
+    }
+    await saveResearchProjectSupervisors();
+    return next || defaultResearchProjectSupervisor(cleanProjectName);
+  }
+
+  function serializeResearchProjectSupervisor(supervisor) {
+    const normalized = sanitizeResearchProjectSupervisor(supervisor, supervisor?.projectName)
+      || defaultResearchProjectSupervisor(supervisor?.projectName);
+    return {
+      ...normalized,
+      supervisor: normalized.state,
+    };
+  }
+
+  async function migrateChatSupervisorAttachmentsToProjects() {
+    let changed = false;
+    for (const attachment of chatAutopilotAttachments.values()) {
+      const projectName = trimText(attachment.projectName);
+      if (!projectName || !attachment.supervisor?.lastObservedAt) continue;
+      const existing = researchProjectSupervisors.get(projectName);
+      if (existing?.state?.lastObservedAt || existing?.state?.lastDirectiveAt) continue;
+      const sessionIds = normalizeResearchProjectSupervisorSessionIds(
+        [attachment.sessionId],
+        existing?.sessionIds || [],
+      );
+      const supervisor = sanitizeResearchProjectSupervisor({
+        ...(existing || {}),
+        projectName,
+        enabled: attachment.enabled,
+        objective: attachment.objective,
+        primarySessionId: attachment.sessionId,
+        sessionIds,
+        state: attachment.supervisor,
+        createdAt: attachment.createdAt,
+        updatedAt: attachment.updatedAt,
+      }, projectName);
+      if (supervisor && shouldPersistResearchProjectSupervisor(supervisor)) {
+        researchProjectSupervisors.set(projectName, supervisor);
+        changed = true;
+      }
+    }
+    if (changed) {
+      await saveResearchProjectSupervisors();
+    }
+  }
+
   function getChatAutopilotAttachment(sessionId) {
     const sid = trimText(sessionId);
     if (!sid) return null;
@@ -7527,15 +7682,25 @@ export async function createVibeResearchApp({
       || defaultChatAutopilotAttachment(attachment?.sessionId);
     const job = normalized.jobId ? researchAutopilotJobs.get(normalized.jobId) : null;
     const serializedJob = job ? serializeResearchAutopilotJob(job) : null;
+    const projectSupervisor = normalized.projectName
+      ? researchProjectSupervisors.get(normalized.projectName)
+      : null;
+    const serializedProjectSupervisor = projectSupervisor
+      ? serializeResearchProjectSupervisor(projectSupervisor)
+      : null;
     return {
       ...normalized,
+      supervisor: serializedProjectSupervisor?.state || normalized.supervisor,
+      projectSupervisor: serializedProjectSupervisor,
       statusText: normalized.statusText || serializedJob?.stopSummary || serializedJob?.currentAction || serializedJob?.status || "",
       job: serializedJob,
     };
   }
 
   await loadResearchAutopilotJobs();
+  await loadResearchProjectSupervisors();
   await loadChatAutopilotAttachments();
+  await migrateChatSupervisorAttachmentsToProjects();
 
   function pruneResearchAutopilotJobs() {
     const jobs = Array.from(researchAutopilotJobs.values()).sort((a, b) => String(b.createdAt).localeCompare(String(a.createdAt)));
@@ -8176,6 +8341,8 @@ export async function createVibeResearchApp({
       let orchestrator = null;
       let supervisorError = "";
       const driver = normalizeChatAutopilotDriver(current.driver, current.jobId ? "runner" : "session");
+      const projectSupervisor = projectName ? getResearchProjectSupervisor(projectName) : null;
+      const supervisorState = projectSupervisor?.state || current.supervisor;
       if (current.enabled && driver === "session" && projectName) {
         try {
           const resolved = await resolveResearchProjectDir(projectName);
@@ -8209,9 +8376,22 @@ export async function createVibeResearchApp({
             attachment: observedAttachment,
             event,
             orchestratorReport: orchestrator,
-            supervisorState: current.supervisor,
+            supervisorState,
           });
-      const supervisor = updateResearchSupervisorState(current.supervisor, decision, event);
+      const supervisor = updateResearchSupervisorState(supervisorState, decision, event);
+      let nextProjectSupervisor = projectSupervisor;
+      if (projectName) {
+        const sessionIds = normalizeResearchProjectSupervisorSessionIds(
+          [...(projectSupervisor?.sessionIds || []), request.params.sessionId],
+        );
+        nextProjectSupervisor = await setResearchProjectSupervisor(projectName, {
+          enabled: current.enabled && driver === "session",
+          objective: observedAttachment.objective,
+          primarySessionId: request.params.sessionId,
+          sessionIds,
+          state: supervisor,
+        });
+      }
       const attachment = await setChatAutopilotAttachment(request.params.sessionId, {
         ...current,
         enabled: current.enabled,
@@ -8230,6 +8410,7 @@ export async function createVibeResearchApp({
         decision,
         directive: decision.shouldSend ? decision.directive : null,
         attachment: serializeChatAutopilotAttachment(attachment),
+        projectSupervisor: nextProjectSupervisor ? serializeResearchProjectSupervisor(nextProjectSupervisor) : null,
         orchestrator: orchestrator
           ? {
               recommendation: orchestrator.recommendation,
@@ -8415,6 +8596,20 @@ export async function createVibeResearchApp({
       response.json(detail);
     } catch (error) {
       response.status(400).json({ error: error.message });
+    }
+  });
+
+  app.get("/api/research/projects/:name/supervisor", async (request, response) => {
+    try {
+      const { projectName } = await resolveResearchProjectDir(request.params.name);
+      const supervisor = getResearchProjectSupervisor(projectName);
+      response.json({
+        ok: true,
+        projectName,
+        supervisor: serializeResearchProjectSupervisor(supervisor),
+      });
+    } catch (error) {
+      response.status(error.statusCode || 500).json({ error: error.message || "Could not load research supervisor." });
     }
   });
 

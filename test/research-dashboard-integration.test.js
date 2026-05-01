@@ -531,6 +531,48 @@ test("chat research supervisor tick is silent on toggle and takes over on demand
     assert.match(takeoverBody.directive.text, /Claim QUEUE row 1/);
     assert.doesNotMatch(takeoverBody.directive.text, /Autopilot/i);
     assert.equal(takeoverBody.attachment.supervisor.interventionCount, 1);
+    assert.equal(takeoverBody.projectSupervisor.projectName, "prose-style");
+    assert.equal(takeoverBody.projectSupervisor.supervisor.interventionCount, 1);
+
+    const secondSessionRes = await fetch(`${baseUrl}/api/sessions`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ providerId: "shell", name: "Second research chat" }),
+    });
+    assert.equal(secondSessionRes.status, 201);
+    const secondSession = (await secondSessionRes.json()).session;
+    const secondSave = await fetch(`${baseUrl}/api/sessions/${secondSession.id}/research-autopilot`, {
+      method: "PUT",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        enabled: true,
+        projectName: "prose-style",
+        objective: "make prose more concise while preserving evidence",
+        driver: "session",
+        mode: "auto",
+      }),
+    });
+    assert.equal(secondSave.status, 200);
+    const duplicateTakeover = await fetch(`${baseUrl}/api/sessions/${secondSession.id}/research-autopilot/supervisor/tick`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ event: { type: "takeover", source: "session" } }),
+    });
+    assert.equal(duplicateTakeover.status, 200);
+    const duplicateTakeoverBody = await duplicateTakeover.json();
+    assert.equal(duplicateTakeoverBody.decision.action, "silent");
+    assert.equal(duplicateTakeoverBody.decision.shouldSend, false);
+    assert.match(duplicateTakeoverBody.decision.reason, /already sent/);
+    assert.equal(duplicateTakeoverBody.attachment.supervisor.interventionCount, 1);
+
+    const projectSupervisorRes = await fetch(`${baseUrl}/api/research/projects/prose-style/supervisor`);
+    assert.equal(projectSupervisorRes.status, 200);
+    const projectSupervisorBody = await projectSupervisorRes.json();
+    assert.equal(projectSupervisorBody.supervisor.supervisor.interventionCount, 1);
+    assert.deepEqual(
+      projectSupervisorBody.supervisor.sessionIds.slice().sort(),
+      [secondSession.id, session.id].sort(),
+    );
 
     const manualTick = await fetch(`${baseUrl}/api/sessions/${session.id}/research-autopilot/supervisor/tick`, {
       method: "POST",
