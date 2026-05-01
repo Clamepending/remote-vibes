@@ -493,6 +493,9 @@ function summarizeAutopilotActions(report) {
     plannedAction: action.plannedAction,
     metric: action.result?.cycle?.metric || action.result?.cycle?.metricValue || action.result?.cycle?.cycle?.metric || "",
     kind: action.result?.kind || "",
+    cycleIndex: action.result?.cycle?.cycleIndex || "",
+    exitCode: action.result?.cycle?.exitCode ?? null,
+    timedOut: Boolean(action.result?.cycle?.timedOut),
   }));
 }
 
@@ -965,8 +968,62 @@ function summarizeResults(results) {
     holdoutStd: Number(std(rows.map((row) => row.holdoutScore)).toFixed(4)),
     devMean: Number(mean(rows.map((row) => row.devScore)).toFixed(4)),
     integrityPassRate: Number(mean(rows.map((row) => row.integrityOk ? 1 : 0)).toFixed(4)),
+    workerCyclesMean: Number(mean(rows.map((row) => workerCycleCount(row))).toFixed(2)),
+    reviewCountMean: Number(mean(rows.map((row) => reviewCount(row))).toFixed(2)),
+    timeoutRate: Number(timeoutRate(rows).toFixed(4)),
+    metricDeltaMean: Number(mean(rows.map((row) => metricDelta(row))).toFixed(4)),
+    reviewWallMsMean: Math.round(mean(rows.flatMap((row) => reviewWallMs(row)))),
     wallMsMean: Math.round(mean(rows.map((row) => row.wallMs))),
   }));
+}
+
+function workerActions(result = {}) {
+  return (result.execution?.reports || []).flatMap((report) => report.actions || []);
+}
+
+function workerCycleCount(result = {}) {
+  const actions = workerActions(result);
+  if (actions.length) return actions.length;
+  return result.execution?.kind && !result.execution?.skipped ? 1 : 0;
+}
+
+function reviewCount(result = {}) {
+  return (result.execution?.reviews || []).length;
+}
+
+function timeoutRate(rows = []) {
+  let events = 0;
+  let timedOut = 0;
+  for (const row of rows) {
+    const actions = workerActions(row);
+    for (const action of actions) {
+      events += 1;
+      if (action.timedOut) timedOut += 1;
+    }
+    if (!actions.length && row.execution && !row.execution.skipped) {
+      events += 1;
+      if (row.execution.timedOut) timedOut += 1;
+    }
+    for (const review of row.execution?.reviews || []) {
+      events += 1;
+      if (review.timedOut) timedOut += 1;
+    }
+  }
+  return events ? timedOut / events : 0;
+}
+
+function reviewWallMs(result = {}) {
+  return (result.execution?.reviews || [])
+    .map((review) => Number(review.wallMs))
+    .filter(Number.isFinite);
+}
+
+function metricDelta(result = {}) {
+  const metrics = workerActions(result)
+    .map((action) => Number(action.metric))
+    .filter(Number.isFinite);
+  if (metrics.length < 2) return 0;
+  return metrics[metrics.length - 1] - metrics[0];
 }
 
 export async function runOrgBench({
@@ -1023,11 +1080,11 @@ export function formatOrgBenchReport(report) {
     `Org bench: ${report.suite}`,
     `Output: ${report.outputDir}`,
     "",
-    "| strategy | runs | holdout mean | holdout std | dev mean | integrity | wall ms |",
-    "|---|---:|---:|---:|---:|---:|---:|",
+    "| strategy | runs | holdout mean | holdout std | dev mean | integrity | cycles | reviews | timeout | metric delta | wall ms |",
+    "|---|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|",
   ];
   for (const row of report.summary || []) {
-    lines.push(`| ${row.strategy} | ${row.runs} | ${row.holdoutMean.toFixed(4)} | ${row.holdoutStd.toFixed(4)} | ${row.devMean.toFixed(4)} | ${(row.integrityPassRate * 100).toFixed(0)}% | ${row.wallMsMean} |`);
+    lines.push(`| ${row.strategy} | ${row.runs} | ${row.holdoutMean.toFixed(4)} | ${row.holdoutStd.toFixed(4)} | ${row.devMean.toFixed(4)} | ${(row.integrityPassRate * 100).toFixed(0)}% | ${row.workerCyclesMean.toFixed(2)} | ${row.reviewCountMean.toFixed(2)} | ${(row.timeoutRate * 100).toFixed(0)}% | ${row.metricDeltaMean.toFixed(4)} | ${row.wallMsMean} |`);
   }
   lines.push("");
   lines.push(`Full JSON: ${path.join(report.outputDir, "report.json")}`);

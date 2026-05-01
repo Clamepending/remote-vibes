@@ -64,6 +64,8 @@ test("runOrgBench compares baseline, single proxy, and org-autopilot proxy", asy
     assert.equal(byStrategy.get("baseline")?.runs, 2);
     assert.equal(byStrategy.get("single-proxy")?.integrityPassRate, 1);
     assert.equal(byStrategy.get("org-autopilot-proxy")?.integrityPassRate, 1);
+    assert.equal(byStrategy.get("org-autopilot-proxy")?.workerCyclesMean, 2);
+    assert.ok(byStrategy.get("org-autopilot-proxy")?.metricDeltaMean < 0, "org proxy should trade visible dev score for holdout robustness");
     assert.ok(
       byStrategy.get("single-proxy").holdoutMean > byStrategy.get("baseline").holdoutMean,
       "single proxy should improve over baseline",
@@ -101,6 +103,8 @@ test("runOrgBench can compare provider-backed single-agent and org strategies", 
     assert.equal(byStrategy.get("single-agent-provider")?.integrityPassRate, 1);
     assert.equal(byStrategy.get("org-provider")?.integrityPassRate, 1);
     assert.equal(byStrategy.get("org-provider-reviewed")?.integrityPassRate, 1);
+    assert.equal(byStrategy.get("org-provider-reviewed")?.reviewCountMean, 1);
+    assert.equal(byStrategy.get("org-provider-reviewed")?.timeoutRate, 0);
     assert.ok(
       byStrategy.get("org-provider").holdoutMean > byStrategy.get("single-agent-provider").holdoutMean,
       "provider-backed org strategy should beat the provider single-pass baseline in the proxy",

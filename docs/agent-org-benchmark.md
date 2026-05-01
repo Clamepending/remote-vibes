@@ -39,7 +39,8 @@ Built-in strategies:
 | `org-provider-reviewed` | Runs worker cycle -> reviewer command -> worker cycle, feeding the reviewer memo into the next worker prompt. |
 
 Each run writes `report.json` with per-seed dev score, holdout score, recipe,
-integrity result, wall time, and strategy metadata.
+integrity result, wall time, strategy metadata, worker-cycle count, review
+count, timeout rate, metric delta across cycles, and reviewer latency.
 
 Provider-backed example:
 
