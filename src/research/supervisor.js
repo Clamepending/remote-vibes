@@ -98,33 +98,67 @@ function automaticDirectiveSignature({ event, action, report, reason }) {
   });
 }
 
-function manualDirective(action) {
+function manualDirective(action, { attachment = {}, report = null } = {}) {
+  const project = trimString(attachment?.projectName);
+  const context = report?.projectContext || {};
+  const objective = trimString(attachment?.objective) || trimString(context.goal);
+  const projectPhrase = projectPhraseFor(project);
+  const nextCommand = trimString(report?.nextCommand);
+  const reason = recommendationReason(report);
+
+  if (action === "continue") {
+    const automatic = automaticDirective({
+      action: recommendationAction(report),
+      report,
+      attachment,
+    });
+    if (automatic) {
+      return {
+        ...automatic,
+        reason: `manual continue requested; ${automatic.reason}`,
+      };
+    }
+    return {
+      text: operatingBrief({
+        headline: `Continue the research loop${projectPhrase} from the current project state.`,
+        project,
+        objective,
+        context,
+        reason,
+        command: nextCommand,
+        focus: "Choose the smallest safe next step from ACTIVE or QUEUE, and do not start broad exploration until the durable state is inspected.",
+      }),
+      reason: "manual continue requested",
+    };
+  }
   if (action === "synthesize") {
     return {
-      text: [
-        "Synthesize the current research state for review.",
-        "Cover findings, evidence, risks, open questions, and the next recommended move.",
-        "Keep it concise and link durable artifacts, result docs, or project notes when relevant.",
-      ].join(" "),
+      text: operatingBrief({
+        headline: `Synthesize the current research state${projectPhrase} for review.`,
+        project,
+        objective,
+        context,
+        reason,
+        command: nextCommand,
+        focus: "Produce a tight checkpoint: what changed since the last update, which evidence is complete or incomplete, current risks, qualitative sample/heatmap status, and the next recommended move.",
+        finish: "Do not launch new experiments during the checkpoint; end with the recommendation, durable links, and any true human gate.",
+      }),
       reason: "manual checkpoint requested",
     };
   }
   if (action === "brainstorm") {
     return {
-      text: [
-        "Replan from the project objective.",
-        "Brainstorm the next research directions, identify the most evidence-backed move, and write the plan or brief before running expensive work.",
-      ].join(" "),
+      text: operatingBrief({
+        headline: `Replan from the current research state${projectPhrase}.`,
+        project,
+        objective,
+        context,
+        reason,
+        command: nextCommand,
+        focus: "Brainstorm candidate directions from the latest positive and negative evidence, then select the smallest evidence-backed move whose result would change a decision.",
+        finish: "Write or update the plan/brief with falsifiers, expected artifacts, and cost; ask for review before expensive execution if the choice is ambiguous.",
+      }),
       reason: "manual replan requested",
-    };
-  }
-  if (action === "continue") {
-    return {
-      text: [
-        "Continue the research loop from the current project state.",
-        "Inspect ACTIVE, QUEUE, LOG, and recent artifacts, run the next safe step, and checkpoint only if a real human gate is required.",
-      ].join(" "),
-      reason: "manual continue requested",
     };
   }
   return null;
@@ -442,7 +476,10 @@ export function decideResearchSupervisorIntervention({
   }
 
   if (normalizedEvent.type === "manual-action") {
-    const manual = manualDirective(normalizedEvent.action);
+    const manual = manualDirective(normalizedEvent.action, {
+      attachment,
+      report: orchestratorReport,
+    });
     if (manual) {
       const signature = directiveSignature({
         event: normalizedEvent,

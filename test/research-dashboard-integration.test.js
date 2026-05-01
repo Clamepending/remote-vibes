@@ -629,6 +629,10 @@ test("chat research supervisor tick is silent on toggle and takes over on demand
     assert.equal(manualBody.decision.action, "directive");
     assert.equal(manualBody.decision.shouldSend, true);
     assert.match(manualBody.directive.text, /Synthesize the current research state/);
+    assert.match(manualBody.directive.text, /Project contract:/);
+    assert.match(manualBody.directive.text, /Goal: Find the prompt scaffold/);
+    assert.match(manualBody.directive.text, /Queue head: v3-fewshot/);
+    assert.match(manualBody.directive.text, /qualitative sample\/heatmap status/);
     assert.doesNotMatch(manualBody.directive.text, /Autopilot/i);
     assert.equal(manualBody.attachment.supervisor.interventionCount, 2);
     assert.equal(manualBody.projectSupervisor.supervisor.interventionCount, 2);

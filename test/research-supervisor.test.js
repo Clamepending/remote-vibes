@@ -43,11 +43,46 @@ test("research supervisor emits opaque directives on manual actions", () => {
   const decision = decideResearchSupervisorIntervention({
     attachment: attachment(),
     event: { type: "manual-action", action: "synthesize", source: "human" },
+    orchestratorReport: {
+      recommendation: { action: "run-next", reason: "QUEUE row 1 is ready", slug: "baseline" },
+      projectContext: {
+        goal: "Find the prompt scaffold that produces the most readable short-form answers.",
+        queueHead: "baseline; from main; why establish the first reproducible baseline",
+      },
+    },
   });
   assert.equal(decision.action, "directive");
   assert.equal(decision.shouldSend, true);
   assert.match(decision.directive.text, /Synthesize the current research state/);
+  assert.match(decision.directive.text, /Project contract:/);
+  assert.match(decision.directive.text, /Goal: Find the prompt scaffold/);
+  assert.match(decision.directive.text, /Queue head: baseline/);
+  assert.match(decision.directive.text, /qualitative sample\/heatmap status/);
   assert.doesNotMatch(decision.directive.text, /Autopilot/i);
+});
+
+test("research supervisor routes manual continue through project recommendation", () => {
+  const decision = decideResearchSupervisorIntervention({
+    attachment: attachment(),
+    event: { type: "manual-action", action: "continue", source: "human" },
+    orchestratorReport: {
+      recommendation: {
+        action: "continue-active",
+        reason: "ACTIVE has v070; continue or finish that move before claiming another.",
+        slug: "v070",
+      },
+      projectContext: {
+        goal: "Keep the active move bounded.",
+        activeHead: "v070; result doc results/v070.md; branch r/v070",
+      },
+    },
+  });
+  assert.equal(decision.action, "directive");
+  assert.equal(decision.shouldSend, true);
+  assert.match(decision.reason, /manual continue requested/);
+  assert.match(decision.directive.text, /Resume the active research move v070/);
+  assert.match(decision.directive.text, /Project contract:/);
+  assert.match(decision.directive.text, /Active: v070/);
 });
 
 test("research supervisor emits immediate takeover directives and dedupes later idle checks", () => {
