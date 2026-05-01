@@ -7114,6 +7114,8 @@ export async function createVibeResearchApp({
   const RESEARCH_AUTOPILOT_TERMINAL_STATUSES = new Set(["succeeded", "failed", "stopped"]);
   const RESEARCH_AUTOPILOT_MODES = new Set(["auto", "brainstorm", "experiment", "synthesize"]);
   const RESEARCH_AUTOPILOT_STOP_ACTIONS = new Set(["stop", "pause", "interrupt"]);
+  const chatAutopilotAttachmentPath = path.join(stateDir, "research-chat-autopilot.json");
+  const chatAutopilotAttachments = new Map();
 
   function numberInRange(value, fallback, min, max) {
     const numeric = Number(value);
@@ -7137,6 +7139,114 @@ export async function createVibeResearchApp({
     const text = trimText(value).replace(/\s+/g, " ");
     if (!text) return "";
     return text.length > limit ? `${text.slice(0, Math.max(0, limit - 3))}...` : text;
+  }
+
+  function defaultChatAutopilotAttachment(sessionId) {
+    return {
+      sessionId: trimText(sessionId),
+      enabled: false,
+      projectName: "",
+      objective: "",
+      mode: "auto",
+      jobId: "",
+      statusText: "",
+      createdAt: "",
+      updatedAt: "",
+      lastMessage: "",
+    };
+  }
+
+  function sanitizeChatAutopilotAttachment(value = {}, sessionId = "") {
+    if (!value || typeof value !== "object" || Array.isArray(value)) {
+      value = {};
+    }
+    const sid = trimText(value.sessionId || sessionId);
+    if (!sid) return null;
+    const createdAt = typeof value.createdAt === "string" ? value.createdAt : "";
+    const updatedAt = typeof value.updatedAt === "string" ? value.updatedAt : "";
+    return {
+      sessionId: sid,
+      enabled: Boolean(value.enabled),
+      projectName: trimText(value.projectName),
+      objective: trimText(value.objective).slice(0, 4_000),
+      mode: normalizeResearchAutopilotMode(value.mode),
+      jobId: trimText(value.jobId),
+      statusText: trimText(value.statusText).slice(0, 400),
+      createdAt,
+      updatedAt,
+      lastMessage: trimText(value.lastMessage).slice(0, 4_000),
+    };
+  }
+
+  function shouldPersistChatAutopilotAttachment(attachment) {
+    return Boolean(
+      attachment?.enabled
+      || attachment?.projectName
+      || attachment?.objective
+      || attachment?.jobId
+      || attachment?.statusText
+      || attachment?.lastMessage,
+    );
+  }
+
+  async function loadChatAutopilotAttachments() {
+    chatAutopilotAttachments.clear();
+    let parsed = null;
+    try {
+      parsed = JSON.parse(await readFile(chatAutopilotAttachmentPath, "utf8"));
+    } catch (error) {
+      if (error?.code !== "ENOENT") {
+        console.warn("[vibe-research] could not load chat autopilot attachments:", error.message);
+      }
+      return;
+    }
+    const entries = Array.isArray(parsed)
+      ? parsed.map((entry) => [entry?.sessionId, entry])
+      : Object.entries(parsed && typeof parsed === "object" ? parsed : {});
+    for (const [rawSessionId, rawAttachment] of entries) {
+      const attachment = sanitizeChatAutopilotAttachment(rawAttachment, rawSessionId);
+      if (attachment && shouldPersistChatAutopilotAttachment(attachment)) {
+        chatAutopilotAttachments.set(attachment.sessionId, attachment);
+      }
+    }
+  }
+
+  async function saveChatAutopilotAttachments() {
+    const payload = {};
+    for (const [sessionId, attachment] of chatAutopilotAttachments.entries()) {
+      if (shouldPersistChatAutopilotAttachment(attachment)) {
+        payload[sessionId] = attachment;
+      }
+    }
+    await mkdir(stateDir, { recursive: true });
+    await writeFile(chatAutopilotAttachmentPath, `${JSON.stringify(payload, null, 2)}\n`, "utf8");
+  }
+
+  function getChatAutopilotAttachment(sessionId) {
+    const sid = trimText(sessionId);
+    if (!sid) return null;
+    return chatAutopilotAttachments.get(sid) || defaultChatAutopilotAttachment(sid);
+  }
+
+  async function setChatAutopilotAttachment(sessionId, patch = {}) {
+    const sid = trimText(sessionId);
+    if (!sid) return null;
+    const now = new Date().toISOString();
+    const previous = chatAutopilotAttachments.get(sid) || defaultChatAutopilotAttachment(sid);
+    const next = sanitizeChatAutopilotAttachment({
+      ...previous,
+      ...patch,
+      sessionId: sid,
+      createdAt: previous.createdAt || now,
+      updatedAt: now,
+    }, sid);
+    if (!next || !shouldPersistChatAutopilotAttachment(next)) {
+      chatAutopilotAttachments.delete(sid);
+    } else {
+      chatAutopilotAttachments.set(sid, next);
+    }
+    await saveChatAutopilotAttachments();
+    return next || defaultChatAutopilotAttachment(sid);
   }
 
   function buildResearchAutopilotReviewPrompt({ objective = "", steering = "" } = {}) {
@@ -7224,6 +7334,20 @@ export async function createVibeResearchApp({
       events: [...job.events].reverse().slice(0, 30),
     };
   }
+
+  function serializeChatAutopilotAttachment(attachment) {
+    const normalized = sanitizeChatAutopilotAttachment(attachment, attachment?.sessionId)
+      || defaultChatAutopilotAttachment(attachment?.sessionId);
+    const job = normalized.jobId ? researchAutopilotJobs.get(normalized.jobId) : null;
+    const serializedJob = job ? serializeResearchAutopilotJob(job) : null;
+    return {
+      ...normalized,
+      statusText: normalized.statusText || serializedJob?.stopSummary || serializedJob?.currentAction || serializedJob?.status || "",
+      job: serializedJob,
+    };
+  }
+
+  await loadChatAutopilotAttachments();
 
   function pruneResearchAutopilotJobs() {
     const jobs = Array.from(researchAutopilotJobs.values()).sort((a, b) => String(b.createdAt).localeCompare(String(a.createdAt)));
@@ -7562,6 +7686,51 @@ export async function createVibeResearchApp({
     return job;
   }
 
+  function requireChatAutopilotSession(sessionId) {
+    const sid = trimText(sessionId);
+    const session = sid ? sessionManager.getSession(sid) : null;
+    if (!session) {
+      throw routeError("Session not found.", 404);
+    }
+    return session;
+  }
+
+  function getAttachedResearchAutopilotJob(attachment) {
+    const jobId = trimText(attachment?.jobId);
+    return jobId ? researchAutopilotJobs.get(jobId) || null : null;
+  }
+
+  function isResearchAutopilotJobActive(job) {
+    return Boolean(job && !RESEARCH_AUTOPILOT_TERMINAL_STATUSES.has(job.status));
+  }
+
+  async function startSessionResearchAutopilot({ sessionId, request, body = {}, attachment = null }) {
+    const projectNameInput = trimText(body.projectName) || attachment?.projectName || "";
+    const { projectName, projectDir } = await resolveResearchProjectDir(projectNameInput);
+    const message = trimText(body.message || body.steering || body.note);
+    const objective = trimText(body.objective) || attachment?.objective || message;
+    const mode = body.mode === undefined
+      ? normalizeResearchAutopilotMode(attachment?.mode)
+      : normalizeResearchAutopilotMode(body.mode);
+    const jobBody = {
+      ...body,
+      objective,
+      mode,
+      finishCanvasSessionId: body.finishCanvasSessionId || sessionId,
+    };
+    const job = startResearchAutopilotJob({ projectName, projectDir, body: jobBody, request });
+    const nextAttachment = await setChatAutopilotAttachment(sessionId, {
+      enabled: true,
+      projectName,
+      objective,
+      mode,
+      jobId: job.id,
+      statusText: "autopilot running",
+      lastMessage: message || objective,
+    });
+    return { job, attachment: nextAttachment };
+  }
+
   app.get("/api/research/autopilot/jobs", async (request, response) => {
     const limit = numberInRange(request.query.limit, 12, 1, 50);
     const jobs = Array.from(researchAutopilotJobs.values())
@@ -7599,6 +7768,163 @@ export async function createVibeResearchApp({
     }
     appendResearchAutopilotEvent(job, { type: "stop-requested", summary: job.stopSummary || "stop requested" });
     response.json({ ok: true, job: serializeResearchAutopilotJob(job) });
+  });
+
+  app.get("/api/sessions/:sessionId/research-autopilot", async (request, response) => {
+    try {
+      requireChatAutopilotSession(request.params.sessionId);
+      const attachment = getChatAutopilotAttachment(request.params.sessionId);
+      const serialized = serializeChatAutopilotAttachment(attachment);
+      response.json({ ok: true, attachment: serialized, job: serialized.job });
+    } catch (error) {
+      response.status(error.statusCode || 500).json({ error: error.message || "Could not load chat autopilot." });
+    }
+  });
+
+  app.put("/api/sessions/:sessionId/research-autopilot", async (request, response) => {
+    try {
+      requireChatAutopilotSession(request.params.sessionId);
+      const body = request.body && typeof request.body === "object" && !Array.isArray(request.body)
+        ? request.body
+        : {};
+      const current = getChatAutopilotAttachment(request.params.sessionId);
+      const attachment = await setChatAutopilotAttachment(request.params.sessionId, {
+        enabled: body.enabled === undefined ? current.enabled : Boolean(body.enabled),
+        projectName: body.projectName === undefined ? current.projectName : body.projectName,
+        objective: body.objective === undefined ? current.objective : body.objective,
+        mode: body.mode === undefined ? current.mode : body.mode,
+        jobId: body.jobId === undefined ? current.jobId : body.jobId,
+        statusText: body.statusText === undefined ? current.statusText : body.statusText,
+        lastMessage: body.lastMessage === undefined ? current.lastMessage : body.lastMessage,
+      });
+      const serialized = serializeChatAutopilotAttachment(attachment);
+      response.json({ ok: true, attachment: serialized, job: serialized.job });
+    } catch (error) {
+      response.status(error.statusCode || 500).json({ error: error.message || "Could not update chat autopilot." });
+    }
+  });
+
+  app.post("/api/sessions/:sessionId/research-autopilot/start", async (request, response) => {
+    try {
+      requireChatAutopilotSession(request.params.sessionId);
+      const body = request.body && typeof request.body === "object" && !Array.isArray(request.body)
+        ? request.body
+        : {};
+      const current = getChatAutopilotAttachment(request.params.sessionId);
+      const { job, attachment } = await startSessionResearchAutopilot({
+        sessionId: request.params.sessionId,
+        request,
+        body,
+        attachment: current,
+      });
+      response.status(202).json({
+        ok: true,
+        attachment: serializeChatAutopilotAttachment(attachment),
+        job: serializeResearchAutopilotJob(job),
+      });
+    } catch (error) {
+      response.status(error.statusCode || 500).json({ error: error.message || "Could not start chat autopilot." });
+    }
+  });
+
+  app.post("/api/sessions/:sessionId/research-autopilot/steer", async (request, response) => {
+    try {
+      requireChatAutopilotSession(request.params.sessionId);
+      const body = request.body && typeof request.body === "object" && !Array.isArray(request.body)
+        ? request.body
+        : {};
+      const current = getChatAutopilotAttachment(request.params.sessionId);
+      const action = trimText(body.action).toLowerCase();
+      const shouldStop = RESEARCH_AUTOPILOT_STOP_ACTIONS.has(action);
+      const message = trimText(body.message || body.note || body.steering);
+      let job = getAttachedResearchAutopilotJob(current);
+
+      if (!isResearchAutopilotJobActive(job)) {
+        if (shouldStop || body.startIfMissing === false) {
+          const attachment = await setChatAutopilotAttachment(request.params.sessionId, {
+            ...current,
+            enabled: false,
+            statusText: shouldStop ? "autopilot paused" : current.statusText,
+            lastMessage: message || current.lastMessage,
+          });
+          const serialized = serializeChatAutopilotAttachment(attachment);
+          response.json({ ok: true, attachment: serialized, job: serialized.job, steering: null });
+          return;
+        }
+        const started = await startSessionResearchAutopilot({
+          sessionId: request.params.sessionId,
+          request,
+          body: {
+            ...body,
+            objective: trimText(body.objective) || current.objective || message,
+            mode: body.mode === undefined ? current.mode : body.mode,
+          },
+          attachment: current,
+        });
+        response.status(202).json({
+          ok: true,
+          attachment: serializeChatAutopilotAttachment(started.attachment),
+          job: serializeResearchAutopilotJob(started.job),
+          steering: null,
+        });
+        return;
+      }
+
+      const mode = body.mode === undefined ? current.mode || job.mode : normalizeResearchAutopilotMode(body.mode);
+      const objective = trimText(body.objective) || current.objective || job.objective || message;
+      const steering = applyResearchAutopilotSteering(job, {
+        ...body,
+        action: shouldStop ? "pause" : action,
+        mode,
+        objective,
+        message,
+        source: trimText(body.source) || "chat",
+      });
+      const attachment = await setChatAutopilotAttachment(request.params.sessionId, {
+        enabled: !shouldStop,
+        projectName: job.projectName || current.projectName,
+        objective,
+        mode: job.mode || mode,
+        jobId: job.id,
+        statusText: shouldStop ? "autopilot paused" : "steering queued",
+        lastMessage: message || current.lastMessage,
+      });
+      response.json({
+        ok: true,
+        steering,
+        attachment: serializeChatAutopilotAttachment(attachment),
+        job: serializeResearchAutopilotJob(job),
+      });
+    } catch (error) {
+      response.status(error.statusCode || 500).json({ error: error.message || "Could not steer chat autopilot." });
+    }
+  });
+
+  app.post("/api/sessions/:sessionId/research-autopilot/stop", async (request, response) => {
+    try {
+      requireChatAutopilotSession(request.params.sessionId);
+      const current = getChatAutopilotAttachment(request.params.sessionId);
+      const job = getAttachedResearchAutopilotJob(current);
+      if (isResearchAutopilotJobActive(job)) {
+        applyResearchAutopilotSteering(job, {
+          action: "pause",
+          message: trimText(request.body?.message) || "Autopilot paused from chat.",
+          source: trimText(request.body?.source) || "chat",
+        });
+      }
+      const attachment = await setChatAutopilotAttachment(request.params.sessionId, {
+        ...current,
+        enabled: false,
+        statusText: "autopilot paused",
+      });
+      response.json({
+        ok: true,
+        attachment: serializeChatAutopilotAttachment(attachment),
+        job: job ? serializeResearchAutopilotJob(job) : null,
+      });
+    } catch (error) {
+      response.status(error.statusCode || 500).json({ error: error.message || "Could not stop chat autopilot." });
+    }
   });
 
   app.post("/api/research/autopilot/jobs/:jobId/steer", async (request, response) => {

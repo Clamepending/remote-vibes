@@ -1549,17 +1549,20 @@ function sanitizeChatAutopilotSession(value) {
   if (!value || typeof value !== "object" || Array.isArray(value)) {
     return null;
   }
+  const sessionId = String(value.sessionId || "").trim();
   const enabled = Boolean(value.enabled);
   const projectName = String(value.projectName || "").trim();
   const objective = String(value.objective || "").trim().slice(0, 4_000);
   const mode = RESEARCH_AUTOPILOT_MODES.some((entry) => entry.value === value.mode) ? value.mode : "auto";
   const jobId = String(value.jobId || "").trim();
   const statusText = String(value.statusText || "").trim().slice(0, 400);
+  const createdAt = typeof value.createdAt === "string" ? value.createdAt : "";
   const updatedAt = typeof value.updatedAt === "string" ? value.updatedAt : "";
-  if (!enabled && !projectName && !objective && !jobId) {
+  const lastMessage = String(value.lastMessage || "").trim().slice(0, 4_000);
+  if (!enabled && !projectName && !objective && !jobId && !statusText && !lastMessage) {
     return null;
   }
-  return { enabled, projectName, objective, mode, jobId, statusText, updatedAt };
+  return { sessionId, enabled, projectName, objective, mode, jobId, statusText, createdAt, updatedAt, lastMessage };
 }
 
 function loadChatAutopilotSessions() {
@@ -2689,6 +2692,9 @@ const state = {
   // eat the message.
   richSessionComposerQueue: loadComposerQueue(),
   chatAutopilotSessions: loadChatAutopilotSessions(),
+  chatAutopilotAttachments: {},
+  chatAutopilotAttachmentLoading: {},
+  chatAutopilotAttachmentLoaded: {},
   chatAutopilotPending: {},
   // Per-session previous streamWorking value, used to detect the
   // working→idle transition that triggers the queue flush.
@@ -7328,7 +7334,9 @@ function getChatAutopilotSessionConfig(sessionId) {
       updatedAt: "",
     };
   }
-  const existing = sanitizeChatAutopilotSession(state.chatAutopilotSessions[sid]) || {};
+  const local = sanitizeChatAutopilotSession(state.chatAutopilotSessions[sid]) || {};
+  const server = sanitizeChatAutopilotSession(state.chatAutopilotAttachments[sid]) || {};
+  const existing = { ...local, ...server };
   return {
     enabled: Boolean(existing.enabled),
     projectName: existing.projectName || state.researchAutopilot.projectName || getResearchAutopilotSelectedProject(),
@@ -7336,7 +7344,9 @@ function getChatAutopilotSessionConfig(sessionId) {
     mode: existing.mode || "auto",
     jobId: existing.jobId || "",
     statusText: existing.statusText || "",
+    createdAt: existing.createdAt || "",
     updatedAt: existing.updatedAt || "",
+    lastMessage: existing.lastMessage || "",
   };
 }
 
@@ -7350,8 +7360,10 @@ function updateChatAutopilotSessionConfig(sessionId, patch = {}) {
   });
   if (!next) {
     delete state.chatAutopilotSessions[sid];
+    delete state.chatAutopilotAttachments[sid];
   } else {
     state.chatAutopilotSessions[sid] = next;
+    state.chatAutopilotAttachments[sid] = next;
   }
   saveChatAutopilotSessions();
   return next;
@@ -7374,6 +7386,26 @@ function getChatAutopilotJob(config = {}) {
   if (!jobId) return null;
   if (state.researchAutopilot.job?.id === jobId) return state.researchAutopilot.job;
   return state.researchAutopilot.jobs.find((job) => job.id === jobId) || null;
+}
+
+function applyChatAutopilotAttachment(sessionId, payload = {}) {
+  const sid = String(sessionId || payload?.attachment?.sessionId || "").trim();
+  if (!sid) return null;
+  const job = payload?.job || payload?.attachment?.job || null;
+  if (job?.id) {
+    applyResearchAutopilotJob(job);
+  }
+  const attachment = sanitizeChatAutopilotSession(payload?.attachment || payload);
+  if (!attachment) {
+    delete state.chatAutopilotAttachments[sid];
+    state.chatAutopilotAttachmentLoaded[sid] = true;
+    return null;
+  }
+  state.chatAutopilotAttachments[sid] = attachment;
+  state.chatAutopilotSessions[sid] = attachment;
+  state.chatAutopilotAttachmentLoaded[sid] = true;
+  saveChatAutopilotSessions();
+  return attachment;
 }
 
 function inferChatAutopilotMode(message, fallback = "auto") {
@@ -7685,6 +7717,13 @@ function refreshRichSessionSurfaceUi({ scrollToBottom = false } = {}) {
   }
   if (activeSession?.id && !state.researchAutopilot.jobsLoaded && !state.researchAutopilot.jobsLoading) {
     void loadResearchAutopilotJobs({ render: false }).then(() => refreshRichSessionSurfaceUi());
+  }
+  if (
+    activeSession?.id
+    && !state.chatAutopilotAttachmentLoaded[activeSession.id]
+    && !state.chatAutopilotAttachmentLoading[activeSession.id]
+  ) {
+    void loadChatAutopilotAttachment(activeSession.id, { render: false }).then(() => refreshRichSessionSurfaceUi());
   }
 
   const shouldStickToBottom = scrollToBottom || isRichSessionFeedAtBottom(feed);
@@ -38580,6 +38619,58 @@ async function ensureChatAutopilotResources() {
   }
 }
 
+async function loadChatAutopilotAttachment(sessionId, { render = true } = {}) {
+  const sid = String(sessionId || "").trim();
+  if (!sid || state.chatAutopilotAttachmentLoading[sid]) return null;
+  state.chatAutopilotAttachmentLoading[sid] = true;
+  try {
+    const payload = await fetchJson(`/api/sessions/${encodeURIComponent(sid)}/research-autopilot`, {
+      timeoutMs: 30_000,
+    });
+    const attachment = applyChatAutopilotAttachment(sid, payload);
+    if (payload?.job?.id) {
+      void pollResearchAutopilotJob(payload.job.id);
+    }
+    return attachment;
+  } catch {
+    state.chatAutopilotAttachmentLoaded[sid] = true;
+    return null;
+  } finally {
+    delete state.chatAutopilotAttachmentLoading[sid];
+    if (render) refreshRichSessionSurfaceUi();
+  }
+}
+
+async function updateChatAutopilotAttachment(sessionId, patch = {}, { render = true } = {}) {
+  const sid = String(sessionId || "").trim();
+  if (!sid) return null;
+  const optimistic = updateChatAutopilotSessionConfig(sid, patch);
+  if (render) refreshRichSessionSurfaceUi();
+  try {
+    const payload = await fetchJson(`/api/sessions/${encodeURIComponent(sid)}/research-autopilot`, {
+      method: "PUT",
+      body: JSON.stringify({
+        ...optimistic,
+        ...patch,
+      }),
+      timeoutMs: 30_000,
+    });
+    const attachment = applyChatAutopilotAttachment(sid, payload);
+    if (payload?.job?.id) {
+      void pollResearchAutopilotJob(payload.job.id);
+    }
+    return attachment;
+  } catch (error) {
+    updateChatAutopilotSessionConfig(sid, {
+      ...getChatAutopilotSessionConfig(sid),
+      statusText: error.message || "Could not update autopilot.",
+    });
+    return null;
+  } finally {
+    if (render) refreshRichSessionSurfaceUi();
+  }
+}
+
 function buildChatAutopilotStartBody(config, objective) {
   const autopilot = state.researchAutopilot;
   return {
@@ -38626,20 +38717,23 @@ async function startChatAutopilotRun(activeSession, objective, options = {}) {
     statusText: "starting autopilot",
   }) || current;
   try {
-    const payload = await fetchJson(`/api/research/projects/${encodeURIComponent(projectName)}/autopilot/jobs`, {
+    const payload = await fetchJson(`/api/sessions/${encodeURIComponent(sessionId)}/research-autopilot/start`, {
       method: "POST",
-      body: JSON.stringify(buildChatAutopilotStartBody({ ...nextConfig, mode }, objective)),
+      body: JSON.stringify({
+        ...buildChatAutopilotStartBody({ ...nextConfig, mode }, objective),
+        projectName,
+      }),
       timeoutMs: 30_000,
     });
-    const job = payload?.job || null;
-    applyResearchAutopilotJob(job);
+    applyChatAutopilotAttachment(sessionId, payload);
+    const job = payload?.job || payload?.attachment?.job || null;
     updateChatAutopilotSessionConfig(sessionId, {
       enabled: true,
-      projectName,
-      objective,
-      mode,
+      projectName: payload?.attachment?.projectName || projectName,
+      objective: payload?.attachment?.objective || objective,
+      mode: payload?.attachment?.mode || mode,
       jobId: job?.id || "",
-      statusText: "autopilot running",
+      statusText: payload?.attachment?.statusText || "autopilot running",
     });
     if (job?.id) {
       void pollResearchAutopilotJob(job.id);
@@ -38675,30 +38769,32 @@ async function steerChatAutopilotRun(activeSession, message, options = {}) {
   setChatAutopilotPending(sessionId, action === "pause" ? "pausing autopilot" : "steering autopilot");
   refreshRichSessionSurfaceUi();
   try {
-    const payload = await fetchJson(`/api/research/autopilot/jobs/${encodeURIComponent(job.id)}/steer`, {
+    const payload = await fetchJson(`/api/sessions/${encodeURIComponent(sessionId)}/research-autopilot/steer`, {
       method: "POST",
       body: JSON.stringify({
         action,
         message,
         mode,
         objective: config.objective || message,
+        projectName: config.projectName,
         source: "chat",
       }),
       timeoutMs: 30_000,
     });
-    applyResearchAutopilotJob(payload?.job || null);
+    applyChatAutopilotAttachment(sessionId, payload);
+    const nextJob = payload?.job || payload?.attachment?.job || null;
     updateChatAutopilotSessionConfig(sessionId, {
       enabled: action !== "pause",
-      projectName: payload?.job?.projectName || config.projectName,
-      objective: config.objective || message,
-      mode,
-      jobId: payload?.job?.id || config.jobId,
-      statusText: action === "pause" ? "autopilot paused" : "steering queued",
+      projectName: payload?.attachment?.projectName || nextJob?.projectName || config.projectName,
+      objective: payload?.attachment?.objective || config.objective || message,
+      mode: payload?.attachment?.mode || mode,
+      jobId: nextJob?.id || config.jobId,
+      statusText: payload?.attachment?.statusText || (action === "pause" ? "autopilot paused" : "steering queued"),
     });
-    if (payload?.job?.id) {
-      void pollResearchAutopilotJob(payload.job.id);
+    if (nextJob?.id) {
+      void pollResearchAutopilotJob(nextJob.id);
     }
-    return payload?.job || null;
+    return nextJob || null;
   } catch (error) {
     updateChatAutopilotSessionConfig(sessionId, {
       ...config,
@@ -38715,21 +38811,16 @@ async function stopChatAutopilotRun(activeSession) {
   const sessionId = activeSession?.id || "";
   if (!sessionId) return;
   const config = getChatAutopilotSessionConfig(sessionId);
-  const job = getChatAutopilotJob(config);
   updateChatAutopilotSessionConfig(sessionId, { ...config, enabled: false, statusText: "autopilot off" });
-  if (!job || isResearchAutopilotTerminalStatus(job.status)) {
-    refreshRichSessionSurfaceUi();
-    return;
-  }
   setChatAutopilotPending(sessionId, "pausing autopilot");
   refreshRichSessionSurfaceUi();
   try {
-    const payload = await fetchJson(`/api/research/autopilot/jobs/${encodeURIComponent(job.id)}/stop`, {
+    const payload = await fetchJson(`/api/sessions/${encodeURIComponent(sessionId)}/research-autopilot/stop`, {
       method: "POST",
       body: JSON.stringify({ source: "chat" }),
       timeoutMs: 30_000,
     });
-    applyResearchAutopilotJob(payload?.job || null);
+    applyChatAutopilotAttachment(sessionId, payload);
   } catch (error) {
     updateChatAutopilotSessionConfig(sessionId, {
       ...config,
@@ -44090,7 +44181,7 @@ function bindShellEvents() {
         if (config.enabled) {
           void stopChatAutopilotRun(activeSession);
         } else {
-          updateChatAutopilotSessionConfig(activeSession.id, {
+          void updateChatAutopilotAttachment(activeSession.id, {
             enabled: true,
             projectName: getChatAutopilotSelectedProjectName(config),
             mode: config.mode || "auto",
@@ -44128,7 +44219,7 @@ function bindShellEvents() {
       if (!(select instanceof HTMLSelectElement)) return;
       const activeSession = getActiveSession();
       if (!activeSession?.id) return;
-      updateChatAutopilotSessionConfig(activeSession.id, {
+      void updateChatAutopilotAttachment(activeSession.id, {
         ...getChatAutopilotSessionConfig(activeSession.id),
         projectName: select.value,
         statusText: select.value ? `project set to ${select.value}` : "",

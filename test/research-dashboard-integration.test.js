@@ -379,6 +379,106 @@ test("POST /api/research/autopilot/jobs/<id>/steer queues human steering", async
   });
 });
 
+test("session research autopilot attachment persists chat-native control state", async () => {
+  await withLibraryServer(async ({ baseUrl }) => {
+    const sessionRes = await fetch(`${baseUrl}/api/sessions`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ providerId: "shell", name: "Research chat" }),
+    });
+    assert.equal(sessionRes.status, 201);
+    const session = (await sessionRes.json()).session;
+    assert.ok(session.id);
+
+    const save = await fetch(`${baseUrl}/api/sessions/${session.id}/research-autopilot`, {
+      method: "PUT",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        enabled: true,
+        projectName: "prose-style",
+        mode: "brainstorm",
+        statusText: "send an objective to start autopilot",
+      }),
+    });
+    assert.equal(save.status, 200);
+    const saved = await save.json();
+    assert.equal(saved.ok, true);
+    assert.equal(saved.attachment.enabled, true);
+    assert.equal(saved.attachment.projectName, "prose-style");
+    assert.equal(saved.attachment.mode, "brainstorm");
+
+    const getSaved = await fetch(`${baseUrl}/api/sessions/${session.id}/research-autopilot`);
+    assert.equal(getSaved.status, 200);
+    const loaded = await getSaved.json();
+    assert.equal(loaded.attachment.projectName, "prose-style");
+    assert.equal(loaded.attachment.job, null);
+
+    const start = await fetch(`${baseUrl}/api/sessions/${session.id}/research-autopilot/start`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        projectName: "prose-style",
+        objective: "keep testing concise prose improvements until interrupted",
+        mode: "experiment",
+        commandText: "node -e \"console.log('score=0.64')\"",
+        metricRegex: "score=([0-9.]+)",
+        maxSteps: 3,
+        intervalMs: 10_000,
+        checkPaper: false,
+      }),
+    });
+    assert.equal(start.status, 202);
+    const started = await start.json();
+    assert.equal(started.ok, true);
+    assert.equal(started.attachment.sessionId, session.id);
+    assert.equal(started.attachment.enabled, true);
+    assert.equal(started.attachment.jobId, started.job.id);
+    assert.equal(started.attachment.job.id, started.job.id);
+
+    let job = started.job;
+    for (let attempt = 0; attempt < 60 && !(job.status === "running" && job.stepCount >= 1); attempt += 1) {
+      await new Promise((resolve) => setTimeout(resolve, 50));
+      const poll = await fetch(`${baseUrl}/api/research/autopilot/jobs/${job.id}`);
+      assert.equal(poll.status, 200);
+      job = (await poll.json()).job;
+    }
+    assert.equal(job.status, "running", job.error || job.stopSummary);
+
+    const steer = await fetch(`${baseUrl}/api/sessions/${session.id}/research-autopilot/steer`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        message: "Switch to synthesis from the chat control strip.",
+        mode: "synthesize",
+        source: "chat",
+      }),
+    });
+    assert.equal(steer.status, 200);
+    const steered = await steer.json();
+    assert.equal(steered.ok, true);
+    assert.equal(steered.attachment.mode, "synthesize");
+    assert.equal(steered.job.lastSteering.source, "chat");
+    assert.match(steered.job.lastSteering.message, /Switch to synthesis/);
+
+    const stop = await fetch(`${baseUrl}/api/sessions/${session.id}/research-autopilot/stop`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ source: "chat" }),
+    });
+    assert.equal(stop.status, 200);
+    const stopped = await stop.json();
+    assert.equal(stopped.ok, true);
+    assert.equal(stopped.attachment.enabled, false);
+    assert.equal(stopped.job.stopRequested, true);
+
+    const finalGet = await fetch(`${baseUrl}/api/sessions/${session.id}/research-autopilot`);
+    assert.equal(finalGet.status, 200);
+    const finalLoaded = await finalGet.json();
+    assert.equal(finalLoaded.attachment.enabled, false);
+    assert.equal(finalLoaded.attachment.jobId, started.job.id);
+  });
+});
+
 test("POST /api/research/org-bench/run executes local benchmark smoke", async () => {
   await withLibraryServer(async ({ baseUrl }) => {
     const res = await fetch(`${baseUrl}/api/research/org-bench/run`, {
@@ -504,6 +604,9 @@ test("main app bundle exposes the native research workspace", async () => {
     assert.match(jsText, /renderResearchAutopilotPanel/);
     assert.match(jsText, /renderRichSessionAutopilotPanel/);
     assert.match(jsText, /\/api\/research\/autopilot\/jobs/);
+    assert.match(jsText, /\/research-autopilot\/start/);
+    assert.match(jsText, /\/research-autopilot\/steer/);
+    assert.match(jsText, /\/research-autopilot\/stop/);
     assert.match(jsText, /research-autopilot-steer-form/);
     assert.match(jsText, /data-chat-autopilot-toggle/);
     assert.match(jsText, /\/api\/research\/org-bench\/jobs/);
