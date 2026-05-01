@@ -5,15 +5,18 @@
 //   - GET /research/<name>                       → static project page
 
 import assert from "node:assert/strict";
+import { execFile } from "node:child_process";
 import { mkdtemp, mkdir, readFile, rm, copyFile } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import test from "node:test";
 import { fileURLToPath } from "node:url";
+import { promisify } from "node:util";
 import { createVibeResearchApp } from "../src/create-app.js";
 import { createResearchBrief } from "../src/research/brief.js";
 import { SleepPreventionService } from "../src/sleep-prevention.js";
 
+const execFileAsync = promisify(execFile);
 const HERE = path.dirname(fileURLToPath(import.meta.url));
 const FIXTURE_LIBRARY = path.join(HERE, "fixtures", "research", "library");
 
@@ -121,6 +124,35 @@ test("POST /api/research/projects creates a project index for chat supervision",
     assert.equal(detail.goal, "Advance semantic autogaze from the active chat.");
     assert.equal(detail.queue[0].slug, "initial-research-loop");
     assert.equal(detail.doctor.counts.error, 0);
+  });
+});
+
+test("POST /api/research/projects checkpoints the new Library project when Library is git-backed", async () => {
+  await withLibraryServer(async ({ baseUrl, libraryRoot }) => {
+    await execFileAsync("git", ["init"], { cwd: libraryRoot });
+    await execFileAsync("git", ["config", "user.name", "Test User"], { cwd: libraryRoot });
+    await execFileAsync("git", ["config", "user.email", "test@example.com"], { cwd: libraryRoot });
+    await execFileAsync("git", ["add", "."], { cwd: libraryRoot });
+    await execFileAsync("git", ["commit", "-m", "seed"], { cwd: libraryRoot });
+
+    const res = await fetch(`${baseUrl}/api/research/projects`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        name: "same-chat-supervisor",
+        goal: "Keep a same-chat research supervisor durable.",
+      }),
+    });
+    assert.equal(res.status, 201);
+    const body = await res.json();
+    assert.equal(body.git.status, "committed", JSON.stringify(body.git));
+    assert.match(body.git.commit, /^[0-9a-f]{7,}$/);
+    assert.equal(body.git.push.status, "skipped");
+
+    const { stdout } = await execFileAsync("git", ["log", "--oneline", "-1"], { cwd: libraryRoot });
+    assert.match(stdout, /research: create same-chat-supervisor project index/);
+    const staged = await execFileAsync("git", ["status", "--porcelain", "--", "projects/same-chat-supervisor"], { cwd: libraryRoot });
+    assert.equal(staged.stdout.trim(), "");
   });
 });
 

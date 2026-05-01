@@ -7070,6 +7070,79 @@ export async function createVibeResearchApp({
     }
   }
 
+  async function gitOutput(cwd, args, options = {}) {
+    const { stdout = "" } = await execFileAsync("git", ["-C", cwd, ...args], {
+      timeout: 10_000,
+      maxBuffer: 256 * 1024,
+      ...options,
+    });
+    return String(stdout || "").trim();
+  }
+
+  async function ensureLibraryGitIdentity(libraryRoot) {
+    const name = await gitOutput(libraryRoot, ["config", "--get", "user.name"]).catch(() => "");
+    if (!name) {
+      await gitOutput(libraryRoot, ["config", "user.name", "Vibe Research"]);
+    }
+    const email = await gitOutput(libraryRoot, ["config", "--get", "user.email"]).catch(() => "");
+    if (!email) {
+      await gitOutput(libraryRoot, ["config", "user.email", "vibe-research@local"]);
+    }
+  }
+
+  async function maybeCheckpointCreatedResearchProject(libraryRoot, projectName) {
+    const name = String(projectName || "").trim();
+    const startedAt = new Date().toISOString();
+    if (!name || !DEFAULT_PROJECT_NAME_PATTERN.test(name)) {
+      return { status: "skipped", reason: "invalid-project-name" };
+    }
+    try {
+      const topLevel = await gitOutput(libraryRoot, ["rev-parse", "--show-toplevel"]);
+      const [topLevelReal, libraryRootReal] = await Promise.all([
+        realpath(topLevel).catch(() => path.resolve(topLevel)),
+        realpath(libraryRoot).catch(() => path.resolve(libraryRoot)),
+      ]);
+      if (path.resolve(topLevelReal) !== path.resolve(libraryRootReal)) {
+        return { status: "skipped", reason: "library-root-is-not-git-toplevel" };
+      }
+      await ensureLibraryGitIdentity(libraryRoot);
+      const relProjectDir = path.join("projects", name);
+      await gitOutput(libraryRoot, ["add", "--", relProjectDir]);
+      const staged = await gitOutput(libraryRoot, ["diff", "--cached", "--name-only", "--", relProjectDir]);
+      if (!staged) {
+        return { status: "clean", reason: "no-new-project-changes" };
+      }
+      await gitOutput(libraryRoot, ["commit", "-m", `research: create ${name} project index`], { timeout: 30_000 });
+      const commit = await gitOutput(libraryRoot, ["rev-parse", "--short", "HEAD"]);
+      const remoteName = String(settingsStore.settings.wikiGitRemoteName || "origin").trim() || "origin";
+      const remoteBranch = String(settingsStore.settings.wikiGitRemoteBranch || "main").trim() || "main";
+      let push = { status: "skipped", reason: "library-remote-disabled" };
+      if (settingsStore.settings.wikiGitRemoteEnabled) {
+        try {
+          await gitOutput(libraryRoot, ["push", "-u", remoteName, `HEAD:${remoteBranch}`], {
+            timeout: 60_000,
+            maxBuffer: 512 * 1024,
+          });
+          push = { status: "pushed", remoteName, remoteBranch };
+        } catch (error) {
+          push = {
+            status: "error",
+            remoteName,
+            remoteBranch,
+            error: String(error?.stderr || error?.stdout || error?.message || error || "").trim().slice(0, 1_000),
+          };
+        }
+      }
+      return { status: "committed", commit, push, startedAt, finishedAt: new Date().toISOString() };
+    } catch (error) {
+      return {
+        status: "skipped",
+        reason: "git-checkpoint-failed",
+        error: String(error?.stderr || error?.stdout || error?.message || error || "").trim().slice(0, 1_000),
+      };
+    }
+  }
+
   // Research dashboard: list every project under <wikiPath>/projects/ with a
   // one-row summary (criterion, leaderboard size, active count, bench version).
   // Powers the at-a-glance index at /research.
@@ -7128,6 +7201,7 @@ export async function createVibeResearchApp({
         repoRoot: appRootDir,
         force: false,
       });
+      const git = await maybeCheckpointCreatedResearchProject(libraryRoot, name);
       const projects = await listResearchProjects(libraryRoot);
       const project = projects.find((entry) => entry.name === name) || null;
       const detail = await getResearchProjectDetail(libraryRoot, name).catch(() => null);
@@ -7140,6 +7214,7 @@ export async function createVibeResearchApp({
         projects,
         wrote: result.wrote || [],
         codeRepo: explicitCodeRepo || inferredCodeRepo || "",
+        git,
       });
     } catch (error) {
       const message = error.message || "Could not create research project.";
