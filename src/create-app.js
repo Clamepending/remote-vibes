@@ -7107,6 +7107,10 @@ export async function createVibeResearchApp({
       }
       await ensureLibraryGitIdentity(libraryRoot);
       const relProjectDir = path.join("projects", name);
+      const preStaged = await gitOutput(libraryRoot, ["diff", "--cached", "--name-only"]);
+      if (preStaged) {
+        return { status: "skipped", reason: "pre-existing-staged-library-changes" };
+      }
       await gitOutput(libraryRoot, ["add", "--", relProjectDir]);
       const staged = await gitOutput(libraryRoot, ["diff", "--cached", "--name-only", "--", relProjectDir]);
       if (!staged) {

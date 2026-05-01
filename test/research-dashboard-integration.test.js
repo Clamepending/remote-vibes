@@ -6,7 +6,7 @@
 
 import assert from "node:assert/strict";
 import { execFile } from "node:child_process";
-import { mkdtemp, mkdir, readFile, rm, copyFile } from "node:fs/promises";
+import { mkdtemp, mkdir, readFile, rm, copyFile, writeFile } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import test from "node:test";
@@ -153,6 +153,36 @@ test("POST /api/research/projects checkpoints the new Library project when Libra
     assert.match(stdout, /research: create same-chat-supervisor project index/);
     const staged = await execFileAsync("git", ["status", "--porcelain", "--", "projects/same-chat-supervisor"], { cwd: libraryRoot });
     assert.equal(staged.stdout.trim(), "");
+  });
+});
+
+test("POST /api/research/projects does not commit unrelated staged Library changes", async () => {
+  await withLibraryServer(async ({ baseUrl, libraryRoot }) => {
+    await execFileAsync("git", ["init"], { cwd: libraryRoot });
+    await execFileAsync("git", ["config", "user.name", "Test User"], { cwd: libraryRoot });
+    await execFileAsync("git", ["config", "user.email", "test@example.com"], { cwd: libraryRoot });
+    await execFileAsync("git", ["add", "."], { cwd: libraryRoot });
+    await execFileAsync("git", ["commit", "-m", "seed"], { cwd: libraryRoot });
+    const unrelatedReadme = path.join(libraryRoot, "projects", "prose-style", "README.md");
+    await writeFile(unrelatedReadme, `${await readFile(unrelatedReadme, "utf8")}\n<!-- staged unrelated edit -->\n`, "utf8");
+    await execFileAsync("git", ["add", "projects/prose-style/README.md"], { cwd: libraryRoot });
+
+    const res = await fetch(`${baseUrl}/api/research/projects`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        name: "staged-safety",
+        goal: "Create without sweeping unrelated staged files.",
+      }),
+    });
+    assert.equal(res.status, 201);
+    const body = await res.json();
+    assert.equal(body.git.status, "skipped");
+    assert.equal(body.git.reason, "pre-existing-staged-library-changes");
+
+    const { stdout } = await execFileAsync("git", ["status", "--porcelain"], { cwd: libraryRoot });
+    assert.match(stdout, /^M  projects\/prose-style\/README\.md/m);
+    assert.match(stdout, /^\?\? projects\/staged-safety\//m);
   });
 });
 
