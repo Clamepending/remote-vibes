@@ -242,6 +242,77 @@ test("reducer: remove frame deletes the entry and tightens the order", () => {
   assert.deepEqual(entries.map((e) => e.id), ["u1", "a2"]);
 });
 
+test("reducer: selectNarrativeEntries sorts chronologically even when an upsert lands with an earlier timestamp than existing entries", () => {
+  // Regression: when a supervisor injects a message on behalf of the user
+  // (or a late-arriving tool result lands after live status updates), the
+  // upsert reaches the client with a timestamp that predates entries
+  // already in state.order. Without a render-time sort the new entry would
+  // render at the bottom of the chat instead of slotting into its true
+  // chronological spot. selectNarrativeEntries must order by (timestamp,
+  // seq) so the rendered chat matches the server's snapshot regardless of
+  // arrival sequence.
+  let state = applyNarrativeFrame(createInitialNarrativeState(), makeNarrativeInitFrame({
+    sessionId: "s",
+    lastSeq: 0,
+    entries: [
+      { id: "u1", kind: "user", text: "stop condition", timestamp: "2026-05-01T18:08:00.000Z", seq: 1 },
+      { id: "a1", kind: "assistant", text: "agent reply", timestamp: "2026-05-01T18:11:00.000Z", seq: 2 },
+    ],
+  }));
+
+  // Supervisor-injected user message lands later but the timestamp falls
+  // between the two existing entries — emulates a directive that was
+  // stamped at decision time and arrives after live activity.
+  state = applyNarrativeFrame(state, makeNarrativeEventFrame({
+    sessionId: "s", op: "upsert", seq: 3,
+    entry: {
+      id: "u2", kind: "user", text: "supervisor directive",
+      timestamp: "2026-05-01T18:09:30.000Z", seq: 3,
+    },
+  }));
+
+  const order = selectNarrativeEntries(state).map((entry) => entry.id);
+  assert.deepEqual(order, ["u1", "u2", "a1"],
+    "chronological order is enforced at render time, not insertion time");
+});
+
+test("reducer: same-timestamp entries fall back to seq for within-turn ordering", () => {
+  // A single Claude message can carry text + tool_use blocks that share the
+  // same payload timestamp. The seq tiebreaker keeps the narrating text
+  // above the tool card it introduces.
+  const sharedTs = "2026-05-01T18:00:00.000Z";
+  const state = applyNarrativeFrame(createInitialNarrativeState(), makeNarrativeInitFrame({
+    sessionId: "s",
+    lastSeq: 0,
+    entries: [
+      { id: "tool-1", kind: "tool", label: "Read", text: "/tmp/x", timestamp: sharedTs, seq: 11, status: "running" },
+      { id: "asst-1", kind: "assistant", text: "Let me check.", timestamp: sharedTs, seq: 10 },
+    ],
+  }));
+  const order = selectNarrativeEntries(state).map((entry) => entry.id);
+  assert.deepEqual(order, ["asst-1", "tool-1"], "lower seq wins when timestamps tie");
+});
+
+test("reducer: undated and zero-seq entries fall back to insertion order so legacy upserts stay stable", () => {
+  // Pre-v2 producers and some test fixtures emit entries with no timestamp
+  // and no real seq (seq is stamped to 0 by normaliseNarrativeEntry). All
+  // three sort keys collapse, so the tertiary insertion-order tiebreaker
+  // must keep them in the order they arrived.
+  let state = applyNarrativeFrame(createInitialNarrativeState(), makeNarrativeInitFrame({
+    sessionId: "s", lastSeq: 0, entries: [{ id: "u1", kind: "user", text: "hi" }],
+  }));
+  state = applyNarrativeFrame(state, makeNarrativeEventFrame({
+    sessionId: "s", op: "upsert", seq: 1,
+    entry: { id: "a1", kind: "assistant", text: "hello" },
+  }));
+  state = applyNarrativeFrame(state, makeNarrativeEventFrame({
+    sessionId: "s", op: "upsert", seq: 2,
+    entry: { id: "t1", kind: "tool", label: "Read", text: "/tmp/x" },
+  }));
+  const order = selectNarrativeEntries(state).map((entry) => entry.id);
+  assert.deepEqual(order, ["u1", "a1", "t1"], "insertion order preserved when sort keys tie");
+});
+
 test("reducer: schema invariant — selectNarrativeEntries returns canonical entries with structured fields preserved", () => {
   let state = applyNarrativeFrame(createInitialNarrativeState(), makeNarrativeInitFrame({
     sessionId: "s", lastSeq: 0,

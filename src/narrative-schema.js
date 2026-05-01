@@ -331,8 +331,47 @@ export function applyNarrativeFrame(state, frame) {
 }
 
 // Materialise the current entries in order — what the renderer iterates.
+//
+// Returns entries sorted chronologically by (timestamp, seq, insertion).
+// This mirrors mergeNarrativeEntries on the server: the snapshot the server
+// emits is already in this order, so the reducer's append-on-upsert is
+// usually fine — but a new upsert whose timestamp predates entries already
+// in `state.order` (supervisor-injected user messages, late-arriving tool
+// results, JSONL backfills) would otherwise render at the bottom of the
+// chat instead of slotting into its true chronological spot. Sorting here
+// makes the renderer authoritative on order regardless of arrival sequence.
 export function selectNarrativeEntries(state) {
   if (!state || !state.order) return [];
   const entries = state.entries instanceof Map ? state.entries : new Map(Object.entries(state.entries || {}));
-  return state.order.map((id) => entries.get(id)).filter(Boolean);
+  const materialised = [];
+  for (let index = 0; index < state.order.length; index += 1) {
+    const entry = entries.get(state.order[index]);
+    if (entry) materialised.push({ entry, index });
+  }
+
+  const isRealSeq = (value) => Number.isFinite(Number(value)) && Number(value) > 0;
+
+  materialised.sort((left, right) => {
+    // Primary: wall-clock timestamp. Date.parse on an empty/invalid value
+    // returns NaN — fall back to 0 so undated entries cluster at the start
+    // and break ties on the secondary keys.
+    const leftTime = Date.parse(left.entry.timestamp || "") || 0;
+    const rightTime = Date.parse(right.entry.timestamp || "") || 0;
+    if (leftTime !== rightTime) return leftTime - rightTime;
+
+    // Secondary: real seq (> 0). seq=0 is the sentinel for "no seq supplied"
+    // (normaliseNarrativeEntry stamps that). Treat it as null so a synthetic
+    // zero never outranks a sibling that genuinely has seq>=1 within the
+    // same Claude payload (text + tool_use sharing a payload timestamp).
+    const leftSeq = isRealSeq(left.entry.seq) ? Number(left.entry.seq) : null;
+    const rightSeq = isRealSeq(right.entry.seq) ? Number(right.entry.seq) : null;
+    if (leftSeq != null && rightSeq != null && leftSeq !== rightSeq) return leftSeq - rightSeq;
+    if (leftSeq != null && rightSeq == null) return -1;
+    if (leftSeq == null && rightSeq != null) return 1;
+
+    // Tertiary: original insertion order keeps the sort stable.
+    return left.index - right.index;
+  });
+
+  return materialised.map(({ entry }) => entry);
 }
