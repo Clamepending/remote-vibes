@@ -82,6 +82,20 @@ function directiveSignature({ event, action, report, reason }) {
   ].filter(Boolean).join("|").slice(0, 300);
 }
 
+function automaticDirectiveSignature({ event, action, report, reason }) {
+  const normalizedEvent = normalizeSupervisorEvent(event);
+  return directiveSignature({
+    event: {
+      ...normalizedEvent,
+      type: "automatic",
+      action: "",
+    },
+    action,
+    report,
+    reason,
+  });
+}
+
 function manualDirective(action) {
   if (action === "synthesize") {
     return {
@@ -287,7 +301,7 @@ export function decideResearchSupervisorIntervention({
     };
   }
 
-  const signature = directiveSignature({
+  const signature = automaticDirectiveSignature({
     event: normalizedEvent,
     action: recAction,
     report: orchestratorReport,
@@ -347,4 +361,5 @@ export const __internal = {
   automaticDirective,
   normalizeSupervisorEvent,
   directiveSignature,
+  automaticDirectiveSignature,
 };

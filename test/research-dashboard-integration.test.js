@@ -485,7 +485,7 @@ test("session research autopilot attachment persists chat-native control state",
   });
 });
 
-test("chat research supervisor tick is silent on toggle and directive-based on demand", async () => {
+test("chat research supervisor tick is silent on toggle and takes over on demand", async () => {
   await withLibraryServer(async ({ baseUrl }) => {
     const sessionRes = await fetch(`${baseUrl}/api/sessions`, {
       method: "POST",
@@ -519,6 +519,19 @@ test("chat research supervisor tick is silent on toggle and directive-based on d
     assert.equal(toggleBody.decision.shouldSend, false);
     assert.equal(toggleBody.directive, null);
 
+    const takeoverTick = await fetch(`${baseUrl}/api/sessions/${session.id}/research-autopilot/supervisor/tick`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ event: { type: "takeover", source: "session" } }),
+    });
+    assert.equal(takeoverTick.status, 200);
+    const takeoverBody = await takeoverTick.json();
+    assert.equal(takeoverBody.decision.action, "directive");
+    assert.equal(takeoverBody.decision.shouldSend, true);
+    assert.match(takeoverBody.directive.text, /Claim QUEUE row 1/);
+    assert.doesNotMatch(takeoverBody.directive.text, /Autopilot/i);
+    assert.equal(takeoverBody.attachment.supervisor.interventionCount, 1);
+
     const manualTick = await fetch(`${baseUrl}/api/sessions/${session.id}/research-autopilot/supervisor/tick`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
@@ -530,7 +543,7 @@ test("chat research supervisor tick is silent on toggle and directive-based on d
     assert.equal(manualBody.decision.shouldSend, true);
     assert.match(manualBody.directive.text, /Synthesize the current research state/);
     assert.doesNotMatch(manualBody.directive.text, /Autopilot/i);
-    assert.equal(manualBody.attachment.supervisor.interventionCount, 1);
+    assert.equal(manualBody.attachment.supervisor.interventionCount, 2);
 
     const duplicateIdle = await fetch(`${baseUrl}/api/sessions/${session.id}/research-autopilot/supervisor/tick`, {
       method: "POST",
@@ -897,6 +910,7 @@ test("main app bundle exposes the native research workspace", async () => {
     assert.match(jsText, /\/research-autopilot\/stop/);
     assert.match(jsText, /\/research-autopilot\/supervisor\/tick/);
     assert.match(jsText, /tickChatAutopilotSupervisor/);
+    assert.match(jsText, /takeover/);
     assert.match(jsText, /research-autopilot-steer-form/);
     assert.match(jsText, /data-chat-autopilot-toggle/);
     assert.match(jsText, /getChatAutopilotInferredProjectName/);

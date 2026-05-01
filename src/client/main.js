@@ -39034,7 +39034,13 @@ async function startChatAutopilotSupervisorForSession(activeSession) {
   });
   setChatAutopilotPending(sessionId, "");
   refreshRichSessionSurfaceUi();
-  return attachment;
+  const takeover = await tickChatAutopilotSupervisor(activeSession, {
+    type: "takeover",
+    source: "session",
+  }, {
+    pendingText: activeSession.streamWorking ? "will take over after current turn" : "taking over",
+  });
+  return takeover || attachment;
 }
 
 async function startOrResumeChatAutopilotForSession(activeSession) {

@@ -50,7 +50,7 @@ test("research supervisor emits opaque directives on manual actions", () => {
   assert.doesNotMatch(decision.directive.text, /Autopilot/i);
 });
 
-test("research supervisor emits and dedupes automatic idle directives", () => {
+test("research supervisor emits immediate takeover directives and dedupes later idle checks", () => {
   const report = {
     recommendation: {
       action: "run-next",
@@ -60,7 +60,7 @@ test("research supervisor emits and dedupes automatic idle directives", () => {
   };
   const first = decideResearchSupervisorIntervention({
     attachment: attachment(),
-    event: { type: "agent-idle", source: "session" },
+    event: { type: "takeover", source: "session" },
     orchestratorReport: report,
   });
   assert.equal(first.action, "directive");
@@ -70,7 +70,7 @@ test("research supervisor emits and dedupes automatic idle directives", () => {
   const supervisor = updateResearchSupervisorState(
     normalizeResearchSupervisorState(),
     first,
-    { type: "agent-idle", source: "session" },
+    { type: "takeover", source: "session" },
     { now: "2026-05-01T12:00:00.000Z" },
   );
   const duplicate = decideResearchSupervisorIntervention({
