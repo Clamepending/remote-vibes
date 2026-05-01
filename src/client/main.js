@@ -7976,11 +7976,20 @@ function refreshRichSessionSurfaceUi({ scrollToBottom = false } = {}) {
     feed.classList.toggle("is-hidden", !richActive);
     feed.setAttribute("aria-hidden", richActive ? "false" : "true");
     if (richActive) {
-      feed.innerHTML = renderRichSessionFeedHtml(activeSession);
-      if (shouldStickToBottom) {
-        feed.scrollTop = feed.scrollHeight;
-      } else if (scrollAnchor) {
-        restoreRichSessionScrollAnchor(feed, scrollAnchor);
+      // While the user has an active text selection inside the feed, replacing
+      // innerHTML would destroy the DOM nodes the selection is anchored to and
+      // wipe it out — making it impossible to copy from a chat that's still
+      // streaming. Defer this paint until the selection clears; the deferred
+      // refresh handler reschedules a render via the selectionchange listener.
+      if (hasSelectedDocumentTextWithin(feed)) {
+        deferSelectableRefresh("rich-session-feed");
+      } else {
+        feed.innerHTML = renderRichSessionFeedHtml(activeSession);
+        if (shouldStickToBottom) {
+          feed.scrollTop = feed.scrollHeight;
+        } else if (scrollAnchor) {
+          restoreRichSessionScrollAnchor(feed, scrollAnchor);
+        }
       }
     }
   }
@@ -36047,6 +36056,10 @@ function flushDeferredSelectableRefreshes({ force = false } = {}) {
 
   if (refreshes.has("scaffold-recipes")) {
     refreshScaffoldRecipesPluginUi({ force: true });
+  }
+
+  if (refreshes.has("rich-session-feed")) {
+    scheduleRichSessionSurfaceRender();
   }
 }
 
