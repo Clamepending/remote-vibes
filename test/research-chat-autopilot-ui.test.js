@@ -107,19 +107,22 @@ test("same-chat supervisor Start creates project memory and queues takeover whil
       const status = document.querySelector(".rich-session-autopilot-status")?.textContent?.trim() || "";
       const projectLabel = document.querySelector(".rich-session-autopilot-project-pill")?.textContent?.trim() || "";
       const queuePreview = document.querySelector(".rich-session-queue-text")?.textContent?.trim() || "";
+      const queueMeta = document.querySelector(".rich-session-queue-meta")?.textContent?.trim() || "";
       return {
         status,
         projectLabel,
         queuePreview,
+        queueMeta,
         queuedId: first?.id || "",
         queuedText: first?.text || "",
       };
     }, session.id);
 
-    assert.match(uiState.status, /supervisor directive queued|watching current turn|using wiki goal/);
+    assert.match(uiState.status, /supervisor next step queued/);
     assert.match(uiState.projectLabel, /vibe-research-chat-supervisor/);
     assert.match(uiState.queuedId, /^autopilot-/);
     assert.match(uiState.queuePreview, /Claim QUEUE row 1/);
+    assert.equal(uiState.queueMeta, "supervisor next step - sends after current turn");
     assert.match(uiState.queuedText, /Claim QUEUE row 1 \(initial-research-loop\)/);
     assert.match(uiState.queuedText, /Use the project objective as the north star/);
     assert.doesNotMatch(uiState.queuedText, /Autopilot/i);

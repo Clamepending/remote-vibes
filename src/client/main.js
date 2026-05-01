@@ -7383,15 +7383,20 @@ function renderRichSessionQueueStripHtml(activeSession) {
 
   const rows = items.map((item, index) => {
     const text = String(item?.text || "").trim();
+    const isSupervisor = String(item?.id || "").startsWith("autopilot-");
     const preview = text || (Array.isArray(item?.attachments) && item.attachments.length
       ? `${item.attachments.length} image${item.attachments.length === 1 ? "" : "s"}`
       : "(empty)");
-    const status = index === 0
-      ? "next — sends after current turn"
-      : `queued · #${index + 1}`;
+    const status = isSupervisor
+      ? index === 0
+        ? "supervisor next step - sends after current turn"
+        : `supervisor queued - #${index + 1}`
+      : index === 0
+        ? "next - sends after current turn"
+        : `queued - #${index + 1}`;
     const id = String(item?.id || "");
     return `
-      <div class="rich-session-queue-item ${index === 0 ? "is-next" : ""}" data-rich-session-queue-item="${escapeHtml(id)}">
+      <div class="rich-session-queue-item ${index === 0 ? "is-next" : ""} ${isSupervisor ? "is-supervisor" : ""}" data-rich-session-queue-item="${escapeHtml(id)}">
         <span class="rich-session-queue-icon" aria-hidden="true">⤴</span>
         <div class="rich-session-queue-text-wrap">
           <span class="rich-session-queue-text" title="${escapeHtml(text)}">${escapeHtml(preview)}</span>
@@ -7782,6 +7787,7 @@ function renderRichSessionAutopilotPanel(activeSession) {
   const objectiveSource = getChatAutopilotObjectiveSource(config, activeSession);
   const objectivePreview = summarizeChatAutopilotObjective(objective);
   const supervisorSummary = summarizeChatAutopilotSupervisor(config);
+  const queuedSupervisorMessage = getQueuedChatAutopilotSupervisorMessage(activeSession.id);
   const noProjects = state.researchAutopilot.projectsLoaded
     && !state.researchAutopilot.projects.length
     && !state.researchAutopilot.projectsLoading;
@@ -7794,9 +7800,13 @@ function renderRichSessionAutopilotPanel(activeSession) {
   const status = pending
     || (enabled && sessionDriver
       ? sessionExited
-        ? "agent stopped; ready to resume"
+        ? queuedSupervisorMessage
+          ? "supervisor handoff ready to resume"
+          : "agent stopped; ready to resume"
         : activeSession.streamWorking
-        ? "watching current turn"
+        ? queuedSupervisorMessage
+          ? "supervisor next step queued"
+          : "watching current turn"
         : objectivePreview
           ? `using ${objectiveSource === "wiki" ? "wiki goal" : "goal"}: ${objectivePreview}`
           : "needs project goal"

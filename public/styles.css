@@ -15375,6 +15375,16 @@ body.is-reordering-file-tabs {
   background: linear-gradient(180deg, rgba(123, 195, 255, 0.1), rgba(123, 195, 255, 0.04));
 }
 
+.rich-session-queue-item.is-supervisor {
+  border-color: rgba(93, 220, 190, 0.42);
+  background: linear-gradient(180deg, rgba(93, 220, 190, 0.1), rgba(123, 195, 255, 0.03));
+}
+
+.rich-session-queue-item.is-supervisor .rich-session-queue-icon,
+.rich-session-queue-item.is-supervisor .rich-session-queue-meta {
+  color: rgba(119, 235, 206, 0.84);
+}
+
 .rich-session-queue-icon {
   color: rgba(123, 195, 255, 0.92);
   font-size: 0.92rem;
