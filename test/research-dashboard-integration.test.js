@@ -348,3 +348,20 @@ test("GET /research/research.js + research.css are served", async () => {
     assert.match(await css.text(), /vr-action-button/);
   });
 });
+
+test("main app bundle exposes the native research workspace", async () => {
+  await withLibraryServer(async ({ baseUrl }) => {
+    const js = await fetch(`${baseUrl}/app.js`);
+    assert.equal(js.status, 200);
+    const jsText = await js.text();
+    assert.match(jsText, /renderResearchView/);
+    assert.match(jsText, /view: "research"/);
+    assert.match(jsText, /\/api\/research\/org-bench\/jobs/);
+
+    const css = await fetch(`${baseUrl}/styles.css`);
+    assert.equal(css.status, 200);
+    const cssText = await css.text();
+    assert.match(cssText, /research-org-bench-card/);
+    assert.match(cssText, /research-bench-table/);
+  });
+});

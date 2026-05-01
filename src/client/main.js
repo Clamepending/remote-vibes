@@ -206,6 +206,7 @@ const KNOWLEDGE_BASE_SEARCH_FIELD_WEIGHTS = [
 const PORT_PREVIEW_TAB_PREFIX = "port:";
 const ROUTED_MAIN_VIEWS = new Set([
   "agent-inbox",
+  "research",
   "search",
   "plugins",
   "settings",
@@ -215,6 +216,20 @@ const ROUTED_MAIN_VIEWS = new Set([
   "swarm",
   "browser-use",
 ]);
+const RESEARCH_ORG_BENCH_PRESETS = {
+  "local-smoke": {
+    label: "Local proxy",
+    seeds: "0,1",
+    timeoutMs: "30000",
+    model: "",
+  },
+  "codex-reviewed": {
+    label: "Codex reviewed",
+    seeds: "0",
+    timeoutMs: "240000",
+    model: "gpt-5.4-mini",
+  },
+};
 const AGENT_SETUP_STORAGE_KEY = "vibeResearch.agentSetupComplete.v1";
 const AGENT_SETUP_PENDING_STORAGE_KEY = "vibeResearch.agentSetupPending.v1";
 const AGENT_TOWN_SHARE_CAPTURE_TIMEOUT_MS = 2500;
@@ -2148,6 +2163,21 @@ const state = {
   pendingPluginSetupFocus: null,
   buildingHubAdvancedOpen: false,
   buildingHubTab: BUILDINGHUB_DEFAULT_TAB,
+  researchOrgBench: {
+    preset: "local-smoke",
+    seeds: RESEARCH_ORG_BENCH_PRESETS["local-smoke"].seeds,
+    timeoutMs: RESEARCH_ORG_BENCH_PRESETS["local-smoke"].timeoutMs,
+    model: RESEARCH_ORG_BENCH_PRESETS["codex-reviewed"].model,
+    status: "idle",
+    statusText: "",
+    error: "",
+    jobId: "",
+    report: null,
+    reports: [],
+    reportsLoaded: false,
+    historyLoading: false,
+    running: false,
+  },
   brainSetupCloneUrl: "",
   brainSetupClonePath: "",
   brainSetupCloning: false,
@@ -15362,6 +15392,12 @@ function renderSidebarNav() {
       label: "Prompts",
       meta: getAgentPromptTargetSummary(),
     },
+    {
+      view: "research",
+      icon: LineChart,
+      label: "Research",
+      meta: getResearchSidebarMeta(),
+    },
   ];
   const communityItems = getCommunitySidebarItems();
 
@@ -20513,6 +20549,322 @@ function renderAgentInboxView() {
       </div>
       ${renderAgentInboxTabs(activeTab)}
       <div class="main-results-grid agent-inbox-grid" id="agent-inbox-list" data-agent-inbox-active-tab="${escapeHtml(activeTab)}">${renderAgentInboxCards()}</div>
+    </section>
+  `;
+}
+
+function getResearchOrgBenchPresetConfig(preset = state.researchOrgBench.preset) {
+  return RESEARCH_ORG_BENCH_PRESETS[preset] || RESEARCH_ORG_BENCH_PRESETS["local-smoke"];
+}
+
+function getResearchOrgBenchRows(report = state.researchOrgBench.report) {
+  return Array.isArray(report?.summary) ? report.summary : [];
+}
+
+function formatResearchBenchNumber(value, digits = 4) {
+  const number = Number(value);
+  return Number.isFinite(number) ? number.toFixed(digits) : "--";
+}
+
+function formatResearchBenchPercent(value) {
+  const number = Number(value);
+  return Number.isFinite(number) ? `${Math.round(number * 100)}%` : "--";
+}
+
+function getBestResearchOrgBenchRow(report = state.researchOrgBench.report) {
+  return getResearchOrgBenchRows(report).reduce((best, row) => {
+    if (!best) return row;
+    return Number(row.holdoutMean) > Number(best.holdoutMean) ? row : best;
+  }, null);
+}
+
+function getResearchOrgBenchRow(strategy, report = state.researchOrgBench.report) {
+  return getResearchOrgBenchRows(report).find((row) => row.strategy === strategy) || null;
+}
+
+function getResearchOrgBenchReviewedLift(report = state.researchOrgBench.report) {
+  const single = getResearchOrgBenchRow("single-agent-provider", report);
+  const reviewed = getResearchOrgBenchRow("org-provider-reviewed", report);
+  if (!single || !reviewed) return NaN;
+  return Number(reviewed.holdoutMean) - Number(single.holdoutMean);
+}
+
+function getResearchSidebarMeta() {
+  const best = getBestResearchOrgBenchRow();
+  if (state.researchOrgBench.running) {
+    return "benchmark running";
+  }
+  if (best) {
+    return `${best.strategy} ${formatResearchBenchNumber(best.holdoutMean, 3)}`;
+  }
+  if (state.researchOrgBench.reports.length) {
+    return `${state.researchOrgBench.reports.length} saved evals`;
+  }
+  return "org loop & evals";
+}
+
+function renderResearchWorkflowCard({ icon, label, title, detail, action }) {
+  return `
+    <article class="automation-card research-workflow-card">
+      <div class="automation-card-icon" aria-hidden="true">${renderIcon(icon)}</div>
+      <span class="main-search-kind">${escapeHtml(label)}</span>
+      <strong>${escapeHtml(title)}</strong>
+      <p>${escapeHtml(detail)}</p>
+      ${action || ""}
+    </article>
+  `;
+}
+
+function renderResearchWorkflowPanel() {
+  return `
+    <div class="research-workflow-grid">
+      ${renderResearchWorkflowCard({
+        icon: MessageSquarePlus,
+        label: "brainstorm",
+        title: "Chat first",
+        detail: "Shape the question with the agent, then turn the promising thread into queued moves.",
+        action: `<button class="ghost-button toolbar-control" type="button" data-open-main-view="shell">open chat</button>`,
+      })}
+      ${renderResearchWorkflowCard({
+        icon: GitFork,
+        label: "experiment",
+        title: "Hillclimb moves",
+        detail: "Run small cycles against a written benchmark and keep the provenance attached to every result.",
+        action: `<a class="ghost-button toolbar-control" href="/research" target="_blank" rel="noreferrer">open lab bench</a>`,
+      })}
+      ${renderResearchWorkflowCard({
+        icon: Inbox,
+        label: "review",
+        title: "Fast human gates",
+        detail: "Use inbox cards for continue, rerun, synthesize, brainstorm, and steer decisions.",
+        action: `<button class="ghost-button toolbar-control" type="button" data-open-main-view="agent-inbox">open inbox</button>`,
+      })}
+    </div>
+  `;
+}
+
+function renderResearchOrgBenchStats(report = state.researchOrgBench.report) {
+  const best = getBestResearchOrgBenchRow(report);
+  const reviewed = getResearchOrgBenchRow("org-provider-reviewed", report);
+  const lift = getResearchOrgBenchReviewedLift(report);
+  const stat = ({ label, value, tone = "" }) => `
+    <div class="research-stat ${tone ? `is-${escapeHtml(tone)}` : ""}">
+      <span>${escapeHtml(label)}</span>
+      <strong>${escapeHtml(value)}</strong>
+    </div>
+  `;
+
+  return `
+    <div class="research-stat-grid">
+      ${stat({
+        label: "best holdout",
+        value: best ? `${best.strategy} ${formatResearchBenchNumber(best.holdoutMean, 4)}` : "--",
+        tone: "accent",
+      })}
+      ${stat({
+        label: "reviewed lift",
+        value: Number.isFinite(lift) ? `${lift >= 0 ? "+" : ""}${lift.toFixed(4)}` : "--",
+        tone: lift > 0 ? "good" : lift < 0 ? "bad" : "",
+      })}
+      ${stat({
+        label: "integrity",
+        value: reviewed ? formatResearchBenchPercent(reviewed.integrityPassRate) : "--",
+        tone: reviewed && Number(reviewed.integrityPassRate) >= 1 ? "good" : "",
+      })}
+      ${stat({
+        label: "timeouts",
+        value: reviewed ? formatResearchBenchPercent(reviewed.timeoutRate) : "--",
+        tone: reviewed && Number(reviewed.timeoutRate) > 0 ? "bad" : "good",
+      })}
+    </div>
+  `;
+}
+
+function renderResearchOrgBenchTable(report = state.researchOrgBench.report) {
+  const rows = getResearchOrgBenchRows(report);
+  if (!rows.length) {
+    return `<div class="blank-state">no benchmark report loaded</div>`;
+  }
+
+  return `
+    <div class="research-table-wrap">
+      <table class="research-bench-table">
+        <thead>
+          <tr>
+            <th>strategy</th>
+            <th>holdout</th>
+            <th>dev</th>
+            <th>integrity</th>
+            <th>cycles</th>
+            <th>reviews</th>
+            <th>timeouts</th>
+            <th>delta</th>
+          </tr>
+        </thead>
+        <tbody>
+          ${rows
+            .map(
+              (row) => `
+                <tr>
+                  <td>${escapeHtml(row.strategy || "")}</td>
+                  <td>${escapeHtml(formatResearchBenchNumber(row.holdoutMean, 4))}</td>
+                  <td>${escapeHtml(formatResearchBenchNumber(row.devMean, 4))}</td>
+                  <td>${escapeHtml(formatResearchBenchPercent(row.integrityPassRate))}</td>
+                  <td>${escapeHtml(formatResearchBenchNumber(row.meanCycles, 2))}</td>
+                  <td>${escapeHtml(formatResearchBenchNumber(row.meanReviewerCalls, 2))}</td>
+                  <td>${escapeHtml(formatResearchBenchPercent(row.timeoutRate))}</td>
+                  <td>${escapeHtml(formatResearchBenchNumber(row.meanMetricDelta, 4))}</td>
+                </tr>
+              `,
+            )
+            .join("")}
+        </tbody>
+      </table>
+    </div>
+  `;
+}
+
+function renderResearchOrgBenchHistory() {
+  const bench = state.researchOrgBench;
+  if (bench.historyLoading) {
+    return `<div class="blank-state">loading recent runs...</div>`;
+  }
+  if (!bench.reportsLoaded) {
+    return `<div class="blank-state">recent runs not loaded</div>`;
+  }
+  if (!bench.reports.length) {
+    return `<div class="blank-state">no saved benchmark reports yet</div>`;
+  }
+
+  return `
+    <div class="research-run-list">
+      ${bench.reports
+        .map((report) => {
+          const best = getBestResearchOrgBenchRow(report);
+          return `
+            <button class="research-run-row" type="button" data-research-load-report="${escapeHtml(report.name || "")}">
+              <span class="research-run-name">${escapeHtml(report.name || "saved run")}</span>
+              <span>${escapeHtml(best ? `best ${best.strategy} ${formatResearchBenchNumber(best.holdoutMean, 4)}` : "no summary")}</span>
+            </button>
+          `;
+        })
+        .join("")}
+    </div>
+  `;
+}
+
+function renderResearchOrgBenchStatus() {
+  const bench = state.researchOrgBench;
+  if (bench.error) {
+    return `<div class="research-status is-error" role="alert">${escapeHtml(bench.error)}</div>`;
+  }
+  if (bench.running || bench.statusText) {
+    return `
+      <div class="research-status ${bench.running ? "is-running" : ""}" role="status">
+        ${bench.jobId ? `<span class="main-search-kind">${escapeHtml(bench.jobId.slice(0, 8))}</span>` : ""}
+        <span>${escapeHtml(bench.statusText || bench.status)}</span>
+      </div>
+    `;
+  }
+  return "";
+}
+
+function renderResearchOrgBenchPanel() {
+  const bench = state.researchOrgBench;
+  const presetConfig = getResearchOrgBenchPresetConfig();
+  const showModel = bench.preset === "codex-reviewed";
+  const presets = Object.entries(RESEARCH_ORG_BENCH_PRESETS)
+    .map(([preset, config]) => `
+      <button
+        class="research-preset-button ${bench.preset === preset ? "is-selected" : ""}"
+        type="button"
+        data-research-org-bench-preset="${escapeHtml(preset)}"
+        aria-pressed="${bench.preset === preset ? "true" : "false"}"
+      >${escapeHtml(config.label)}</button>
+    `)
+    .join("");
+
+  return `
+    <article class="automation-card research-org-bench-card" id="research-org-bench">
+      <div class="research-card-head">
+        <div>
+          <span class="main-search-kind">posttrain-lite</span>
+          <strong>Organization benchmark</strong>
+          <p>Compare the one-shot worker against the reviewed organization loop.</p>
+        </div>
+        <button class="ghost-button toolbar-control" type="button" data-research-refresh-runs>
+          ${renderIcon(RefreshCw)}<span>recent</span>
+        </button>
+      </div>
+      <form class="research-bench-form" id="research-org-bench-form">
+        <div class="research-preset-group" role="group" aria-label="Benchmark preset">
+          ${presets}
+        </div>
+        <label class="research-field">
+          <span>seeds</span>
+          <input class="file-root-input" name="seeds" value="${escapeHtml(bench.seeds || presetConfig.seeds)}" autocomplete="off" spellcheck="false" />
+        </label>
+        <label class="research-field">
+          <span>timeout ms</span>
+          <input class="file-root-input" name="timeoutMs" type="number" min="1000" step="1000" value="${escapeHtml(bench.timeoutMs || presetConfig.timeoutMs)}" />
+        </label>
+        <label class="research-field ${showModel ? "" : "is-hidden"}">
+          <span>model</span>
+          <input class="file-root-input" name="model" value="${escapeHtml(bench.model || presetConfig.model)}" autocomplete="off" spellcheck="false" />
+        </label>
+        <button class="primary-button toolbar-control" type="submit" ${bench.running ? "disabled" : ""}>
+          ${bench.running ? "running..." : "start run"}
+        </button>
+      </form>
+      ${renderResearchOrgBenchStatus()}
+      ${
+        bench.report
+          ? `
+            <div class="research-report-path">${escapeHtml(bench.report.outputDir || "")}</div>
+            ${renderResearchOrgBenchStats(bench.report)}
+            ${renderResearchOrgBenchTable(bench.report)}
+          `
+          : `<div class="blank-state">run the local proxy preset for a quick check, or use Codex reviewed when you want a real agent canary</div>`
+      }
+      <div class="research-history-panel">
+        <div class="research-history-head">
+          <strong>Recent runs</strong>
+          <span>${escapeHtml(bench.reportsLoaded ? `${bench.reports.length} shown` : "not loaded")}</span>
+        </div>
+        ${renderResearchOrgBenchHistory()}
+      </div>
+    </article>
+  `;
+}
+
+function renderResearchView() {
+  const best = getBestResearchOrgBenchRow();
+  const summary = best
+    ? `${best.strategy} leads holdout at ${formatResearchBenchNumber(best.holdoutMean, 4)}`
+    : "benchmark not loaded";
+
+  return `
+    <section class="dashboard-panel main-view research-view" ${renderMainViewAttributes("research", `research:${state.researchOrgBench.status}:${state.researchOrgBench.jobId}:${state.researchOrgBench.reports.length}`)}>
+      <div class="dashboard-toolbar">
+        <button class="icon-button hidden-desktop" type="button" id="open-sidebar" aria-label="Open sidebar" ${tooltipAttributes("Open sidebar")}>${renderIcon(Menu)}</button>
+        <div class="dashboard-copy">
+          <strong>Research</strong>
+          <div class="terminal-meta">brainstorm, run, review, and fold results back into the agent loop</div>
+        </div>
+        <div class="dashboard-actions">
+          <button class="ghost-button toolbar-control" type="button" data-open-main-view="shell">chat</button>
+          <button class="ghost-button toolbar-control" type="button" data-open-main-view="agent-inbox">review</button>
+        </div>
+      </div>
+      <div class="dashboard-range">
+        <span class="dashboard-range-label">org benchmark</span>
+        <span>${escapeHtml(summary)}</span>
+        <span class="dashboard-updated">${escapeHtml(state.researchOrgBench.running ? "running" : state.researchOrgBench.status || "idle")}</span>
+      </div>
+      <div class="main-results-grid research-grid">
+        ${renderResearchWorkflowPanel()}
+        ${renderResearchOrgBenchPanel()}
+      </div>
     </section>
   `;
 }
@@ -32402,6 +32754,9 @@ function renderPassiveWorkspaceView(tab) {
   if (view === "agent-prompt") {
     return renderAgentPromptView();
   }
+  if (view === "research") {
+    return renderResearchView();
+  }
   if (view === "search") {
     return renderSearchView();
   }
@@ -32501,6 +32856,10 @@ function renderTerminalPanel(activeSession) {
 
   if (state.currentView === "agent-prompt") {
     return renderAgentPromptView();
+  }
+
+  if (state.currentView === "research") {
+    return renderResearchView();
   }
 
   if (state.currentView === "search") {
@@ -33068,6 +33427,8 @@ const MAIN_VIEW_SCROLL_TARGETS = [
   ["agentPromptGrid", ".agent-prompt-grid"],
   ["agentPromptTargets", "#agent-prompt-targets"],
   ["agentPromptEditor", "#agent-prompt-textarea"],
+  ["researchGrid", ".research-grid"],
+  ["researchOrgBench", "#research-org-bench"],
   ["swarmGraph", ".swarm-graph-scroller"],
   ["swarmDetails", ".swarm-details"],
 ];
@@ -33446,6 +33807,7 @@ function renderShell() {
   const viewTitles = {
     "knowledge-base": "Library · Vibe Research",
     "agent-prompt": "Prompts · Vibe Research",
+    research: "Research · Vibe Research",
     search: "Search · Vibe Research",
     plugins: "BuildingHub · Vibe Research",
     settings: "Settings · Vibe Research",
@@ -37479,6 +37841,182 @@ async function createAgentAutomationFromForm(form) {
 
 async function deleteAgentAutomation(automationId) {
   await saveAgentAutomations(getAgentAutomations().filter((automation) => automation.id !== automationId));
+}
+
+function syncResearchOrgBenchFormDraft(form) {
+  if (!(form instanceof HTMLFormElement)) {
+    return;
+  }
+  const formData = new FormData(form);
+  state.researchOrgBench.seeds = String(formData.get("seeds") || "").trim();
+  state.researchOrgBench.timeoutMs = String(formData.get("timeoutMs") || "").trim();
+  state.researchOrgBench.model = String(formData.get("model") || "").trim();
+}
+
+function setResearchOrgBenchPreset(preset) {
+  const config = getResearchOrgBenchPresetConfig(preset);
+  const nextPreset = RESEARCH_ORG_BENCH_PRESETS[preset] ? preset : "local-smoke";
+  state.researchOrgBench.preset = nextPreset;
+  state.researchOrgBench.seeds = config.seeds;
+  state.researchOrgBench.timeoutMs = config.timeoutMs;
+  if (config.model) {
+    state.researchOrgBench.model = config.model;
+  }
+  state.researchOrgBench.error = "";
+  renderShell();
+}
+
+async function loadResearchOrgBenchRuns({ render = true } = {}) {
+  if (state.researchOrgBench.historyLoading) {
+    return;
+  }
+  state.researchOrgBench.historyLoading = true;
+  state.researchOrgBench.error = "";
+  if (render) {
+    renderShell();
+  }
+
+  try {
+    const payload = await fetchJson("/api/research/org-bench/runs?limit=6", { timeoutMs: 30_000 });
+    const reports = Array.isArray(payload?.reports) ? payload.reports : [];
+    state.researchOrgBench.reports = reports;
+    state.researchOrgBench.reportsLoaded = true;
+    if (!state.researchOrgBench.report && reports.length) {
+      state.researchOrgBench.report = reports[0];
+      state.researchOrgBench.status = "loaded";
+      state.researchOrgBench.statusText = `loaded ${reports[0].name || "latest report"}`;
+    }
+  } catch (error) {
+    state.researchOrgBench.error = error.message || "Could not load organization benchmark runs.";
+  } finally {
+    state.researchOrgBench.historyLoading = false;
+    if (render) {
+      renderShell();
+    }
+  }
+}
+
+function loadResearchOrgBenchReportByName(name) {
+  const report = state.researchOrgBench.reports.find((entry) => entry.name === name);
+  if (!report) {
+    return;
+  }
+  state.researchOrgBench.report = report;
+  state.researchOrgBench.status = "loaded";
+  state.researchOrgBench.statusText = `loaded ${report.name || "saved report"}`;
+  state.researchOrgBench.error = "";
+  renderShell();
+}
+
+async function waitForResearchOrgBenchJob(jobId) {
+  let lastStatus = "";
+  for (let attempt = 0; attempt < 720; attempt += 1) {
+    const payload = await fetchJson(`/api/research/org-bench/jobs/${encodeURIComponent(jobId)}`, {
+      timeoutMs: 30_000,
+    });
+    const job = payload?.job || {};
+    if (job.status && job.status !== lastStatus) {
+      lastStatus = job.status;
+      state.researchOrgBench.status = job.status;
+      state.researchOrgBench.statusText = `benchmark ${job.status}`;
+      renderShell();
+    }
+    if (job.status === "succeeded" || job.status === "failed") {
+      return job;
+    }
+    await sleep(900);
+  }
+  throw new Error("Benchmark job did not finish before the browser wait limit.");
+}
+
+async function startResearchOrgBenchRun(form) {
+  syncResearchOrgBenchFormDraft(form);
+  const bench = state.researchOrgBench;
+  bench.running = true;
+  bench.status = "queued";
+  bench.statusText = "starting benchmark job";
+  bench.error = "";
+  bench.jobId = "";
+  renderShell();
+
+  try {
+    const payload = await fetchJson("/api/research/org-bench/jobs", {
+      method: "POST",
+      body: JSON.stringify({
+        preset: bench.preset,
+        seeds: bench.seeds,
+        timeoutMs: Number(bench.timeoutMs) || undefined,
+        model: bench.model,
+      }),
+      timeoutMs: 30_000,
+    });
+    const job = payload?.job || {};
+    bench.jobId = job.id || "";
+    bench.status = job.status || "queued";
+    bench.statusText = `benchmark ${bench.status}`;
+    renderShell();
+
+    const finished = await waitForResearchOrgBenchJob(bench.jobId);
+    if (finished.status === "failed") {
+      throw new Error(finished.error || "Organization benchmark failed.");
+    }
+
+    bench.report = finished.report || null;
+    bench.status = "succeeded";
+    bench.statusText = "report saved";
+    bench.error = "";
+    await loadResearchOrgBenchRuns({ render: false });
+  } catch (error) {
+    bench.status = "failed";
+    bench.statusText = "";
+    bench.error = error.message || "Could not run organization benchmark.";
+  } finally {
+    bench.running = false;
+    renderShell();
+  }
+}
+
+function bindResearchEvents() {
+  if (state.currentView === "research" && !state.researchOrgBench.reportsLoaded && !state.researchOrgBench.historyLoading) {
+    void loadResearchOrgBenchRuns();
+  }
+
+  document.querySelectorAll("[data-research-org-bench-preset]").forEach((button) => {
+    button.addEventListener("click", (event) => {
+      event.preventDefault();
+      const preset = button.getAttribute("data-research-org-bench-preset") || "local-smoke";
+      setResearchOrgBenchPreset(preset);
+    });
+  });
+
+  document.querySelectorAll("[data-research-refresh-runs]").forEach((button) => {
+    button.addEventListener("click", (event) => {
+      event.preventDefault();
+      void loadResearchOrgBenchRuns();
+    });
+  });
+
+  document.querySelectorAll("[data-research-load-report]").forEach((button) => {
+    button.addEventListener("click", (event) => {
+      event.preventDefault();
+      loadResearchOrgBenchReportByName(button.getAttribute("data-research-load-report") || "");
+    });
+  });
+
+  document.querySelector("#research-org-bench-form")?.addEventListener("input", (event) => {
+    const form = event.currentTarget;
+    if (form instanceof HTMLFormElement) {
+      syncResearchOrgBenchFormDraft(form);
+    }
+  });
+
+  document.querySelector("#research-org-bench-form")?.addEventListener("submit", (event) => {
+    event.preventDefault();
+    const form = event.currentTarget;
+    if (form instanceof HTMLFormElement && !state.researchOrgBench.running) {
+      void startResearchOrgBenchRun(form);
+    }
+  });
 }
 
 function bindAutomationEvents() {
@@ -43021,6 +43559,7 @@ function bindShellEvents() {
   bindSearchResultEvents();
   bindPluginCardEvents();
   bindBuildingHubCatalogControls();
+  bindResearchEvents();
   bindAutomationEvents();
   bindVisualBuildingLibraryEvents();
   bindDoghouseNameEvents();
