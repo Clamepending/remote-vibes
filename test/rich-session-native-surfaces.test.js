@@ -194,13 +194,19 @@ test("native UI renders plan card, MCP badge, image strip, /login action, chat d
         id: "chat-review-card",
         kind: "review",
         priority: "high",
-        title: "Review latest cycle",
-        detail: "Cycle 1 improved the metric; choose how the agent should proceed.",
+        title: "Review cycle 1: chat-review",
+        detail: "Cycle 1 metric=0.71; choose how the agent should proceed.",
         recommendation: "Continue one more cycle before synthesis.",
         consequence: "Your click resolves the gate without leaving chat.",
-        source: "research-judge",
+        source: "research-runner",
         sourceSessionId: session.id,
-        target: { type: "file", id: "projects/demo/results/cycle.md", label: "cycle.md" },
+        target: {
+          type: "file",
+          id: "demo:chat-review:cycle-1",
+          label: "cycle.md",
+          projectName: "demo",
+          action: "review-research-cycle",
+        },
         evidence: [{ label: "result doc", path: "projects/demo/results/cycle.md", kind: "result" }],
         choices: ["continue", "steer"],
       }),
@@ -275,6 +281,12 @@ test("native UI renders plan card, MCP badge, image strip, /login action, chat d
       const actionPanel = document.querySelector("[data-rich-session-action-panel]");
       const actionCard = actionPanel?.querySelector('[data-agent-town-action-item="chat-review-card"]');
       const actionTitle = actionCard?.querySelector("strong")?.textContent || "";
+      const researchStrip = document.querySelector("[data-rich-session-research-loop]");
+      const researchStripText = researchStrip?.textContent || "";
+      const researchFields = Array.from(
+        researchStrip?.querySelectorAll(".rich-session-research-field") || [],
+        (field) => field.textContent?.replace(/\s+/g, " ").trim() || "",
+      );
       const actionButtons = Array.from(
         actionCard?.querySelectorAll("button") || [],
         (button) => button.textContent?.trim() || "",
@@ -307,6 +319,8 @@ test("native UI renders plan card, MCP badge, image strip, /login action, chat d
         slashCommand,
         slashLabel,
         actionTitle,
+        researchStripText,
+        researchFields,
         actionButtons,
         evidenceTagName,
         evidenceRichPath,
@@ -344,7 +358,14 @@ test("native UI renders plan card, MCP badge, image strip, /login action, chat d
     assert.equal(surfaces.slashCommand, "/login", "slash-action button targets /login");
     assert.match(surfaces.slashLabel, /Sign in/u, "slash-action button label reads Sign in");
 
-    assert.equal(surfaces.actionTitle, "Review latest cycle", "Agent Inbox card appears inside the chat feed");
+    assert.equal(surfaces.actionTitle, "Review cycle 1: chat-review", "Agent Inbox card appears inside the chat feed");
+    assert.match(surfaces.researchStripText, /Research loop/u, "chat feed shows compact research loop context");
+    assert.ok(surfaces.researchFields.includes("gate cycle review"), "research strip shows the gate");
+    assert.ok(surfaces.researchFields.includes("project demo"), "research strip shows the project");
+    assert.ok(surfaces.researchFields.includes("move chat-review"), "research strip shows the move");
+    assert.ok(surfaces.researchFields.includes("cycle 1"), "research strip shows the cycle");
+    assert.ok(surfaces.researchFields.includes("metric metric=0.71"), "research strip shows the metric");
+    assert.ok(surfaces.researchFields.includes("next click continue"), "research strip shows the suggested next click");
     assert.ok(surfaces.actionButtons.includes("continue"), "chat card exposes continue choice");
     assert.ok(surfaces.actionButtons.includes("steer"), "chat card exposes steer choice");
     assert.ok(surfaces.actionButtons.includes("ask why"), "chat card exposes ask-why follow-up");
@@ -355,7 +376,7 @@ test("native UI renders plan card, MCP badge, image strip, /login action, chat d
 
     await page.click('[data-rich-session-action-panel] [data-agent-town-action-ask-why="chat-review-card"]');
     const askWhyDraft = await page.locator("#rich-session-input").inputValue();
-    assert.match(askWhyDraft, /explain the reasoning behind the review card "Review latest cycle"/u);
+    assert.match(askWhyDraft, /explain the reasoning behind the review card "Review cycle 1: chat-review"/u);
     assert.match(askWhyDraft, /Available decisions: continue, steer/u);
 
     await page.click('[data-rich-session-action-panel] [data-agent-town-action-resolve="chat-review-card"][data-agent-town-action-resolution="continued"]');

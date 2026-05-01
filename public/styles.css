@@ -15091,6 +15091,70 @@ body.is-reordering-file-tabs {
   margin-left: 0;
 }
 
+.rich-session-research-strip {
+  display: grid;
+  gap: 8px;
+  padding: 10px 12px;
+  border: 1px solid rgba(124, 231, 240, 0.16);
+  border-radius: 8px;
+  background:
+    linear-gradient(180deg, rgba(124, 231, 240, 0.08), rgba(255, 255, 255, 0.025)),
+    rgba(12, 18, 22, 0.78);
+}
+
+.rich-session-research-strip-head {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+}
+
+.rich-session-research-strip-head .rich-session-entry-meta {
+  min-width: 0;
+  margin-left: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.rich-session-research-fields {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  min-width: 0;
+}
+
+.rich-session-research-field {
+  display: inline-flex;
+  align-items: center;
+  max-width: 100%;
+  min-width: 0;
+  overflow: hidden;
+  border: 1px solid rgba(255, 255, 255, 0.08);
+  border-radius: 8px;
+  background: rgba(255, 255, 255, 0.045);
+  color: rgba(244, 247, 251, 0.88);
+  font-family: "IBM Plex Mono", monospace;
+  font-size: 0.68rem;
+  line-height: 1.25;
+}
+
+.rich-session-research-field b,
+.rich-session-research-field span {
+  min-width: 0;
+  overflow: hidden;
+  padding: 4px 7px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.rich-session-research-field b {
+  border-right: 1px solid rgba(255, 255, 255, 0.08);
+  color: rgba(226, 233, 239, 0.54);
+  font-weight: 500;
+  text-transform: uppercase;
+}
+
 .rich-session-action-grid {
   display: grid;
   grid-template-columns: repeat(auto-fit, minmax(min(100%, 280px), 1fr));

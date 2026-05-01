@@ -6733,9 +6733,11 @@ function renderRichSessionActionItems(activeSession) {
   if (!items.length) {
     return "";
   }
+  const researchLoopStrip = renderRichSessionResearchLoopStrip(items);
 
   return `
     <section class="rich-session-action-panel" data-rich-session-action-panel aria-label="Pending human decisions">
+      ${researchLoopStrip}
       <div class="rich-session-action-panel-header">
         <span class="rich-session-entry-kicker-label">Human decisions</span>
         <span class="rich-session-entry-meta">${escapeHtml(`${items.length} pending`)}</span>
@@ -6744,6 +6746,115 @@ function renderRichSessionActionItems(activeSession) {
         ${items.map(renderAgentTownActionItemCard).join("")}
       </div>
     </section>
+  `;
+}
+
+function parseResearchCycleNumber(item) {
+  const haystack = [
+    item?.title,
+    item?.detail,
+    item?.target?.id,
+  ].map((entry) => String(entry || "")).join("\n");
+  const cycleMatch = haystack.match(/\bcycle[-\s:]*(\d+)\b/iu);
+  return cycleMatch ? cycleMatch[1] : "";
+}
+
+function parseResearchMoveSlug(item) {
+  const target = item?.target && typeof item.target === "object" ? item.target : {};
+  const targetId = String(target.id || "").trim();
+  const title = String(item?.title || "").trim();
+  const colonMatch = targetId.match(/^[A-Za-z0-9._-]+:([A-Za-z0-9._-]+):cycle-\d+$/u);
+  if (colonMatch) return colonMatch[1];
+  const titleMatch = title.match(/\bcycle\s+\d+\s*:\s*([A-Za-z0-9._-]+)/iu);
+  if (titleMatch) return titleMatch[1];
+  const pathMatch = targetId.replaceAll("\\", "/").match(/\/results\/([A-Za-z0-9._-]+)\.md$/u);
+  if (pathMatch) return pathMatch[1];
+  return "";
+}
+
+function parseResearchProjectName(item) {
+  const target = item?.target && typeof item.target === "object" ? item.target : {};
+  const projectName = String(target.projectName || "").trim();
+  if (projectName) return projectName;
+  const targetId = String(target.id || "").trim();
+  const colonMatch = targetId.match(/^([A-Za-z0-9._-]+):[A-Za-z0-9._-]+:cycle-\d+$/u);
+  if (colonMatch) return colonMatch[1];
+  const pathMatch = targetId.replaceAll("\\", "/").match(/(?:^|\/)projects\/([^/]+)\//u);
+  return pathMatch ? pathMatch[1] : "";
+}
+
+function parseResearchMetric(item) {
+  const text = [
+    item?.detail,
+    item?.recommendation,
+    item?.consequence,
+  ].map((entry) => String(entry || "")).join("\n");
+  const metricMatch = text.match(/\b(metric|score|accuracy|loss|mean_return|final_return)\s*[:=]\s*([+-]?[0-9]*\.?[0-9]+(?:e[+-]?\d+)?)/iu);
+  if (!metricMatch) return "";
+  return `${metricMatch[1]}=${metricMatch[2]}`;
+}
+
+function getResearchGateLabel(item) {
+  const action = String(item?.target?.action || "").trim();
+  if (action === "review-research-cycle") return "cycle review";
+  if (action === "compile-research-brief") return "brief review";
+  if (String(item?.kind || "") === "approval") return "approval";
+  return String(item?.kind || "review").replaceAll("_", " ");
+}
+
+function getResearchNextClick(item) {
+  const choices = Array.isArray(item?.choices) ? item.choices : [];
+  const preferred = choices.find((choice) => ["continue", "rerun", "synthesize", "brainstorm", "steer", "approve"].includes(String(choice || "").trim()));
+  return String(preferred || choices[0] || "").trim();
+}
+
+function getRichSessionResearchLoopSummary(items) {
+  const item = (items || []).find(isResearchReviewActionItem);
+  if (!item) return null;
+  const project = parseResearchProjectName(item);
+  const move = parseResearchMoveSlug(item);
+  const cycle = parseResearchCycleNumber(item);
+  const metric = parseResearchMetric(item);
+  const nextClick = getResearchNextClick(item);
+  return {
+    gate: getResearchGateLabel(item),
+    project,
+    move,
+    cycle,
+    metric,
+    nextClick,
+    title: String(item.title || "Research review").trim(),
+  };
+}
+
+function renderResearchLoopField(label, value) {
+  if (!value) return "";
+  return `
+    <span class="rich-session-research-field">
+      <b>${escapeHtml(label)}</b>
+      <span>${escapeHtml(value)}</span>
+    </span>
+  `;
+}
+
+function renderRichSessionResearchLoopStrip(items) {
+  const summary = getRichSessionResearchLoopSummary(items);
+  if (!summary) return "";
+  return `
+    <div class="rich-session-research-strip" data-rich-session-research-loop>
+      <div class="rich-session-research-strip-head">
+        <span class="rich-session-entry-kicker-label">Research loop</span>
+        <span class="rich-session-entry-meta">${escapeHtml(summary.title)}</span>
+      </div>
+      <div class="rich-session-research-fields">
+        ${renderResearchLoopField("gate", summary.gate)}
+        ${renderResearchLoopField("project", summary.project)}
+        ${renderResearchLoopField("move", summary.move)}
+        ${renderResearchLoopField("cycle", summary.cycle)}
+        ${renderResearchLoopField("metric", summary.metric)}
+        ${renderResearchLoopField("next click", summary.nextClick)}
+      </div>
+    </div>
   `;
 }
 
