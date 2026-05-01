@@ -336,7 +336,7 @@ export function createKnowledgeBaseGraphRenderer(container, options = {}) {
         const a = degree.get(link.source.id) || 1;
         const b = degree.get(link.target.id) || 1;
         const maxDeg = Math.max(a, b);
-        return 36 + (link.source.radius || 5) + (link.target.radius || 5) + Math.sqrt(maxDeg) * 14;
+        return 70 + (link.source.radius || 5) + (link.target.radius || 5) + Math.sqrt(maxDeg) * 22;
       })
       // Outbound-attraction-distribution-style: weaken link pull as the
       // hub's degree grows, so a 30-leaf hub doesn't get yanked toward
@@ -350,11 +350,12 @@ export function createKnowledgeBaseGraphRenderer(container, options = {}) {
       });
 
     const chargeForce = forceManyBody()
-      // Strong, long-range repulsion. Without enough reach, packed leaves
-      // around a hub feel charge from immediate neighbors only and stay
-      // crushed; with reach, the whole hub neighborhood inflates.
-      .strength((n) => -320 - (n.radius || 5) * 24)
-      .distanceMax(1800)
+      // Long-range repulsion is what pushes whole CLUSTERS apart, not just
+      // neighbors within a cluster. Bumping distanceMax 1800 -> 3500 means
+      // a hub on the left actually feels a hub on the right and they
+      // don't collapse into the middle of the canvas.
+      .strength((n) => -480 - (n.radius || 5) * 32)
+      .distanceMax(3500)
       .theta(0.9);
 
     const collideForce = forceCollide()
@@ -365,7 +366,10 @@ export function createKnowledgeBaseGraphRenderer(container, options = {}) {
       .strength(0.95)
       .iterations(2);
 
-    const centerForce = forceCenter(0, 0).strength(0.05);
+    // Very weak centering — just enough to keep the whole graph from
+    // drifting off-screen. Stronger center gravity squashes clusters
+    // together; long-range charge handles inter-cluster spacing instead.
+    const centerForce = forceCenter(0, 0).strength(0.015);
 
     simulation
       .force("link", linkForce)
