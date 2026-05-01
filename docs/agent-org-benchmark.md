@@ -17,9 +17,10 @@ orchestration change.
 
 So the first Vibe harness uses `posttrain-lite`: a deterministic local proxy
 where each strategy edits a tiny `recipe.json`, sees a dev profile, and is
-scored by a hidden holdout profile. It does not measure real post-training
-skill. It measures whether our organization loop preserves the benchmark
-contract and improves a recipe through iterative evidence.
+scored by a hidden holdout profile stored outside the provider working
+directory. It does not measure real post-training skill. It measures whether
+our organization loop preserves the benchmark contract and improves a recipe
+through iterative evidence.
 
 ## Command
 
@@ -79,6 +80,7 @@ The provider command runs with these environment variables:
 - Can the Vibe loop run the same task through durable project state?
 - Does iterative review/correction beat a one-shot dev optimizer on holdout?
 - Do protected benchmark files remain unchanged?
+- Is the hidden holdout kept outside the provider working directory?
 - Can we compare strategies over multiple seeds with mean/std?
 
 ## What This Does Not Test Yet

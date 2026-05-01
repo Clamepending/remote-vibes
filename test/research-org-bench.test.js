@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { spawn } from "node:child_process";
-import { mkdtempSync, readFileSync, rmSync } from "node:fs";
+import { existsSync, mkdtempSync, readFileSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import path, { join } from "node:path";
 import test from "node:test";
@@ -47,6 +47,8 @@ test("posttrain-lite scenario evaluates protected recipe edits", async () => {
     assert.equal(baseline.integrityOk, true);
     assert.ok(baseline.holdoutScore > 0);
     assert.equal(baseline.recipe.method, "grpo");
+    assert.equal(existsSync(join(dir, ".bench", "holdout-profile.json")), false);
+    assert.equal(existsSync(join(path.dirname(dir), ".bench-hidden", path.basename(dir), "holdout-profile.json")), true);
   } finally {
     rmSync(dir, { recursive: true, force: true });
   }

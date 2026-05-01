@@ -48,6 +48,11 @@ async function sha256File(filePath) {
   return hash.digest("hex");
 }
 
+function holdoutProfilePath(scenarioDir) {
+  const resolved = path.resolve(scenarioDir);
+  return path.join(path.dirname(resolved), ".bench-hidden", path.basename(resolved), "holdout-profile.json");
+}
+
 function shellQuote(value) {
   const text = String(value || "");
   if (/^[A-Za-z0-9_./:=@+-]+$/u.test(text)) return text;
@@ -380,14 +385,16 @@ export async function createPosttrainLiteScenario({ scenarioDir, seed = 0 } = {}
   if (!scenarioDir) throw new TypeError("scenarioDir is required");
   const resolved = path.resolve(scenarioDir);
   const profiles = posttrainLiteProfiles(seed);
+  const hiddenPath = holdoutProfilePath(resolved);
   await rm(resolved, { recursive: true, force: true });
+  await rm(path.dirname(hiddenPath), { recursive: true, force: true });
   await mkdir(path.join(resolved, "scripts"), { recursive: true });
   await mkdir(path.join(resolved, "data"), { recursive: true });
   await mkdir(path.join(resolved, ".bench"), { recursive: true });
   await writeFile(path.join(resolved, "TASK.md"), scenarioTaskMarkdown());
   await writeJson(path.join(resolved, "recipe.json"), baseRecipe());
   await writeJson(path.join(resolved, "data", "dev-profile.json"), profiles.dev);
-  await writeJson(path.join(resolved, ".bench", "holdout-profile.json"), profiles.holdout);
+  await writeJson(hiddenPath, profiles.holdout);
   await writeFile(path.join(resolved, "scripts", "evaluate-dev.mjs"), evaluateDevScript(), { mode: 0o755 });
   await writeFile(path.join(resolved, "scripts", "single-agent-proxy.mjs"), singleProxyScript(), { mode: 0o755 });
   await writeFile(path.join(resolved, "scripts", "org-cycle.mjs"), orgCycleScript(), { mode: 0o755 });
@@ -397,7 +404,6 @@ export async function createPosttrainLiteScenario({ scenarioDir, seed = 0 } = {}
   const protectedFiles = [
     "TASK.md",
     "data/dev-profile.json",
-    ".bench/holdout-profile.json",
     "scripts/evaluate-dev.mjs",
     "scripts/single-agent-proxy.mjs",
     "scripts/org-cycle.mjs",
@@ -411,6 +417,7 @@ export async function createPosttrainLiteScenario({ scenarioDir, seed = 0 } = {}
   await writeJson(path.join(resolved, ".bench", "manifest.json"), {
     suite: "posttrain-lite",
     seed,
+    holdout: "external",
     protectedFiles,
     hashes,
     createdAt: new Date().toISOString(),
@@ -423,7 +430,8 @@ export async function evaluatePosttrainLiteScenario({ scenarioDir } = {}) {
   const resolved = path.resolve(scenarioDir);
   const recipe = await readJson(path.join(resolved, "recipe.json"));
   const devProfile = await readJson(path.join(resolved, "data", "dev-profile.json"));
-  const holdoutProfile = await readJson(path.join(resolved, ".bench", "holdout-profile.json"));
+  const holdoutProfile = await readJson(holdoutProfilePath(resolved))
+    .catch(() => readJson(path.join(resolved, ".bench", "holdout-profile.json")));
   const manifest = await readJson(path.join(resolved, ".bench", "manifest.json")).catch(() => null);
   const integrityFindings = [];
   if (!manifest) {
