@@ -513,6 +513,98 @@ test("session research autopilot start falls back to the project GOAL", async ()
   });
 });
 
+test("session research autopilot start resumes a paused attached job", async () => {
+  await withLibraryServer(async ({ baseUrl }) => {
+    const sessionRes = await fetch(`${baseUrl}/api/sessions`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ providerId: "shell", name: "Pause resume research chat" }),
+    });
+    assert.equal(sessionRes.status, 201);
+    const session = (await sessionRes.json()).session;
+
+    const start = await fetch(`${baseUrl}/api/sessions/${session.id}/research-autopilot/start`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        projectName: "prose-style",
+        objective: "pause and resume this same autopilot job",
+        mode: "experiment",
+        commandText: "node -e \"console.log('score=0.67')\"",
+        metricRegex: "score=([0-9.]+)",
+        maxSteps: 3,
+        intervalMs: 10_000,
+        checkPaper: false,
+      }),
+    });
+    assert.equal(start.status, 202);
+    const started = await start.json();
+    let job = started.job;
+    for (let attempt = 0; attempt < 60 && !(job.status === "running" && job.stepCount >= 1); attempt += 1) {
+      await new Promise((resolve) => setTimeout(resolve, 50));
+      const poll = await fetch(`${baseUrl}/api/research/autopilot/jobs/${job.id}`);
+      assert.equal(poll.status, 200);
+      job = (await poll.json()).job;
+    }
+    assert.equal(job.status, "running", job.error || job.stopSummary);
+    assert.equal(job.stepCount, 1);
+
+    const stop = await fetch(`${baseUrl}/api/sessions/${session.id}/research-autopilot/stop`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ source: "chat" }),
+    });
+    assert.equal(stop.status, 200);
+    job = (await stop.json()).job;
+    for (let attempt = 0; attempt < 40 && !["succeeded", "failed", "stopped"].includes(job.status); attempt += 1) {
+      await new Promise((resolve) => setTimeout(resolve, 50));
+      const poll = await fetch(`${baseUrl}/api/research/autopilot/jobs/${started.job.id}`);
+      assert.equal(poll.status, 200);
+      job = (await poll.json()).job;
+    }
+    assert.equal(job.status, "stopped");
+    assert.equal(job.stopReason, "user-stop");
+
+    const resume = await fetch(`${baseUrl}/api/sessions/${session.id}/research-autopilot/start`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        projectName: "prose-style",
+        mode: "experiment",
+        maxSteps: 3,
+        intervalMs: 0,
+        checkPaper: false,
+      }),
+    });
+    assert.equal(resume.status, 202);
+    const resumed = await resume.json();
+    assert.equal(resumed.job.id, started.job.id);
+    assert.equal(resumed.attachment.jobId, started.job.id);
+    assert.equal(resumed.attachment.statusText, "autopilot resumed");
+    assert.ok(["queued", "running"].includes(resumed.job.status));
+    assert.equal(resumed.job.stepCount, 1);
+
+    job = resumed.job;
+    for (let attempt = 0; attempt < 60 && !["succeeded", "failed", "stopped"].includes(job.status); attempt += 1) {
+      await new Promise((resolve) => setTimeout(resolve, 50));
+      const poll = await fetch(`${baseUrl}/api/research/autopilot/jobs/${job.id}`);
+      assert.equal(poll.status, 200);
+      job = (await poll.json()).job;
+      if (job.stepCount >= 2) break;
+    }
+    assert.equal(job.id, started.job.id);
+    assert.ok(job.stepCount >= 2);
+    assert.ok(job.events.some((event) => event.type === "resumed"));
+
+    const finalStop = await fetch(`${baseUrl}/api/sessions/${session.id}/research-autopilot/stop`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ source: "chat" }),
+    });
+    assert.equal(finalStop.status, 200);
+  });
+});
+
 test("session research autopilot job resumes after app restart", async () => {
   const tmp = await mkdtemp(path.join(os.tmpdir(), "vr-research-dashboard-restart-"));
   const cwd = tmp;

@@ -7571,7 +7571,7 @@ function renderRichSessionAutopilotPanel(activeSession) {
         : "click to hand this chat to the research loop");
   const toggleTitle = enabled
     ? "Pause Autopilot for this chat."
-    : "Turn on Autopilot. It will use the project's wiki objective unless you steer it.";
+    : "Start Autopilot from the project's wiki objective, or resume the paused run attached to this chat.";
   const showProjectPicker = !running && pickerOpen;
   const showSteeringActions = enabled && job && !isResearchAutopilotTerminalStatus(job.status);
   const projectTitle = projectName
@@ -38811,38 +38811,62 @@ function buildChatAutopilotStartBody(config, objective, options = {}) {
   };
 }
 
-async function enableChatAutopilotForSession(activeSession) {
+async function startOrResumeChatAutopilotForSession(activeSession) {
   const sessionId = activeSession?.id || "";
   if (!sessionId) return null;
-  setChatAutopilotPending(sessionId, "loading project objective");
+  setChatAutopilotPending(sessionId, "starting from project objective");
   refreshRichSessionSurfaceUi();
   await ensureChatAutopilotResources();
   const config = getChatAutopilotSessionConfig(sessionId);
+  const job = getChatAutopilotJob(config);
+  if (job && !isResearchAutopilotTerminalStatus(job.status)) {
+    try {
+      const attachment = await updateChatAutopilotAttachment(activeSession.id, {
+        enabled: true,
+        projectName: job.projectName || getChatAutopilotSelectedProjectName(config, activeSession),
+        objective: job.objective || getChatAutopilotDefaultObjective(config, activeSession),
+        mode: job.mode || config.mode || "auto",
+        jobId: job.id,
+        statusText: "autopilot running",
+      }, { render: false });
+      void pollResearchAutopilotJob(job.id);
+      return attachment;
+    } finally {
+      setChatAutopilotPending(sessionId, "");
+      refreshRichSessionSurfaceUi();
+    }
+  }
+
   const projectName = getChatAutopilotSelectedProjectName(config, activeSession);
   const objective = getChatAutopilotDefaultObjective(config, activeSession);
-  const statusText = objective
-    ? "ready with project objective"
-    : projectName
-      ? "waiting for your research objective"
+  if (!projectName || !objective) {
+    const statusText = projectName
+      ? "add a project GOAL before starting autopilot"
       : "choose a research project";
-  try {
-    return await updateChatAutopilotAttachment(activeSession.id, {
-      enabled: true,
-      projectName,
-      objective,
-      mode: config.mode || "auto",
-      statusText,
-    }, { render: false });
-  } finally {
-    setChatAutopilotPending(sessionId, "");
-    refreshRichSessionSurfaceUi();
+    try {
+      return await updateChatAutopilotAttachment(activeSession.id, {
+        enabled: true,
+        projectName,
+        objective,
+        mode: config.mode || "auto",
+        statusText,
+      }, { render: false });
+    } finally {
+      setChatAutopilotPending(sessionId, "");
+      refreshRichSessionSurfaceUi();
+    }
   }
+
+  return startChatAutopilotRun(activeSession, objective, {
+    preferSavedObjective: true,
+    pendingText: "starting from project objective",
+  });
 }
 
 async function startChatAutopilotRun(activeSession, objective, options = {}) {
   const sessionId = activeSession?.id || "";
   if (!sessionId) return null;
-  setChatAutopilotPending(sessionId, "starting autopilot");
+  setChatAutopilotPending(sessionId, options.pendingText || "starting autopilot");
   refreshRichSessionSurfaceUi();
   await ensureChatAutopilotResources();
 
@@ -44352,7 +44376,7 @@ function bindShellEvents() {
         if (config.enabled) {
           void stopChatAutopilotRun(activeSession);
         } else {
-          void enableChatAutopilotForSession(activeSession);
+          void startOrResumeChatAutopilotForSession(activeSession);
           focusRichSessionComposer();
         }
         return;

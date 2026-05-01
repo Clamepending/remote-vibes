@@ -7947,6 +7947,84 @@ export async function createVibeResearchApp({
     return Boolean(job && !RESEARCH_AUTOPILOT_TERMINAL_STATUSES.has(job.status));
   }
 
+  function canResumeResearchAutopilotJob(job) {
+    return Boolean(job && job.status === "stopped" && job.stopReason === "user-stop");
+  }
+
+  function resumeAttachedResearchAutopilotJob(job, body = {}, request) {
+    if (!canResumeResearchAutopilotJob(job)) {
+      return null;
+    }
+    const mode = body.mode === undefined ? job.mode : normalizeResearchAutopilotMode(body.mode);
+    const objective = trimText(body.objective) || job.objective;
+    const decision = trimText(body.decision) || decisionForResearchAutopilotMode(mode);
+    const commandText = trimText(body.commandText || body.command);
+    const metricRegex = trimText(body.metricRegex);
+    const agentReviewPrompt = trimText(body.agentReviewPrompt)
+      || buildResearchAutopilotReviewPrompt({ objective });
+
+    job.objective = objective;
+    job.mode = mode;
+    job.status = "queued";
+    job.stopRequested = false;
+    job.shutdownRequested = false;
+    job.finishedAt = "";
+    job.currentAction = "";
+    job.stopReason = "user-resume";
+    job.stopSummary = "resumed from chat autopilot";
+    job.error = "";
+    job.heartbeatAt = new Date().toISOString();
+    job.maxSteps = Math.max(
+      numberInRange(body.maxSteps, job.maxSteps || 24, 1, 10_000),
+      (job.stepCount || 0) + 1,
+    );
+    job.maxFailures = numberInRange(body.maxFailures, job.maxFailures || 3, 1, 100);
+    job.intervalMs = numberInRange(body.intervalMs, job.intervalMs || 5_000, 0, 60 * 60 * 1000);
+    job.maxWallClockMs = numberInRange(
+      body.wallClockMinutes || body.maxWallClockMinutes,
+      Math.ceil((job.maxWallClockMs || 8 * 60 * 60 * 1000) / (60 * 1000)),
+      1,
+      7 * 24 * 60,
+    ) * 60 * 1000;
+    job.runOptions = {
+      ...(job.runOptions && typeof job.runOptions === "object" ? job.runOptions : {}),
+      projectDir: job.projectDir,
+      apply: body.apply === undefined ? job.runOptions?.apply !== false : body.apply !== false,
+      decision: decision || job.runOptions?.decision || "",
+      askHuman: body.askHuman === undefined && body.waitHuman === undefined
+        ? Boolean(job.runOptions?.askHuman)
+        : Boolean(body.askHuman || body.waitHuman),
+      waitHuman: body.waitHuman === undefined ? Boolean(job.runOptions?.waitHuman) : Boolean(body.waitHuman),
+      agentTownApi: String(body.agentTownApi || body.api || job.runOptions?.agentTownApi || `${requestServerBaseUrl(request)}/api/agent-town`),
+      timeoutMs: body.timeoutMs === undefined ? job.runOptions?.timeoutMs : body.timeoutMs,
+      allowCrossVersion: body.allowCrossVersion === undefined
+        ? Boolean(job.runOptions?.allowCrossVersion)
+        : Boolean(body.allowCrossVersion),
+      checkPaper: body.checkPaper === undefined && body.noPaper === undefined
+        ? job.runOptions?.checkPaper !== false
+        : body.checkPaper !== false && !body.noPaper,
+      codeCwd: body.codeCwd || job.runOptions?.codeCwd,
+      change: trimText(body.change) || objective,
+      agentReviewPrompt,
+      finishCanvasSessionId: body.finishCanvasSessionId || job.runOptions?.finishCanvasSessionId,
+    };
+    if (commandText) job.runOptions.commandText = commandText;
+    if (body.commandTimeoutMs !== undefined) job.runOptions.commandTimeoutMs = body.commandTimeoutMs;
+    if (body.metric !== undefined) job.runOptions.metric = body.metric;
+    if (metricRegex) job.runOptions.metricRegex = metricRegex;
+    if (body.qual !== undefined) job.runOptions.qual = body.qual;
+    if (body.seed !== undefined) job.runOptions.seed = body.seed;
+
+    appendResearchAutopilotEvent(job, {
+      type: "resumed",
+      action: "resume",
+      summary: `resumed from chat after ${job.stepCount || 0} step${job.stepCount === 1 ? "" : "s"}`,
+    });
+    saveResearchAutopilotJobsSoon();
+    launchResearchAutopilotJob(job);
+    return job;
+  }
+
   async function startSessionResearchAutopilot({ sessionId, request, body = {}, attachment = null }) {
     const projectNameInput = trimText(body.projectName) || attachment?.projectName || "";
     const { projectName, projectDir } = await resolveResearchProjectDir(projectNameInput);
@@ -7964,17 +8042,21 @@ export async function createVibeResearchApp({
       mode,
       finishCanvasSessionId: body.finishCanvasSessionId || sessionId,
     };
-    const job = startResearchAutopilotJob({ projectName, projectDir, body: jobBody, request });
+    const attachedJob = getAttachedResearchAutopilotJob(attachment);
+    const job = body.resumeAttached === false || attachedJob?.projectName !== projectName
+      ? null
+      : resumeAttachedResearchAutopilotJob(attachedJob, jobBody, request);
+    const activeJob = job || startResearchAutopilotJob({ projectName, projectDir, body: jobBody, request });
     const nextAttachment = await setChatAutopilotAttachment(sessionId, {
       enabled: true,
       projectName,
       objective,
       mode,
-      jobId: job.id,
-      statusText: "autopilot running",
+      jobId: activeJob.id,
+      statusText: job ? "autopilot resumed" : "autopilot running",
       lastMessage: message || objective,
     });
-    return { job, attachment: nextAttachment };
+    return { job: activeJob, attachment: nextAttachment };
   }
 
   app.get("/api/research/autopilot/jobs", async (request, response) => {
