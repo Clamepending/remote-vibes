@@ -7566,7 +7566,7 @@ async function createChatAutopilotProjectForSession(activeSession = getActiveSes
   const goal = buildChatAutopilotBootstrapGoal(activeSession, name);
   state.researchAutopilot.projectCreating = true;
   state.researchAutopilot.error = "";
-  setChatAutopilotPending(sessionId, "creating project index");
+  setChatAutopilotPending(sessionId, "preparing supervisor");
   if (render) refreshRichSessionSurfaceUi();
   try {
     const payload = await fetchJson("/api/research/projects", {
@@ -7598,7 +7598,7 @@ async function createChatAutopilotProjectForSession(activeSession = getActiveSes
       ...getChatAutopilotSessionConfig(sessionId),
       projectName: state.researchAutopilot.projectName,
       objective: state.researchAutopilot.objective,
-      statusText: "project index ready",
+      statusText: "research memory ready",
     }, { render: false });
     return state.researchAutopilot.projectName;
   } catch (error) {
@@ -7786,16 +7786,16 @@ function renderRichSessionAutopilotPanel(activeSession) {
           ? `${objectiveSource === "wiki" ? "wiki" : "saved"} objective: ${objectivePreview}`
           : "needs research objective"
         : projectCreating
-          ? "creating project index"
+          ? "preparing supervisor"
         : noProjects
-          ? "no project index yet"
+          ? "ready to supervise this chat"
         : projectName
           ? "ready to hand off"
           : "choose a project");
   const toggleTitle = enabled
     ? "Pause the supervisor for this chat."
     : noProjects
-      ? "Create a project index for this chat, then let the supervisor take the next step."
+      ? "Create durable research memory for this chat, then let the supervisor take the next step."
       : "Let the supervisor take the next research step in this same chat.";
   const showProjectPicker = !noProjects && !running && pickerOpen;
   const showSteeringActions = enabled && (sessionDriver || (job && !isResearchAutopilotTerminalStatus(job.status)));
@@ -7824,8 +7824,8 @@ function renderRichSessionAutopilotPanel(activeSession) {
       </div>
       <div class="rich-session-autopilot-actions">
         ${noProjects ? `
-          <button class="rich-session-autopilot-action is-primary" type="button" data-chat-autopilot-create-project title="Create a durable project README, LOG, paper, and first QUEUE row for this chat." ${actionDisabled}>
-            ${projectCreating ? "Indexing..." : "Index chat"}
+          <button class="rich-session-autopilot-action is-primary" type="button" data-chat-autopilot-start-project title="Create durable research memory for this chat and let the supervisor take over." ${actionDisabled}>
+            ${projectCreating ? "Starting..." : "Start"}
           </button>
         ` : showProjectPicker ? `
           <label class="sr-only" for="chat-autopilot-project">Research project</label>
@@ -45062,12 +45062,13 @@ function bindShellEvents() {
         return;
       }
 
-      const createProjectButton = target?.closest("[data-chat-autopilot-create-project]");
-      if (createProjectButton instanceof HTMLElement) {
+      const startProjectButton = target?.closest("[data-chat-autopilot-start-project]");
+      if (startProjectButton instanceof HTMLElement) {
         event.preventDefault();
         const activeSession = getActiveSession();
         if (!activeSession?.id) return;
-        void createChatAutopilotProjectForSession(activeSession);
+        void startChatAutopilotSupervisorForSession(activeSession);
+        focusRichSessionComposer();
         return;
       }
 

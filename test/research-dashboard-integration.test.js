@@ -1111,8 +1111,8 @@ test("main app bundle exposes the native research workspace", async () => {
     assert.match(jsText, /Next/);
     assert.match(jsText, /Replan/);
     assert.match(jsText, /Checkpoint/);
-    assert.match(jsText, /Index chat/);
-    assert.match(jsText, /data-chat-autopilot-create-project/);
+    assert.match(jsText, /ready to supervise this chat/);
+    assert.match(jsText, /data-chat-autopilot-start-project/);
     assert.match(jsText, /\/api\/research\/projects/);
     assert.match(jsText, /research_progress_score/);
     assert.doesNotMatch(jsText, /Autopilot driving/);
