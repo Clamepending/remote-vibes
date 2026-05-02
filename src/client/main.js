@@ -3308,7 +3308,16 @@ function hasWorkingSessionSubactivity(session) {
 }
 
 function hasWorkingSessionActivity(session) {
-  return session?.activityStatus === "working" || hasWorkingSessionSubactivity(session);
+  if (!session || session.status === "exited") {
+    return false;
+  }
+
+  const hasSubactivity = hasWorkingSessionSubactivity(session);
+  if (session.streamMode) {
+    return Boolean(session.streamWorking) || hasSubactivity;
+  }
+
+  return session.activityStatus === "working" || hasSubactivity;
 }
 
 function pruneSessionReadState() {
@@ -3427,9 +3436,12 @@ function getSessionLabel(session) {
   }
 
   if (hasWorkingSessionActivity(session)) {
-    const title = session?.backgroundActivity?.active
-      ? "agent has a live monitor or background task"
-      : "agent is working";
+    let title = "agent is working";
+    if (session?.streamMode && session?.streamWorking) {
+      title = "agent is actively running";
+    } else if (session?.backgroundActivity?.active) {
+      title = "agent has a live monitor or background task";
+    }
     return { text: "working", className: "working", title };
   }
 
