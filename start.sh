@@ -136,6 +136,58 @@ expand_home_path() {
   esac
 }
 
+read_persisted_wiki_dir() {
+  local settings_file="$RUNTIME_DIR/settings.json"
+
+  if [ ! -f "$settings_file" ]; then
+    return 1
+  fi
+
+  node -e '
+const fs = require("fs");
+const path = require("path");
+
+const [settingsFile, rootDir] = process.argv.slice(1);
+let payload;
+try {
+  payload = JSON.parse(fs.readFileSync(settingsFile, "utf8"));
+} catch {
+  process.exit(1);
+}
+
+const settings = payload && typeof payload === "object" ? payload.settings || {} : {};
+const rawPath = String(settings.wikiPath || "").trim();
+if (!rawPath || settings.wikiPathConfigured === false) {
+  process.exit(1);
+}
+
+const homeDir = process.env.HOME || "";
+const expandedPath =
+  rawPath === "~"
+    ? homeDir
+    : rawPath.startsWith("~/")
+      ? path.join(homeDir, rawPath.slice(2))
+      : rawPath;
+
+process.stdout.write(path.resolve(rootDir, expandedPath));
+' "$settings_file" "$ROOT_DIR"
+}
+
+configure_wiki_dir() {
+  local persisted_wiki_dir
+
+  if [ -n "$WIKI_DIR" ]; then
+    WIKI_DIR="$(expand_home_path "$WIKI_DIR")"
+  elif persisted_wiki_dir="$(read_persisted_wiki_dir 2>/dev/null)" && [ -n "$persisted_wiki_dir" ]; then
+    WIKI_DIR="$persisted_wiki_dir"
+  fi
+
+  if [ -n "$WIKI_DIR" ]; then
+    export VIBE_RESEARCH_WIKI_DIR="$WIKI_DIR"
+    export REMOTE_VIBES_WIKI_DIR="${REMOTE_VIBES_WIKI_DIR:-$WIKI_DIR}"
+  fi
+}
+
 ensure_runtime_dir() {
   mkdir -p "$RUNTIME_DIR"
 }
@@ -995,14 +1047,10 @@ print_startup_log() {
 }
 
 ensure_runtime_dir
-if [ -n "$WIKI_DIR" ]; then
-  WIKI_DIR="$(expand_home_path "$WIKI_DIR")"
-  export VIBE_RESEARCH_WIKI_DIR="$WIKI_DIR"
-  export REMOTE_VIBES_WIKI_DIR="${REMOTE_VIBES_WIKI_DIR:-$WIKI_DIR}"
-fi
 migrate_legacy_runtime_dir
 migrate_home_checkout_to_app
 ensure_node_runtime
+configure_wiki_dir
 ensure_vibe_research_settings_repo
 ensure_mac_brain_wiki
 ensure_default_session_cwd

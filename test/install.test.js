@@ -1645,6 +1645,82 @@ exit 0
   }
 });
 
+test("install.sh preserves a persisted custom Library folder in the systemd service", async () => {
+  const { tempRoot, repoDir } = await createSourceRepo();
+  const installRoot = await mkdtemp(path.join(os.tmpdir(), "vibe-research-systemd-library-"));
+  const installDir = path.join(installRoot, "vibe-research");
+  const fakeBin = path.join(installRoot, "bin");
+  const serviceDir = path.join(installRoot, "systemd");
+  const systemctlLog = path.join(installRoot, "systemctl.log");
+  const stateDir = path.join(installRoot, "state");
+  const workspaceDir = path.join(installRoot, "workspace");
+  const wikiDir = path.join(installRoot, "mac-brain");
+
+  try {
+    await mkdir(fakeBin, { recursive: true });
+    await mkdir(serviceDir, { recursive: true });
+    await mkdir(stateDir, { recursive: true });
+    await writeFile(
+      path.join(stateDir, "settings.json"),
+      `${JSON.stringify({
+        version: 1,
+        settings: {
+          workspaceRootPath: workspaceDir,
+          wikiPath: wikiDir,
+          wikiPathConfigured: true,
+        },
+      }, null, 2)}\n`,
+      "utf8",
+    );
+    await writeFile(path.join(fakeBin, "uname"), "#!/usr/bin/env sh\nprintf 'Linux\\n'\n");
+    await writeFile(
+      path.join(fakeBin, "ps"),
+      `#!/usr/bin/env sh
+if [ "\${1:-}" = "-p" ] && [ "\${2:-}" = "1" ]; then
+  printf 'systemd\\n'
+  exit 0
+fi
+exec /bin/ps "$@"
+`,
+    );
+    await writeFile(
+      path.join(fakeBin, "systemctl"),
+      `#!/usr/bin/env sh
+printf '%s\\n' "$*" >> ${JSON.stringify(systemctlLog)}
+if [ "\${1:-}" = "is-system-running" ]; then
+  printf 'running\\n'
+  exit 0
+fi
+exit 0
+`,
+    );
+    await writeFile(path.join(fakeBin, "sudo"), fakeSudoScript);
+    await execFile("chmod", ["+x", ...["uname", "ps", "systemctl", "sudo"].map((name) => path.join(fakeBin, name))]);
+
+    const result = await execFile("bash", [installScript], {
+      env: installTestEnv({
+        PATH: `${fakeBin}${path.delimiter}${process.env.PATH || ""}`,
+        VIBE_RESEARCH_HOME: installDir,
+        VIBE_RESEARCH_REPO_URL: repoDir,
+        VIBE_RESEARCH_INSTALL_SERVICE: "1",
+        VIBE_RESEARCH_SYSTEMD_SERVICE_DIR: serviceDir,
+        VIBE_RESEARCH_SERVICE_NAME: "vibe-research-test",
+        VIBE_RESEARCH_STATE_DIR: stateDir,
+        VIBE_RESEARCH_WORKSPACE_DIR: workspaceDir,
+        VIBE_RESEARCH_PORT: "4999",
+      }),
+    });
+
+    assert.match(result.stdout, /SOURCE_VERSION=v1/);
+
+    const unit = await readFile(path.join(serviceDir, "vibe-research-test.service"), "utf8");
+    assert.match(unit, new RegExp(`Environment=VIBE_RESEARCH_WIKI_DIR=${escapeRegExp(wikiDir)}`));
+  } finally {
+    await rm(tempRoot, { recursive: true, force: true });
+    await rm(installRoot, { recursive: true, force: true });
+  }
+});
+
 test("install.sh accepts a transient systemd restart failure when the service becomes active", async () => {
   const { tempRoot, repoDir } = await createSourceRepo();
   const installRoot = await mkdtemp(path.join(os.tmpdir(), "vibe-research-systemd-retry-"));

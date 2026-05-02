@@ -48276,6 +48276,7 @@ async function saveSettingsFromForm(form) {
   const wikiPath = String(formData.get("wikiPath") || "");
   const agentSpawnPath = String(formData.get("agentSpawnPath") || "");
   const hasField = (name) => Boolean(form.querySelector(`[name="${name}"]`));
+  const previousWikiPath = normalizeWorkspaceRoot(state.settings.wikiPath || "");
   const body = {};
 
   if (hasField("preventSleepEnabled")) {
@@ -48339,24 +48340,30 @@ async function saveSettingsFromForm(form) {
     method: "PATCH",
     body: JSON.stringify(body),
   });
+  const nextWikiPath = normalizeWorkspaceRoot(payload.settings?.wikiPath || wikiPath || state.settings.wikiPath || "");
+  const wikiPathChanged = hasField("wikiPath") && previousWikiPath !== nextWikiPath;
 
   applySettingsState(payload.settings);
   if (hasField("wikiPath")) {
     state.settings.wikiPath = payload.settings?.wikiPath || wikiPath || state.settings.wikiPath;
-    state.settings.wikiPathConfigured = Boolean(state.settings.wikiPath);
+    state.settings.wikiPathConfigured =
+      payload.settings?.wikiPathConfigured === undefined
+        ? Boolean(state.settings.wikiPath)
+        : Boolean(payload.settings.wikiPathConfigured);
   }
   if (hasField("agentSpawnPath")) {
     state.settings.agentSpawnPath = payload.settings?.agentSpawnPath || agentSpawnPath || state.settings.agentSpawnPath;
     state.defaultCwd = state.settings.agentSpawnPath || state.defaultCwd;
   }
-  if (hasField("agentSpawnPath")) {
-    state.settings.agentSpawnPath = payload.settings?.agentSpawnPath || agentSpawnPath || state.settings.agentSpawnPath;
-    state.defaultCwd = state.settings.agentSpawnPath || state.defaultCwd;
+  if (payload.agentPrompt) {
+    applyAgentPromptState(payload.agentPrompt);
   }
-  applyAgentPromptState(payload.agentPrompt);
-  state.knowledgeBase.noteCache = {};
 
-  if (state.currentView === "knowledge-base") {
+  if (wikiPathChanged) {
+    state.knowledgeBase.noteCache = {};
+  }
+
+  if (wikiPathChanged && state.currentView === "knowledge-base") {
     await loadKnowledgeBaseIndex();
     await ensureKnowledgeBaseSelectionLoaded({ force: true });
   }

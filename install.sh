@@ -1275,6 +1275,59 @@ wait_for_vibe_research_server() {
   return 1
 }
 
+read_persisted_wiki_dir() {
+  local state_dir="$1"
+  local settings_file="$state_dir/settings.json"
+
+  if [ ! -f "$settings_file" ] || ! has_command node; then
+    return 1
+  fi
+
+  node -e '
+const fs = require("fs");
+const path = require("path");
+
+const [settingsFile, rootDir] = process.argv.slice(1);
+let payload;
+try {
+  payload = JSON.parse(fs.readFileSync(settingsFile, "utf8"));
+} catch {
+  process.exit(1);
+}
+
+const settings = payload && typeof payload === "object" ? payload.settings || {} : {};
+const rawPath = String(settings.wikiPath || "").trim();
+if (!rawPath || settings.wikiPathConfigured === false) {
+  process.exit(1);
+}
+
+const homeDir = process.env.HOME || "";
+const expandedPath =
+  rawPath === "~"
+    ? homeDir
+    : rawPath.startsWith("~/")
+      ? path.join(homeDir, rawPath.slice(2))
+      : rawPath;
+
+process.stdout.write(path.resolve(rootDir, expandedPath));
+' "$settings_file" "$INSTALL_DIR"
+}
+
+resolve_service_wiki_dir() {
+  local state_dir="$1"
+  local configured_wiki_dir="${VIBE_RESEARCH_WIKI_DIR:-${REMOTE_VIBES_WIKI_DIR:-}}"
+  local persisted_wiki_dir
+
+  if [ -n "$configured_wiki_dir" ]; then
+    printf '%s\n' "$configured_wiki_dir"
+    return
+  fi
+
+  if persisted_wiki_dir="$(read_persisted_wiki_dir "$state_dir" 2>/dev/null)" && [ -n "$persisted_wiki_dir" ]; then
+    printf '%s\n' "$persisted_wiki_dir"
+  fi
+}
+
 install_systemd_service() {
   local service_user state_dir wiki_dir port service_file temp_file
 
@@ -1299,7 +1352,7 @@ install_systemd_service() {
 
   service_user="$(id -un)"
   state_dir="${VIBE_RESEARCH_STATE_DIR:-${REMOTE_VIBES_STATE_DIR:-$HOME/.vibe-research}}"
-  wiki_dir="${VIBE_RESEARCH_WIKI_DIR:-${REMOTE_VIBES_WIKI_DIR:-}}"
+  wiki_dir="$(resolve_service_wiki_dir "$state_dir")"
   workspace_dir="${VIBE_RESEARCH_WORKSPACE_DIR:-${REMOTE_VIBES_WORKSPACE_DIR:-$HOME/vibe-projects}}"
   port="${VIBE_RESEARCH_PORT:-${REMOTE_VIBES_PORT:-4826}}"
   service_file="$SYSTEMD_SERVICE_DIR/${SERVICE_NAME}.service"
