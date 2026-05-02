@@ -298,6 +298,7 @@ function manualDirective(action, { attachment = {}, report = null } = {}) {
   const context = report?.projectContext || {};
   const objective = trimString(attachment?.objective) || trimString(context.goal);
   const runtime = observedAttachmentRuntime(attachment);
+  const watchlist = trimString(attachment?.watchlist);
   const projectPhrase = projectPhraseFor(project);
   const nextCommand = trimString(report?.nextCommand);
   const reason = recommendationReason(report);
@@ -324,6 +325,7 @@ function manualDirective(action, { attachment = {}, report = null } = {}) {
         command: nextCommand,
         action: "manual-continue",
         runtime,
+        watchlist,
         focus: "Choose the smallest safe next step from ACTIVE or QUEUE, and do not start broad exploration until the durable state is inspected.",
       }),
       reason: "manual continue requested",
@@ -340,6 +342,7 @@ function manualDirective(action, { attachment = {}, report = null } = {}) {
         command: nextCommand,
         action: "manual-synthesize",
         runtime,
+        watchlist,
         focus: "Produce a tight checkpoint: what changed since the last update, which evidence is complete or incomplete, current risks, qualitative sample/heatmap status, and the next recommended move.",
         finish: "Do not launch new experiments during the checkpoint; end with the recommendation, durable links, and any true human gate.",
       }),
@@ -357,6 +360,7 @@ function manualDirective(action, { attachment = {}, report = null } = {}) {
         command: nextCommand,
         action: "manual-brainstorm",
         runtime,
+        watchlist,
         focus: "Brainstorm candidate directions from the latest positive and negative evidence, then select the smallest evidence-backed move whose result would change a decision.",
         finish: "Write or update the plan/brief with falsifiers, expected artifacts, and cost; ask for review before expensive execution if the choice is ambiguous.",
       }),
@@ -428,6 +432,25 @@ function workerHandoffLine(event = {}) {
   return observed ? `Worker just reported: ${observed}.` : "";
 }
 
+function supervisorWatchlistItems(value = "") {
+  return String(value || "")
+    .split(/\n|;/u)
+    .map((line) => trimString(line).replace(/^[-*•]\s*/u, ""))
+    .filter(Boolean)
+    .slice(0, 8);
+}
+
+function supervisorWatchlistLine(value = "") {
+  const items = supervisorWatchlistItems(value);
+  if (!items.length) return "";
+  return `Supervisor look-fors: ${compactDirectiveText(items.join("; "), 420)}.`;
+}
+
+function supervisorWatchlistSignaturePart(value = "") {
+  const normalized = supervisorWatchlistItems(value).join("|");
+  return normalized ? `watch:${textFingerprint(normalized)}` : "";
+}
+
 function operatingBrief({
   headline,
   project = "",
@@ -440,10 +463,12 @@ function operatingBrief({
   action = "",
   runtime = {},
   handoff = "",
+  watchlist = "",
 } = {}) {
   const continuityLine = conciseContinuityLine({ action, runtime });
   const stateHint = conciseStateHint(context);
   const commandHint = conciseCommandHint(command);
+  const watchlistLine = supervisorWatchlistLine(watchlist);
   const lines = [
     headline,
     handoff,
@@ -453,13 +478,14 @@ function operatingBrief({
   if (reason) {
     lines.push(`Why: ${reason}`);
   }
+  if (watchlistLine) lines.push(watchlistLine);
   lines.push("Keep it evidence-first: inspect validation samples/heatmaps/failure cases yourself; audit stale or cherry-picked artifacts; preserve provenance.");
   lines.push("Keep safe idle GPUs saturated with independent seeds/ablations/sweeps; if stuck or changing recipe, do lightweight literature/current-docs before more GPU spend.");
   if (continuityLine) lines.push(continuityLine);
   if (commandHint) lines.push(`Command if useful: ${commandHint}.`);
   if (focus) lines.push(compactDirectiveText(focus, 220));
   lines.push(compactDirectiveText(finish || "Update durable state after the bounded step and stop only for a true human gate.", 150));
-  return compactDirectiveText(lines.join(" "), 1_040);
+  return compactDirectiveText(lines.join(" "), 1_200);
 }
 
 function supervisorModeForAction(action = "") {
@@ -537,6 +563,7 @@ function automaticDirective({ action, report, attachment, event = {} }) {
   const context = report?.projectContext || {};
   const objective = trimString(attachment?.objective) || trimString(context.goal);
   const runtime = observedAttachmentRuntime(attachment);
+  const watchlist = trimString(attachment?.watchlist);
   const projectPhrase = projectPhraseFor(project);
   const nextCommand = trimString(report?.nextCommand);
   const handoff = workerHandoffLine(event);
@@ -553,6 +580,7 @@ function automaticDirective({ action, report, attachment, event = {} }) {
         action,
         runtime,
         handoff,
+        watchlist,
         focus: "Do not start experiments while the project contract is corrupt; repair the README/LOG/result-doc shape first.",
         finish: "Re-run the doctor, commit/push the repair, then continue from the durable README/LOG state.",
       }),
@@ -572,6 +600,7 @@ function automaticDirective({ action, report, attachment, event = {} }) {
         action,
         runtime,
         handoff,
+        watchlist,
         focus: "If a cycle is running, verify process/GPU/artifact state and monitor it. If GPUs are idle, launch only independent seeds/ablations/sweeps with separate artifacts; inspect validation samples before claiming progress. If stuck, do a lightweight literature/current-docs pass before changing recipe.",
       }),
       reason: reason || "active move needs the next supervised step",
@@ -590,6 +619,7 @@ function automaticDirective({ action, report, attachment, event = {} }) {
         action,
         runtime,
         handoff,
+        watchlist,
         focus: "Create or resume the result doc before expensive work, move the row into ACTIVE, make the pre-flight/falsifier explicit, and plan validation artifacts plus safe GPU saturation up front.",
       }),
       reason: reason || "queued move is ready to run",
@@ -608,6 +638,7 @@ function automaticDirective({ action, report, attachment, event = {} }) {
         action,
         runtime,
         handoff,
+        watchlist,
         focus: "Run the next runnable sweep rows across all safe idle GPUs, preserve per-row artifacts and metrics, and do not collapse distinct recipes into one undocumented comparison.",
       }),
       reason: reason || "planned sweep has runnable rows",
@@ -626,6 +657,7 @@ function automaticDirective({ action, report, attachment, event = {} }) {
         action,
         runtime,
         handoff,
+        watchlist,
         focus: "Judge the latest result, distill what changed, identify failure modes and qualitative evidence, then propose the next move with a falsifier.",
         finish: "Write the review/brief update, surface the recommendation for approval if needed, and only then compile new QUEUE rows.",
       }),
@@ -645,6 +677,7 @@ function automaticDirective({ action, report, attachment, event = {} }) {
         action,
         runtime,
         handoff,
+        watchlist,
         focus: "Use the README, LOG, leaderboard, prior result docs, current artifacts, and lightweight literature/current-docs grounding to propose one small next move with a falsifier before running it.",
         finish: "Save the brief, ask for review if the choice is material, and do not start experiments until the brief is fit to queue.",
       }),
@@ -664,6 +697,7 @@ function automaticDirective({ action, report, attachment, event = {} }) {
         action,
         runtime,
         handoff,
+        watchlist,
         focus: "Use latest positive/negative evidence plus a lightweight literature/current-docs pass when stuck to propose candidate moves, then pick the smallest one that would change a decision.",
         finish: "Save the plan or brief, include falsifiers and expected artifacts, and ask for review before expensive execution if the choice is ambiguous.",
       }),
@@ -683,6 +717,7 @@ function automaticDirective({ action, report, attachment, event = {} }) {
         action,
         runtime,
         handoff,
+        watchlist,
         focus: "If it is already fit to run, compile it into QUEUE; otherwise tighten the question, literature/current-docs grounding, validation artifacts, and falsifier first.",
       }),
       reason: reason || "brief needs review before queueing",
@@ -703,6 +738,7 @@ function automaticDirective({ action, report, attachment, event = {} }) {
           action,
           runtime,
           handoff,
+          watchlist,
           focus: "Inspect the judge issues and validation artifacts yourself, run the narrowest confirming cycle, and keep the leaderboard unchanged until evidence is strong.",
         }),
         reason: reason || "judge recommends rerun",
@@ -720,6 +756,7 @@ function automaticDirective({ action, report, attachment, event = {} }) {
           action,
           runtime,
           handoff,
+          watchlist,
           focus: "Update the narrative, limitations, and durable project state according to the judge evidence before choosing new work.",
         }),
         reason: reason || "judge recommends synthesis",
@@ -737,6 +774,7 @@ function automaticDirective({ action, report, attachment, event = {} }) {
           action,
           runtime,
           handoff,
+          watchlist,
           focus: "Use judge output, negative results, leaderboard state, qualitative artifact review, and literature/current-docs grounding if stuck to propose the smallest useful follow-up.",
         }),
         reason: reason || "judge recommends brainstorming",
@@ -754,6 +792,7 @@ function automaticDirective({ action, report, attachment, event = {} }) {
           action,
           runtime,
           handoff,
+          watchlist,
           focus: "Use the judge evidence to choose the next safe cycle and keep the result doc current.",
         }),
         reason: reason || "judge recommends continuing",
@@ -892,6 +931,7 @@ export function decideResearchSupervisorIntervention({
     action: recAction,
     report: orchestratorReport,
     reason: [automatic.reason, continuitySignaturePart(recAction, observedAttachmentRuntime(attachment))]
+      .concat(supervisorWatchlistSignaturePart(attachment.watchlist))
       .filter(Boolean)
       .join("|"),
   });

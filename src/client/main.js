@@ -1547,6 +1547,17 @@ function saveComposerQueue() {
   }
 }
 
+function normalizeChatAutopilotSupervisorWatchlist(value) {
+  return String(value || "")
+    .replace(/\r\n?/g, "\n")
+    .split("\n")
+    .map((line) => line.trim())
+    .join("\n")
+    .replace(/\n{3,}/g, "\n\n")
+    .trim()
+    .slice(0, 4_000);
+}
+
 function sanitizeChatAutopilotSupervisor(value) {
   const input = value && typeof value === "object" && !Array.isArray(value) ? value : {};
   const rawCard = input.lastDirectiveCard && typeof input.lastDirectiveCard === "object" && !Array.isArray(input.lastDirectiveCard)
@@ -1626,6 +1637,7 @@ function sanitizeChatAutopilotProjectSupervisor(value) {
     projectName: String(input.projectName || "").trim(),
     enabled: Boolean(input.enabled),
     objective: String(input.objective || "").trim().slice(0, 4_000),
+    watchlist: normalizeChatAutopilotSupervisorWatchlist(input.watchlist),
     primarySessionId: String(input.primarySessionId || "").trim(),
     sessionIds,
     createdAt: typeof input.createdAt === "string" ? input.createdAt : "",
@@ -1650,12 +1662,13 @@ function sanitizeChatAutopilotSession(value) {
   const createdAt = typeof value.createdAt === "string" ? value.createdAt : "";
   const updatedAt = typeof value.updatedAt === "string" ? value.updatedAt : "";
   const lastMessage = String(value.lastMessage || "").trim().slice(0, 4_000);
+  const watchlist = normalizeChatAutopilotSupervisorWatchlist(value.watchlist);
   const supervisor = sanitizeChatAutopilotSupervisor(value.supervisor);
   const projectSupervisor = sanitizeChatAutopilotProjectSupervisor(value.projectSupervisor);
-  if (!enabled && !projectName && !objective && !jobId && !statusText && !lastMessage && !supervisor.lastObservedAt && !supervisor.thread.length && driver === "session") {
+  if (!enabled && !projectName && !objective && !jobId && !statusText && !lastMessage && !watchlist && !supervisor.lastObservedAt && !supervisor.thread.length && driver === "session") {
     return null;
   }
-  return { sessionId, enabled, projectName, objective, mode, driver, jobId, statusText, createdAt, updatedAt, lastMessage, supervisor, projectSupervisor };
+  return { sessionId, enabled, projectName, objective, mode, driver, jobId, statusText, createdAt, updatedAt, lastMessage, watchlist, supervisor, projectSupervisor };
 }
 
 function loadChatAutopilotSessions() {
@@ -2805,6 +2818,9 @@ const state = {
   chatAutopilotProjectPickerOpen: {},
   chatAutopilotSupervisorDrawerOpen: {},
   chatAutopilotSupervisorDrafts: {},
+  chatAutopilotSupervisorWatchlistDrafts: {},
+  chatAutopilotSupervisorWatchlistSaving: {},
+  chatAutopilotSupervisorWatchlistTimers: {},
   chatAutopilotSupervisorSending: {},
   chatAutopilotPending: {},
   chatAutopilotSupervisorTicking: {},
@@ -7496,6 +7512,7 @@ function getChatAutopilotSessionConfig(sessionId) {
       jobId: "",
       statusText: "",
       updatedAt: "",
+      watchlist: "",
       supervisor: sanitizeChatAutopilotSupervisor(),
       projectSupervisor: sanitizeChatAutopilotProjectSupervisor(),
     };
@@ -7514,6 +7531,7 @@ function getChatAutopilotSessionConfig(sessionId) {
     createdAt: existing.createdAt || "",
     updatedAt: existing.updatedAt || "",
     lastMessage: existing.lastMessage || "",
+    watchlist: existing.watchlist || existing.projectSupervisor?.watchlist || "",
     supervisor: sanitizeChatAutopilotSupervisor(existing.supervisor),
     projectSupervisor: sanitizeChatAutopilotProjectSupervisor(existing.projectSupervisor),
   };
@@ -7932,6 +7950,14 @@ function isChatAutopilotSupervisorDrawerOpen(activeSession) {
   return getShellSurfaceMode(activeSession) === "native" && isSupervisorSideChatDesktopViewport();
 }
 
+function getChatAutopilotSupervisorWatchlist(sessionId, config = getChatAutopilotSessionConfig(sessionId)) {
+  const sid = String(sessionId || "").trim();
+  if (sid && Object.prototype.hasOwnProperty.call(state.chatAutopilotSupervisorWatchlistDrafts, sid)) {
+    return normalizeChatAutopilotSupervisorWatchlist(state.chatAutopilotSupervisorWatchlistDrafts[sid]);
+  }
+  return normalizeChatAutopilotSupervisorWatchlist(config.watchlist || config.projectSupervisor?.watchlist || "");
+}
+
 function renderChatAutopilotSupervisorDrawer(activeSession) {
   const sessionId = activeSession?.id || "";
   if (!sessionId) return "";
@@ -7961,6 +7987,8 @@ function renderChatAutopilotSupervisorDrawer(activeSession) {
     || (enabled ? "Waiting for the next worker pause before sending a directive." : "Supervisor is paused for this chat.");
   const decisionTitle = card.action || card.mode || (supervisor.lastDirectiveAt ? "last directive" : "ready");
   const draft = String(state.chatAutopilotSupervisorDrafts[sessionId] || "");
+  const watchlist = getChatAutopilotSupervisorWatchlist(sessionId, config);
+  const watchlistSaving = Boolean(state.chatAutopilotSupervisorWatchlistSaving[sessionId]);
   const chatHistory = threadRows.length
     ? threadRows.map((entry) => {
       const role = String(entry.role || "state").toLowerCase();
@@ -8019,6 +8047,18 @@ function renderChatAutopilotSupervisorDrawer(activeSession) {
             Reviewing durable state, recent trace, artifacts, and continuity.
           </section>
         ` : ""}
+        <section class="rich-session-supervisor-watchlist">
+          <div class="rich-session-supervisor-watchlist-head">
+            <label class="rich-session-supervisor-section-title" for="chat-autopilot-supervisor-watchlist">Look for</label>
+            <span>${watchlistSaving ? "saving" : "saved"}</span>
+          </div>
+          <textarea
+            id="chat-autopilot-supervisor-watchlist"
+            data-chat-autopilot-supervisor-watchlist
+            rows="5"
+            placeholder="- make sure worker is fully parallelizing and using safe idle GPUs&#10;- assess qualitative results of recent models&#10;- run latest models on qualitative test set and inspect misses&#10;- check cheating / reward hacking&#10;- if results plateau, step back: literature, code audit, experiment review"
+          >${escapeHtml(watchlist)}</textarea>
+        </section>
         <section class="rich-session-supervisor-history" aria-label="Supervisor side chat">
           <div class="rich-session-supervisor-chat-log">${chatHistory}</div>
         </section>
@@ -39895,10 +39935,44 @@ async function updateChatAutopilotAttachment(sessionId, patch = {}, { render = t
   }
 }
 
+async function saveChatAutopilotSupervisorWatchlist(activeSession, value, { render = false } = {}) {
+  const sessionId = activeSession?.id || "";
+  if (!sessionId) return null;
+  const text = normalizeChatAutopilotSupervisorWatchlist(value);
+  const current = getChatAutopilotSessionConfig(sessionId);
+  state.chatAutopilotSupervisorWatchlistSaving[sessionId] = true;
+  try {
+    const attachment = await updateChatAutopilotAttachment(sessionId, {
+      ...current,
+      watchlist: text,
+      jobId: isChatAutopilotSessionDriver(current) ? "" : current.jobId,
+    }, { render });
+    if (normalizeChatAutopilotSupervisorWatchlist(state.chatAutopilotSupervisorWatchlistDrafts[sessionId]) === text) {
+      delete state.chatAutopilotSupervisorWatchlistDrafts[sessionId];
+    }
+    return attachment;
+  } finally {
+    delete state.chatAutopilotSupervisorWatchlistSaving[sessionId];
+    if (render) refreshRichSessionSurfaceUi();
+  }
+}
+
+function scheduleChatAutopilotSupervisorWatchlistSave(activeSession, value) {
+  const sessionId = activeSession?.id || "";
+  if (!sessionId) return;
+  state.chatAutopilotSupervisorWatchlistDrafts[sessionId] = value;
+  window.clearTimeout(state.chatAutopilotSupervisorWatchlistTimers[sessionId]);
+  state.chatAutopilotSupervisorWatchlistTimers[sessionId] = window.setTimeout(() => {
+    delete state.chatAutopilotSupervisorWatchlistTimers[sessionId];
+    void saveChatAutopilotSupervisorWatchlist(activeSession, value, { render: false });
+  }, 650);
+}
+
 function buildChatAutopilotStartBody(config, objective, options = {}) {
   const autopilot = state.researchAutopilot;
   return {
     objective,
+    watchlist: config.watchlist,
     mode: config.mode || inferChatAutopilotMode(objective, "auto"),
     maxSteps: Number(autopilot.maxSteps) || undefined,
     intervalMs: Number(autopilot.intervalMs) || 0,
@@ -39977,6 +40051,7 @@ async function sendChatAutopilotSupervisorChat(activeSession, mode = "ask") {
         message,
         projectName: getChatAutopilotSelectedProjectName(config, activeSession),
         objective: getChatAutopilotDefaultObjective(config, activeSession),
+        watchlist: getChatAutopilotSupervisorWatchlist(sessionId, config),
       }),
       timeoutMs: 30_000,
     });
@@ -40105,6 +40180,7 @@ async function tickChatAutopilotSupervisor(activeSession, event = {}, { pendingT
         observedMessage: observedMessage || eventWithTurn?.message || "",
         projectName: getChatAutopilotSelectedProjectName(config, activeSession),
         objective: getChatAutopilotDefaultObjective(config, activeSession),
+        watchlist: getChatAutopilotSupervisorWatchlist(sessionId, config),
       }),
       timeoutMs: 30_000,
     });
@@ -46024,6 +46100,13 @@ function bindShellEvents() {
 
     document.addEventListener("input", (event) => {
       const target = event.target instanceof Element ? event.target : null;
+      const watchlistInput = target?.closest("[data-chat-autopilot-supervisor-watchlist]");
+      if (watchlistInput instanceof HTMLTextAreaElement) {
+        const activeSession = getActiveSession();
+        if (!activeSession?.id) return;
+        scheduleChatAutopilotSupervisorWatchlistSave(activeSession, watchlistInput.value);
+        return;
+      }
       const input = target?.closest("[data-chat-autopilot-supervisor-input]");
       if (!(input instanceof HTMLTextAreaElement)) return;
       const activeSession = getActiveSession();
@@ -46055,6 +46138,15 @@ function bindShellEvents() {
 
     document.addEventListener("change", (event) => {
       const target = event.target instanceof Element ? event.target : null;
+      const watchlistInput = target?.closest("[data-chat-autopilot-supervisor-watchlist]");
+      if (watchlistInput instanceof HTMLTextAreaElement) {
+        const activeSession = getActiveSession();
+        if (!activeSession?.id) return;
+        window.clearTimeout(state.chatAutopilotSupervisorWatchlistTimers[activeSession.id]);
+        delete state.chatAutopilotSupervisorWatchlistTimers[activeSession.id];
+        void saveChatAutopilotSupervisorWatchlist(activeSession, watchlistInput.value, { render: false });
+        return;
+      }
       const select = target?.closest("[data-chat-autopilot-project]");
       if (!(select instanceof HTMLSelectElement)) return;
       const activeSession = getActiveSession();

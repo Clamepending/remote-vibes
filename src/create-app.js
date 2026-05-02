@@ -7370,11 +7370,23 @@ export async function createVibeResearchApp({
     return [...new Set(ids.map((id) => trimText(id)).filter(Boolean))].slice(-20);
   }
 
+  function normalizeSupervisorWatchlist(value) {
+    return String(value || "")
+      .replace(/\r\n?/g, "\n")
+      .split("\n")
+      .map((line) => line.trim())
+      .join("\n")
+      .replace(/\n{3,}/g, "\n\n")
+      .trim()
+      .slice(0, 4_000);
+  }
+
   function defaultResearchProjectSupervisor(projectName) {
     return {
       projectName: trimText(projectName),
       enabled: false,
       objective: "",
+      watchlist: "",
       primarySessionId: "",
       sessionIds: [],
       createdAt: "",
@@ -7393,6 +7405,7 @@ export async function createVibeResearchApp({
       projectName: cleanProjectName,
       enabled: Boolean(value.enabled),
       objective: trimText(value.objective).slice(0, 4_000),
+      watchlist: normalizeSupervisorWatchlist(value.watchlist),
       primarySessionId: trimText(value.primarySessionId),
       sessionIds: normalizeResearchProjectSupervisorSessionIds(value.sessionIds),
       createdAt: typeof value.createdAt === "string" ? value.createdAt : "",
@@ -7405,6 +7418,7 @@ export async function createVibeResearchApp({
     return Boolean(
       supervisor?.enabled
       || supervisor?.objective
+      || supervisor?.watchlist
       || supervisor?.primarySessionId
       || supervisor?.sessionIds?.length
       || supervisor?.state?.lastObservedAt
@@ -7576,6 +7590,7 @@ export async function createVibeResearchApp({
       createdAt: "",
       updatedAt: "",
       lastMessage: "",
+      watchlist: "",
       supervisor: normalizeResearchSupervisorState(),
     };
   }
@@ -7603,6 +7618,7 @@ export async function createVibeResearchApp({
       createdAt,
       updatedAt,
       lastMessage: trimText(value.lastMessage).slice(0, 4_000),
+      watchlist: normalizeSupervisorWatchlist(value.watchlist),
       supervisor,
     };
   }
@@ -7616,6 +7632,7 @@ export async function createVibeResearchApp({
       || attachment?.jobId
       || attachment?.statusText
       || attachment?.lastMessage
+      || attachment?.watchlist
       || attachment?.supervisor?.lastObservedAt
       || attachment?.supervisor?.lastDirectiveAt
       || attachment?.supervisor?.thread?.length
@@ -7745,6 +7762,7 @@ export async function createVibeResearchApp({
         projectName,
         enabled: attachment.enabled,
         objective: attachment.objective,
+        watchlist: attachment.watchlist || existing?.watchlist,
         primarySessionId: attachment.sessionId,
         sessionIds,
         state: attachment.supervisor,
@@ -7761,7 +7779,7 @@ export async function createVibeResearchApp({
     }
   }
 
-  async function syncResearchProjectSupervisorFromChatAttachments(projectName, { preferredAttachment = null } = {}) {
+  async function syncResearchProjectSupervisorFromChatAttachments(projectName, { preferredAttachment = null, preferredWatchlistExplicit = false } = {}) {
     const cleanProjectName = trimText(projectName);
     if (!cleanProjectName) return null;
     const existing = getResearchProjectSupervisor(cleanProjectName);
@@ -7787,9 +7805,13 @@ export async function createVibeResearchApp({
     const state = existing.state?.lastObservedAt || existing.state?.lastDirectiveAt
       ? existing.state
       : normalizeResearchSupervisorState(preferredAttachment?.supervisor || existing.state);
+    const watchlist = preferredWatchlistExplicit
+      ? normalizeSupervisorWatchlist(preferredAttachment?.watchlist)
+      : normalizeSupervisorWatchlist(preferredAttachment?.watchlist || existing.watchlist);
     return setResearchProjectSupervisor(cleanProjectName, {
       enabled: enabledAttachments.length > 0,
       objective: trimText(preferredAttachment?.objective) || existing.objective,
+      watchlist,
       primarySessionId,
       sessionIds,
       state,
@@ -7807,6 +7829,7 @@ export async function createVibeResearchApp({
     if (!sid) return null;
     const now = new Date().toISOString();
     const previous = chatAutopilotAttachments.get(sid) || defaultChatAutopilotAttachment(sid);
+    const watchlistExplicit = Object.prototype.hasOwnProperty.call(patch, "watchlist");
     const next = sanitizeChatAutopilotAttachment({
       ...previous,
       ...patch,
@@ -7827,6 +7850,7 @@ export async function createVibeResearchApp({
     for (const projectName of projectNames) {
       await syncResearchProjectSupervisorFromChatAttachments(projectName, {
         preferredAttachment: next?.projectName === projectName ? next : null,
+        preferredWatchlistExplicit: watchlistExplicit && next?.projectName === projectName,
       });
     }
     return next || defaultChatAutopilotAttachment(sid);
@@ -8514,19 +8538,32 @@ export async function createVibeResearchApp({
     ].filter(Boolean).join(" "), 900);
   }
 
-  function buildSupervisorSideChatDirective({ message = "", orchestrator = null, runtime = {} } = {}) {
+  function supervisorWatchlistSummary(value = "", limit = 420) {
+    const items = normalizeSupervisorWatchlist(value)
+      .split("\n")
+      .map((line) => trimText(line).replace(/^[-*•]\s*/u, ""))
+      .filter(Boolean)
+      .slice(0, 8);
+    if (!items.length) return "";
+    const text = items.join("; ");
+    return text.length > limit ? `${text.slice(0, Math.max(0, limit - 3)).trimEnd()}...` : text;
+  }
+
+  function buildSupervisorSideChatDirective({ message = "", orchestrator = null, runtime = {}, watchlist = "" } = {}) {
     const rec = supervisorRecommendationSummary(orchestrator);
     const runtimeLine = supervisorRuntimeSummary(runtime);
     const head = compactSupervisorChatText(message, 360) || "Continue from the current project state.";
     const route = rec.slug ? `Current route: ${rec.action} ${rec.slug}; ${rec.reason}.` : `Current route: ${rec.action}; ${rec.reason}.`;
+    const watchlistLine = supervisorWatchlistSummary(watchlist);
     return compactSupervisorChatText([
       `Please prioritize: ${head}`,
+      watchlistLine ? `Supervisor look-fors: ${watchlistLine}.` : "",
       "First inspect README/ACTIVE/QUEUE/LOG, the result doc, recent commits, GPU/process state, metrics, and validation samples/heatmaps/failure cases yourself.",
       route,
       `Continuity: ${runtimeLine}.`,
       "Keep safe idle GPUs/subagents saturated only with independent, provenance-preserving work; if stuck or changing recipe, do lightweight literature/current-docs before more GPU spend.",
       "Audit shortcuts or stale artifacts; stop only for a true human gate.",
-    ].join(" "), 1_000);
+    ].join(" "), 1_200);
   }
 
   function getAttachedResearchAutopilotJob(attachment) {
@@ -8622,6 +8659,7 @@ export async function createVibeResearchApp({
     const projectGoal = await readResearchProjectGoal(projectDir);
     const message = trimText(body.message || body.steering || body.note);
     const objective = trimText(body.objective) || attachment?.objective || projectGoal || message;
+    const watchlist = normalizeSupervisorWatchlist(body.watchlist === undefined ? attachment?.watchlist : body.watchlist);
     const change = trimText(body.change) || (message && message !== objective ? message : "");
     const mode = body.mode === undefined
       ? normalizeResearchAutopilotMode(attachment?.mode)
@@ -8647,6 +8685,7 @@ export async function createVibeResearchApp({
       jobId: activeJob.id,
       statusText: job ? "autopilot resumed" : "autopilot running",
       lastMessage: message || objective,
+      watchlist,
     });
     return { job: activeJob, attachment: nextAttachment };
   }
@@ -8708,7 +8747,7 @@ export async function createVibeResearchApp({
         ? request.body
         : {};
       const current = getChatAutopilotAttachment(request.params.sessionId);
-      const attachment = await setChatAutopilotAttachment(request.params.sessionId, {
+      const patch = {
         enabled: body.enabled === undefined ? current.enabled : Boolean(body.enabled),
         projectName: body.projectName === undefined ? current.projectName : body.projectName,
         objective: body.objective === undefined ? current.objective : body.objective,
@@ -8718,7 +8757,11 @@ export async function createVibeResearchApp({
         statusText: body.statusText === undefined ? current.statusText : body.statusText,
         lastMessage: body.lastMessage === undefined ? current.lastMessage : body.lastMessage,
         supervisor: body.supervisor === undefined ? current.supervisor : body.supervisor,
-      });
+      };
+      if (body.watchlist !== undefined) {
+        patch.watchlist = body.watchlist;
+      }
+      const attachment = await setChatAutopilotAttachment(request.params.sessionId, patch);
       const serialized = serializeChatAutopilotAttachment(attachment);
       response.json({ ok: true, attachment: serialized, job: serialized.job });
     } catch (error) {
@@ -8747,6 +8790,11 @@ export async function createVibeResearchApp({
       let supervisorError = "";
       const driver = normalizeChatAutopilotDriver(current.driver, current.jobId ? "runner" : "session");
       const projectSupervisor = projectName ? getResearchProjectSupervisor(projectName) : null;
+      const watchlist = normalizeSupervisorWatchlist(
+        body.watchlist === undefined
+          ? current.watchlist || projectSupervisor?.watchlist
+          : body.watchlist,
+      );
       const supervisorState = projectSupervisor?.state || current.supervisor;
       const runtime = await getSupervisorRuntimeForSession(session, {
         ignoreTexts: [
@@ -8775,7 +8823,7 @@ export async function createVibeResearchApp({
         ? `I could not inspect the durable project state: ${supervisorError}`
         : buildSupervisorSideChatReply({ message, mode, projectName, orchestrator, runtime });
       const directiveText = mode === "directive" && !supervisorError
-        ? buildSupervisorSideChatDirective({ message, orchestrator, runtime })
+        ? buildSupervisorSideChatDirective({ message, orchestrator, runtime, watchlist })
         : "";
       const event = {
         type: "supervisor-chat",
@@ -8830,6 +8878,7 @@ export async function createVibeResearchApp({
         nextProjectSupervisor = await setResearchProjectSupervisor(projectName, {
           enabled: current.enabled && driver === "session",
           objective,
+          watchlist,
           primarySessionId: request.params.sessionId,
           sessionIds,
           state: supervisor,
@@ -8841,6 +8890,7 @@ export async function createVibeResearchApp({
         driver,
         projectName,
         objective,
+        watchlist,
         jobId: driver === "session" ? "" : current.jobId,
         statusText: directiveText ? "supervisor directive ready" : "supervisor answered",
         lastMessage: current.lastMessage,
@@ -8893,6 +8943,11 @@ export async function createVibeResearchApp({
       let supervisorError = "";
       const driver = normalizeChatAutopilotDriver(current.driver, current.jobId ? "runner" : "session");
       const projectSupervisor = projectName ? getResearchProjectSupervisor(projectName) : null;
+      const watchlist = normalizeSupervisorWatchlist(
+        body.watchlist === undefined
+          ? current.watchlist || projectSupervisor?.watchlist
+          : body.watchlist,
+      );
       const supervisorState = projectSupervisor?.state || current.supervisor;
       const runtime = await getSupervisorRuntimeForSession(session, {
         ignoreTexts: [
@@ -8921,6 +8976,7 @@ export async function createVibeResearchApp({
         ...current,
         projectName,
         objective: trimText(body.objective) || current.objective,
+        watchlist,
         runtime,
       };
       const decision = supervisorError
@@ -8946,6 +9002,7 @@ export async function createVibeResearchApp({
         nextProjectSupervisor = await setResearchProjectSupervisor(projectName, {
           enabled: current.enabled && driver === "session",
           objective: observedAttachment.objective,
+          watchlist,
           primarySessionId: request.params.sessionId,
           sessionIds,
           state: supervisor,
@@ -8957,6 +9014,7 @@ export async function createVibeResearchApp({
         driver,
         projectName,
         objective: observedAttachment.objective,
+        watchlist,
         jobId: driver === "session" ? "" : current.jobId,
         statusText: decision.shouldSend
           ? "supervisor queued a directive"

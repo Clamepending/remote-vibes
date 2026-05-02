@@ -617,6 +617,10 @@ test("chat research supervisor arms silently and routes only on worker-idle or e
         enabled: true,
         projectName: "prose-style",
         objective: "make prose more concise while preserving evidence",
+        watchlist: [
+          "- assess qualitative results of recent models",
+          "- check for cheating / reward hacking",
+        ].join("\n"),
         driver: "session",
         mode: "auto",
       }),
@@ -664,6 +668,9 @@ test("chat research supervisor arms silently and routes only on worker-idle or e
     assert.match(firstIdleBody.directive.text, /Use the README\/project goal as the north star/);
     assert.match(firstIdleBody.directive.text, /GPU\/process state/);
     assert.match(firstIdleBody.directive.text, /validation samples\/heatmaps\/failure cases yourself/);
+    assert.match(firstIdleBody.directive.text, /Supervisor look-fors:/);
+    assert.match(firstIdleBody.directive.text, /assess qualitative results/);
+    assert.match(firstIdleBody.directive.text, /cheating \/ reward hacking/);
     assert.match(firstIdleBody.directive.text, /safe idle GPUs saturated/);
     assert.match(firstIdleBody.directive.text, /literature\/current-docs/);
     assert.match(firstIdleBody.directive.text, /set a monitor\/wakeup\/log watcher/);
@@ -676,6 +683,7 @@ test("chat research supervisor arms silently and routes only on worker-idle or e
     assert.equal(firstIdleBody.runtime.hasContinuity, false);
     assert.equal(firstIdleBody.attachment.supervisor.interventionCount, 1);
     assert.equal(firstIdleBody.projectSupervisor.projectName, "prose-style");
+    assert.match(firstIdleBody.projectSupervisor.watchlist, /assess qualitative results/);
     assert.equal(firstIdleBody.projectSupervisor.supervisor.interventionCount, 1);
     assert.equal(firstIdleBody.orchestrator.projectContext.goal, "Find the prompt scaffold that produces the most readable short-form answers.");
 
@@ -1312,6 +1320,8 @@ test("main app bundle exposes the native research workspace", async () => {
     assert.match(jsText, /data-chat-autopilot-supervisor-form/);
     assert.match(jsText, /data-chat-autopilot-supervisor-submit/);
     assert.match(jsText, /chatAutopilotSupervisorDrafts/);
+    assert.match(jsText, /chatAutopilotSupervisorWatchlistDrafts/);
+    assert.match(jsText, /data-chat-autopilot-supervisor-watchlist/);
     assert.match(jsText, /renderChatAutopilotSupervisorDrawer/);
     assert.match(jsText, /formatChatAutopilotSupervisorDirective/);
     assert.match(jsText, /Human driving/);
@@ -1338,6 +1348,7 @@ test("main app bundle exposes the native research workspace", async () => {
     assert.match(cssText, /rich-session-autopilot-action\.is-primary/);
     assert.match(cssText, /rich-session-supervisor-drawer/);
     assert.match(cssText, /rich-session-supervisor-history/);
+    assert.match(cssText, /rich-session-supervisor-watchlist/);
     assert.match(cssText, /rich-session-supervisor-chat-log/);
     assert.match(cssText, /rich-session-supervisor-composer/);
     assert.match(cssText, /research-org-bench-card/);

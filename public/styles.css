@@ -15550,6 +15550,50 @@ body.is-reordering-file-tabs {
   overflow: visible;
 }
 
+.rich-session-supervisor-watchlist {
+  display: grid;
+  gap: 7px;
+  padding: 10px 12px;
+  border-bottom: 1px solid rgba(255, 255, 255, 0.055);
+}
+
+.rich-session-supervisor-watchlist-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+}
+
+.rich-session-supervisor-watchlist-head .rich-session-supervisor-section-title {
+  padding: 0;
+}
+
+.rich-session-supervisor-watchlist-head span {
+  color: rgba(244, 244, 242, 0.42);
+  font-family: "IBM Plex Mono", monospace;
+  font-size: 0.62rem;
+}
+
+.rich-session-supervisor-watchlist textarea {
+  width: 100%;
+  min-height: 96px;
+  max-height: 220px;
+  resize: vertical;
+  border: 1px solid rgba(142, 210, 185, 0.12);
+  border-radius: 8px;
+  background: rgba(142, 210, 185, 0.045);
+  color: rgba(234, 244, 239, 0.86);
+  font: inherit;
+  font-size: 0.78rem;
+  line-height: 1.4;
+  padding: 9px 10px;
+}
+
+.rich-session-supervisor-watchlist textarea:focus {
+  outline: 2px solid rgba(142, 210, 185, 0.26);
+  outline-offset: 1px;
+}
+
 .rich-session-supervisor-chat-log {
   display: grid;
   gap: 12px;

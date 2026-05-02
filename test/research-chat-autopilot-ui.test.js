@@ -171,6 +171,8 @@ test("same-chat supervisor Start creates project memory and arms silently while 
       history: Array.from(document.querySelectorAll(".rich-session-supervisor-event"))
         .map((entry) => entry.textContent?.trim() || "")
         .join(" "),
+      watchlistLabel: document.querySelector(".rich-session-supervisor-watchlist label")?.textContent?.trim() || "",
+      watchlistPlaceholder: document.querySelector("[data-chat-autopilot-supervisor-watchlist]")?.getAttribute("placeholder") || "",
       toolbarButtonCount: document.querySelectorAll("#rich-session-autopilot button").length,
       surfaceOpen: document.querySelector(".rich-session-surface")?.classList.contains("is-supervisor-open") || false,
       drawerPosition: getComputedStyle(document.querySelector("[data-chat-autopilot-supervisor-drawer]")).position,
@@ -183,6 +185,8 @@ test("same-chat supervisor Start creates project memory and arms silently while 
     assert.ok(drawerState.signals.includes("no background tasks"));
     assert.ok(drawerState.signals.includes("continuity unknown"));
     assert.match(drawerState.history, /No supervisor decisions yet/);
+    assert.equal(drawerState.watchlistLabel, "Look for");
+    assert.match(drawerState.watchlistPlaceholder, /reward hacking/);
     assert.equal(drawerState.toolbarButtonCount, 0);
     assert.equal(drawerState.surfaceOpen, true);
     assert.equal(drawerState.drawerPosition, "sticky");

@@ -102,6 +102,43 @@ test("research supervisor routes manual continue through project recommendation"
   assert.equal(decision.card.action, "continue active move");
 });
 
+test("research supervisor includes human-defined look-fors in worker directives", () => {
+  const decision = decideResearchSupervisorIntervention({
+    attachment: attachment({
+      watchlist: [
+        "- make sure the worker is fully parallelizing and utilizing safe idle GPUs",
+        "- assess qualitative results of recent models",
+        "- check for cheating / reward hacking",
+        "- if results plateau, suggest literature review and code/experiment audit",
+      ].join("\n"),
+    }),
+    event: {
+      type: "agent-idle",
+      source: "session",
+      turnMarker: "watchlist-turn",
+      message: "cycle 2 finished; score is flat against cycle 1",
+    },
+    orchestratorReport: {
+      recommendation: {
+        action: "continue-active",
+        reason: "ACTIVE has v070; continue or finish that move before claiming another.",
+        slug: "v070",
+      },
+      projectContext: {
+        activeHead: "v070; result doc results/v070.md; branch r/v070",
+      },
+    },
+  });
+  assert.equal(decision.action, "directive");
+  assert.equal(decision.shouldSend, true);
+  assert.match(decision.directive.text, /Worker just reported: cycle 2 finished/);
+  assert.match(decision.directive.text, /Supervisor look-fors:/);
+  assert.match(decision.directive.text, /fully parallelizing/);
+  assert.match(decision.directive.text, /assess qualitative results/);
+  assert.match(decision.directive.text, /cheating \/ reward hacking/);
+  assert.match(decision.directive.text, /literature review and code\/experiment audit/);
+});
+
 test("research supervisor only auto-directs at worker handoff unless explicitly told", () => {
   const report = {
     recommendation: {
