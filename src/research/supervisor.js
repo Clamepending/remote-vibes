@@ -30,6 +30,17 @@ function compactDirectiveText(value, limit = 320) {
   return `${clipped}...`;
 }
 
+function textFingerprint(value = "") {
+  const text = trimString(value).toLowerCase();
+  if (!text) return "";
+  let hash = 2166136261;
+  for (let index = 0; index < text.length; index += 1) {
+    hash ^= text.charCodeAt(index);
+    hash = Math.imul(hash, 16777619);
+  }
+  return (hash >>> 0).toString(36);
+}
+
 function normalizeSupervisorCard(value = {}) {
   const input = value && typeof value === "object" && !Array.isArray(value) ? value : {};
   return {
@@ -241,16 +252,25 @@ function directiveSignature({ event, action, report, reason }) {
 
 function automaticDirectiveSignature({ event, action, report, reason }) {
   const normalizedEvent = normalizeSupervisorEvent(event);
-  return directiveSignature({
-    event: {
-      ...normalizedEvent,
-      type: "automatic",
-      action: "",
-    },
+  const rec = report?.recommendation || {};
+  const context = report?.projectContext || {};
+  const stateFingerprint = textFingerprint([
+    context.activeHead,
+    context.queueHead,
+    context.latestLog,
+    context.benchmark?.version,
+    report?.nextCommand,
+  ].filter(Boolean).join(" | "));
+  const observedFingerprint = textFingerprint(normalizedEvent.message);
+  return [
     action,
-    report,
+    "automatic",
+    trimString(rec.action).toLowerCase(),
+    projectSlugFromRecommendation(rec),
+    stateFingerprint ? `state:${stateFingerprint}` : "",
+    observedFingerprint ? `observed:${observedFingerprint}` : "",
     reason,
-  });
+  ].filter(Boolean).join("|").slice(0, 300);
 }
 
 export function appendResearchSupervisorThread(previous = {}, entries = [], { now = new Date() } = {}) {
@@ -403,6 +423,11 @@ function conciseCommandHint(command = "") {
   return compactDirectiveText(text, 120);
 }
 
+function workerHandoffLine(event = {}) {
+  const observed = compactDirectiveText(normalizeSupervisorEvent(event).message, 180);
+  return observed ? `Worker just reported: ${observed}.` : "";
+}
+
 function operatingBrief({
   headline,
   project = "",
@@ -414,12 +439,14 @@ function operatingBrief({
   finish = "",
   action = "",
   runtime = {},
+  handoff = "",
 } = {}) {
   const continuityLine = conciseContinuityLine({ action, runtime });
   const stateHint = conciseStateHint(context);
   const commandHint = conciseCommandHint(command);
   const lines = [
     headline,
+    handoff,
     `Check ${stateHint}, the result doc, recent commits, GPU/process state, metrics, and validation/qualitative artifacts first.`,
     objectiveSentence(objective),
   ];
@@ -502,7 +529,7 @@ function continuitySignaturePart(action = "", runtime = {}) {
   return actionNeedsContinuityReminder(action) ? "continuity-missing" : "";
 }
 
-function automaticDirective({ action, report, attachment }) {
+function automaticDirective({ action, report, attachment, event = {} }) {
   const rec = report?.recommendation || {};
   const reason = recommendationReason(report);
   const slug = projectSlugFromRecommendation(rec);
@@ -512,6 +539,7 @@ function automaticDirective({ action, report, attachment }) {
   const runtime = observedAttachmentRuntime(attachment);
   const projectPhrase = projectPhraseFor(project);
   const nextCommand = trimString(report?.nextCommand);
+  const handoff = workerHandoffLine(event);
 
   if (action === "fix-doctor" || action === "orchestrator-fix-doctor") {
     return {
@@ -524,6 +552,7 @@ function automaticDirective({ action, report, attachment }) {
         command: nextCommand || `vr-research-doctor <project-dir>`,
         action,
         runtime,
+        handoff,
         focus: "Do not start experiments while the project contract is corrupt; repair the README/LOG/result-doc shape first.",
         finish: "Re-run the doctor, commit/push the repair, then continue from the durable README/LOG state.",
       }),
@@ -542,6 +571,7 @@ function automaticDirective({ action, report, attachment }) {
         command: nextCommand,
         action,
         runtime,
+        handoff,
         focus: "If a cycle is running, verify process/GPU/artifact state and monitor it. If GPUs are idle, launch only independent seeds/ablations/sweeps with separate artifacts; inspect validation samples before claiming progress. If stuck, do a lightweight literature/current-docs pass before changing recipe.",
       }),
       reason: reason || "active move needs the next supervised step",
@@ -559,6 +589,7 @@ function automaticDirective({ action, report, attachment }) {
         command: nextCommand,
         action,
         runtime,
+        handoff,
         focus: "Create or resume the result doc before expensive work, move the row into ACTIVE, make the pre-flight/falsifier explicit, and plan validation artifacts plus safe GPU saturation up front.",
       }),
       reason: reason || "queued move is ready to run",
@@ -576,6 +607,7 @@ function automaticDirective({ action, report, attachment }) {
         command: nextCommand,
         action,
         runtime,
+        handoff,
         focus: "Run the next runnable sweep rows across all safe idle GPUs, preserve per-row artifacts and metrics, and do not collapse distinct recipes into one undocumented comparison.",
       }),
       reason: reason || "planned sweep has runnable rows",
@@ -593,6 +625,7 @@ function automaticDirective({ action, report, attachment }) {
         command: nextCommand,
         action,
         runtime,
+        handoff,
         focus: "Judge the latest result, distill what changed, identify failure modes and qualitative evidence, then propose the next move with a falsifier.",
         finish: "Write the review/brief update, surface the recommendation for approval if needed, and only then compile new QUEUE rows.",
       }),
@@ -611,6 +644,7 @@ function automaticDirective({ action, report, attachment }) {
         command: nextCommand,
         action,
         runtime,
+        handoff,
         focus: "Use the README, LOG, leaderboard, prior result docs, current artifacts, and lightweight literature/current-docs grounding to propose one small next move with a falsifier before running it.",
         finish: "Save the brief, ask for review if the choice is material, and do not start experiments until the brief is fit to queue.",
       }),
@@ -629,6 +663,7 @@ function automaticDirective({ action, report, attachment }) {
         command: nextCommand,
         action,
         runtime,
+        handoff,
         focus: "Use latest positive/negative evidence plus a lightweight literature/current-docs pass when stuck to propose candidate moves, then pick the smallest one that would change a decision.",
         finish: "Save the plan or brief, include falsifiers and expected artifacts, and ask for review before expensive execution if the choice is ambiguous.",
       }),
@@ -647,6 +682,7 @@ function automaticDirective({ action, report, attachment }) {
         command: nextCommand,
         action,
         runtime,
+        handoff,
         focus: "If it is already fit to run, compile it into QUEUE; otherwise tighten the question, literature/current-docs grounding, validation artifacts, and falsifier first.",
       }),
       reason: reason || "brief needs review before queueing",
@@ -666,6 +702,7 @@ function automaticDirective({ action, report, attachment }) {
           command: nextCommand,
           action,
           runtime,
+          handoff,
           focus: "Inspect the judge issues and validation artifacts yourself, run the narrowest confirming cycle, and keep the leaderboard unchanged until evidence is strong.",
         }),
         reason: reason || "judge recommends rerun",
@@ -682,6 +719,7 @@ function automaticDirective({ action, report, attachment }) {
           command: nextCommand,
           action,
           runtime,
+          handoff,
           focus: "Update the narrative, limitations, and durable project state according to the judge evidence before choosing new work.",
         }),
         reason: reason || "judge recommends synthesis",
@@ -698,6 +736,7 @@ function automaticDirective({ action, report, attachment }) {
           command: nextCommand,
           action,
           runtime,
+          handoff,
           focus: "Use judge output, negative results, leaderboard state, qualitative artifact review, and literature/current-docs grounding if stuck to propose the smallest useful follow-up.",
         }),
         reason: reason || "judge recommends brainstorming",
@@ -714,6 +753,7 @@ function automaticDirective({ action, report, attachment }) {
           command: nextCommand,
           action,
           runtime,
+          handoff,
           focus: "Use the judge evidence to choose the next safe cycle and keep the result doc current.",
         }),
         reason: reason || "judge recommends continuing",
@@ -836,7 +876,7 @@ export function decideResearchSupervisorIntervention({
   }
 
   const recAction = recommendationAction(orchestratorReport);
-  const automatic = automaticDirective({ action: recAction, report: orchestratorReport, attachment });
+  const automatic = automaticDirective({ action: recAction, report: orchestratorReport, attachment, event: normalizedEvent });
   if (!automatic) {
     return {
       action: "silent",

@@ -40035,15 +40035,23 @@ function claimChatAutopilotAutoRecovery(activeSession, config = {}, cooldownMs =
   return true;
 }
 
-function getChatAutopilotTurnMarker(activeSession) {
+function compactChatAutopilotTurnObservation(value, limit = 520) {
+  const text = String(value || "").replace(/\s+/g, " ").trim();
+  if (!text || text.length <= limit) return text;
+  return `${text.slice(0, Math.max(0, limit - 3)).trimEnd()}...`;
+}
+
+function getChatAutopilotTurnSnapshot(activeSession) {
   const sessionId = String(activeSession?.id || "").trim();
-  if (!sessionId) return "";
+  if (!sessionId) return { marker: "", message: "" };
   const narrative = getRichSessionNarrative(sessionId);
   const entries = Array.isArray(narrative?.entries) ? narrative.entries : [];
   let latestEntry = null;
   for (let index = entries.length - 1; index >= 0; index -= 1) {
     const entry = entries[index];
     if (!entry || typeof entry !== "object") continue;
+    const kind = String(entry.kind || entry.role || "").toLowerCase();
+    if (kind === "user" || kind === "human") continue;
     if (entry.status === "running" || entry.meta === "running" || entry.meta === "streaming") continue;
     latestEntry = entry;
     break;
@@ -40051,13 +40059,22 @@ function getChatAutopilotTurnMarker(activeSession) {
   const entryMarker = latestEntry
     ? [latestEntry.id, latestEntry.seq, latestEntry.kind, latestEntry.status].filter((part) => part !== undefined && part !== "").join(":")
     : "";
-  return [
+  const marker = [
     sessionId,
     activeSession.lastOutputAt || "",
     activeSession.updatedAt || "",
     activeSession.status || "",
     entryMarker,
   ].filter(Boolean).join("|").slice(0, 120);
+  const message = latestEntry
+    ? compactChatAutopilotTurnObservation([
+      latestEntry.text,
+      latestEntry.summary,
+      latestEntry.outputPreview,
+      latestEntry.statusText,
+    ].filter(Boolean).join(" "))
+    : "";
+  return { marker, message };
 }
 
 async function tickChatAutopilotSupervisor(activeSession, event = {}, { pendingText = "", sendDirective = true, observedMessage = "" } = {}) {
@@ -40071,8 +40088,15 @@ async function tickChatAutopilotSupervisor(activeSession, event = {}, { pendingT
     refreshRichSessionSurfaceUi();
   }
   try {
-    const eventWithTurn = event?.type === "agent-idle" && !event.turnMarker && !event.turnId
-      ? { ...event, turnMarker: getChatAutopilotTurnMarker(activeSession) }
+    const turnSnapshot = event?.type === "agent-idle"
+      ? getChatAutopilotTurnSnapshot(activeSession)
+      : { marker: "", message: "" };
+    const eventWithTurn = event?.type === "agent-idle"
+      ? {
+        ...event,
+        turnMarker: event.turnMarker || event.turnId || turnSnapshot.marker,
+        message: event.message || event.observedMessage || event.text || turnSnapshot.message,
+      }
       : event;
     const payload = await fetchJson(`/api/sessions/${encodeURIComponent(sessionId)}/research-autopilot/supervisor/tick`, {
       method: "POST",

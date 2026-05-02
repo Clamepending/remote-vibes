@@ -8884,6 +8884,7 @@ export async function createVibeResearchApp({
             action: trimText(body.action),
             source: trimText(body.source) || "chat",
           };
+      const eventType = trimText(event.type || event.event || "tick").toLowerCase();
       if (observedMessage && !(event && typeof event === "object" && !Array.isArray(event) && (event.message || event.observedMessage || event.text))) {
         event = { ...event, message: observedMessage };
       }
@@ -8960,7 +8961,7 @@ export async function createVibeResearchApp({
         statusText: decision.shouldSend
           ? "supervisor queued a directive"
           : current.statusText || (current.enabled ? "supervisor listening" : ""),
-        lastMessage: observedMessage || current.lastMessage,
+        lastMessage: eventType === "human-message" ? observedMessage || current.lastMessage : current.lastMessage,
         supervisor,
       });
       response.json({

@@ -286,7 +286,7 @@ test("research supervisor compacts long objectives and keeps tactical priorities
   assert.ok(decision.directive.text.length < 1_100, `directive was too long: ${decision.directive.text.length}`);
 });
 
-test("research supervisor dedupes automatic directives by completed turn marker", () => {
+test("research supervisor changes automatic directives only after new worker evidence", () => {
   const report = {
     recommendation: {
       action: "continue-active",
@@ -321,8 +321,24 @@ test("research supervisor dedupes automatic directives by completed turn marker"
     event: { type: "agent-idle", source: "session", turnMarker: "turn-2" },
     orchestratorReport: report,
   });
-  assert.equal(nextTurn.action, "directive");
-  assert.equal(nextTurn.shouldSend, true);
+  assert.equal(nextTurn.action, "silent");
+  assert.equal(nextTurn.shouldSend, false);
+  assert.match(nextTurn.reason, /already sent/);
+
+  const newWorkerEvidence = decideResearchSupervisorIntervention({
+    attachment: attachment({ supervisor }),
+    event: {
+      type: "agent-idle",
+      source: "session",
+      turnMarker: "turn-3",
+      message: "cycle 1 finished with metric=0.42; validation heatmaps are missing",
+    },
+    orchestratorReport: report,
+  });
+  assert.equal(newWorkerEvidence.action, "directive");
+  assert.equal(newWorkerEvidence.shouldSend, true);
+  assert.notEqual(newWorkerEvidence.directive.text, first.directive.text);
+  assert.match(newWorkerEvidence.directive.text, /Worker just reported: cycle 1 finished with metric=0\.42/);
 });
 
 test("research supervisor gives active-move execution briefs", () => {

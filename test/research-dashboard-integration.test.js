@@ -910,7 +910,8 @@ test("chat research supervisor ignores its own continuity reminder until the wor
     assert.equal(directiveEchoBody.runtime.hasContinuity, false);
     assert.equal(directiveEchoBody.runtime.recentTraceHasMonitor, false);
     assert.equal(directiveEchoBody.runtime.recentTraceHasWakeup, false);
-    assert.match(directiveEchoBody.decision.card.continuity, /no active monitor\/wakeup is visible/);
+    assert.equal(directiveEchoBody.decision.shouldSend, false);
+    assert.match(directiveEchoBody.decision.reason, /already sent/);
 
     app.sessionManager.pushNativeNarrativeEntry(serverSession, {
       kind: "assistant",
@@ -1292,7 +1293,7 @@ test("main app bundle exposes the native research workspace", async () => {
     assert.match(jsText, /queueChatAutopilotSupervisorMessage/);
     assert.match(jsText, /chatAutopilotAutoRecoveryLastAt/);
     assert.match(jsText, /claimChatAutopilotAutoRecovery/);
-    assert.match(jsText, /getChatAutopilotTurnMarker/);
+    assert.match(jsText, /getChatAutopilotTurnSnapshot/);
     assert.match(jsText, /research-autopilot-steer-form/);
     assert.match(jsText, /data-chat-autopilot-toggle/);
     assert.match(jsText, /getChatAutopilotInferredProjectName/);
