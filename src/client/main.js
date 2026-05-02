@@ -7804,34 +7804,6 @@ function summarizeChatAutopilotProjectName(value, limit = 34) {
   return text.length > limit ? `${text.slice(0, Math.max(0, limit - 3))}...` : text;
 }
 
-function summarizeChatAutopilotSupervisor(config = {}) {
-  const projectSupervisor = sanitizeChatAutopilotProjectSupervisor(config.projectSupervisor);
-  const supervisor = projectSupervisor.supervisor.lastObservedAt
-    ? projectSupervisor.supervisor
-    : sanitizeChatAutopilotSupervisor(config.supervisor);
-  const interventions = Math.max(0, Number(supervisor.interventionCount) || 0);
-  const chats = projectSupervisor.sessionIds.length;
-  const card = supervisor.lastDirectiveCard || {};
-  const hasCard = Boolean(card.action || card.mode || card.preview);
-  const parts = [hasCard ? (card.action || card.mode || "supervising") : interventions ? `${interventions} move${interventions === 1 ? "" : "s"}` : "ready"];
-  if (chats > 1) parts.push(`${chats} chats`);
-  const cardTitle = hasCard
-    ? [
-        card.label || "Evidence-first supervisor",
-        card.evidence ? `Evidence: ${card.evidence}` : "",
-        card.integrity ? `Integrity: ${card.integrity}` : "",
-        card.compute ? `Compute: ${card.compute}` : "",
-        card.continuity ? `Continuity: ${card.continuity}` : "",
-        card.stop ? `Stop: ${card.stop}` : "",
-      ].filter(Boolean).join("\n")
-    : "";
-  return {
-    label: parts.join(" · "),
-    title: cardTitle || supervisor.lastDirectiveReason || supervisor.lastObservedEvent || "Project-scoped supervisor state for this research handoff.",
-    card: hasCard ? card : null,
-  };
-}
-
 function getChatAutopilotSupervisorDisplayState(config = {}) {
   const projectSupervisor = sanitizeChatAutopilotProjectSupervisor(config.projectSupervisor);
   const sessionSupervisor = sanitizeChatAutopilotSupervisor(config.supervisor);
@@ -7847,24 +7819,6 @@ function getChatAutopilotSupervisorDisplayState(config = {}) {
     supervisor: useProjectState ? projectState : sessionSupervisor,
     scope: useProjectState ? "project" : "chat",
   };
-}
-
-function renderChatAutopilotSupervisorPolicy(supervisorSummary = {}) {
-  const card = supervisorSummary.card || {
-    preview: "",
-    evidence: "Require current metrics plus first-hand validation samples, heatmaps, or failure cases before spending more compute.",
-    integrity: "Check the recent trace for evaluator edits, leakage, cherry-picking, stale artifacts, and unverifiable numbers.",
-    compute: "Keep safe idle GPUs saturated with independent seeds, ablations, or sweeps that preserve provenance.",
-    continuity: "When long-running work remains, verify a monitor, wakeup, or log watcher is attached.",
-  };
-  const title = [
-    card.preview ? `Last directive: ${card.preview}` : "",
-    card.evidence ? `Evidence: ${card.evidence}` : "",
-    card.integrity ? `Integrity: ${card.integrity}` : "",
-    card.compute ? `Compute: ${card.compute}` : "",
-    card.continuity ? `Continuity: ${card.continuity}` : "",
-  ].filter(Boolean).join("\n");
-  return `<span class="rich-session-autopilot-policy" data-chat-autopilot-policy title="${escapeHtml(title)}">evidence · integrity · compute</span>`;
 }
 
 function chatAutopilotSupervisorRoleLabel(role = "", kind = "") {
@@ -8120,11 +8074,9 @@ function renderRichSessionAutopilotPanel(activeSession) {
   const sessionExited = activeSession.status === "exited";
   const running = isResearchAutopilotRunning(job) || (enabled && sessionDriver && Boolean(activeSession.streamWorking));
   const projectName = getChatAutopilotSelectedProjectName(config, activeSession);
-  const projectSource = getChatAutopilotProjectSource(activeSession, config);
   const objective = getChatAutopilotDefaultObjective(config, activeSession);
   const objectiveSource = getChatAutopilotObjectiveSource(config, activeSession);
   const objectivePreview = summarizeChatAutopilotObjective(objective);
-  const supervisorSummary = summarizeChatAutopilotSupervisor(config);
   const queuedSupervisorMessage = getQueuedChatAutopilotSupervisorMessage(activeSession.id);
   const noProjects = state.researchAutopilot.projectsLoaded
     && !state.researchAutopilot.projects.length
@@ -8134,7 +8086,6 @@ function renderRichSessionAutopilotPanel(activeSession) {
   const title = enabled
     ? sessionDriver ? "Supervisor on" : "Runner on"
     : "Human driving";
-  const projectLabel = projectName ? summarizeChatAutopilotProjectName(projectName) : "No project";
   const status = pending
     || (enabled && sessionDriver
       ? sessionExited
@@ -8161,25 +8112,39 @@ function renderRichSessionAutopilotPanel(activeSession) {
         : projectName
           ? "ready to hand off"
           : "choose a project");
-  const toggleTitle = enabled
-    ? "Pause the supervisor for this chat."
-    : noProjects
-      ? "Create durable research memory for this chat and arm the supervisor without messaging the worker."
-      : "Turn on the supervisor for this chat without messaging the worker.";
+  if (enabled) {
+    return `
+      <section class="rich-session-autopilot is-enabled ${running ? "is-running" : ""}" id="rich-session-autopilot" data-rich-session-autopilot-mount>
+        <div class="rich-session-autopilot-main">
+          <span
+            class="rich-session-autopilot-indicator"
+            data-chat-autopilot-indicator
+            role="status"
+            aria-label="${escapeHtml(`${title}: ${status}`)}"
+            title="${escapeHtml(status)}"
+          >
+            <span class="rich-session-autopilot-dot" aria-hidden="true"></span>
+            <span>${escapeHtml(title)}</span>
+          </span>
+        </div>
+      </section>
+    `;
+  }
+
+  const toggleTitle = noProjects
+    ? "Create durable research memory for this chat and arm the supervisor without messaging the worker."
+    : "Turn on the supervisor for this chat without messaging the worker.";
   const showProjectPicker = !noProjects && !running && pickerOpen;
-  const showSteeringActions = enabled && (sessionDriver || (job && !isResearchAutopilotTerminalStatus(job.status)));
+  const projectSource = getChatAutopilotProjectSource(activeSession, config);
+  const projectLabel = projectName ? summarizeChatAutopilotProjectName(projectName) : "No project";
   const projectTitle = projectName
     ? `The supervisor will use ${projectName}${projectSource ? ` (${projectSource})` : ""}.${objectivePreview ? ` Objective: ${objectivePreview}` : ""} Click to change.`
     : "Choose the research project for this chat.";
-  const nextActionLabel = sessionExited && sessionDriver ? "Resume" : "Next";
-  const nextActionTitle = sessionExited && sessionDriver
-    ? "Start a fresh chat in the same folder and let the supervisor continue."
-    : "Ask the supervisor to take the next research step.";
   const actionDisabled = pending || projectCreating ? "disabled" : "";
   const historyOpen = isChatAutopilotSupervisorDrawerOpen(activeSession);
   const historyButton = `<button class="rich-session-autopilot-action" type="button" data-chat-autopilot-supervisor-history aria-expanded="${historyOpen ? "true" : "false"}" title="Open the side-by-side supervisor chat and history.">Side chat</button>`;
   return `
-    <section class="rich-session-autopilot ${enabled ? "is-enabled" : ""} ${running ? "is-running" : ""}" id="rich-session-autopilot" data-rich-session-autopilot-mount>
+    <section class="rich-session-autopilot ${running ? "is-running" : ""}" id="rich-session-autopilot" data-rich-session-autopilot-mount>
       <div class="rich-session-autopilot-main">
         <button
           class="rich-session-autopilot-toggle"
@@ -8209,18 +8174,6 @@ function renderRichSessionAutopilotPanel(activeSession) {
           </button>
         `}
         ${historyButton}
-        ${showSteeringActions ? `
-          <span class="rich-session-autopilot-supervisor-pill" title="${escapeHtml(supervisorSummary.title)}">${escapeHtml(supervisorSummary.label)}</span>
-          ${renderChatAutopilotSupervisorPolicy(supervisorSummary)}
-          <button class="rich-session-autopilot-action is-primary" type="button" data-chat-autopilot-action="continue" title="${escapeHtml(nextActionTitle)}" ${actionDisabled}>${escapeHtml(nextActionLabel)}</button>
-          <button class="rich-session-autopilot-action" type="button" data-chat-autopilot-action="brainstorm" title="Ask the supervisor to pause execution and propose next directions." ${actionDisabled}>Replan</button>
-          <button class="rich-session-autopilot-action" type="button" data-chat-autopilot-action="synthesize" title="Ask the supervisor for a checkpoint summary, evidence, risks, and recommendation." ${actionDisabled}>Checkpoint</button>
-          <button class="rich-session-autopilot-action is-danger" type="button" data-chat-autopilot-action="pause" title="Pause the autonomous run attached to this chat." ${actionDisabled}>Pause</button>
-        ` : enabled ? `
-          <span class="rich-session-autopilot-supervisor-pill" title="${escapeHtml(supervisorSummary.title)}">${escapeHtml(supervisorSummary.label)}</span>
-          ${renderChatAutopilotSupervisorPolicy(supervisorSummary)}
-          <button class="rich-session-autopilot-action is-danger" type="button" data-chat-autopilot-action="pause" title="Turn Autopilot off for this chat." ${actionDisabled}>Pause</button>
-        ` : ""}
       </div>
     </section>
   `;

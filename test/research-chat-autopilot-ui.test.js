@@ -127,42 +127,36 @@ test("same-chat supervisor Start creates project memory and arms silently while 
     );
     await startButton.click();
 
-    await page.waitForFunction(() => /watching current turn/i.test(document.querySelector(".rich-session-autopilot-status")?.textContent || ""), null, { timeout: 20_000 });
+    await page.waitForFunction(() => /watching current turn/i.test(document.querySelector("[data-chat-autopilot-indicator]")?.getAttribute("title") || ""), null, { timeout: 20_000 });
     const uiState = await page.evaluate((sessionId) => {
       const rawQueue = window.localStorage.getItem("vibe-research-composer-queue-v1") || "{}";
       const queue = JSON.parse(rawQueue);
       const items = Array.isArray(queue[sessionId]) ? queue[sessionId] : [];
-      const status = document.querySelector(".rich-session-autopilot-status")?.textContent?.trim() || "";
-      const projectLabel = document.querySelector(".rich-session-autopilot-project-pill")?.textContent?.trim() || "";
-      const policyLabel = document.querySelector("[data-chat-autopilot-policy]")?.textContent?.trim() || "";
-      const policyTitle = document.querySelector("[data-chat-autopilot-policy]")?.getAttribute("title") || "";
-      const traceButton = document.querySelector("[data-chat-autopilot-supervisor-history]");
+      const indicator = document.querySelector("[data-chat-autopilot-indicator]");
       const queuePreview = document.querySelector(".rich-session-queue-text")?.textContent?.trim() || "";
       const queueMeta = document.querySelector(".rich-session-queue-meta")?.textContent?.trim() || "";
       return {
-        status,
-        projectLabel,
-        policyLabel,
-        policyTitle,
-        traceTitle: traceButton?.getAttribute("title") || "",
-        traceLabel: traceButton?.textContent?.trim() || "",
-        traceExpanded: traceButton?.getAttribute("aria-expanded") || "",
+        indicatorLabel: indicator?.textContent?.trim() || "",
+        indicatorTitle: indicator?.getAttribute("title") || "",
+        buttonLabels: Array.from(document.querySelectorAll("#rich-session-autopilot button"))
+          .map((button) => button.textContent?.trim() || ""),
+        actionCount: document.querySelectorAll("#rich-session-autopilot [data-chat-autopilot-action]").length,
+        hasProjectPicker: Boolean(document.querySelector("#rich-session-autopilot [data-chat-autopilot-change-project], #rich-session-autopilot [data-chat-autopilot-project]")),
+        hasPolicyPill: Boolean(document.querySelector("#rich-session-autopilot [data-chat-autopilot-policy]")),
+        hasSideChatButton: Boolean(document.querySelector("#rich-session-autopilot [data-chat-autopilot-supervisor-history]")),
         queuePreview,
         queueMeta,
         queueCount: items.length,
       };
     }, session.id);
 
-    assert.match(uiState.status, /watching current turn/);
-    assert.match(uiState.projectLabel, /vibe-research-chat-supervisor/);
-    assert.equal(uiState.policyLabel, "evidence · integrity · compute");
-    assert.match(uiState.policyTitle, /Evidence:/);
-    assert.match(uiState.policyTitle, /Integrity:/);
-    assert.match(uiState.policyTitle, /Compute:/);
-    assert.match(uiState.policyTitle, /Continuity:/);
-    assert.match(uiState.traceTitle, /side-by-side supervisor chat and history/i);
-    assert.equal(uiState.traceLabel, "Side chat");
-    assert.equal(uiState.traceExpanded, "true");
+    assert.equal(uiState.indicatorLabel, "Supervisor on");
+    assert.match(uiState.indicatorTitle, /watching current turn/);
+    assert.deepEqual(uiState.buttonLabels, []);
+    assert.equal(uiState.actionCount, 0);
+    assert.equal(uiState.hasProjectPicker, false);
+    assert.equal(uiState.hasPolicyPill, false);
+    assert.equal(uiState.hasSideChatButton, false);
     assert.equal(uiState.queueCount, 0);
     assert.equal(uiState.queuePreview, "");
     assert.equal(uiState.queueMeta, "");
@@ -177,7 +171,7 @@ test("same-chat supervisor Start creates project memory and arms silently while 
       history: Array.from(document.querySelectorAll(".rich-session-supervisor-event"))
         .map((entry) => entry.textContent?.trim() || "")
         .join(" "),
-      expanded: document.querySelector("[data-chat-autopilot-supervisor-history]")?.getAttribute("aria-expanded") || "",
+      toolbarButtonCount: document.querySelectorAll("#rich-session-autopilot button").length,
       surfaceOpen: document.querySelector(".rich-session-surface")?.classList.contains("is-supervisor-open") || false,
       drawerPosition: getComputedStyle(document.querySelector("[data-chat-autopilot-supervisor-drawer]")).position,
     }));
@@ -189,7 +183,7 @@ test("same-chat supervisor Start creates project memory and arms silently while 
     assert.ok(drawerState.signals.includes("no background tasks"));
     assert.ok(drawerState.signals.includes("continuity unknown"));
     assert.match(drawerState.history, /No supervisor decisions yet/);
-    assert.equal(drawerState.expanded, "true");
+    assert.equal(drawerState.toolbarButtonCount, 0);
     assert.equal(drawerState.surfaceOpen, true);
     assert.equal(drawerState.drawerPosition, "sticky");
     const scrollState = await page.evaluate(() => {
@@ -255,19 +249,6 @@ test("same-chat supervisor Start creates project memory and arms silently while 
         .join(" ");
       return /Scroll retention probe/i.test(text) && /Recommendation:/i.test(text);
     }, null, { timeout: 20_000 });
-    const preservedScroll = await page.evaluate(() => {
-      const body = document.querySelector(".rich-session-supervisor-drawer-body");
-      const projectButton = document.querySelector("[data-chat-autopilot-change-project]");
-      if (!(body instanceof HTMLElement) || !(projectButton instanceof HTMLElement)) return null;
-      body.scrollTop = Math.min(360, Math.max(0, body.scrollHeight - body.clientHeight));
-      const before = body.scrollTop;
-      projectButton.click();
-      const after = document.querySelector(".rich-session-supervisor-drawer-body")?.scrollTop || 0;
-      return { before, after };
-    });
-    assert.ok(preservedScroll);
-    assert.ok(preservedScroll.before > 0);
-    assert.ok(preservedScroll.after >= preservedScroll.before - 8, JSON.stringify(preservedScroll));
 
     await page.fill("[data-chat-autopilot-supervisor-input]", "Please tell the worker to inspect qualitative heatmaps before more GPU spend.");
     await page.click('[data-chat-autopilot-supervisor-submit="directive"]');

@@ -1305,7 +1305,7 @@ test("main app bundle exposes the native research workspace", async () => {
     assert.doesNotMatch(jsText, /ready with project objective/);
     assert.match(jsText, /data-chat-autopilot-change-project/);
     assert.match(jsText, /Supervisor on/);
-    assert.match(jsText, /data-chat-autopilot-policy/);
+    assert.match(jsText, /data-chat-autopilot-indicator/);
     assert.match(jsText, /data-chat-autopilot-supervisor-history/);
     assert.match(jsText, /data-chat-autopilot-supervisor-drawer/);
     assert.match(jsText, /data-chat-autopilot-supervisor-form/);
@@ -1313,14 +1313,8 @@ test("main app bundle exposes the native research workspace", async () => {
     assert.match(jsText, /chatAutopilotSupervisorDrafts/);
     assert.match(jsText, /renderChatAutopilotSupervisorDrawer/);
     assert.match(jsText, /formatChatAutopilotSupervisorDirective/);
-    assert.match(jsText, /evidence.*integrity.*compute/);
-    assert.match(jsText, /Continuity:/);
     assert.match(jsText, /Human driving/);
     assert.match(jsText, /agent stopped; ready to resume/);
-    assert.match(jsText, /Resume/);
-    assert.match(jsText, /Next/);
-    assert.match(jsText, /Replan/);
-    assert.match(jsText, /Checkpoint/);
     assert.match(jsText, /ready to supervise this chat/);
     assert.match(jsText, /data-chat-autopilot-start-project/);
     assert.match(jsText, /\/api\/research\/projects/);
@@ -1338,9 +1332,8 @@ test("main app bundle exposes the native research workspace", async () => {
     assert.match(cssText, /research-autopilot-card/);
     assert.match(cssText, /research-autopilot-steer/);
     assert.match(cssText, /rich-session-autopilot/);
+    assert.match(cssText, /rich-session-autopilot-indicator/);
     assert.match(cssText, /rich-session-autopilot-project-pill/);
-    assert.match(cssText, /rich-session-autopilot-supervisor-pill/);
-    assert.match(cssText, /rich-session-autopilot-policy/);
     assert.match(cssText, /rich-session-autopilot-action\.is-primary/);
     assert.match(cssText, /rich-session-supervisor-drawer/);
     assert.match(cssText, /rich-session-supervisor-history/);

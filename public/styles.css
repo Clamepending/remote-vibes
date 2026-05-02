@@ -15176,8 +15176,13 @@ body.is-reordering-file-tabs {
 }
 
 .rich-session-autopilot.is-enabled {
+  display: inline-flex;
+  width: max-content;
+  max-width: 100%;
+  padding: 0;
   border-color: rgba(142, 210, 185, 0.2);
-  background: rgba(24, 32, 30, 0.76);
+  background: transparent;
+  backdrop-filter: none;
 }
 
 .rich-session-autopilot.is-running {
@@ -15198,10 +15203,9 @@ body.is-reordering-file-tabs {
 }
 
 .rich-session-autopilot-toggle,
+.rich-session-autopilot-indicator,
 .rich-session-autopilot-action,
-.rich-session-autopilot-project-pill,
-.rich-session-autopilot-supervisor-pill,
-.rich-session-autopilot-policy {
+.rich-session-autopilot-project-pill {
   display: inline-flex;
   align-items: center;
   justify-content: center;
@@ -15219,6 +15223,18 @@ body.is-reordering-file-tabs {
 
 .rich-session-autopilot-toggle {
   padding: 0 10px;
+}
+
+.rich-session-autopilot-indicator {
+  padding: 0 10px;
+  border-color: rgba(142, 210, 185, 0.18);
+  background: rgba(142, 210, 185, 0.075);
+  color: rgba(224, 248, 237, 0.86);
+  cursor: default;
+}
+
+.rich-session-autopilot.is-enabled .rich-session-autopilot-main {
+  width: auto;
 }
 
 .rich-session-autopilot-action {
@@ -15239,29 +15255,6 @@ body.is-reordering-file-tabs {
   color: rgba(244, 244, 242, 0.68);
   overflow: hidden;
   text-overflow: ellipsis;
-}
-
-.rich-session-autopilot-supervisor-pill {
-  justify-content: flex-start;
-  max-width: 180px;
-  padding: 0 10px;
-  border-color: rgba(255, 255, 255, 0.06);
-  background: rgba(255, 255, 255, 0.028);
-  color: rgba(244, 244, 242, 0.62);
-  overflow: hidden;
-  text-overflow: ellipsis;
-  cursor: default;
-}
-
-.rich-session-autopilot-policy {
-  max-width: 240px;
-  padding: 0 10px;
-  border-color: rgba(142, 210, 185, 0.13);
-  background: rgba(142, 210, 185, 0.055);
-  color: rgba(224, 248, 237, 0.68);
-  overflow: hidden;
-  text-overflow: ellipsis;
-  cursor: default;
 }
 
 .rich-session-autopilot-action.is-danger {
@@ -19536,16 +19529,6 @@ select:disabled {
   }
 
   .rich-session-autopilot-project-pill {
-    max-width: none;
-    flex: 1 1 100%;
-  }
-
-  .rich-session-autopilot-supervisor-pill {
-    max-width: none;
-    flex: 1 1 100%;
-  }
-
-  .rich-session-autopilot-policy {
     max-width: none;
     flex: 1 1 100%;
   }
