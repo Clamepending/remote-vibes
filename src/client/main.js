@@ -9146,6 +9146,10 @@ async function fetchJson(url, options = {}) {
   if (!response.ok) {
     const error = new Error(payload?.error || `Request failed with status ${response.status}`);
     error.status = response.status;
+    error.payload = payload;
+    if (payload?.update) {
+      error.update = payload.update;
+    }
     throw error;
   }
 
@@ -47389,8 +47393,36 @@ function bindUpdateEvents() {
     try {
       const payload = await fetchJson("/api/update/apply", { method: "POST" });
       state.update = payload.update ?? state.update;
+      if (payload.scheduled === false || payload.alreadyCurrent) {
+        state.updateApplying = false;
+        state.lastUpdateError = null;
+        refreshUpdateUi({ force: true });
+        refreshSystemToastsUi({ force: true });
+        return;
+      }
       waitForUpdateRestart();
     } catch (error) {
+      const update = error.update || error.payload?.update || null;
+      const alreadyCurrent =
+        update?.updateAvailable === false ||
+        update?.status === "current" ||
+        /already up to date/i.test(String(error.message || ""));
+
+      if (alreadyCurrent) {
+        state.updateApplying = false;
+        state.lastUpdateError = null;
+        state.update = update || {
+          ...(state.update || {}),
+          status: "current",
+          updateAvailable: false,
+          canUpdate: false,
+          reason: "",
+        };
+        refreshUpdateUi({ force: true });
+        refreshSystemToastsUi({ force: true });
+        return;
+      }
+
       state.updateApplying = false;
       state.lastUpdateError = {
         message: error.message,
