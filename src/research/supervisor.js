@@ -726,7 +726,12 @@ export function decideResearchSupervisorIntervention({
     };
   }
 
-  if (normalizedEvent.type === "toggle-on" || normalizedEvent.type === "toggle-off" || normalizedEvent.type === "human-message") {
+  if (
+    normalizedEvent.type === "toggle-on"
+    || normalizedEvent.type === "toggle-off"
+    || normalizedEvent.type === "takeover"
+    || normalizedEvent.type === "human-message"
+  ) {
     return {
       action: "silent",
       shouldSend: false,

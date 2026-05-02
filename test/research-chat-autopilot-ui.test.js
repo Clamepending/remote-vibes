@@ -25,7 +25,7 @@ async function startApp({ cwd, providers }) {
   return { app, baseUrl: `http://127.0.0.1:${app.config.port}` };
 }
 
-test("same-chat supervisor Start creates project memory and queues takeover while agent is busy", async (t) => {
+test("same-chat supervisor Start creates project memory and arms silently while agent is busy", async (t) => {
   const executablePath = await resolveBrowserExecutablePath({ env: process.env });
   if (!executablePath) {
     t.skip("No local Chromium/Chrome executable available for the chat supervisor UI canary.");
@@ -98,12 +98,11 @@ test("same-chat supervisor Start creates project memory and queues takeover whil
     );
     await startButton.click();
 
-    await page.waitForSelector('[data-rich-session-queue-item^="autopilot-"]', { timeout: 20_000 });
+    await page.waitForFunction(() => /watching current turn/i.test(document.querySelector(".rich-session-autopilot-status")?.textContent || ""), null, { timeout: 20_000 });
     const uiState = await page.evaluate((sessionId) => {
       const rawQueue = window.localStorage.getItem("vibe-research-composer-queue-v1") || "{}";
       const queue = JSON.parse(rawQueue);
       const items = Array.isArray(queue[sessionId]) ? queue[sessionId] : [];
-      const first = items[0] || null;
       const status = document.querySelector(".rich-session-autopilot-status")?.textContent?.trim() || "";
       const projectLabel = document.querySelector(".rich-session-autopilot-project-pill")?.textContent?.trim() || "";
       const policyLabel = document.querySelector("[data-chat-autopilot-policy]")?.textContent?.trim() || "";
@@ -117,31 +116,27 @@ test("same-chat supervisor Start creates project memory and queues takeover whil
         policyLabel,
         policyTitle,
         traceTitle: traceButton?.getAttribute("title") || "",
+        traceLabel: traceButton?.textContent?.trim() || "",
         traceExpanded: traceButton?.getAttribute("aria-expanded") || "",
         queuePreview,
         queueMeta,
-        queuedId: first?.id || "",
-        queuedText: first?.text || "",
+        queueCount: items.length,
       };
     }, session.id);
 
-    assert.match(uiState.status, /supervisor next step queued/);
+    assert.match(uiState.status, /watching current turn/);
     assert.match(uiState.projectLabel, /vibe-research-chat-supervisor/);
     assert.equal(uiState.policyLabel, "evidence · integrity · compute");
     assert.match(uiState.policyTitle, /Evidence:/);
     assert.match(uiState.policyTitle, /Integrity:/);
     assert.match(uiState.policyTitle, /Compute:/);
     assert.match(uiState.policyTitle, /Continuity:/);
-    assert.match(uiState.traceTitle, /supervisor review history/i);
+    assert.match(uiState.traceTitle, /supervisor side chat and history/i);
+    assert.equal(uiState.traceLabel, "Supervisor");
     assert.equal(uiState.traceExpanded, "false");
-    assert.match(uiState.queuedId, /^autopilot-/);
-    assert.match(uiState.queuePreview, /Claim QUEUE row 1/);
-    assert.equal(uiState.queueMeta, "supervisor next step - sends after current turn");
-    assert.match(uiState.queuedText, /Claim QUEUE row 1 \(initial-research-loop\)/);
-    assert.match(uiState.queuedText, /Use the README\/project goal as the north star/);
-    assert.match(uiState.queuedText, /set a monitor\/wakeup\/log watcher/);
-    assert.doesNotMatch(uiState.queuedText, /\n/);
-    assert.doesNotMatch(uiState.queuedText, /Autopilot/i);
+    assert.equal(uiState.queueCount, 0);
+    assert.equal(uiState.queuePreview, "");
+    assert.equal(uiState.queueMeta, "");
 
     await page.click("[data-chat-autopilot-supervisor-history]");
     await page.waitForSelector("[data-chat-autopilot-supervisor-drawer].is-open", { timeout: 10_000 });
@@ -153,13 +148,16 @@ test("same-chat supervisor Start creates project memory and queues takeover whil
         .map((entry) => entry.textContent?.trim() || "")
         .join(" "),
       expanded: document.querySelector("[data-chat-autopilot-supervisor-history]")?.getAttribute("aria-expanded") || "",
+      surfaceOpen: document.querySelector(".rich-session-surface")?.classList.contains("is-supervisor-open") || false,
+      drawerPosition: getComputedStyle(document.querySelector("[data-chat-autopilot-supervisor-drawer]")).position,
     }));
     assert.equal(drawerState.title, "Supervisor");
     assert.equal(drawerState.status, "resting");
-    assert.match(drawerState.preview, /Claim QUEUE row 1/);
-    assert.match(drawerState.history, /takeover/);
-    assert.match(drawerState.history, /directive/);
+    assert.match(drawerState.preview, /Waiting for the next worker pause/);
+    assert.match(drawerState.history, /No supervisor decisions yet/);
     assert.equal(drawerState.expanded, "true");
+    assert.equal(drawerState.surfaceOpen, true);
+    assert.equal(drawerState.drawerPosition, "sticky");
 
     await page.fill("[data-chat-autopilot-supervisor-input]", "Should I ask for qualitative heatmaps or ablations next?");
     await page.click('[data-chat-autopilot-supervisor-submit="ask"]');
@@ -179,7 +177,7 @@ test("same-chat supervisor Start creates project memory and queues takeover whil
           .map((entry) => entry.textContent?.trim() || ""),
       };
     }, session.id);
-    assert.equal(askState.queueCount, 1);
+    assert.equal(askState.queueCount, 0);
     assert.ok(askState.messages.some((text) => /Should I ask for qualitative heatmaps or ablations next\?/i.test(text)));
     assert.ok(askState.messages.some((text) => /Recommendation:/i.test(text)));
 
@@ -192,7 +190,7 @@ test("same-chat supervisor Start creates project memory and queues takeover whil
       const text = Array.from(document.querySelectorAll(".rich-session-supervisor-message"))
         .map((entry) => entry.textContent || "")
         .join(" ");
-      return items.length >= 2 && /Sent to worker|Directive sent/i.test(text);
+      return items.length >= 1 && /Sent to worker|Directive sent/i.test(text);
     }, session.id, { timeout: 20_000 });
     const directiveState = await page.evaluate((sessionId) => {
       const rawQueue = window.localStorage.getItem("vibe-research-composer-queue-v1") || "{}";
@@ -200,19 +198,19 @@ test("same-chat supervisor Start creates project memory and queues takeover whil
       const items = Array.isArray(queue[sessionId]) ? queue[sessionId] : [];
       return {
         queueCount: items.length,
-        secondText: items[1]?.text || "",
-        secondMeta: Array.from(document.querySelectorAll(".rich-session-queue-meta"))
-          .map((entry) => entry.textContent?.trim() || "")[1] || "",
+        queuedText: items[0]?.text || "",
+        queuedMeta: Array.from(document.querySelectorAll(".rich-session-queue-meta"))
+          .map((entry) => entry.textContent?.trim() || "")[0] || "",
         messages: Array.from(document.querySelectorAll(".rich-session-supervisor-message"))
           .map((entry) => entry.textContent?.trim() || "")
           .join(" "),
       };
     }, session.id);
-    assert.equal(directiveState.queueCount, 2);
-    assert.match(directiveState.secondText, /Please prioritize:/);
-    assert.match(directiveState.secondText, /qualitative heatmaps/);
-    assert.doesNotMatch(directiveState.secondText, /\n/);
-    assert.equal(directiveState.secondMeta, "supervisor queued - #2");
+    assert.equal(directiveState.queueCount, 1);
+    assert.match(directiveState.queuedText, /Please prioritize:/);
+    assert.match(directiveState.queuedText, /qualitative heatmaps/);
+    assert.doesNotMatch(directiveState.queuedText, /\n/);
+    assert.equal(directiveState.queuedMeta, "supervisor next step - sends after current turn");
     assert.match(directiveState.messages, /Sent to worker|Directive sent/i);
 
     const projectsResponse = await fetch(`${baseUrl}/api/research/projects`);
@@ -259,7 +257,7 @@ test("same-chat supervisor Start creates project memory and queues takeover whil
     assert.equal(continuedAttachment.attachment.enabled, true);
     assert.equal(continuedAttachment.attachment.driver, "session");
     assert.equal(continuedAttachment.attachment.projectName, projectName);
-    assert.equal(continuedAttachment.attachment.lastMessage, uiState.queuedText);
+    assert.equal(continuedAttachment.attachment.lastMessage, directiveState.queuedText);
 
     const queueAfterRecovery = await page.evaluate((oldSessionId) => {
       const rawQueue = window.localStorage.getItem("vibe-research-composer-queue-v1") || "{}";

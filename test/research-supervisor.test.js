@@ -17,7 +17,7 @@ function attachment(overrides = {}) {
   };
 }
 
-test("research supervisor keeps toggle and human-message events context-neutral", () => {
+test("research supervisor keeps toggle, takeover, and human-message events context-neutral", () => {
   const toggle = decideResearchSupervisorIntervention({
     attachment: attachment(),
     event: { type: "toggle-on", source: "human" },
@@ -27,6 +27,16 @@ test("research supervisor keeps toggle and human-message events context-neutral"
   });
   assert.equal(toggle.action, "silent");
   assert.equal(toggle.shouldSend, false);
+
+  const takeover = decideResearchSupervisorIntervention({
+    attachment: attachment(),
+    event: { type: "takeover", source: "session" },
+    orchestratorReport: {
+      recommendation: { action: "run-next", reason: "QUEUE row 1 is ready", slug: "baseline" },
+    },
+  });
+  assert.equal(takeover.action, "silent");
+  assert.equal(takeover.shouldSend, false);
 
   const humanMessage = decideResearchSupervisorIntervention({
     attachment: attachment(),
@@ -90,7 +100,7 @@ test("research supervisor routes manual continue through project recommendation"
   assert.equal(decision.card.action, "continue active move");
 });
 
-test("research supervisor emits immediate takeover directives and dedupes later idle checks", () => {
+test("research supervisor emits worker-idle directives and dedupes later idle checks", () => {
   const report = {
     recommendation: {
       action: "run-next",
@@ -115,7 +125,7 @@ test("research supervisor emits immediate takeover directives and dedupes later 
   };
   const first = decideResearchSupervisorIntervention({
     attachment: attachment(),
-    event: { type: "takeover", source: "session" },
+    event: { type: "agent-idle", source: "session", turnMarker: "turn-1" },
     orchestratorReport: report,
   });
   assert.equal(first.action, "directive");
@@ -139,12 +149,12 @@ test("research supervisor emits immediate takeover directives and dedupes later 
   const supervisor = updateResearchSupervisorState(
     normalizeResearchSupervisorState(),
     first,
-    { type: "takeover", source: "session" },
+    { type: "agent-idle", source: "session", turnMarker: "turn-1" },
     { now: "2026-05-01T12:00:00.000Z" },
   );
   const duplicate = decideResearchSupervisorIntervention({
     attachment: attachment({ supervisor }),
-    event: { type: "agent-idle", source: "session" },
+    event: { type: "agent-idle", source: "session", turnMarker: "turn-1" },
     orchestratorReport: report,
   });
   assert.equal(duplicate.action, "silent");
@@ -165,7 +175,7 @@ test("research supervisor emits immediate takeover directives and dedupes later 
 test("research supervisor falls back to the project goal when no chat objective is set", () => {
   const decision = decideResearchSupervisorIntervention({
     attachment: attachment({ objective: "" }),
-    event: { type: "takeover", source: "session" },
+    event: { type: "agent-idle", source: "session" },
     orchestratorReport: {
       recommendation: {
         action: "run-next",

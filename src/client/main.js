@@ -7825,8 +7825,13 @@ function getChatAutopilotSupervisorDisplayState(config = {}) {
 }
 
 function renderChatAutopilotSupervisorPolicy(supervisorSummary = {}) {
-  const card = supervisorSummary.card;
-  if (!card) return "";
+  const card = supervisorSummary.card || {
+    preview: "",
+    evidence: "Require current metrics plus qualitative samples, heatmaps, or failure cases before spending more compute.",
+    integrity: "Check the recent trace for evaluator edits, leakage, cherry-picking, stale artifacts, and unverifiable numbers.",
+    compute: "Keep idle GPUs busy only with independent seeds, ablations, or sweeps that preserve provenance.",
+    continuity: "When long-running work remains, verify a monitor, wakeup, or log watcher is attached.",
+  };
   const title = [
     card.preview ? `Last directive: ${card.preview}` : "",
     card.evidence ? `Evidence: ${card.evidence}` : "",
@@ -8041,8 +8046,8 @@ function renderRichSessionAutopilotPanel(activeSession) {
   const toggleTitle = enabled
     ? "Pause the supervisor for this chat."
     : noProjects
-      ? "Create durable research memory for this chat, then let the supervisor take the next step."
-      : "Let the supervisor take the next research step in this same chat.";
+      ? "Create durable research memory for this chat and arm the supervisor without messaging the worker."
+      : "Turn on the supervisor for this chat without messaging the worker.";
   const showProjectPicker = !noProjects && !running && pickerOpen;
   const showSteeringActions = enabled && (sessionDriver || (job && !isResearchAutopilotTerminalStatus(job.status)));
   const projectTitle = projectName
@@ -8054,7 +8059,7 @@ function renderRichSessionAutopilotPanel(activeSession) {
     : "Ask the supervisor to take the next research step.";
   const actionDisabled = pending || projectCreating ? "disabled" : "";
   const historyOpen = Boolean(state.chatAutopilotSupervisorDrawerOpen[activeSession.id]);
-  const historyButton = `<button class="rich-session-autopilot-action" type="button" data-chat-autopilot-supervisor-history aria-expanded="${historyOpen ? "true" : "false"}" title="Show supervisor review history and latest decision." ${actionDisabled}>Trace</button>`;
+  const historyButton = `<button class="rich-session-autopilot-action" type="button" data-chat-autopilot-supervisor-history aria-expanded="${historyOpen ? "true" : "false"}" title="Open the supervisor side chat and history." ${actionDisabled}>Supervisor</button>`;
   return `
     <section class="rich-session-autopilot ${enabled ? "is-enabled" : ""} ${running ? "is-running" : ""}" id="rich-session-autopilot" data-rich-session-autopilot-mount>
       <div class="rich-session-autopilot-main">
@@ -8072,7 +8077,7 @@ function renderRichSessionAutopilotPanel(activeSession) {
       </div>
       <div class="rich-session-autopilot-actions">
         ${noProjects ? `
-          <button class="rich-session-autopilot-action is-primary" type="button" data-chat-autopilot-start-project title="Create durable research memory for this chat and let the supervisor take over." ${actionDisabled}>
+          <button class="rich-session-autopilot-action is-primary" type="button" data-chat-autopilot-start-project title="Create durable research memory for this chat and arm the supervisor." ${actionDisabled}>
             ${projectCreating ? "Starting..." : "Start"}
           </button>
         ` : showProjectPicker ? `
@@ -8138,6 +8143,7 @@ function renderRichSessionSurface(activeSession) {
   const richActive = surfaceMode === "native";
   const streamLogActive = surfaceMode === "stream-json";
   const surfaceActive = richActive || streamLogActive;
+  const supervisorOpen = Boolean(activeSession?.id && state.chatAutopilotSupervisorDrawerOpen[activeSession.id]);
   // The "agent is doing X right now" signal lives ON the send button now
   // (it morphs into a spinner while streamWorking is true). The standalone
   // activity strip used to be a full-width row above the composer with
@@ -8147,7 +8153,7 @@ function renderRichSessionSurface(activeSession) {
   const isWorking = Boolean(activeSession?.streamWorking);
   const activeMonitors = getRichSessionActiveMonitors(activeSession);
   return `
-    <div class="rich-session-surface ${surfaceActive ? "is-active" : ""} ${streamLogActive ? "is-stream-log" : ""}" id="rich-session-surface" aria-hidden="${surfaceActive ? "false" : "true"}" data-rich-session-surface-mode="${escapeHtml(surfaceMode)}">
+    <div class="rich-session-surface ${surfaceActive ? "is-active" : ""} ${streamLogActive ? "is-stream-log" : ""} ${supervisorOpen ? "is-supervisor-open" : ""}" id="rich-session-surface" aria-hidden="${surfaceActive ? "false" : "true"}" data-rich-session-surface-mode="${escapeHtml(surfaceMode)}">
       <div class="rich-session-feed ${richActive ? "" : "is-hidden"}" id="rich-session-feed" aria-hidden="${richActive ? "false" : "true"}">${renderRichSessionFeedHtml(activeSession)}</div>
       <div class="rich-session-stream-log ${streamLogActive ? "" : "is-hidden"}" id="rich-session-stream-log" aria-hidden="${streamLogActive ? "false" : "true"}"></div>
       <div class="rich-session-monitors ${activeMonitors.length ? "is-active" : ""}" id="rich-session-monitors" aria-hidden="${activeMonitors.length ? "false" : "true"}">
@@ -8288,6 +8294,7 @@ function refreshRichSessionSurfaceUi({ scrollToBottom = false } = {}) {
   const richActive = surfaceMode === "native";
   const streamLogActive = surfaceMode === "stream-json";
   const surfaceActive = richActive || streamLogActive;
+  const supervisorOpen = Boolean(activeSession?.id && state.chatAutopilotSupervisorDrawerOpen[activeSession.id]);
   const stack = document.querySelector(".terminal-stack");
   const surface = document.querySelector("#rich-session-surface");
   const feed = getRichSessionFeedViewport();
@@ -8348,6 +8355,7 @@ function refreshRichSessionSurfaceUi({ scrollToBottom = false } = {}) {
 
   surface.classList.toggle("is-active", surfaceActive);
   surface.classList.toggle("is-stream-log", streamLogActive);
+  surface.classList.toggle("is-supervisor-open", supervisorOpen);
   surface.setAttribute("aria-hidden", surfaceActive ? "false" : "true");
   surface.setAttribute("data-rich-session-surface-mode", surfaceMode);
 
@@ -39743,13 +39751,7 @@ async function startChatAutopilotSupervisorForSession(activeSession) {
   });
   setChatAutopilotPending(sessionId, "");
   refreshRichSessionSurfaceUi();
-  const takeover = await tickChatAutopilotSupervisor(activeSession, {
-    type: "takeover",
-    source: "session",
-  }, {
-    pendingText: activeSession.streamWorking ? "will take over after current turn" : "taking over",
-  });
-  return takeover || attachment;
+  return attachment;
 }
 
 async function startOrResumeChatAutopilotForSession(activeSession) {

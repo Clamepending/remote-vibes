@@ -600,7 +600,7 @@ test("session research autopilot attachment persists chat-native control state",
   });
 });
 
-test("chat research supervisor tick is silent on toggle and takes over on demand", async () => {
+test("chat research supervisor arms silently and routes only on worker-idle or explicit action", async () => {
   await withLibraryServer(async ({ baseUrl }) => {
     const sessionRes = await fetch(`${baseUrl}/api/sessions`, {
       method: "POST",
@@ -644,24 +644,36 @@ test("chat research supervisor tick is silent on toggle and takes over on demand
     });
     assert.equal(takeoverTick.status, 200);
     const takeoverBody = await takeoverTick.json();
-    assert.equal(takeoverBody.decision.action, "directive");
-    assert.equal(takeoverBody.decision.shouldSend, true);
-    assert.match(takeoverBody.directive.text, /Claim QUEUE row 1/);
-    assert.match(takeoverBody.directive.text, /Check QUEUE (baseline|v3-fewshot)/);
-    assert.match(takeoverBody.directive.text, /bench v1/);
-    assert.match(takeoverBody.directive.text, /Use the README\/project goal as the north star/);
-    assert.match(takeoverBody.directive.text, /set a monitor\/wakeup\/log watcher/);
-    assert.doesNotMatch(takeoverBody.directive.text, /\n/);
-    assert.doesNotMatch(takeoverBody.directive.text, /^(State|Goal|Ranking|Success|Supervisor policy):/m);
-    assert.equal(takeoverBody.decision.card.mode, "experiment");
-    assert.match(takeoverBody.decision.card.integrity, /evaluator tampering/);
-    assert.match(takeoverBody.decision.card.continuity, /no active monitor\/wakeup is visible/);
-    assert.doesNotMatch(takeoverBody.directive.text, /Autopilot/i);
-    assert.equal(takeoverBody.runtime.hasContinuity, false);
-    assert.equal(takeoverBody.attachment.supervisor.interventionCount, 1);
-    assert.equal(takeoverBody.projectSupervisor.projectName, "prose-style");
-    assert.equal(takeoverBody.projectSupervisor.supervisor.interventionCount, 1);
-    assert.equal(takeoverBody.orchestrator.projectContext.goal, "Find the prompt scaffold that produces the most readable short-form answers.");
+    assert.equal(takeoverBody.decision.action, "silent");
+    assert.equal(takeoverBody.decision.shouldSend, false);
+    assert.equal(takeoverBody.directive, null);
+    assert.equal(takeoverBody.attachment.supervisor.interventionCount, 0);
+
+    const idleTick = await fetch(`${baseUrl}/api/sessions/${session.id}/research-autopilot/supervisor/tick`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ event: { type: "agent-idle", source: "session", turnMarker: "idle-1" } }),
+    });
+    assert.equal(idleTick.status, 200);
+    const firstIdleBody = await idleTick.json();
+    assert.equal(firstIdleBody.decision.action, "directive");
+    assert.equal(firstIdleBody.decision.shouldSend, true);
+    assert.match(firstIdleBody.directive.text, /Claim QUEUE row 1/);
+    assert.match(firstIdleBody.directive.text, /Check QUEUE (baseline|v3-fewshot)/);
+    assert.match(firstIdleBody.directive.text, /bench v1/);
+    assert.match(firstIdleBody.directive.text, /Use the README\/project goal as the north star/);
+    assert.match(firstIdleBody.directive.text, /set a monitor\/wakeup\/log watcher/);
+    assert.doesNotMatch(firstIdleBody.directive.text, /\n/);
+    assert.doesNotMatch(firstIdleBody.directive.text, /^(State|Goal|Ranking|Success|Supervisor policy):/m);
+    assert.equal(firstIdleBody.decision.card.mode, "experiment");
+    assert.match(firstIdleBody.decision.card.integrity, /evaluator tampering/);
+    assert.match(firstIdleBody.decision.card.continuity, /no active monitor\/wakeup is visible/);
+    assert.doesNotMatch(firstIdleBody.directive.text, /Autopilot/i);
+    assert.equal(firstIdleBody.runtime.hasContinuity, false);
+    assert.equal(firstIdleBody.attachment.supervisor.interventionCount, 1);
+    assert.equal(firstIdleBody.projectSupervisor.projectName, "prose-style");
+    assert.equal(firstIdleBody.projectSupervisor.supervisor.interventionCount, 1);
+    assert.equal(firstIdleBody.orchestrator.projectContext.goal, "Find the prompt scaffold that produces the most readable short-form answers.");
 
     const secondSessionRes = await fetch(`${baseUrl}/api/sessions`, {
       method: "POST",
@@ -685,7 +697,7 @@ test("chat research supervisor tick is silent on toggle and takes over on demand
     const duplicateTakeover = await fetch(`${baseUrl}/api/sessions/${secondSession.id}/research-autopilot/supervisor/tick`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ event: { type: "takeover", source: "session" } }),
+      body: JSON.stringify({ event: { type: "agent-idle", source: "session", turnMarker: "idle-1" } }),
     });
     assert.equal(duplicateTakeover.status, 200);
     const duplicateTakeoverBody = await duplicateTakeover.json();
@@ -852,29 +864,29 @@ test("chat research supervisor ignores its own continuity reminder until the wor
     });
     assert.equal(save.status, 200);
 
-    const takeoverTick = await fetch(`${baseUrl}/api/sessions/${session.id}/research-autopilot/supervisor/tick`, {
+    const firstIdleTick = await fetch(`${baseUrl}/api/sessions/${session.id}/research-autopilot/supervisor/tick`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ event: { type: "takeover", source: "session" } }),
+      body: JSON.stringify({ event: { type: "agent-idle", source: "session", turnMarker: "initial-idle" } }),
     });
-    assert.equal(takeoverTick.status, 200);
-    const takeoverBody = await takeoverTick.json();
-    assert.match(takeoverBody.directive.text, /set a monitor\/wakeup\/log watcher/);
-    assert.equal(takeoverBody.runtime.hasContinuity, false);
+    assert.equal(firstIdleTick.status, 200);
+    const firstIdleBody = await firstIdleTick.json();
+    assert.match(firstIdleBody.directive.text, /set a monitor\/wakeup\/log watcher/);
+    assert.equal(firstIdleBody.runtime.hasContinuity, false);
 
     const serverSession = app.sessionManager.getSession(session.id);
     assert.ok(serverSession);
     app.sessionManager.pushNativeNarrativeEntry(serverSession, {
       kind: "user",
       label: "You",
-      text: takeoverBody.directive.text,
+      text: firstIdleBody.directive.text,
       timestamp: new Date().toISOString(),
       meta: "queued-input",
     });
     const saveDirectiveAsLastMessage = await fetch(`${baseUrl}/api/sessions/${session.id}/research-autopilot`, {
       method: "PUT",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ lastMessage: takeoverBody.directive.text }),
+      body: JSON.stringify({ lastMessage: firstIdleBody.directive.text }),
     });
     assert.equal(saveDirectiveAsLastMessage.status, 200);
 
@@ -1264,7 +1276,7 @@ test("main app bundle exposes the native research workspace", async () => {
     assert.match(jsText, /\/research-autopilot\/supervisor\/chat/);
     assert.match(jsText, /tickChatAutopilotSupervisor/);
     assert.match(jsText, /sendChatAutopilotSupervisorChat/);
-    assert.match(jsText, /takeover/);
+    assert.match(jsText, /agent-idle/);
     assert.match(jsText, /projectSupervisor/);
     assert.match(jsText, /isSessionInputConnected/);
     assert.match(jsText, /queueChatAutopilotSupervisorMessage/);
