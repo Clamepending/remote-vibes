@@ -232,6 +232,46 @@ test("resume rehydration: live stream entries with same timestamp keep their seq
   });
 });
 
+test("stream narrative snapshot collapses completed assistant plus stale streaming duplicate", async () => {
+  await withManager(async (manager) => {
+    const session = makeStreamSession(manager, { id: "stream-duplicate-partial" });
+    const timestamp = "2026-05-02T21:19:00.000Z";
+    session.streamEntries = [
+      {
+        id: "claude-assistant-msg_final-0",
+        kind: "assistant",
+        label: "Claude Code",
+        text: "Let me write a proper pre-flight.",
+        timestamp,
+        seq: 10,
+      },
+      {
+        id: "claude-partial-current",
+        kind: "assistant",
+        label: "Claude Code",
+        text: "Let me write a proper pre-flight.",
+        timestamp: "2026-05-02T21:19:01.000Z",
+        meta: "streaming",
+        seq: 11,
+      },
+    ];
+
+    const narrative = await manager.getSessionNarrative(session.id);
+    assert.deepEqual(
+      narrative.entries
+        .filter((entry) => entry.kind === "assistant")
+        .map((entry) => ({ id: entry.id, text: entry.text, meta: entry.meta || "" })),
+      [
+        {
+          id: "claude-assistant-msg_final-0",
+          text: "Let me write a proper pre-flight.",
+          meta: "",
+        },
+      ],
+    );
+  });
+});
+
 // ---------------------------------------------------------------------------
 // Reconnect / seq-gap recovery
 // ---------------------------------------------------------------------------

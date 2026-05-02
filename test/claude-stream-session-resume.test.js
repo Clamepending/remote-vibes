@@ -89,3 +89,97 @@ test("stream parser preserves valid provider timestamps for replayed resume hist
     ],
   );
 });
+
+test("stream parser updates partial assistant text in the final assistant entry slot", () => {
+  let seq = 0;
+  const stream = new ClaudeStreamSession({
+    sessionId: "partial-upsert",
+    allocateSeq: () => {
+      seq += 1;
+      return seq;
+    },
+  });
+
+  stream._handleLine(JSON.stringify({
+    type: "stream_event",
+    event: { type: "message_start", message: { id: "msg_partial" } },
+  }));
+  stream._handleLine(JSON.stringify({
+    type: "stream_event",
+    event: { type: "content_block_start", index: 0, content_block: { type: "text", text: "" } },
+  }));
+  stream._handleLine(JSON.stringify({
+    type: "stream_event",
+    event: { type: "content_block_delta", index: 0, delta: { type: "text_delta", text: "Let me write" } },
+  }));
+
+  assert.deepEqual(
+    stream.entries.map((entry) => ({ id: entry.id, kind: entry.kind, text: entry.text, meta: entry.meta || "" })),
+    [
+      {
+        id: "claude-assistant-msg_partial-0",
+        kind: "assistant",
+        text: "Let me write",
+        meta: "streaming",
+      },
+    ],
+  );
+
+  stream._handleLine(JSON.stringify({
+    type: "assistant",
+    timestamp: "2026-05-02T21:19:00.000Z",
+    message: {
+      id: "msg_partial",
+      role: "assistant",
+      content: [{ type: "text", text: "Let me write" }],
+    },
+  }));
+
+  assert.deepEqual(
+    stream.entries.map((entry) => ({ id: entry.id, kind: entry.kind, text: entry.text, meta: entry.meta || "" })),
+    [
+      {
+        id: "claude-assistant-msg_partial-0",
+        kind: "assistant",
+        text: "Let me write",
+        meta: "",
+      },
+    ],
+  );
+});
+
+test("stream parser drops stale streaming duplicate when final assistant id differs", () => {
+  let seq = 0;
+  const stream = new ClaudeStreamSession({
+    sessionId: "partial-stale",
+    allocateSeq: () => {
+      seq += 1;
+      return seq;
+    },
+  });
+
+  stream._handleLine(JSON.stringify({
+    type: "stream_event",
+    event: { type: "content_block_delta", index: 0, delta: { type: "text_delta", text: "Same text" } },
+  }));
+  stream._handleLine(JSON.stringify({
+    type: "assistant",
+    message: {
+      id: "msg_final",
+      role: "assistant",
+      content: [{ type: "text", text: "Same text" }],
+    },
+  }));
+
+  assert.deepEqual(
+    stream.entries.map((entry) => ({ id: entry.id, kind: entry.kind, text: entry.text, meta: entry.meta || "" })),
+    [
+      {
+        id: "claude-assistant-msg_final-0",
+        kind: "assistant",
+        text: "Same text",
+        meta: "",
+      },
+    ],
+  );
+});

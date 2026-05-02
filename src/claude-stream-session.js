@@ -45,6 +45,91 @@ function normalizeIsoTimestamp(value) {
   return Number.isFinite(parsed) ? new Date(parsed).toISOString() : "";
 }
 
+function tokenSlug(input) {
+  return String(input ?? "")
+    .replace(/[^a-zA-Z0-9_-]/g, "")
+    .slice(0, 24);
+}
+
+function getClaudeAssistantEntryId(messageId, blockIndex) {
+  const messageIdSlug = tokenSlug(messageId || "current") || "current";
+  const index = Number.isFinite(Number(blockIndex)) ? Math.max(0, Number(blockIndex)) : 0;
+  return `claude-assistant-${messageIdSlug}-${index}`;
+}
+
+function normalizeEntryTextForMatch(value) {
+  return String(value || "").replace(/\s+/g, " ").trim();
+}
+
+function buildAssistantTextKey(entry) {
+  if (!entry || entry.kind !== "assistant") {
+    return "";
+  }
+  const text = normalizeEntryTextForMatch(entry.text);
+  if (!text) {
+    return "";
+  }
+  return `${entry.label || ""}::${text}`;
+}
+
+function collapseDuplicateStreamEntries(entries = []) {
+  const byId = new Map();
+  const order = [];
+  for (const entry of Array.isArray(entries) ? entries : []) {
+    if (!entry?.id) {
+      continue;
+    }
+    if (!byId.has(entry.id)) {
+      order.push(entry.id);
+    }
+    const previous = byId.get(entry.id);
+    if (
+      previous?.kind === "assistant"
+      && previous.meta !== "streaming"
+      && previous.meta !== "pending"
+      && entry.kind === "assistant"
+      && entry.meta === "streaming"
+    ) {
+      continue;
+    }
+    byId.set(entry.id, { ...(byId.get(entry.id) || {}), ...entry });
+  }
+
+  const collapsed = order.map((id) => byId.get(id)).filter(Boolean);
+  const completedAssistantTimesByKey = new Map();
+  for (const entry of collapsed) {
+    if (
+      entry?.kind === "assistant"
+      && entry.meta !== "streaming"
+      && entry.meta !== "pending"
+      && normalizeEntryTextForMatch(entry.text)
+    ) {
+      const key = buildAssistantTextKey(entry);
+      if (!key) continue;
+      const timestamp = Date.parse(entry.timestamp || "");
+      const list = completedAssistantTimesByKey.get(key) || [];
+      list.push(Number.isFinite(timestamp) ? timestamp : 0);
+      completedAssistantTimesByKey.set(key, list);
+    }
+  }
+
+  return collapsed.filter((entry) => {
+    if (entry?.kind !== "assistant" || entry.meta !== "streaming") {
+      return true;
+    }
+    const key = buildAssistantTextKey(entry);
+    const completedTimes = key ? completedAssistantTimesByKey.get(key) : null;
+    if (!completedTimes?.length) {
+      return true;
+    }
+    const streamingTime = Date.parse(entry.timestamp || "");
+    if (!Number.isFinite(streamingTime)) {
+      return true;
+    }
+    return !completedTimes.some((completedTime) => completedTime && Math.abs(completedTime - streamingTime) < 60_000);
+  });
+}
+
 const DEFAULT_MAX_ENTRIES = 96;
 
 export class ClaudeStreamSession extends EventEmitter {
@@ -104,10 +189,12 @@ export class ClaudeStreamSession extends EventEmitter {
     // entries that DO have timestamps. Cache a stamp the first time we see
     // each entry id so chronology matches arrival order.
     this._entryStamps = new Map();
-    // Track partial assistant text per in-flight message id so we can render
-    // the reply token-by-token. Cleared once the canonical `assistant` event
-    // arrives for the same message.
-    this._partialByMessage = new Map();
+    // Track partial assistant text per in-flight content block. The partial
+    // row uses the same id as the eventual finalized assistant block, so the
+    // UI mutates one message in place instead of rendering sibling copies.
+    this._partialBlocks = new Map();
+    this._currentPartialMessageId = "";
+    this._currentPartialBlockIndex = 0;
     this._pendingThinking = false;
     // FIFO queue of ExitPlanMode tool_use_ids awaiting a user response.
     // Real Claude rarely emits two parallel plans, but it CAN — and the
@@ -427,7 +514,8 @@ export class ClaudeStreamSession extends EventEmitter {
       return { ...entry, timestamp: normalizeIsoTimestamp(entry?.timestamp) || cachedStamp, seq };
     });
     const synthesizedEntries = this._synthesizePartialEntries(stamp);
-    this.entries = [...stampedRaw, ...synthesizedEntries];
+    this.entries = collapseDuplicateStreamEntries([...stampedRaw, ...synthesizedEntries])
+      .slice(-this.maxEntries);
     this.emit("event", event);
     this.emit("entries", this.entries);
 
@@ -450,18 +538,37 @@ export class ClaudeStreamSession extends EventEmitter {
       const innerType = event.event.type;
       if (innerType === "message_start") {
         const messageId = String(event.event.message?.id || "current");
-        this._partialByMessage.set(messageId, "");
+        this._currentPartialMessageId = messageId;
+        this._currentPartialBlockIndex = 0;
+        this._partialBlocks.clear();
+        this._pendingThinking = false;
+        return;
+      }
+      if (innerType === "content_block_start") {
+        const blockIndex = Number.isFinite(Number(event.event.index)) ? Number(event.event.index) : 0;
+        this._currentPartialBlockIndex = blockIndex;
+        const blockType = String(event.event.content_block?.type || "");
+        if (!blockType || blockType === "text") {
+          const messageId = this._currentPartialMessageId || "current";
+          this._partialBlocks.set(`${messageId}:${blockIndex}`, {
+            messageId,
+            blockIndex,
+            text: String(event.event.content_block?.text || ""),
+          });
+        }
         this._pendingThinking = false;
         return;
       }
       if (innerType === "content_block_delta") {
         const delta = event.event.delta;
         if (delta && delta.type === "text_delta" && typeof delta.text === "string") {
-          // The CLI doesn't repeat message_id on every stream_event, so fall
-          // back to the most recently opened partial slot.
-          const lastKey = Array.from(this._partialByMessage.keys()).pop() || "current";
-          const existing = this._partialByMessage.get(lastKey) || "";
-          this._partialByMessage.set(lastKey, existing + delta.text);
+          const messageId = this._currentPartialMessageId || "current";
+          const blockIndex = Number.isFinite(Number(event.event.index))
+            ? Number(event.event.index)
+            : this._currentPartialBlockIndex;
+          const key = `${messageId}:${blockIndex}`;
+          const existing = this._partialBlocks.get(key) || { messageId, blockIndex, text: "" };
+          this._partialBlocks.set(key, { ...existing, text: `${existing.text || ""}${delta.text}` });
           this._pendingThinking = false;
         }
         return;
@@ -472,9 +579,13 @@ export class ClaudeStreamSession extends EventEmitter {
     if (event.type === "assistant") {
       const messageId = String(event.message?.id || "");
       if (messageId) {
-        this._partialByMessage.delete(messageId);
+        for (const [key, block] of this._partialBlocks) {
+          if (block?.messageId === messageId) {
+            this._partialBlocks.delete(key);
+          }
+        }
       } else {
-        this._partialByMessage.clear();
+        this._partialBlocks.clear();
       }
       this._pendingThinking = false;
       // Watch the assistant content for ExitPlanMode tool_uses. Real
@@ -518,7 +629,9 @@ export class ClaudeStreamSession extends EventEmitter {
     }
 
     if (event.type === "result") {
-      this._partialByMessage.clear();
+      this._partialBlocks.clear();
+      this._currentPartialMessageId = "";
+      this._currentPartialBlockIndex = 0;
       this._pendingThinking = false;
       // Invalidate the per-turn placeholder cache so the next turn gets a
       // fresh seq for its own waiting-placeholder. Without this the second
@@ -533,12 +646,11 @@ export class ClaudeStreamSession extends EventEmitter {
     // the assistant entry itself. While we're waiting on the first text
     // delta we emit an assistant entry with empty text; the renderer shows
     // it as a spinner. Once deltas arrive, the same id mutates into the
-    // streaming text. When the canonical `assistant` event lands the
-    // partial slot is cleared and the parser's entry takes over (with the
-    // same seq cached against its id, so position is stable).
+    // streaming text. When the canonical `assistant` event lands it reuses
+    // this same id, so the entry updates in place.
     const synthesized = [];
-    for (const [messageId, partialText] of this._partialByMessage) {
-      const cacheKey = `claude-partial-${messageId}`;
+    for (const block of this._partialBlocks.values()) {
+      const cacheKey = getClaudeAssistantEntryId(block?.messageId, block?.blockIndex);
       let seq = this._entrySeqs.get(cacheKey);
       if (seq == null) {
         seq = this._allocateSeq();
@@ -548,13 +660,13 @@ export class ClaudeStreamSession extends EventEmitter {
         id: cacheKey,
         kind: "assistant",
         label: "Claude Code",
-        text: String(partialText || ""),
+        text: String(block?.text || ""),
         timestamp: stamp,
         meta: "streaming",
         seq,
       });
     }
-    if (this._pendingThinking && this._partialByMessage.size === 0) {
+    if (this._pendingThinking && this._partialBlocks.size === 0) {
       const cacheKey = "claude-pending-assistant";
       let seq = this._entrySeqs.get(cacheKey);
       if (seq == null) {

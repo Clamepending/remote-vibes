@@ -611,6 +611,51 @@ function buildNarrativeEntryDedupKey(entry) {
   ].join("::");
 }
 
+function buildStreamingAssistantDuplicateKey(entry) {
+  if (!entry || entry.kind !== "assistant") {
+    return "";
+  }
+  const text = normalizeNarrativeEventText(entry.text || "", 1_200);
+  if (!text) {
+    return "";
+  }
+  return `${entry.label || ""}::${text}`;
+}
+
+function filterDuplicateStreamingAssistantEntries(entries = []) {
+  const completedAssistantTimesByKey = new Map();
+  for (const entry of Array.isArray(entries) ? entries : []) {
+    if (
+      entry?.kind === "assistant"
+      && entry.meta !== "streaming"
+      && entry.meta !== "pending"
+      && normalizeNarrativeEventText(entry.text || "", 1_200)
+    ) {
+      const key = buildStreamingAssistantDuplicateKey(entry);
+      if (!key) continue;
+      const list = completedAssistantTimesByKey.get(key) || [];
+      list.push(parseSessionTimestamp(entry.timestamp, 0));
+      completedAssistantTimesByKey.set(key, list);
+    }
+  }
+
+  return (Array.isArray(entries) ? entries : []).filter((entry) => {
+    if (entry?.kind !== "assistant" || entry.meta !== "streaming") {
+      return true;
+    }
+    const key = buildStreamingAssistantDuplicateKey(entry);
+    const completedTimes = key ? completedAssistantTimesByKey.get(key) : null;
+    if (!completedTimes?.length) {
+      return true;
+    }
+    const streamingTime = parseSessionTimestamp(entry.timestamp, 0);
+    if (!streamingTime) {
+      return true;
+    }
+    return !completedTimes.some((completedTime) => completedTime && Math.abs(completedTime - streamingTime) < 60_000);
+  });
+}
+
 function shouldPreferNativeBootstrapNarrative(providerId) {
   return new Set(["codex", "claude", CLAUDE_OLLAMA_PROVIDER_ID, "gemini"]).has(
     String(providerId || "").trim().toLowerCase(),
@@ -710,7 +755,8 @@ function mergeNarrativeEntries(localEntries = [], providerEntries = [], maxEntri
     previousKey = key;
   }
 
-  return deduped.slice(Math.max(0, deduped.length - Math.max(1, Number(maxEntries) || NATIVE_NARRATIVE_EVENT_LIMIT)));
+  const collapsed = filterDuplicateStreamingAssistantEntries(deduped);
+  return collapsed.slice(Math.max(0, collapsed.length - Math.max(1, Number(maxEntries) || NATIVE_NARRATIVE_EVENT_LIMIT)));
 }
 
 function shouldRetainNativeEntryWithProviderNarrative(entry) {
