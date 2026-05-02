@@ -175,10 +175,13 @@ test("same-chat supervisor Start creates project memory and arms silently while 
     const scrollState = await page.evaluate(() => {
       const body = document.querySelector(".rich-session-supervisor-drawer-body");
       if (!(body instanceof HTMLElement)) return null;
-      const filler = document.createElement("div");
-      filler.style.minHeight = "1400px";
+      const chatLog = document.querySelector(".rich-session-supervisor-chat-log");
+      if (!(chatLog instanceof HTMLElement)) return null;
+      const filler = document.createElement("article");
+      filler.className = "rich-session-supervisor-message is-supervisor";
       filler.setAttribute("data-test-supervisor-scroll-filler", "true");
-      body.appendChild(filler);
+      filler.innerHTML = `<div class="rich-session-supervisor-message-top"><span>Supervisor</span></div><p>${"debug scroll row ".repeat(260)}</p>`;
+      chatLog.appendChild(filler);
       body.scrollTop = 0;
       body.scrollBy(0, 320);
       const state = {
@@ -187,6 +190,7 @@ test("same-chat supervisor Start creates project memory and arms silently while 
         scrollTop: body.scrollTop,
         overflowY: getComputedStyle(body).overflowY,
         tabIndex: body.tabIndex,
+        chatSectionHeight: document.querySelector(".rich-session-supervisor-history")?.clientHeight || 0,
       };
       filler.remove();
       body.scrollTop = 0;
@@ -197,6 +201,7 @@ test("same-chat supervisor Start creates project memory and arms silently while 
     assert.equal(scrollState.tabIndex, 0);
     assert.ok(scrollState.scrollHeight > scrollState.clientHeight);
     assert.ok(scrollState.scrollTop > 0);
+    assert.ok(scrollState.chatSectionHeight > 180);
 
     await page.fill("[data-chat-autopilot-supervisor-input]", "Should I ask for qualitative heatmaps or ablations next?");
     await page.click('[data-chat-autopilot-supervisor-submit="ask"]');
