@@ -31,6 +31,33 @@ npm run dev:local
 
 Open `http://localhost:4828` for development. Leave `http://localhost:4826` for the installed app.
 
+## Local Claude/Ollama Agent
+
+Vibe Research exposes `Local Claude Code (Ollama)` as an agent provider when both `claude` and `ollama` are installed. It launches the regular Claude Code harness, but routes Anthropic API calls to Ollama's Anthropic-compatible endpoint at `http://localhost:11434`.
+
+Useful knobs:
+
+```sh
+export VIBE_RESEARCH_CLAUDE_OLLAMA_MODEL=qwen3.5
+export VIBE_RESEARCH_CLAUDE_OLLAMA_BASE_URL=http://localhost:11434
+```
+
+For a tiny response-only proof model:
+
+```sh
+ollama pull qwen2.5-coder:1.5b
+VIBE_RESEARCH_CLAUDE_OLLAMA_MODEL=qwen2.5-coder:1.5b npm run dev:local
+```
+
+For a still-small local model that has passed a basic Claude Code tool-use smoke in Vibe Research:
+
+```sh
+ollama pull qwen3:1.7b
+VIBE_RESEARCH_CLAUDE_OLLAMA_MODEL=qwen3:1.7b npm run dev:local
+```
+
+For stronger day-to-day local use, prefer a model with good tool calling and a large context window; Ollama's Claude Code docs currently recommend at least 64k context for this harness.
+
 ## Ship Loop
 
 Use a clean worktree when shipping:

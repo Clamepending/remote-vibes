@@ -100,7 +100,7 @@ const CLAUDE_BACKGROUND_TASK_GRACE_MS = 30_000;
 const CLAUDE_SKIP_PERMISSIONS_ARG = "--dangerously-skip-permissions";
 const CLAUDE_OLLAMA_PROVIDER_ID = "claude-ollama";
 const DEFAULT_CLAUDE_OLLAMA_BASE_URL = "http://localhost:11434";
-const DEFAULT_CLAUDE_OLLAMA_MODEL = "qwen3-coder";
+const DEFAULT_CLAUDE_OLLAMA_MODEL = "qwen3.5";
 const PERSISTENT_TERMINAL_PROVIDER_IDS = new Set([
   "claude",
   CLAUDE_OLLAMA_PROVIDER_ID,
@@ -289,7 +289,7 @@ function buildProviderSpecificSessionEnv(providerId, env = process.env) {
 
   return {
     ANTHROPIC_AUTH_TOKEN: "ollama",
-    ANTHROPIC_API_KEY: "local",
+    ANTHROPIC_API_KEY: "",
     ANTHROPIC_BASE_URL: getClaudeOllamaBaseUrl(env),
     ANTHROPIC_MODEL: model,
     ANTHROPIC_DEFAULT_HAIKU_MODEL: model,

@@ -117,6 +117,8 @@ test("provider definitions include one-command installer hints for onboarding", 
   assert.match(installers.claude, /@anthropic-ai\/claude-code/);
   assert.match(installers.claude, /timeout 600s/);
   assert.match(installers.claude, /claude --version/);
+  assert.match(installers["claude-ollama"], /claude --version/);
+  assert.match(installers["claude-ollama"], /ollama --version/);
   assert.equal(installers.codex, "npm install -g @openai/codex");
 });
 
@@ -149,11 +151,67 @@ test("provider definitions include real auth entrypoints for onboarding", () => 
   assert.equal(authCommands.codex, "codex login --device-auth");
 });
 
-test("providerDefinitions only expose Claude Code, Codex, and the internal shell fallback", () => {
+test("providerDefinitions expose cloud, local, and shell agent choices", () => {
   assert.deepEqual(
     providerDefinitions.map((provider) => provider.id),
-    ["claude", "codex", "shell"],
+    ["claude", "claude-ollama", "codex", "shell"],
   );
+});
+
+test("local Claude Code provider requires Ollama alongside Claude", async () => {
+  const tempDir = await mkdtemp(path.join(os.tmpdir(), "vibe-research-provider-local-claude-"));
+  const fakeBinDir = path.join(tempDir, "bin");
+  const fakeClaudePath = path.join(fakeBinDir, "claude");
+  const fakeOllamaPath = path.join(fakeBinDir, "ollama");
+  const localClaudeProvider = providerDefinitions.find((entry) => entry.id === "claude-ollama");
+
+  try {
+    await mkdir(fakeBinDir, { recursive: true });
+    await writeFile(fakeClaudePath, "#!/usr/bin/env bash\nprintf 'Claude Code test\\n'\n", "utf8");
+    await chmod(fakeClaudePath, 0o755);
+
+    assert.ok(localClaudeProvider);
+    assert.deepEqual(
+      await resolveProviderCommand(
+        {
+          ...localClaudeProvider,
+          pathHints: [fakeClaudePath],
+          requiredCommands: [{ command: "vr-missing-ollama-for-test" }],
+        },
+        { HOME: tempDir, PATH: `${fakeBinDir}:/usr/bin:/bin`, SHELL: "/bin/zsh" },
+      ),
+      {
+        available: false,
+        resolvedCommand: null,
+      },
+    );
+
+    await writeFile(fakeOllamaPath, "#!/usr/bin/env bash\nprintf 'ollama version is 0.22.1\\n'\n", "utf8");
+    await chmod(fakeOllamaPath, 0o755);
+
+    assert.deepEqual(
+      await resolveProviderCommand(
+        {
+          ...localClaudeProvider,
+          pathHints: [fakeClaudePath],
+          requiredCommands: [
+            {
+              command: "ollama",
+              verifyArgs: ["--version"],
+              pathHints: [fakeOllamaPath],
+            },
+          ],
+        },
+        { HOME: tempDir, PATH: `${fakeBinDir}:/usr/bin:/bin`, SHELL: "/bin/zsh" },
+      ),
+      {
+        available: true,
+        resolvedCommand: fakeClaudePath,
+      },
+    );
+  } finally {
+    await rm(tempDir, { recursive: true, force: true });
+  }
 });
 
 test("Codex onboarding uses device auth so remote browsers avoid localhost callback failures", () => {

@@ -161,7 +161,7 @@ test("buildSessionEnv routes local Claude Code sessions through Ollama", () => {
   );
 
   assert.equal(env.ANTHROPIC_AUTH_TOKEN, "ollama");
-  assert.equal(env.ANTHROPIC_API_KEY, "local");
+  assert.equal(env.ANTHROPIC_API_KEY, "");
   assert.equal(env.ANTHROPIC_BASE_URL, "http://127.0.0.1:11435");
   assert.equal(env.ANTHROPIC_MODEL, "qwen2.5-coder:7b");
   assert.equal(env.ANTHROPIC_DEFAULT_HAIKU_MODEL, "qwen2.5-coder:7b");

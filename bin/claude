@@ -51,7 +51,7 @@ if [ -z "$REAL_CLAUDE" ]; then
   exit 1
 fi
 
-export VIBE_RESEARCH_PROVIDER="claude"
+export VIBE_RESEARCH_PROVIDER="${VIBE_RESEARCH_PROVIDER:-claude}"
 export REMOTE_VIBES_PROVIDER="${REMOTE_VIBES_PROVIDER:-claude}"
 
 COMBINED_GUIDANCE="$(build_combined_guidance)"

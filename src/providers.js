@@ -6,6 +6,11 @@ import { promisify } from "node:util";
 
 const execFileAsync = promisify(execFile);
 
+const CLAUDE_CODE_INSTALL_COMMAND =
+  '((if command -v timeout >/dev/null 2>&1; then timeout 600s bash -c \'curl -fsSL https://claude.ai/install.sh | bash\'; else bash -c \'curl -fsSL https://claude.ai/install.sh | bash\'; fi) || (mkdir -p "$HOME/.local" && NPM_CONFIG_PREFIX="$HOME/.local" npm install -g @anthropic-ai/claude-code --no-audit --no-fund --fetch-retries=5 --fetch-retry-maxtimeout=120000 --fetch-timeout=300000)) && export PATH="$HOME/.local/bin:$PATH" && hash -r && claude --version';
+const OLLAMA_INSTALL_COMMAND =
+  'if command -v ollama >/dev/null 2>&1; then ollama --version; elif command -v brew >/dev/null 2>&1; then brew install ollama && ollama --version; else curl -fsSL https://ollama.com/install.sh | sh && ollama --version; fi';
+
 export const providerDefinitions = [
   {
     id: "claude",
@@ -19,9 +24,37 @@ export const providerDefinitions = [
       name: "@anthropic-ai/claude-code",
       bin: "claude",
     },
-    installCommand:
-      '((if command -v timeout >/dev/null 2>&1; then timeout 600s bash -c \'curl -fsSL https://claude.ai/install.sh | bash\'; else bash -c \'curl -fsSL https://claude.ai/install.sh | bash\'; fi) || (mkdir -p "$HOME/.local" && NPM_CONFIG_PREFIX="$HOME/.local" npm install -g @anthropic-ai/claude-code --no-audit --no-fund --fetch-retries=5 --fetch-retry-maxtimeout=120000 --fetch-timeout=300000)) && export PATH="$HOME/.local/bin:$PATH" && hash -r && claude --version',
+    installCommand: CLAUDE_CODE_INSTALL_COMMAND,
     authCommand: "claude auth login",
+    pathHints: [
+      "~/.local/bin/claude",
+      "/opt/homebrew/bin/claude",
+      "/usr/local/bin/claude",
+    ],
+  },
+  {
+    id: "claude-ollama",
+    label: "Local Claude Code (Ollama)",
+    command: "claude",
+    launchCommand: "claude",
+    defaultName: "Local Claude",
+    verifyArgs: ["--version"],
+    preferPathHints: true,
+    npmPackage: {
+      name: "@anthropic-ai/claude-code",
+      bin: "claude",
+    },
+    requiredCommands: [
+      {
+        command: "ollama",
+        verifyArgs: ["--version"],
+        pathHints: [
+          "/opt/homebrew/bin/ollama",
+          "/usr/local/bin/ollama",
+        ],
+      },
+    ],
+    installCommand: `${CLAUDE_CODE_INSTALL_COMMAND} && ${OLLAMA_INSTALL_COMMAND}`,
     pathHints: [
       "~/.local/bin/claude",
       "/opt/homebrew/bin/claude",
