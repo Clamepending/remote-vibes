@@ -6416,16 +6416,16 @@ test("visual graph empty canvas click closes the selected session panel and dele
   }
 });
 
-test("fresh browser starts on workspace folder setup until a folder is chosen", async (t) => {
+test("fresh browser starts on brain setup until a brain folder is chosen", async (t) => {
   const executablePath = await resolveBrowserExecutablePath({ env: process.env });
   if (!executablePath) {
-    t.skip("No local Chromium/Chrome executable is available for the workspace setup smoke.");
+    t.skip("No local Chromium/Chrome executable is available for the brain setup smoke.");
     return;
   }
 
   const workspaceDir = await createTempWorkspace("vibe-research-brain-setup-");
-  const selectedWorkspaceDir = path.join(workspaceDir, "workspace-root");
-  await mkdir(selectedWorkspaceDir, { recursive: true });
+  const selectedBrainDir = path.join(workspaceDir, "brain-root");
+  await mkdir(selectedBrainDir, { recursive: true });
   const { app, baseUrl } = await startApp({ cwd: workspaceDir });
   let browser = null;
 
@@ -6434,19 +6434,21 @@ test("fresh browser starts on workspace folder setup until a folder is chosen", 
     const page = await browser.newPage();
     await page.goto(baseUrl, { waitUntil: "domcontentloaded" });
     await page.waitForSelector(".brain-setup-screen", { timeout: 10_000 });
-    await page.waitForSelector("text=Select a workspace folder", { timeout: 10_000 });
-    await page.waitForSelector("text=Insert GitHub URL", { timeout: 10_000 });
+    await page.waitForSelector("text=Open brain", { timeout: 10_000 });
+    await page.waitForSelector("text=New brain", { timeout: 10_000 });
+    await page.waitForSelector("text=Clone brain", { timeout: 10_000 });
+    await page.waitForSelector("text=Connect via SSH", { timeout: 10_000 });
     assert.equal(await page.locator(".app-shell").count(), 0);
+    await page.getByRole("button", { name: "Connect via SSH" }).click();
+    assert.equal(await page.locator("#brain-git-url").getAttribute("placeholder"), "git@github.com:you/brain.git");
 
     await page.locator(".brain-setup-button").click();
     await page.waitForSelector(".folder-picker-modal", { timeout: 10_000 });
-    await page.locator(".folder-picker-tree-row", { hasText: "workspace-root" }).click();
-    await page.waitForFunction(() => document.querySelector(".folder-picker-path")?.textContent?.includes("workspace-root"), null, {
+    await page.locator(".folder-picker-tree-row", { hasText: "brain-root" }).click();
+    await page.waitForFunction(() => document.querySelector(".folder-picker-path")?.textContent?.includes("brain-root"), null, {
       timeout: 10_000,
     });
-    const canonicalWorkspaceRoot = await realpath(selectedWorkspaceDir);
-    const expectedWikiDir = getWorkspaceLibraryDir(canonicalWorkspaceRoot);
-    const expectedAgentDir = getWorkspaceAgentDir(canonicalWorkspaceRoot);
+    const canonicalBrainRoot = await realpath(selectedBrainDir);
 
     await page.click("#folder-picker-select");
     await page.waitForSelector(".agent-setup-screen", { timeout: 10_000 });
@@ -6457,9 +6459,7 @@ test("fresh browser starts on workspace folder setup until a folder is chosen", 
     assert.equal(settingsResponse.status, 200);
     const settingsPayload = await settingsResponse.json();
     assert.equal(settingsPayload.settings.wikiPathConfigured, true);
-    assert.equal(settingsPayload.settings.workspaceRootPath, canonicalWorkspaceRoot);
-    assert.equal(settingsPayload.settings.wikiPath, expectedWikiDir);
-    assert.equal(settingsPayload.settings.agentSpawnPath, expectedAgentDir);
+    assert.equal(settingsPayload.settings.wikiPath, canonicalBrainRoot);
     assert.equal(settingsPayload.settings.wikiGitRemoteUrl, "");
   } finally {
     await browser?.close().catch(() => {});
@@ -6751,7 +6751,7 @@ test("brain setup remains scrollable on short viewports", async (t) => {
 
   try {
     browser = await chromium.launch({ executablePath, headless: true });
-    const page = await browser.newPage({ viewport: { width: 768, height: 640 } });
+    const page = await browser.newPage({ viewport: { width: 768, height: 420 } });
     await page.goto(baseUrl, { waitUntil: "domcontentloaded" });
     await page.waitForSelector(".brain-setup-screen", { timeout: 10_000 });
 

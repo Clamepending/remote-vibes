@@ -2384,6 +2384,7 @@ const state = {
   },
   brainSetupCloneUrl: "",
   brainSetupClonePath: "",
+  brainSetupGitMode: "clone",
   brainSetupCloning: false,
   brainSetupError: "",
   agentInboxTab: "",
@@ -9271,6 +9272,14 @@ function isMainViewNavigationCurrent(token) {
 }
 
 function getFolderPickerTitle() {
+  if (state.folderPicker.target === "brain-open") {
+    return "open brain";
+  }
+
+  if (state.folderPicker.target === "brain-new") {
+    return "new brain";
+  }
+
   if (state.folderPicker.target === "wiki-onboarding") {
     return "select workspace folder";
   }
@@ -9431,6 +9440,10 @@ function getFolderPickerChildRelativePath(parentPath, childName) {
 }
 
 function getFolderPickerTargetInput() {
+  if (state.folderPicker.target === "brain-open" || state.folderPicker.target === "brain-new") {
+    return document.querySelector("#brain-folder-input");
+  }
+
   if (state.folderPicker.target === "wiki") {
     return document.querySelector("#wiki-path-input");
   }
@@ -10966,6 +10979,11 @@ async function applyFolderPickerSelection() {
 
   if (state.folderPicker.target === "wiki-onboarding") {
     await saveBrainFolderSelection(selectedPath);
+    return;
+  }
+
+  if (state.folderPicker.target === "brain-open" || state.folderPicker.target === "brain-new") {
+    await saveOpenBrainSelection(selectedPath);
     return;
   }
 
@@ -35048,6 +35066,10 @@ function renderFolderPickerModal() {
   const isSessionTarget = state.folderPicker.target === "session";
   const chooseLabel = isSessionTarget
     ? "choose folder"
+    : state.folderPicker.target === "brain-open"
+      ? "open brain"
+    : state.folderPicker.target === "brain-new"
+      ? "use this brain"
     : state.folderPicker.target === "wiki-onboarding"
       ? "use this workspace"
       : "choose this folder";
@@ -35453,81 +35475,92 @@ function renderAgentSetupScreen() {
 }
 
 function renderBrainSetupScreen() {
-  document.title = "Set Workspace Folder · Vibe Research";
+  document.title = "Open Brain · Vibe Research";
+  const gitMode = state.brainSetupGitMode === "ssh" ? "ssh" : "clone";
+  const gitTitle = gitMode === "ssh" ? "Connect via SSH" : "Clone brain";
+  const gitDescription =
+    gitMode === "ssh"
+      ? "Paste an SSH git remote for a markdown brain."
+      : "Paste a git remote for a markdown brain.";
+  const gitLabel = gitMode === "ssh" ? "SSH git URL" : "Git repo URL";
+  const gitPlaceholder =
+    gitMode === "ssh"
+      ? "git@github.com:you/brain.git"
+      : "https://github.com/you/brain.git";
+  const gitButtonLabel =
+    state.brainSetupCloning
+      ? "cloning..."
+      : gitMode === "ssh"
+        ? "clone over SSH"
+        : "clone brain";
 
   app.innerHTML = `
     <main class="screen brain-setup-screen">
       <section class="brain-setup-card" aria-labelledby="brain-setup-title">
-        <span class="brain-setup-eyebrow">Vibe Research</span>
-        <h1 id="brain-setup-title">Choose your workspace</h1>
-        <p>
-          Pick one folder for Vibe Research data. The Library will live in
-          <code>${escapeHtml(WORKSPACE_LIBRARY_RELATIVE_PATH)}</code>, and new agents will work in
-          <code>${escapeHtml(WORKSPACE_USER_RELATIVE_PATH)}</code>.
-        </p>
-        <div class="brain-setup-option-grid" aria-label="Workspace setup options">
-          <button class="brain-setup-option" type="button" data-folder-picker-target="wiki-onboarding">
-            <strong>Create workspace</strong>
-            <span>Open the folder chooser and use the new folder field.</span>
+        <div class="brain-setup-brand">
+          <span class="brain-setup-logo" aria-hidden="true">${renderIcon(BookOpen)}</span>
+          <div>
+            <h1 id="brain-setup-title">Vibe Research</h1>
+            <p><span>Brains</span><span>Settings</span></p>
+          </div>
+        </div>
+        <div class="brain-setup-option-grid" aria-label="Brain setup options">
+          <button class="brain-setup-option brain-setup-button" type="button" data-folder-picker-target="brain-open">
+            <span class="brain-setup-option-icon" aria-hidden="true">${renderIcon(FolderOpen)}</span>
+            <strong>Open brain</strong>
           </button>
-          <button class="brain-setup-option" type="button" data-folder-picker-target="wiki-onboarding">
-            <strong>Use existing folder</strong>
-            <span>Pick a folder already on this computer.</span>
+          <button class="brain-setup-option" type="button" data-folder-picker-target="brain-new">
+            <span class="brain-setup-option-icon" aria-hidden="true">${renderIcon(FolderPlus)}</span>
+            <strong>New brain</strong>
           </button>
-          <button class="brain-setup-option" type="button" data-focus-brain-git>
-            <strong>Clone from GitHub</strong>
-            <span>Paste a repo URL and Vibe Research will clone it locally.</span>
+          <button class="brain-setup-option" type="button" data-focus-brain-git="clone">
+            <span class="brain-setup-option-icon" aria-hidden="true">${renderIcon(GitFork)}</span>
+            <strong>Clone brain</strong>
+          </button>
+          <button class="brain-setup-option" type="button" data-focus-brain-git="ssh">
+            <span class="brain-setup-option-icon" aria-hidden="true">${renderIcon(ServerCog)}</span>
+            <strong>Connect via SSH</strong>
           </button>
         </div>
         <div class="brain-setup-picker">
-          <h2>Select a workspace folder</h2>
-          <p>
-            The Library will live in ${escapeHtml(WORKSPACE_LIBRARY_RELATIVE_PATH)} and
-            new agents will start in ${escapeHtml(WORKSPACE_USER_RELATIVE_PATH)} under
-            the folder you choose.
-          </p>
-          <label class="field-label" for="brain-folder-input">workspace folder</label>
-          <div class="folder-input-row">
-            <input
-              id="brain-folder-input"
-              class="file-root-input"
-              type="text"
-              value="${escapeHtml(state.settings.wikiPathConfigured ? state.settings.workspaceRootPath || "" : "")}"
-              placeholder="${escapeHtml(state.settings.workspaceRootPath || state.defaultCwd || "choose a folder")}"
-              readonly
-              data-folder-picker-target="wiki-onboarding"
-              autocomplete="off"
-              autocorrect="off"
-              autocapitalize="none"
-              spellcheck="false"
-            />
-            <button class="primary-button brain-setup-button" type="button" data-folder-picker-target="wiki-onboarding">select workspace</button>
-          </div>
+          <label class="field-label" for="brain-folder-input">brain folder</label>
+          <input
+            id="brain-folder-input"
+            class="file-root-input"
+            type="text"
+            value="${escapeHtml(state.settings.wikiPathConfigured ? state.settings.wikiPath || "" : "")}"
+            placeholder="${escapeHtml(state.settings.wikiPathConfigured ? state.settings.wikiPath || "" : state.settings.workspaceRootPath || state.defaultCwd || "choose a brain folder")}"
+            readonly
+            data-folder-picker-target="brain-open"
+            autocomplete="off"
+            autocorrect="off"
+            autocapitalize="none"
+            spellcheck="false"
+          />
         </div>
-        <div class="brain-setup-divider"><span>or</span></div>
         <form class="brain-setup-git-form" id="brain-git-form">
-          <div>
-            <h2>Insert GitHub URL</h2>
-            <p>
-              Paste a GitHub repo URL and Vibe Research will clone it into the
-              workspace Library, then use its origin remote for backups.
-            </p>
+          <div class="brain-setup-git-head">
+            <div>
+              <h2>${escapeHtml(gitTitle)}</h2>
+              <p>${escapeHtml(gitDescription)}</p>
+            </div>
+            <span class="brain-setup-note">Markdown wiki</span>
           </div>
-          <label class="field-label" for="brain-git-url">GitHub repo URL</label>
+          <label class="field-label" for="brain-git-url">${escapeHtml(gitLabel)}</label>
           <input
             id="brain-git-url"
             class="file-root-input"
             name="remoteUrl"
             type="text"
             value="${escapeHtml(state.brainSetupCloneUrl)}"
-            placeholder="https://github.com/you/private-library.git"
+            placeholder="${escapeHtml(gitPlaceholder)}"
             autocomplete="off"
             autocorrect="off"
             autocapitalize="none"
             spellcheck="false"
             ${state.brainSetupCloning ? "disabled" : ""}
           />
-          <label class="field-label" for="brain-clone-path">Local folder (optional)</label>
+          <label class="field-label" for="brain-clone-path">local brain folder (optional)</label>
           <input
             id="brain-clone-path"
             class="file-root-input"
@@ -35543,9 +35576,9 @@ function renderBrainSetupScreen() {
           />
           <div class="brain-setup-git-actions">
             <button class="ghost-button brain-setup-clone-button" type="submit" ${state.brainSetupCloning ? "disabled" : ""}>
-              ${state.brainSetupCloning ? "cloning..." : "clone and use"}
+              ${escapeHtml(gitButtonLabel)}
             </button>
-            <span class="brain-setup-hint">Private repos work if this machine's git credentials can clone them.</span>
+            <span class="brain-setup-hint">Private brains work if this machine's git credentials can clone them.</span>
           </div>
           ${
             state.brainSetupError
@@ -46496,14 +46529,15 @@ function bindShellEvents() {
   document.querySelectorAll("[data-folder-picker-target]").forEach((button) => {
     button.addEventListener("click", async () => {
       const target = button.getAttribute("data-folder-picker-target") || "session";
-      const isWikiTarget = target === "wiki" || target === "wiki-onboarding";
+      const isBrainTarget = target === "brain-open" || target === "brain-new";
+      const isWikiTarget = target === "wiki" || target === "wiki-onboarding" || isBrainTarget;
       if (target === "session") {
         await startNewAgentFromUi();
         return;
       }
 
       const input =
-        target === "wiki-onboarding"
+        isBrainTarget || target === "wiki-onboarding"
           ? document.querySelector("#brain-folder-input")
           : target === "wiki"
             ? document.querySelector("#wiki-path-input")
@@ -46516,9 +46550,15 @@ function bindShellEvents() {
         input instanceof HTMLInputElement && input.value.trim()
           ? input.value.trim()
           : isWikiTarget
-            ? target === "wiki-onboarding"
-              ? state.settings.workspaceRootPath || state.defaultCwd || state.settings.wikiPath
-              : state.settings.wikiPath || state.defaultCwd
+            ? target === "brain-open"
+              ? state.settings.wikiPathConfigured
+                ? state.settings.wikiPath || state.defaultCwd || state.settings.workspaceRootPath
+                : state.settings.workspaceRootPath || state.defaultCwd || state.settings.wikiPath
+              : target === "brain-new"
+                ? state.settings.workspaceRootPath || state.defaultCwd || state.settings.wikiPath
+                : target === "wiki-onboarding"
+                  ? state.settings.workspaceRootPath || state.defaultCwd || state.settings.wikiPath
+                  : state.settings.wikiPath || state.defaultCwd
           : target === "agent-spawn"
             ? state.settings.agentSpawnPath || state.defaultCwd
             : target === "files"
@@ -46532,7 +46572,11 @@ function bindShellEvents() {
   document.querySelectorAll("[data-focus-brain-git]").forEach((button) => {
     button.addEventListener("click", (event) => {
       event.preventDefault();
-      document.querySelector("#brain-git-url")?.focus();
+      state.brainSetupGitMode = button.getAttribute("data-focus-brain-git") === "ssh" ? "ssh" : "clone";
+      renderShell();
+      window.requestAnimationFrame(() => {
+        document.querySelector("#brain-git-url")?.focus();
+      });
     });
   });
 
@@ -49102,6 +49146,35 @@ async function saveBrainFolderSelection(selectedPath) {
     payload.settings?.agentSpawnPath || getWorkspaceUserPath(state.settings.workspaceRootPath) || state.settings.agentSpawnPath;
   state.defaultCwd = state.settings.agentSpawnPath || state.defaultCwd;
   state.settings.wikiPathConfigured = true;
+  applyAgentPromptState(payload.agentPrompt);
+  state.knowledgeBase.noteCache = {};
+  state.folderPicker.open = false;
+  state.agentSetupActive = true;
+  saveAgentSetupPendingPreference(true);
+  setCurrentView("knowledge-base");
+  await loadKnowledgeBaseIndex();
+  await ensureKnowledgeBaseSelectionLoaded({ force: true });
+  renderShell();
+}
+
+async function saveOpenBrainSelection(selectedPath) {
+  const wikiPath = normalizeWorkspaceRoot(selectedPath);
+  if (!wikiPath) {
+    throw new Error("Choose or create a brain folder first.");
+  }
+
+  const payload = await fetchJson("/api/settings", {
+    method: "PATCH",
+    body: JSON.stringify({
+      wikiPath,
+      wikiPathConfigured: true,
+    }),
+  });
+
+  applySettingsState(payload.settings);
+  state.settings.wikiPath = payload.settings?.wikiPath || wikiPath || state.settings.wikiPath;
+  state.settings.wikiPathConfigured = true;
+  state.defaultCwd = state.settings.agentSpawnPath || state.defaultCwd;
   applyAgentPromptState(payload.agentPrompt);
   state.knowledgeBase.noteCache = {};
   state.folderPicker.open = false;
