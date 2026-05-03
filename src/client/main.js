@@ -8152,6 +8152,11 @@ function renderRichSessionAutopilotPanel(activeSession) {
         : projectName
           ? "ready to hand off"
           : "choose a project");
+  const historyOpen = isChatAutopilotSupervisorDrawerOpen(activeSession);
+  const historyTitle = historyOpen
+    ? "Close the side-by-side supervisor chat and history."
+    : "Open the side-by-side supervisor chat and history.";
+  const historyButton = `<button class="rich-session-autopilot-action" type="button" data-chat-autopilot-supervisor-history aria-expanded="${historyOpen ? "true" : "false"}" aria-label="${escapeHtml(historyTitle)}" title="${escapeHtml(historyTitle)}">Side chat</button>`;
   if (enabled) {
     return `
       <section class="rich-session-autopilot is-enabled ${running ? "is-running" : ""}" id="rich-session-autopilot" data-rich-session-autopilot-mount>
@@ -8167,6 +8172,9 @@ function renderRichSessionAutopilotPanel(activeSession) {
             <span>${escapeHtml(title)}</span>
           </span>
         </div>
+        <div class="rich-session-autopilot-actions">
+          ${historyButton}
+        </div>
       </section>
     `;
   }
@@ -8181,8 +8189,6 @@ function renderRichSessionAutopilotPanel(activeSession) {
     ? `The supervisor will use ${projectName}${projectSource ? ` (${projectSource})` : ""}.${objectivePreview ? ` Objective: ${objectivePreview}` : ""} Click to change.`
     : "Choose the research project for this chat.";
   const actionDisabled = pending || projectCreating ? "disabled" : "";
-  const historyOpen = isChatAutopilotSupervisorDrawerOpen(activeSession);
-  const historyButton = `<button class="rich-session-autopilot-action" type="button" data-chat-autopilot-supervisor-history aria-expanded="${historyOpen ? "true" : "false"}" title="Open the side-by-side supervisor chat and history.">Side chat</button>`;
   return `
     <section class="rich-session-autopilot ${running ? "is-running" : ""}" id="rich-session-autopilot" data-rich-session-autopilot-mount>
       <div class="rich-session-autopilot-main">

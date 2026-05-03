@@ -152,11 +152,11 @@ test("same-chat supervisor Start creates project memory and arms silently while 
 
     assert.equal(uiState.indicatorLabel, "Supervisor on");
     assert.match(uiState.indicatorTitle, /watching current turn/);
-    assert.deepEqual(uiState.buttonLabels, []);
+    assert.deepEqual(uiState.buttonLabels, ["Side chat"]);
     assert.equal(uiState.actionCount, 0);
     assert.equal(uiState.hasProjectPicker, false);
     assert.equal(uiState.hasPolicyPill, false);
-    assert.equal(uiState.hasSideChatButton, false);
+    assert.equal(uiState.hasSideChatButton, true);
     assert.equal(uiState.queueCount, 0);
     assert.equal(uiState.queuePreview, "");
     assert.equal(uiState.queueMeta, "");
@@ -187,9 +187,33 @@ test("same-chat supervisor Start creates project memory and arms silently while 
     assert.match(drawerState.history, /No supervisor decisions yet/);
     assert.equal(drawerState.watchlistLabel, "Look for");
     assert.match(drawerState.watchlistPlaceholder, /reward hacking/);
-    assert.equal(drawerState.toolbarButtonCount, 0);
+    assert.equal(drawerState.toolbarButtonCount, 1);
     assert.equal(drawerState.surfaceOpen, true);
     assert.equal(drawerState.drawerPosition, "sticky");
+
+    await page.click("[data-chat-autopilot-supervisor-close]");
+    await page.waitForFunction(() => {
+      const drawer = document.querySelector("[data-chat-autopilot-supervisor-drawer]");
+      const surface = document.querySelector(".rich-session-surface");
+      const sideChat = document.querySelector("#rich-session-autopilot [data-chat-autopilot-supervisor-history]");
+      return drawer
+        && !drawer.classList.contains("is-open")
+        && surface
+        && !surface.classList.contains("is-supervisor-open")
+        && sideChat?.getAttribute("aria-expanded") === "false";
+    }, null, { timeout: 10_000 });
+    await page.click("#rich-session-autopilot [data-chat-autopilot-supervisor-history]");
+    await page.waitForFunction(() => {
+      const drawer = document.querySelector("[data-chat-autopilot-supervisor-drawer]");
+      const surface = document.querySelector(".rich-session-surface");
+      const sideChat = document.querySelector("#rich-session-autopilot [data-chat-autopilot-supervisor-history]");
+      return drawer
+        && drawer.classList.contains("is-open")
+        && surface
+        && surface.classList.contains("is-supervisor-open")
+        && sideChat?.getAttribute("aria-expanded") === "true";
+    }, null, { timeout: 10_000 });
+
     const scrollState = await page.evaluate(() => {
       const body = document.querySelector(".rich-session-supervisor-drawer-body");
       if (!(body instanceof HTMLElement)) return null;
