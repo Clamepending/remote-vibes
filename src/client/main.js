@@ -8158,20 +8158,27 @@ function renderRichSessionAutopilotPanel(activeSession) {
     ? "Close the side-by-side supervisor chat and history."
     : "Open the side-by-side supervisor chat and history.";
   const historyButton = `<button class="rich-session-autopilot-action" type="button" data-chat-autopilot-supervisor-history aria-expanded="${historyOpen ? "true" : "false"}" aria-label="${escapeHtml(historyTitle)}" title="${escapeHtml(historyTitle)}">Side chat</button>`;
+  const toggleTitle = enabled
+    ? "Turn off the supervisor for this chat."
+    : noProjects
+      ? "Create durable research memory for this chat and arm the supervisor without messaging the worker."
+      : "Turn on the supervisor for this chat without messaging the worker.";
   if (enabled) {
     return `
       <section class="rich-session-autopilot is-enabled ${running ? "is-running" : ""}" id="rich-session-autopilot" data-rich-session-autopilot-mount>
         <div class="rich-session-autopilot-main">
-          <span
-            class="rich-session-autopilot-indicator"
+          <button
+            class="rich-session-autopilot-toggle rich-session-autopilot-indicator"
+            type="button"
+            data-chat-autopilot-toggle
             data-chat-autopilot-indicator
-            role="status"
-            aria-label="${escapeHtml(`${title}: ${status}`)}"
+            aria-pressed="true"
+            aria-label="${escapeHtml(`${toggleTitle} Current status: ${status}`)}"
             title="${escapeHtml(status)}"
           >
             <span class="rich-session-autopilot-dot" aria-hidden="true"></span>
             <span>${escapeHtml(title)}</span>
-          </span>
+          </button>
         </div>
         <div class="rich-session-autopilot-actions">
           ${historyButton}
@@ -8180,9 +8187,6 @@ function renderRichSessionAutopilotPanel(activeSession) {
     `;
   }
 
-  const toggleTitle = noProjects
-    ? "Create durable research memory for this chat and arm the supervisor without messaging the worker."
-    : "Turn on the supervisor for this chat without messaging the worker.";
   const showProjectPicker = !noProjects && !running && pickerOpen;
   const projectSource = getChatAutopilotProjectSource(activeSession, config);
   const projectLabel = projectName ? summarizeChatAutopilotProjectName(projectName) : "No project";

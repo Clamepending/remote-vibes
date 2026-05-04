@@ -140,6 +140,7 @@ test("same-chat supervisor Start creates project memory and arms silently while 
         indicatorTitle: indicator?.getAttribute("title") || "",
         buttonLabels: Array.from(document.querySelectorAll("#rich-session-autopilot button"))
           .map((button) => button.textContent?.trim() || ""),
+        hasToggleWhenEnabled: Boolean(document.querySelector("#rich-session-autopilot [data-chat-autopilot-toggle][aria-pressed='true']")),
         actionCount: document.querySelectorAll("#rich-session-autopilot [data-chat-autopilot-action]").length,
         hasProjectPicker: Boolean(document.querySelector("#rich-session-autopilot [data-chat-autopilot-change-project], #rich-session-autopilot [data-chat-autopilot-project]")),
         hasPolicyPill: Boolean(document.querySelector("#rich-session-autopilot [data-chat-autopilot-policy]")),
@@ -152,7 +153,8 @@ test("same-chat supervisor Start creates project memory and arms silently while 
 
     assert.equal(uiState.indicatorLabel, "Supervisor on");
     assert.match(uiState.indicatorTitle, /watching current turn/);
-    assert.deepEqual(uiState.buttonLabels, ["Side chat"]);
+    assert.deepEqual(uiState.buttonLabels, ["Supervisor on", "Side chat"]);
+    assert.equal(uiState.hasToggleWhenEnabled, true);
     assert.equal(uiState.actionCount, 0);
     assert.equal(uiState.hasProjectPicker, false);
     assert.equal(uiState.hasPolicyPill, false);
@@ -160,6 +162,14 @@ test("same-chat supervisor Start creates project memory and arms silently while 
     assert.equal(uiState.queueCount, 0);
     assert.equal(uiState.queuePreview, "");
     assert.equal(uiState.queueMeta, "");
+
+    await page.click("#rich-session-autopilot [data-chat-autopilot-toggle]");
+    await page.waitForFunction(() => /Human driving/i.test(document.querySelector("#rich-session-autopilot")?.textContent || ""), null, { timeout: 10_000 });
+    const pausedAttachment = await (await fetch(`${baseUrl}/api/sessions/${session.id}/research-autopilot`)).json();
+    assert.equal(pausedAttachment.attachment.enabled, false);
+
+    await page.click("#rich-session-autopilot [data-chat-autopilot-toggle]");
+    await page.waitForFunction(() => /Supervisor on/i.test(document.querySelector("[data-chat-autopilot-indicator]")?.textContent || ""), null, { timeout: 20_000 });
 
     await page.waitForSelector("[data-chat-autopilot-supervisor-drawer].is-open", { timeout: 10_000 });
     const drawerState = await page.evaluate(() => ({
@@ -187,7 +197,7 @@ test("same-chat supervisor Start creates project memory and arms silently while 
     assert.match(drawerState.history, /No supervisor decisions yet/);
     assert.equal(drawerState.watchlistLabel, "Look for");
     assert.match(drawerState.watchlistPlaceholder, /reward hacking/);
-    assert.equal(drawerState.toolbarButtonCount, 1);
+    assert.equal(drawerState.toolbarButtonCount, 2);
     assert.equal(drawerState.surfaceOpen, true);
     assert.equal(drawerState.drawerPosition, "sticky");
 
