@@ -2389,7 +2389,7 @@ const state = {
   brainSetupError: "",
   agentInboxTab: "",
   questHint: null,
-  canvasPanelOpen: false,
+  // canvasPanelOpen removed: agent canvas feature deleted.
   mobileWorkspaceView: "cli",
   agentPrompt: "",
   agentPromptPath: "",
@@ -15685,20 +15685,8 @@ function renderSessionCard(session) {
   `;
 }
 
-function renderSessionCanvasBadge(session) {
-  const canvas = getAgentCanvasForSession(session, { sessionId: session?.id || "" });
-  if (!canvas) {
-    return "";
-  }
-
-  const title = canvas.title || "Agent canvas";
-  return `
-    <span class="session-canvas-pill" title="${escapeHtml(title)}" aria-label="Agent canvas ${escapeHtml(title)}">
-      ${renderIcon(ImageIcon)}
-      <span>Canvas</span>
-    </span>
-  `;
-}
+// renderSessionCanvasBadge stubbed: agent canvas feature deleted.
+function renderSessionCanvasBadge() { return ""; }
 
 function renderSessionActivityButton(session, status) {
   const canMarkRead = status.className === "unread";
@@ -16091,562 +16079,24 @@ function renderAgentProfileTopBar(session) {
   `;
 }
 
-function isSafeAgentCanvasUrl(value) {
-  const text = String(value || "").trim();
-  if (!text) {
-    return false;
-  }
+// Agent canvas UI removed: feature deleted (server side gone in stage 1).
+// Image rendering inside the chat itself now happens via inline imageRefs
+// on narrative entries — see renderRichSessionImageStrip and the
+// extractImageRefsFromText pipeline in session-native-narrative.
+//
+// The stubs below keep call sites elsewhere in main.js working without
+// having to chase every reference; each function is deliberately a
+// no-op that returns the appropriate empty value for its call sites.
+function renderAgentCanvasPanel() { return ""; }
+function renderAgentCanvasHost() { return ""; }
+function refreshAgentCanvasUi() { /* no-op */ }
+function handleViewAgentCanvasClick() { /* no-op */ }
+function bindAgentCanvasCloseEvents() { /* no-op */ }
+function bindAgentCanvasStageEvents() { /* no-op */ }
+function bindAgentCanvasWindowDrag() { /* no-op */ }
+function getAgentCanvasForSession() { return null; }
+function getAgentCanvasSignature() { return ""; }
 
-  try {
-    const url = new URL(text, window.location.origin);
-    return url.protocol === "http:" || url.protocol === "https:" || url.origin === window.location.origin;
-  } catch {
-    return false;
-  }
-}
-
-function getAgentCanvasTime(canvas) {
-  const timestamp = Date.parse(canvas?.updatedAt || canvas?.createdAt || "");
-  return Number.isFinite(timestamp) ? timestamp : 0;
-}
-
-function getAgentCanvasForSession(session, selection = state.agentProfile) {
-  if (!session?.id || !Array.isArray(state.agentTown?.canvases)) {
-    return null;
-  }
-
-  const sessionId = String(session.id);
-  const canvases = state.agentTown.canvases
-    .filter((canvas) => (
-      canvas?.sourceSessionId === sessionId ||
-      canvas?.sessionId === sessionId ||
-      canvas?.id === sessionId
-    ))
-    .sort((left, right) => getAgentCanvasTime(right) - getAgentCanvasTime(left));
-
-  if (!canvases.length) {
-    return null;
-  }
-
-  const subagent = getSelectedAgentProfileSubagent(session, selection);
-  const subagentIds = new Set([
-    subagent?.id,
-    subagent?.agentId,
-    subagent?.browserUseSessionId,
-    subagent?.ottoAuthSessionId,
-    subagent?.videoMemoryMonitorId,
-  ].filter(Boolean).map(String));
-  if (subagentIds.size) {
-    const subagentCanvas = canvases.find((canvas) => subagentIds.has(String(canvas?.sourceAgentId || "")));
-    if (subagentCanvas) {
-      return subagentCanvas;
-    }
-  }
-
-  return canvases[0];
-}
-
-function getAgentCanvasImageSrc(canvas) {
-  if (!canvas?.id) {
-    return "";
-  }
-
-  if (canvas.imagePath) {
-    const params = new URLSearchParams();
-    if (canvas.updatedAt) {
-      params.set("updated", canvas.updatedAt);
-    }
-    const suffix = params.toString() ? `?${params.toString()}` : "";
-    return `${getAppBaseUrl()}/api/agent-town/canvases/${encodeURIComponent(canvas.id)}/image${suffix}`;
-  }
-
-  const imageUrl = String(canvas.imageUrl || "").trim();
-  return isSafeAgentCanvasUrl(imageUrl) ? imageUrl : "";
-}
-
-function renderAgentCanvasPanel(session, selection = state.agentProfile) {
-  const canvas = getAgentCanvasForSession(session, selection);
-  if (!canvas) {
-    if (!state.canvasPanelOpen || !session) {
-      return "";
-    }
-
-    return `
-      <section class="agent-canvas-panel agent-canvas-panel-placeholder" data-agent-canvas-panel aria-label="Empty agent canvas">
-        <div class="agent-canvas-head" data-agent-canvas-drag-handle>
-          <span class="agent-canvas-kicker">${renderIcon(ImageIcon)}<span>Canvas</span></span>
-          <strong>Empty canvas</strong>
-          <button class="icon-button agent-canvas-close" type="button" data-agent-canvas-close aria-label="Close canvas" ${tooltipAttributes("Close canvas")}>${renderIcon(X)}</button>
-        </div>
-        <div class="agent-canvas-stage agent-canvas-stage-placeholder">
-          <div class="agent-canvas-placeholder-copy">
-            <p class="agent-canvas-placeholder-lead">Your agent's canvas will appear here once they publish one.</p>
-            <p class="agent-canvas-placeholder-hint">Try asking your agent:</p>
-            <code class="agent-canvas-placeholder-prompt">show me a picture of pikachu</code>
-          </div>
-        </div>
-      </section>
-    `;
-  }
-
-  const imageSrc = getAgentCanvasImageSrc(canvas);
-  const title = canvas.title || "Agent canvas";
-  const caption = String(canvas.caption || "").trim();
-  const updated = relativeTimeAgo(canvas.updatedAt || canvas.createdAt) || "";
-  const openHref = isSafeAgentCanvasUrl(canvas.href) ? canvas.href : imageSrc;
-
-  return `
-    <section class="agent-canvas-panel" data-agent-canvas-panel data-agent-canvas-id="${escapeHtml(canvas.id)}" aria-label="Agent canvas">
-      <div class="agent-canvas-head" data-agent-canvas-drag-handle>
-        <span class="agent-canvas-kicker">${renderIcon(ImageIcon)}<span>Canvas</span></span>
-        <strong title="${escapeHtml(title)}">${escapeHtml(title)}</strong>
-        ${updated ? `<em>${escapeHtml(updated)}</em>` : ""}
-        ${
-          openHref
-            ? `<a class="icon-button agent-canvas-open" href="${escapeHtml(openHref)}" target="_blank" rel="noreferrer" aria-label="Open canvas image" ${tooltipAttributes("Open canvas image")}>${renderIcon(AppWindow)}</a>`
-            : ""
-        }
-        <button class="icon-button agent-canvas-close" type="button" data-agent-canvas-close aria-label="Close canvas" ${tooltipAttributes("Close canvas")}>${renderIcon(X)}</button>
-      </div>
-      <div class="agent-canvas-stage" data-agent-canvas-stage data-agent-canvas-stage-id="${escapeHtml(canvas.id)}" style="${getAgentCanvasTransformStyle(canvas.id)}">
-        ${
-          imageSrc
-            ? `<img src="${escapeHtml(imageSrc)}" alt="${escapeHtml(canvas.alt || title)}" loading="lazy" decoding="async" draggable="false" />`
-            : `<div class="blank-state">empty canvas</div>`
-        }
-      </div>
-      ${caption ? `<p class="agent-canvas-caption" title="${escapeHtml(caption)}">${escapeHtml(caption)}</p>` : ""}
-    </section>
-  `;
-}
-
-function isMobileViewport() {
-  if (typeof window === "undefined" || typeof window.matchMedia !== "function") {
-    return false;
-  }
-  return window.matchMedia("(max-width: 920px)").matches;
-}
-
-function handleViewAgentCanvasClick() {
-  clearQuestHintFor("chat-canvas-button", { render: false });
-
-  if (isMobileViewport()) {
-    if (state.mobileWorkspaceView === "canvas") {
-      state.mobileWorkspaceView = "cli";
-      state.canvasPanelOpen = false;
-      renderShell();
-      return;
-    }
-    state.mobileWorkspaceView = "canvas";
-    state.canvasPanelOpen = true;
-    renderShell();
-    return;
-  }
-
-  state.canvasPanelOpen = true;
-  renderShell();
-
-  const host = document.querySelector("[data-agent-canvas-host]");
-  host?.scrollIntoView({ behavior: "smooth", block: "nearest" });
-  host?.classList.add("is-attention");
-  window.setTimeout(() => host?.classList.remove("is-attention"), 1600);
-}
-
-function closeAgentCanvasPanel() {
-  const wasMobileCanvas = state.mobileWorkspaceView === "canvas";
-  if (!state.canvasPanelOpen && !wasMobileCanvas) {
-    return;
-  }
-  state.canvasPanelOpen = false;
-  if (wasMobileCanvas) {
-    state.mobileWorkspaceView = "cli";
-  }
-  renderShell();
-}
-
-function bindAgentCanvasCloseEvents(root = document) {
-  root.querySelectorAll?.("[data-agent-canvas-close]").forEach((button) => {
-    if (button.dataset.agentCanvasCloseBound === "true") {
-      return;
-    }
-    button.dataset.agentCanvasCloseBound = "true";
-    button.addEventListener("click", (event) => {
-      event.preventDefault();
-      event.stopPropagation();
-      closeAgentCanvasPanel();
-    });
-  });
-}
-
-function renderAgentCanvasHost(session) {
-  return `
-    <aside
-      class="agent-canvas-host agent-canvas-window"
-      data-agent-canvas-host
-      data-agent-canvas-window
-      data-agent-canvas-session="${escapeHtml(session?.id || "")}"
-      data-agent-canvas-signature="${escapeHtml(getAgentCanvasSignature(session))}"
-      aria-label="Agent canvas window"
-    >${renderAgentCanvasPanel(session)}</aside>
-  `;
-}
-
-function getAgentCanvasSignature(session, selection = state.agentProfile) {
-  const canvas = getAgentCanvasForSession(session, selection);
-  if (!canvas) {
-    return "";
-  }
-
-  return [
-    canvas.id,
-    canvas.updatedAt,
-    canvas.title,
-    canvas.caption,
-    canvas.imagePath,
-    canvas.imageUrl,
-    canvas.href,
-  ].map((entry) => String(entry || "")).join("\u001f");
-}
-
-function refreshAgentCanvasUi() {
-  document.querySelectorAll("[data-agent-canvas-host]").forEach((host) => {
-    if (!(host instanceof HTMLElement)) {
-      return;
-    }
-
-    const sessionId = host.getAttribute("data-agent-canvas-session") || "";
-    const session = state.sessions.find((entry) => entry.id === sessionId) || null;
-    const signature = getAgentCanvasSignature(session);
-    const placeholderActive = state.canvasPanelOpen && Boolean(session) && !signature;
-    const effectiveSignature = signature || (placeholderActive ? "placeholder" : "");
-    if (host.getAttribute("data-agent-canvas-signature") !== effectiveSignature) {
-      host.setAttribute("data-agent-canvas-signature", effectiveSignature);
-      host.innerHTML = renderAgentCanvasPanel(session);
-      bindAgentCanvasWindowDrag(host);
-      bindAgentCanvasStageEvents(host);
-      bindAgentCanvasCloseEvents(host);
-      if (!signature) {
-        clearAgentCanvasFloatingPosition(host);
-      }
-    }
-
-    const showCanvas = Boolean(signature) || placeholderActive;
-    const shellSplit = host.closest(".workspace-split");
-    if (shellSplit instanceof HTMLElement) {
-      shellSplit.classList.toggle("has-agent-canvas", showCanvas);
-    }
-    const visualBody = host.closest(".visual-game-terminal-body");
-    if (visualBody instanceof HTMLElement) {
-      visualBody.classList.toggle("has-agent-canvas", showCanvas);
-    }
-  });
-}
-
-function clearAgentCanvasFloatingPosition(host) {
-  host.classList.remove("is-floating", "is-dragging");
-  host.style.removeProperty("--agent-canvas-window-left");
-  host.style.removeProperty("--agent-canvas-window-top");
-  host.style.removeProperty("--agent-canvas-window-width");
-  host.style.removeProperty("--agent-canvas-window-height");
-}
-
-function getAgentCanvasDragBoundary(host) {
-  return host.closest(".terminal-panel")
-    || host.closest(".visual-game-session-panel")
-    || host.parentElement
-    || document.body;
-}
-
-function setAgentCanvasFloatingPosition(host, boundaryRect, hostRect, clientX, clientY, offsetX, offsetY) {
-  const edge = 10;
-  const maxLeft = Math.max(edge, boundaryRect.width - hostRect.width - edge);
-  const maxTop = Math.max(edge, boundaryRect.height - hostRect.height - edge);
-  const left = clamp(clientX - boundaryRect.left - offsetX, edge, maxLeft);
-  const top = clamp(clientY - boundaryRect.top - offsetY, edge, maxTop);
-  host.style.setProperty("--agent-canvas-window-left", `${Math.round(left)}px`);
-  host.style.setProperty("--agent-canvas-window-top", `${Math.round(top)}px`);
-}
-
-const AGENT_CANVAS_MIN_ZOOM = 1;
-const AGENT_CANVAS_MAX_ZOOM = 8;
-const agentCanvasTransforms = new Map();
-
-function getAgentCanvasTransform(canvasId) {
-  const id = String(canvasId || "");
-  const cached = agentCanvasTransforms.get(id);
-  if (cached) {
-    return cached;
-  }
-
-  const entry = { zoom: 1, offsetX: 0, offsetY: 0 };
-  if (id) {
-    agentCanvasTransforms.set(id, entry);
-  }
-  return entry;
-}
-
-function setAgentCanvasTransform(canvasId, { zoom, offsetX, offsetY } = {}) {
-  const id = String(canvasId || "");
-  if (!id) {
-    return { zoom: 1, offsetX: 0, offsetY: 0 };
-  }
-
-  const current = getAgentCanvasTransform(id);
-  const nextZoomRaw = Number.isFinite(Number(zoom)) ? Number(zoom) : current.zoom;
-  const nextZoom = clamp(nextZoomRaw, AGENT_CANVAS_MIN_ZOOM, AGENT_CANVAS_MAX_ZOOM);
-  const resetPan = nextZoom <= AGENT_CANVAS_MIN_ZOOM + 0.001;
-  const next = {
-    zoom: nextZoom,
-    offsetX: resetPan ? 0 : (Number.isFinite(Number(offsetX)) ? Number(offsetX) : current.offsetX),
-    offsetY: resetPan ? 0 : (Number.isFinite(Number(offsetY)) ? Number(offsetY) : current.offsetY),
-  };
-  agentCanvasTransforms.set(id, next);
-  return next;
-}
-
-function getAgentCanvasTransformStyle(canvasId) {
-  const { zoom, offsetX, offsetY } = getAgentCanvasTransform(canvasId);
-  return `--agent-canvas-zoom:${zoom};--agent-canvas-x:${offsetX}px;--agent-canvas-y:${offsetY}px;`;
-}
-
-function applyAgentCanvasTransformToStage(stage) {
-  if (!(stage instanceof HTMLElement)) {
-    return;
-  }
-
-  const canvasId = stage.getAttribute("data-agent-canvas-stage-id") || "";
-  const { zoom, offsetX, offsetY } = getAgentCanvasTransform(canvasId);
-  stage.style.setProperty("--agent-canvas-zoom", String(zoom));
-  stage.style.setProperty("--agent-canvas-x", `${offsetX}px`);
-  stage.style.setProperty("--agent-canvas-y", `${offsetY}px`);
-}
-
-function zoomAgentCanvasAt(stage, nextZoom, anchorClientPoint) {
-  if (!(stage instanceof HTMLElement)) {
-    return;
-  }
-
-  const canvasId = stage.getAttribute("data-agent-canvas-stage-id") || "";
-  const clampedZoom = clamp(nextZoom, AGENT_CANVAS_MIN_ZOOM, AGENT_CANVAS_MAX_ZOOM);
-  const current = getAgentCanvasTransform(canvasId);
-  if (clampedZoom <= AGENT_CANVAS_MIN_ZOOM + 0.001) {
-    setAgentCanvasTransform(canvasId, { zoom: clampedZoom, offsetX: 0, offsetY: 0 });
-    applyAgentCanvasTransformToStage(stage);
-    return;
-  }
-
-  const rect = stage.getBoundingClientRect();
-  const anchorX = (anchorClientPoint?.clientX ?? (rect.left + rect.width / 2)) - rect.left - rect.width / 2;
-  const anchorY = (anchorClientPoint?.clientY ?? (rect.top + rect.height / 2)) - rect.top - rect.height / 2;
-  const ratio = clampedZoom / current.zoom;
-  setAgentCanvasTransform(canvasId, {
-    zoom: clampedZoom,
-    offsetX: anchorX - (anchorX - current.offsetX) * ratio,
-    offsetY: anchorY - (anchorY - current.offsetY) * ratio,
-  });
-  applyAgentCanvasTransformToStage(stage);
-}
-
-function bindAgentCanvasStageEvents(root = document) {
-  root.querySelectorAll?.("[data-agent-canvas-stage]").forEach((stage) => {
-    if (!(stage instanceof HTMLElement) || stage.dataset.agentCanvasStageBound === "true") {
-      return;
-    }
-
-    stage.dataset.agentCanvasStageBound = "true";
-    applyAgentCanvasTransformToStage(stage);
-
-    stage.addEventListener(
-      "wheel",
-      (event) => {
-        if (!stage.querySelector("img")) {
-          return;
-        }
-
-        event.preventDefault();
-        event.stopPropagation();
-        const canvasId = stage.getAttribute("data-agent-canvas-stage-id") || "";
-        const current = getAgentCanvasTransform(canvasId);
-        const multiplier = event.deltaY > 0 ? 1 / 1.12 : 1.12;
-        zoomAgentCanvasAt(stage, current.zoom * multiplier, {
-          clientX: event.clientX,
-          clientY: event.clientY,
-        });
-      },
-      { passive: false },
-    );
-
-    stage.addEventListener("pointerdown", (event) => {
-      if (event.button !== 0 || !stage.querySelector("img")) {
-        return;
-      }
-
-      event.preventDefault();
-      event.stopPropagation();
-      const canvasId = stage.getAttribute("data-agent-canvas-stage-id") || "";
-      const start = getAgentCanvasTransform(canvasId);
-      const dragState = {
-        pointerId: event.pointerId,
-        clientX: event.clientX,
-        clientY: event.clientY,
-        offsetX: start.offsetX,
-        offsetY: start.offsetY,
-        canvasId,
-      };
-      stage.dataset.dragging = JSON.stringify(dragState);
-      stage.classList.add("is-panning");
-      stage.setPointerCapture?.(event.pointerId);
-    });
-
-    stage.addEventListener("pointermove", (event) => {
-      if (!stage.dataset.dragging) {
-        return;
-      }
-
-      let dragState;
-      try {
-        dragState = JSON.parse(stage.dataset.dragging);
-      } catch {
-        dragState = null;
-      }
-
-      if (!dragState || dragState.pointerId !== event.pointerId) {
-        return;
-      }
-
-      setAgentCanvasTransform(dragState.canvasId, {
-        offsetX: dragState.offsetX + event.clientX - dragState.clientX,
-        offsetY: dragState.offsetY + event.clientY - dragState.clientY,
-      });
-      applyAgentCanvasTransformToStage(stage);
-    });
-
-    const endPan = (event) => {
-      if (stage.dataset.dragging) {
-        stage.releasePointerCapture?.(event.pointerId);
-      }
-      stage.dataset.dragging = "";
-      stage.classList.remove("is-panning");
-    };
-
-    stage.addEventListener("pointerup", endPan);
-    stage.addEventListener("pointercancel", endPan);
-    stage.addEventListener("lostpointercapture", () => {
-      stage.dataset.dragging = "";
-      stage.classList.remove("is-panning");
-    });
-
-    stage.addEventListener("dblclick", (event) => {
-      event.preventDefault();
-      event.stopPropagation();
-      const canvasId = stage.getAttribute("data-agent-canvas-stage-id") || "";
-      setAgentCanvasTransform(canvasId, { zoom: 1, offsetX: 0, offsetY: 0 });
-      applyAgentCanvasTransformToStage(stage);
-    });
-  });
-}
-
-function bindAgentCanvasWindowDrag(root = document) {
-  root.querySelectorAll?.("[data-agent-canvas-drag-handle]").forEach((handle) => {
-    if (!(handle instanceof HTMLElement) || handle.dataset.agentCanvasDragBound === "true") {
-      return;
-    }
-
-    handle.dataset.agentCanvasDragBound = "true";
-    handle.addEventListener("dblclick", (event) => {
-      const host = handle.closest("[data-agent-canvas-window]");
-      if (host instanceof HTMLElement) {
-        clearAgentCanvasFloatingPosition(host);
-        event.preventDefault();
-      }
-    });
-
-    const startDrag = (event, pointerId = null) => {
-      if (event.button !== 0 || event.target?.closest?.("a, button, input, textarea, select")) {
-        return;
-      }
-
-      if (handle.dataset.agentCanvasDragActive === "true") {
-        return;
-      }
-
-      const host = handle.closest("[data-agent-canvas-window]");
-      if (!(host instanceof HTMLElement)) {
-        return;
-      }
-
-      handle.dataset.agentCanvasDragActive = "true";
-      const boundary = getAgentCanvasDragBoundary(host);
-      const boundaryRect = boundary.getBoundingClientRect();
-      const hostRect = host.getBoundingClientRect();
-      const offsetX = event.clientX - hostRect.left;
-      const offsetY = event.clientY - hostRect.top;
-      const startX = event.clientX;
-      const startY = event.clientY;
-      let dragging = false;
-      let ended = false;
-
-      event.preventDefault();
-      if (pointerId != null) {
-        handle.setPointerCapture?.(pointerId);
-      }
-
-      const move = (moveEvent) => {
-        const distance = Math.hypot(moveEvent.clientX - startX, moveEvent.clientY - startY);
-        if (!dragging && distance < 4) {
-          return;
-        }
-
-        if (!dragging) {
-          dragging = true;
-          host.classList.add("is-floating", "is-dragging");
-          host.style.setProperty("--agent-canvas-window-width", `${Math.round(hostRect.width)}px`);
-          host.style.setProperty("--agent-canvas-window-height", `${Math.round(hostRect.height)}px`);
-        }
-
-        setAgentCanvasFloatingPosition(host, boundaryRect, hostRect, moveEvent.clientX, moveEvent.clientY, offsetX, offsetY);
-        moveEvent.preventDefault();
-      };
-
-      const moveWithMouse = (moveEvent) => {
-        move(moveEvent);
-      };
-
-      const up = () => {
-        if (ended) {
-          return;
-        }
-
-        ended = true;
-        delete handle.dataset.agentCanvasDragActive;
-        window.removeEventListener("pointermove", move);
-        window.removeEventListener("mousemove", moveWithMouse);
-        window.removeEventListener("pointerup", up);
-        window.removeEventListener("mouseup", up);
-        window.removeEventListener("pointercancel", up);
-        window.removeEventListener("blur", up);
-        if (pointerId != null) {
-          handle.releasePointerCapture?.(pointerId);
-        }
-        host.classList.remove("is-dragging");
-      };
-
-      window.addEventListener("pointermove", move);
-      window.addEventListener("mousemove", moveWithMouse);
-      window.addEventListener("pointerup", up, { once: true });
-      window.addEventListener("mouseup", up, { once: true });
-      window.addEventListener("pointercancel", up, { once: true });
-      window.addEventListener("blur", up, { once: true });
-    };
-
-    handle.addEventListener("pointerdown", (event) => {
-      startDrag(event, event.pointerId);
-    });
-    handle.addEventListener("mousedown", (event) => {
-      startDrag(event);
-    });
-  });
-}
 
 function getVisualGameAgentHoverSelection(hit) {
   if (!hit?.sessionId) {
@@ -16684,7 +16134,6 @@ function getVisualGameAgentHoverProfileSignature(hit) {
     subagent?.name,
     subagent?.status,
     subagent?.updatedAt,
-    getAgentCanvasSignature(session, selection),
   ].map((entry) => String(entry || "")).join("\u001f");
 }
 
@@ -25420,7 +24869,6 @@ function renderVisualGameSessionDrawer(graph) {
     : "session unavailable";
   const browserUseSessionId = state.visualGame.selectedBrowserUseSessionId || "";
   const agentProfileTopBar = renderAgentProfileTopBar(selectedSession);
-  const hasAgentCanvas = Boolean(getAgentCanvasSignature(selectedSession));
 
   return `
     <aside class="visual-game-session-panel visual-game-side-panel" aria-label="Agent terminal">
@@ -25446,7 +24894,7 @@ function renderVisualGameSessionDrawer(graph) {
             : ""
         }
       </div>
-      <div class="visual-game-terminal-body ${hasAgentCanvas ? "has-agent-canvas" : ""}">
+      <div class="visual-game-terminal-body">
         <div class="terminal-stack visual-game-terminal-stack ${isRichSessionSurfaceActive(selectedSession) ? "is-rich-surface" : ""}">
           <div class="terminal-mount" id="terminal-mount"></div>
           <div class="terminal-transcript-scroll" id="terminal-transcript-scroll" tabindex="0" aria-label="Terminal transcript history">
@@ -34993,13 +34441,9 @@ function renderTerminalPanel(activeSession) {
   }
 
   const agentProfileTopBar = renderAgentProfileTopBar(activeSession);
-  const hasAgentCanvas = Boolean(getAgentCanvasSignature(activeSession));
-  const isMobileCanvasView = state.mobileWorkspaceView === "canvas" && Boolean(activeSession);
   const workspaceSplitClass = [
     "workspace-split",
-    hasAgentCanvas ? "has-agent-canvas" : "",
     state.openFileTabs.length ? "has-file-preview" : "",
-    isMobileCanvasView ? "is-mobile-canvas-view" : "",
   ].filter(Boolean).join(" ");
   const terminalStackClass = [
     "terminal-stack",
@@ -35026,10 +34470,6 @@ function renderTerminalPanel(activeSession) {
           }
           <div class="toolbar-actions">
             ${renderShellSurfaceToggle(activeSession)}
-            <div class="toolbar-canvas-action">
-              ${activeSession ? renderQuestHintBubble("chat-canvas-button", { className: "is-trailing" }) : ""}
-              <button class="icon-button ${getQuestHintForAnchor("chat-canvas-button") ? "is-quest-hint" : ""} ${isMobileCanvasView ? "is-active" : ""}" type="button" id="view-agent-canvas" aria-label="${escapeHtml(isMobileCanvasView ? "Show CLI" : (getAgentCanvasForSession(activeSession) ? "View agent canvas" : "How to publish a canvas"))}" aria-pressed="${isMobileCanvasView ? "true" : "false"}" ${tooltipAttributes(isMobileCanvasView ? "Show CLI" : (getAgentCanvasForSession(activeSession) ? "View canvas" : "Publish a canvas"))} ${activeSession ? "" : "disabled"}>${renderIcon(ImageIcon)}</button>
-            </div>
             <button class="icon-button" type="button" id="refresh-sessions" aria-label="Refresh sessions" ${tooltipAttributes("Refresh sessions")}>${renderIcon(RefreshCw)}</button>
           </div>
         </div>
@@ -36927,10 +36367,6 @@ function isGuidedTutorialStepComplete(step) {
       );
     case "quest-place-functional-building":
       return Boolean(state.agentTown?.layoutSummary?.functionalCount >= 1);
-    case "quest-canvas-open-agent":
-      return Boolean(state.activeSessionId || state.visualGame.selectedSessionId);
-    case "quest-canvas-button":
-      return Boolean(state.agentCanvas.open || state.agentCanvas.helpOpen || (state.agentTown?.canvases || []).length > 0);
     case "quest-open-library":
       return state.currentView === "knowledge-base";
     case "quest-library-save-note":
@@ -36982,10 +36418,6 @@ function getGuidedTutorialPointerTarget(step) {
       return "selector:[data-agent-town-builder-install-functional]";
     case "quest-place-functional-building":
       return state.visualGame.builderPlacement?.cursorRect ? "placement-preview" : "selector:#visual-game-canvas";
-    case "quest-canvas-open-agent":
-      return getGuidedOnboardingSessionPointerTarget();
-    case "quest-canvas-button":
-      return "selector-fallback:#view-agent-canvas||[data-start-new-agent=\"town\"]||[data-start-new-agent]";
     case "quest-open-library":
       return "selector:[data-open-main-view=\"knowledge-base\"]";
     case "quest-library-save-note":
@@ -47606,10 +47038,7 @@ function bindShellEvents() {
 
   document.querySelector("#refresh-sessions")?.addEventListener("click", () => loadSessions());
 
-  document.querySelector("#view-agent-canvas")?.addEventListener("click", (event) => {
-    event.preventDefault();
-    handleViewAgentCanvasClick();
-  });
+  // #view-agent-canvas listener removed: button no longer rendered.
   document.querySelector("#refresh-agent-prompt")?.addEventListener("click", async () => {
     const textarea = document.querySelector("#agent-prompt-textarea");
     const hasUnsavedChanges =
@@ -48490,9 +47919,6 @@ function mountTerminal() {
     const handleResize = () => {
       const mount = document.querySelector("#terminal-mount");
       syncViewportMetrics();
-      if (!isMobileViewport() && state.mobileWorkspaceView === "canvas") {
-        state.mobileWorkspaceView = "cli";
-      }
       refreshLayoutUi();
       applyTerminalDisplayProfile(mount);
       fitTerminalSoon();
