@@ -45,6 +45,7 @@ import { GitHubService } from "./github-service.js";
 import { GoogleOAuthTokenStore } from "./google-oauth-token-store.js";
 import { GoogleService } from "./google-service.js";
 import { OttoAuthService } from "./ottoauth-service.js";
+import { ClaudeOAuthFlow } from "./claude-oauth-flow.js";
 import { PortAliasStore } from "./port-alias-store.js";
 import { listListeningPorts } from "./ports.js";
 import {
@@ -5847,6 +5848,69 @@ export async function createVibeResearchApp({
     response.json({ ottoAuth: ottoAuthService.getStatus() });
   });
 
+  // Claude Code OAuth flow — handles the user-pasted code path so the
+  // signed-in token can be injected into stream-session env on next
+  // launch. See src/claude-oauth-flow.js for the protocol summary.
+  // The flow object lives for the server lifetime — single-user is the
+  // realistic constraint, but the in-memory map keys by uuid so concurrent
+  // tests / parallel signins work.
+  const claudeOAuthFlow = new ClaudeOAuthFlow({ stateDir });
+  app.get("/api/auth/claude-oauth/status", async (_request, response) => {
+    try {
+      const token = await claudeOAuthFlow.loadToken();
+      response.json({
+        signedIn: Boolean(token?.access_token),
+        obtainedAt: token?.obtained_at || null,
+        expiresAt: token?.expires_at || null,
+        scope: token?.scope || null,
+      });
+    } catch (error) {
+      response.status(500).json({ error: error.message || "status-failed" });
+    }
+  });
+  app.post("/api/auth/claude-oauth/start", (_request, response) => {
+    try {
+      const { id, url } = claudeOAuthFlow.start();
+      response.json({ id, url });
+    } catch (error) {
+      response.status(500).json({ error: error.message || "start-failed" });
+    }
+  });
+  app.post("/api/auth/claude-oauth/submit", async (request, response) => {
+    const id = String(request.body?.id || "").trim();
+    const code = String(request.body?.code || "").trim();
+    if (!id) {
+      response.status(400).json({ error: "missing-flow-id" });
+      return;
+    }
+    if (!code) {
+      response.status(400).json({ error: "missing-code" });
+      return;
+    }
+    try {
+      const token = await claudeOAuthFlow.submit(id, code);
+      response.json({
+        ok: true,
+        obtainedAt: token.obtained_at,
+        expiresAt: token.expires_at || null,
+        scope: token.scope || null,
+      });
+    } catch (error) {
+      response.status(error?.code === "flow-not-found" ? 404 : 400).json({
+        error: error.message || "submit-failed",
+        code: error?.code || null,
+      });
+    }
+  });
+  app.post("/api/auth/claude-oauth/signout", async (_request, response) => {
+    try {
+      const removed = await claudeOAuthFlow.clearToken();
+      response.json({ ok: true, removed });
+    } catch (error) {
+      response.status(500).json({ error: error.message || "signout-failed" });
+    }
+  });
+
   app.post("/api/ottoauth/setup", async (request, response) => {
     try {
       const privateKey = String(request.body?.privateKey || request.body?.ottoAuthPrivateKey || "").trim();
@@ -6965,6 +7029,23 @@ export async function createVibeResearchApp({
       response.status(201).json({ session });
     } catch (error) {
       response.status(400).json({ error: error.message });
+    }
+  });
+
+  // Re-spawn the claude subprocess for an existing stream-mode session,
+  // preserving the JSONL transcript via `--resume`. Triggered by the
+  // OAuth sign-in modal so a freshly-issued token (CLAUDE_CODE_OAUTH_TOKEN)
+  // can be picked up by a new subprocess without losing the conversation.
+  app.post("/api/sessions/:sessionId/restart-stream", async (request, response) => {
+    try {
+      const result = await sessionManager.restartStreamSession(request.params.sessionId);
+      if (!result.ok) {
+        response.status(result.reason === "session-not-found" ? 404 : 400).json(result);
+        return;
+      }
+      response.json(result);
+    } catch (error) {
+      response.status(500).json({ ok: false, error: error.message || "restart-failed" });
     }
   });
 
@@ -10008,7 +10089,18 @@ export async function createVibeResearchApp({
           // exercise this path; PTY sessions ignore the attachments
           // (typing the markdown reference is the legacy fallback).
           const attachments = Array.isArray(message.attachments) ? message.attachments : [];
-          sessionManager.write(session.id, message.data, { attachments });
+          // Optional clientMessageId — UUID the composer allocated when
+          // the user hit send. Threading it through to the user-echo
+          // narrative entry keeps the entry's id stable end-to-end:
+          // optimistic UI in the composer, the wire frame, the persisted
+          // record, and the rehydrated entry on reconnect all share the
+          // same id. Without it, dedup falls back to (label,text,timestamp)
+          // — fragile when wall clocks drift across reconnect.
+          const clientMessageId = typeof message.clientMessageId === "string"
+            && message.clientMessageId.trim()
+            ? message.clientMessageId.trim().slice(0, 64)
+            : null;
+          sessionManager.write(session.id, message.data, { attachments, clientMessageId });
           return;
         }
 

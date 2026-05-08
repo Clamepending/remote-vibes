@@ -5809,9 +5809,16 @@ function flushNextRichSessionComposerQueueItem(sessionId) {
   if (!text && !(attachments && attachments.length)) return;
   const isStreamMode = Boolean(session.streamMode);
   const outgoing = text || (attachments && attachments.length ? "Take a look at this image." : "");
+  // Reuse the queue item's id when it carries one (autopilot supervisor
+  // entries pre-allocate ids); otherwise allocate fresh. Either way the
+  // id is what the server will stamp on the user-echo entry.
+  const messageId = String(next.id || "").trim() && /^c-/.test(String(next.id))
+    ? String(next.id)
+    : allocateClientMessageId();
   const sent = sendTerminalInput(`${outgoing}\r`, {
     queueIfDisconnected: false,
     attachments: isStreamMode && attachments && attachments.length ? attachments : null,
+    clientMessageId: messageId,
   });
   if (!sent) {
     // WebSocket isn't ready — keep the message at the front of the queue
@@ -5819,6 +5826,42 @@ function flushNextRichSessionComposerQueueItem(sessionId) {
     // brief disconnect.
     unshiftRichSessionComposerQueueItem(sid, next);
     return;
+  }
+  // Optimistically insert the user entry into the reducer state so the
+  // chat shows the message immediately instead of waiting for the
+  // server's user-echo round-trip. Same id as the server will stamp
+  // (clientMessageId is threaded through), so the eventual server upsert
+  // mutates this entry in place — no flicker, no duplicate, no reorder.
+  // Seq=0 means "no real seq yet"; the server's upsert will replace it
+  // with the authoritative monotonic seq.
+  if (isStreamMode) {
+    const optimisticImageRefs = isStreamMode && attachments && attachments.length
+      ? attachments
+          .map((att) => String(att?.absolutePath || att?.path || "").trim())
+          .filter(Boolean)
+      : [];
+    const optimisticEntry = {
+      id: messageId,
+      kind: "user",
+      label: "You",
+      text: outgoing,
+      timestamp: new Date().toISOString(),
+      seq: 0,
+    };
+    if (optimisticImageRefs.length) {
+      optimisticEntry.imageRefs = optimisticImageRefs;
+    }
+    try {
+      applyNarrativeFrameToState(sid, {
+        type: NARRATIVE_FRAME_TYPES.EVENT,
+        sessionId: sid,
+        op: "upsert",
+        seq: 0,
+        entry: optimisticEntry,
+      });
+    } catch (error) {
+      console.warn("[vibe-research] optimistic user insert failed", error);
+    }
   }
   scheduleRichSessionNarrativeRefresh(sid, { immediate: true });
   refreshRichSessionSurfaceUi({ scrollToBottom: true });
@@ -6845,6 +6888,17 @@ function sendRichSessionSlashCommand(command, { trigger = null, switchToTerminal
     return false;
   }
 
+  // Special-case /login on Claude sessions: stream-mode claude rejects
+  // /login as "isn't available in this environment", so forwarding it
+  // would just produce a confusing error. Open the OAuth modal instead.
+  // See src/claude-oauth-flow.js — we hit Anthropic's OAuth endpoints
+  // directly and persist the token to vibe-research's state dir, then
+  // inject CLAUDE_CODE_OAUTH_TOKEN into the next stream-session spawn.
+  if (value === "/login") {
+    openClaudeOAuthSignInModal({ trigger });
+    return true;
+  }
+
   if (switchToTerminal) {
     setShellSurfaceMode("terminal");
   }
@@ -6866,6 +6920,223 @@ function sendRichSessionSlashCommand(command, { trigger = null, switchToTerminal
   }
 
   return true;
+}
+
+// Claude OAuth sign-in modal — paste-back flow.
+//
+// We POST /api/auth/claude-oauth/start to generate a PKCE pair on the
+// server, get back the authorize URL + an opaque flow id. The user opens
+// the URL (we open it in a new tab for them and also display it as a
+// fallback link). They sign in, the redirect lands on Anthropic's
+// platform.claude.com page which displays the OAuth code (with #state
+// suffix). They paste it back into our input field, we POST to
+// /submit. On success the token is persisted server-side and
+// CLAUDE_CODE_OAUTH_TOKEN gets injected into the next claude subprocess
+// spawn. We offer to relaunch the active session in-place.
+let __claudeOAuthModal = null;
+function openClaudeOAuthSignInModal({ trigger = null } = {}) {
+  if (__claudeOAuthModal && document.body.contains(__claudeOAuthModal.root)) {
+    __claudeOAuthModal.input?.focus();
+    return;
+  }
+  closeClaudeOAuthSignInModal();
+  if (trigger instanceof HTMLButtonElement) {
+    trigger.setAttribute("disabled", "disabled");
+    trigger.classList.add("is-sending");
+  }
+
+  const root = document.createElement("div");
+  root.className = "claude-oauth-modal-backdrop";
+  root.innerHTML = `
+    <div class="claude-oauth-modal" role="dialog" aria-labelledby="claude-oauth-modal-title">
+      <button type="button" class="claude-oauth-modal-close" aria-label="Close">×</button>
+      <h2 id="claude-oauth-modal-title">Sign in to Claude</h2>
+      <p class="claude-oauth-modal-step">
+        <span class="claude-oauth-step-num">1</span>
+        Open the Anthropic OAuth page in your browser and finish signing in.
+      </p>
+      <div class="claude-oauth-modal-url-row">
+        <a class="claude-oauth-modal-url" target="_blank" rel="noreferrer noopener">Loading…</a>
+        <button type="button" class="claude-oauth-modal-copy" disabled>Copy</button>
+      </div>
+      <p class="claude-oauth-modal-step">
+        <span class="claude-oauth-step-num">2</span>
+        After signing in, the page will display a code. Copy and paste it here.
+      </p>
+      <textarea class="claude-oauth-modal-input" rows="3" placeholder="paste the code here (it may include &amp;state= or #state — that's fine)"></textarea>
+      <div class="claude-oauth-modal-status" aria-live="polite"></div>
+      <div class="claude-oauth-modal-actions">
+        <button type="button" class="claude-oauth-modal-cancel">Cancel</button>
+        <button type="button" class="claude-oauth-modal-submit primary-button" disabled>Sign in</button>
+      </div>
+    </div>
+  `;
+  document.body.appendChild(root);
+
+  const urlAnchor = root.querySelector(".claude-oauth-modal-url");
+  const copyButton = root.querySelector(".claude-oauth-modal-copy");
+  const input = root.querySelector(".claude-oauth-modal-input");
+  const submit = root.querySelector(".claude-oauth-modal-submit");
+  const cancel = root.querySelector(".claude-oauth-modal-cancel");
+  const closeBtn = root.querySelector(".claude-oauth-modal-close");
+  const statusEl = root.querySelector(".claude-oauth-modal-status");
+
+  let flowId = null;
+  let flowUrl = null;
+  let busy = false;
+
+  const setStatus = (message, kind = "") => {
+    statusEl.textContent = message || "";
+    statusEl.dataset.kind = kind;
+  };
+
+  const enableSubmit = () => {
+    submit.disabled = busy || !flowId || !input.value.trim();
+  };
+
+  __claudeOAuthModal = { root, input };
+
+  // Step 1: kick off the flow on the server.
+  (async () => {
+    setStatus("Starting OAuth flow…");
+    try {
+      const response = await fetch("/api/auth/claude-oauth/start", { method: "POST" });
+      if (!response.ok) throw new Error(`server returned ${response.status}`);
+      const data = await response.json();
+      flowId = data.id;
+      flowUrl = data.url;
+      urlAnchor.textContent = flowUrl;
+      urlAnchor.href = flowUrl;
+      copyButton.disabled = false;
+      setStatus("");
+      enableSubmit();
+      // Auto-open the URL so the user doesn't have to click. Pop-ups
+      // may be blocked on the first user-facing modal trigger; that's
+      // why the link is also clickable.
+      try {
+        window.open(flowUrl, "_blank", "noreferrer,noopener");
+      } catch {
+        /* pop-up blocked is fine */
+      }
+      input.focus();
+    } catch (error) {
+      setStatus(`Could not start OAuth flow: ${error.message}`, "error");
+    }
+  })();
+
+  copyButton.addEventListener("click", async () => {
+    if (!flowUrl) return;
+    try {
+      await navigator.clipboard.writeText(flowUrl);
+      copyButton.textContent = "Copied";
+      setTimeout(() => { copyButton.textContent = "Copy"; }, 1200);
+    } catch {
+      copyButton.textContent = "Copy failed";
+      setTimeout(() => { copyButton.textContent = "Copy"; }, 1200);
+    }
+  });
+
+  input.addEventListener("input", enableSubmit);
+
+  const closeModal = () => {
+    closeClaudeOAuthSignInModal();
+    if (trigger instanceof HTMLButtonElement) {
+      trigger.removeAttribute("disabled");
+      trigger.classList.remove("is-sending");
+    }
+  };
+
+  cancel.addEventListener("click", closeModal);
+  closeBtn.addEventListener("click", closeModal);
+  root.addEventListener("click", (event) => {
+    if (event.target === root) closeModal();
+  });
+
+  submit.addEventListener("click", async () => {
+    const code = input.value.trim();
+    if (!flowId || !code || busy) return;
+    busy = true;
+    submit.disabled = true;
+    setStatus("Exchanging code for token…");
+    try {
+      const response = await fetch("/api/auth/claude-oauth/submit", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ id: flowId, code }),
+      });
+      const data = await response.json().catch(() => ({}));
+      if (!response.ok) {
+        const detail = data?.error || `server returned ${response.status}`;
+        setStatus(`Sign in failed: ${detail}`, "error");
+        busy = false;
+        enableSubmit();
+        return;
+      }
+      // Auto-restart the active stream session in-place so the new
+      // CLAUDE_CODE_OAUTH_TOKEN is picked up by a fresh claude
+      // subprocess. The conversation transcript is preserved server-side
+      // via `--resume <session-id>` — the user just has their next
+      // message succeed instead of bouncing on auth_failed again.
+      setStatus("Signed in. Restarting Claude…", "success");
+      submit.textContent = "Done";
+      submit.classList.add("is-success");
+      const activeSession = getActiveSession();
+      if (activeSession?.id) {
+        try {
+          await restartRichSessionAfterSignIn(activeSession.id);
+          setStatus("Signed in. Send your message again to continue.", "success");
+        } catch (error) {
+          setStatus(
+            `Signed in, but auto-restart failed (${error.message || "unknown error"}). ` +
+              `Manually restart the session or refresh the page.`,
+            "error",
+          );
+        }
+      } else {
+        setStatus("Signed in. Open a session to start chatting.", "success");
+      }
+      // Auto-close after a brief moment so the user reads the status.
+      setTimeout(() => closeModal(), 1500);
+    } catch (error) {
+      setStatus(`Sign in failed: ${error.message}`, "error");
+      busy = false;
+      enableSubmit();
+    }
+  });
+
+  // Esc closes
+  const escHandler = (event) => {
+    if (event.key === "Escape") {
+      closeModal();
+      window.removeEventListener("keydown", escHandler);
+    }
+  };
+  window.addEventListener("keydown", escHandler);
+}
+
+function closeClaudeOAuthSignInModal() {
+  if (__claudeOAuthModal?.root && __claudeOAuthModal.root.parentNode) {
+    __claudeOAuthModal.root.parentNode.removeChild(__claudeOAuthModal.root);
+  }
+  __claudeOAuthModal = null;
+}
+
+// Best-effort session restart after sign-in. The session record itself
+// stays — we just need claude to be re-spawned so the new env var
+// (CLAUDE_CODE_OAUTH_TOKEN) flows through. The server uses claude's
+// `--resume <session-id>` so the conversation transcript is preserved.
+async function restartRichSessionAfterSignIn(sessionId) {
+  if (!sessionId) return;
+  try {
+    const response = await fetch(`/api/sessions/${encodeURIComponent(sessionId)}/restart-stream`, {
+      method: "POST",
+    });
+    if (!response.ok) {
+      console.warn("[vibe-research] could not auto-restart session after sign-in", response.status);
+    }
+  } catch (error) {
+    console.warn("[vibe-research] session restart errored", error);
+  }
 }
 
 // Pick the latest TodoWrite/TaskUpdate entry — the one whose todos[] is
@@ -11148,7 +11419,7 @@ function getParentPathForDisplay(value) {
   return normalizedPath.slice(0, separatorIndex);
 }
 
-function sendTerminalInput(data, { queueIfDisconnected = false, attachments = null } = {}) {
+function sendTerminalInput(data, { queueIfDisconnected = false, attachments = null, clientMessageId = null } = {}) {
   const text = String(data || "");
   if (!text) {
     return false;
@@ -11183,9 +11454,33 @@ function sendTerminalInput(data, { queueIfDisconnected = false, attachments = nu
       mimeType: String(att.mimeType || ""),
     })).filter((att) => att.absolutePath);
   }
+  // Pass through the client-allocated stable id when present. The server
+  // uses it as the user-echo entry id, so optimistic UI, the persisted
+  // record, and any rehydrated entry on reconnect all share one id.
+  if (clientMessageId && typeof clientMessageId === "string") {
+    message.clientMessageId = clientMessageId;
+  }
   state.websocket.send(JSON.stringify(message));
   scheduleTerminalTextareaReset();
   return true;
+}
+
+// Stable id allocator for outbound chat messages. Each composer-flushed
+// queue item gets a UUID before it leaves the client; the server treats
+// it as the canonical id for the user-echo entry. Falls back to a
+// timestamp-counter id in environments without crypto.randomUUID
+// (very old browsers; unit tests using jsdom).
+let __nextLocalMessageIdCounter = 0;
+function allocateClientMessageId() {
+  try {
+    if (typeof crypto !== "undefined" && typeof crypto.randomUUID === "function") {
+      return `c-${crypto.randomUUID()}`;
+    }
+  } catch {
+    // crypto blocked on insecure contexts; fall through.
+  }
+  __nextLocalMessageIdCounter += 1;
+  return `c-${Date.now().toString(36)}-${__nextLocalMessageIdCounter.toString(36)}`;
 }
 
 function isImageFileLike(file) {

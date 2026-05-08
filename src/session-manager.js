@@ -38,6 +38,7 @@ import {
   normaliseNarrativeEntry,
 } from "./narrative-schema.js";
 import { ClaudeStreamSession } from "./claude-stream-session.js";
+import { envWithClaudeTokenSync } from "./claude-oauth-flow.js";
 import { CodexStreamSession } from "./codex-stream-session.js";
 import { SessionStore } from "./session-store.js";
 import { getLegacyWorkspaceStateDir, getVibeResearchStateDir, getVibeResearchSystemDir } from "./state-paths.js";
@@ -684,36 +685,17 @@ function mergeNarrativeEntries(localEntries = [], providerEntries = [], maxEntri
     ...providerEntries.map((entry, index) => ({ ...entry, __origin: "provider", __index: index })),
   ]
     .sort((left, right) => {
-      // Sort by wall-clock timestamp first. ClaudeStreamSession caches
-      // first-observation time per entry id (see _entryStamps), and the
-      // JSONL transcript that drives rehydration is itself ordered by
-      // Claude's emit time — both produce monotonic timestamps in
-      // practice. Persisted nativeNarrativeEntries also carry the original
-      // wall-clock from when they were pushed.
+      // Seq-primary ordering. allocateSeq() is the single ordering
+      // authority and is now persisted across restarts (entrySeqCounter
+      // serializes with the session record), and JSONL rehydration
+      // re-stamps entries via the same counter — so we no longer have the
+      // "synthetic-zero from rehydration" problem that pushed the old
+      // comparator to timestamp-primary. Insertion-order owned by seq is
+      // the same rule the client renderer uses (selectNarrativeEntries).
       //
-      // Why not seq-first: across a server restart we mix three buckets:
-      //   - persisted status pills (seq stripped on restore)
-      //   - JSONL-rehydrated entries (synthetic seq=0 from
-      //     normaliseNarrativeEntry's default, real seq is unknown)
-      //   - fresh post-restart pills + new live stream entries (real seq)
-      // A seq-first comparator puts every "fresh" or "synthetic-zero"
-      // entry before everything that has lost its seq, and the chat
-      // history scrambles into a non-chronological order. Timestamps
-      // survive the restart cleanly, so they're the safe primary key.
-      //
-      // Seq still acts as the tiebreaker for entries that share a
-      // timestamp (the common within-turn case where text + tool_use
-      // blocks all carry the same Claude payload timestamp).
-      const leftTime = parseSessionTimestamp(left.timestamp, 0);
-      const rightTime = parseSessionTimestamp(right.timestamp, 0);
-      if (leftTime !== rightTime) {
-        return leftTime - rightTime;
-      }
-
-      // Real seq numbers from allocateSeq() start at 1; seq=0 is the
-      // sentinel that normaliseNarrativeEntry stamps when no seq was
-      // supplied. Treat the sentinel as "no seq" so a synthetic-zero
-      // never outranks a real entry that genuinely has seq>=1.
+      // Timestamp acts only as a defensive tiebreaker for genuine seq=0
+      // entries (legacy data on disk, third-party producers); within a
+      // single producer's stream of fresh entries seq is total.
       const isRealSeq = (value) => Number.isFinite(Number(value)) && Number(value) > 0;
       const leftSeq = isRealSeq(left.seq) ? Number(left.seq) : null;
       const rightSeq = isRealSeq(right.seq) ? Number(right.seq) : null;
@@ -725,6 +707,12 @@ function mergeNarrativeEntries(localEntries = [], providerEntries = [], maxEntri
       }
       if (leftSeq == null && rightSeq != null) {
         return 1;
+      }
+
+      const leftTime = parseSessionTimestamp(left.timestamp, 0);
+      const rightTime = parseSessionTimestamp(right.timestamp, 0);
+      if (leftTime !== rightTime) {
+        return leftTime - rightTime;
       }
 
       if (left.__origin !== right.__origin) {
@@ -4196,7 +4184,7 @@ export class SessionManager {
     return this.performSessionWrite(session, input);
   }
 
-  writeToClaudeStreamSession(session, input, { attachments = [] } = {}) {
+  writeToClaudeStreamSession(session, input, { attachments = [], clientMessageId = null } = {}) {
     if (!session?.streamSession) {
       return false;
     }
@@ -4224,7 +4212,13 @@ export class SessionManager {
             .map((att) => String(att?.absolutePath || att?.path || "").trim())
             .filter(Boolean)
         : [];
+      // Honor the client-allocated id only on the FIRST physical line of a
+      // multi-line paste. Subsequent lines synthesize their own ids — the
+      // client only allocates one per send action, and we must not collide
+      // them across pushes inside the same loop iteration.
+      const userEntryId = firstLine && clientMessageId ? clientMessageId : undefined;
       this.pushNativeNarrativeEntry(session, {
+        id: userEntryId,
         kind: "user",
         label: "You",
         text: line,
@@ -4849,7 +4843,65 @@ export class SessionManager {
     autoRenameEnabled = false,
     occupationId = this.occupationId,
     streamMode = false,
+    entrySeqCounter = 0,
+    broadcastSeq = 0,
   }) {
+    // Restore persisted entries while preserving each entry's seq. Without
+    // this round-trip every restored entry was stamped seq=0, which used to
+    // be tolerable when the server merge sorted by timestamp; under the
+    // seq-primary ordering rule we now use, losing seq scrambles the chat
+    // history on the next restart. Re-establish entrySeqCounter as max+1
+    // of the restored entries so any new pushNativeNarrativeEntry never
+    // collides with a restored seq.
+    const restoredEntries = Array.isArray(nativeNarrativeEntries)
+      ? nativeNarrativeEntries
+        .map((entry) => (
+          entry && typeof entry === "object"
+            ? {
+                id: String(entry.id || randomUUID()),
+                kind: String(entry.kind || "status"),
+                label: String(entry.label || "Activity"),
+                text: normalizeNarrativeEventText(entry.text || ""),
+                timestamp: entry.timestamp || null,
+                status: entry.status || null,
+                meta: entry.meta || null,
+                outputPreview: entry.outputPreview || "",
+                seq: Number.isFinite(Number(entry.seq)) && Number(entry.seq) > 0
+                  ? Number(entry.seq)
+                  : 0,
+                ...(Array.isArray(entry.imageRefs) && entry.imageRefs.length
+                  ? { imageRefs: entry.imageRefs.map((ref) => String(ref || "")).filter(Boolean) }
+                  : {}),
+              }
+            : null
+        ))
+        .filter((entry) => entry?.text)
+        .slice(-NATIVE_NARRATIVE_EVENT_LIMIT)
+      : [];
+    let restoredMaxSeq = 0;
+    for (const entry of restoredEntries) {
+      if (entry.seq > restoredMaxSeq) restoredMaxSeq = entry.seq;
+    }
+    let resumedEntrySeqCounter = Number.isFinite(Number(entrySeqCounter))
+      ? Math.max(0, Number(entrySeqCounter))
+      : 0;
+    if (restoredMaxSeq > resumedEntrySeqCounter) {
+      resumedEntrySeqCounter = restoredMaxSeq;
+    }
+    // Backfill seq for any restored entry that lost it (legacy data on
+    // disk from before seq was persisted). Stamp them in restored order
+    // so client renderer's insertion-order draws them as they were last
+    // seen. New seqs go above the highest persisted seq so live entries
+    // stay above legacy ones in any subsequent merge.
+    for (const entry of restoredEntries) {
+      if (!entry.seq || entry.seq <= 0) {
+        resumedEntrySeqCounter += 1;
+        entry.seq = resumedEntrySeqCounter;
+      }
+    }
+    const resumedBroadcastSeq = Number.isFinite(Number(broadcastSeq))
+      ? Math.max(0, Number(broadcastSeq))
+      : 0;
     return {
       id,
       providerId,
@@ -4872,25 +4924,7 @@ export class SessionManager {
       rows,
       pty: null,
       buffer: trimBuffer(buffer || ""),
-      nativeNarrativeEntries: Array.isArray(nativeNarrativeEntries)
-        ? nativeNarrativeEntries
-          .map((entry) => (
-            entry && typeof entry === "object"
-              ? {
-                  id: String(entry.id || randomUUID()),
-                  kind: String(entry.kind || "status"),
-                  label: String(entry.label || "Activity"),
-                  text: normalizeNarrativeEventText(entry.text || ""),
-                  timestamp: entry.timestamp || null,
-                  status: entry.status || null,
-                  meta: entry.meta || null,
-                  outputPreview: entry.outputPreview || "",
-                }
-              : null
-          ))
-          .filter((entry) => entry?.text)
-          .slice(-NATIVE_NARRATIVE_EVENT_LIMIT)
-        : [],
+      nativeNarrativeEntries: restoredEntries,
       nativeNarrativeInputBuffer: String(nativeNarrativeInputBuffer || ""),
       clients: new Set(),
       metaBroadcastTimer: null,
@@ -4924,7 +4958,10 @@ export class SessionManager {
       // turns (a tool_use_result event's timestamp infects every subsequent
       // assistant entry's `updatedAt`). Sequence numbers don't have that
       // problem — first observation wins and they're stable across re-parses.
-      entrySeqCounter: 0,
+      // Counter is now persisted across restarts; restoredMaxSeq above
+      // ensures we never re-use a number a still-live frame already used.
+      entrySeqCounter: resumedEntrySeqCounter,
+      broadcastSeq: resumedBroadcastSeq,
       // True between when the user sends a prompt and the underlying stream
       // session emits turn-complete. Lets the client render a persistent
       // "agent is working" indicator that survives across the pending /
@@ -5973,10 +6010,76 @@ export class SessionManager {
     }
   }
 
+  // Stop the current claude subprocess (if any) and re-spawn it via
+  // startSession({ restored: true }). Used after the user signs in via
+  // the OAuth flow — the env var CLAUDE_CODE_OAUTH_TOKEN was injected
+  // when the prior subprocess was launched, so we have to relaunch for
+  // the new token to take effect. `restored: true` makes claude-cli
+  // use `--resume <session-id>`, so the user's conversation transcript
+  // is preserved across the restart.
+  //
+  // Race protection: the old child's `on("exit")` handler fires
+  // asynchronously after we kill it; without the `_restarting` flag and
+  // the streamSession === ownStreamSession check inside the handler, the
+  // old exit could land *after* startSession has wired up the new child
+  // and stomp `session.status` -> "exited". The flag is cleared by the
+  // replacement-guard check in the handler itself (it just no-ops once
+  // session.streamSession points at the new instance), so we don't need
+  // to clean it up here.
+  async restartStreamSession(sessionId) {
+    const session = this.sessions.get(sessionId);
+    if (!session) {
+      return { ok: false, reason: "session-not-found" };
+    }
+    if (!session.streamMode) {
+      return { ok: false, reason: "not-stream-mode" };
+    }
+    const provider = this.getProvider(session.providerId);
+    if (!provider) {
+      return { ok: false, reason: "provider-not-found" };
+    }
+    const oldStreamSession = session.streamSession;
+    if (oldStreamSession) {
+      // Mark the old instance as mid-restart BEFORE close() so its
+      // async exit event no-ops on (a) the _restarting flag.
+      oldStreamSession._restarting = true;
+      // Clear the pointer too so guard (b) catches any handler that
+      // somehow misses the flag (defense in depth — the JS event loop
+      // is async; close() may even fire `exit` synchronously in some
+      // edge paths and we want the handler to bail either way).
+      session.streamSession = null;
+      if (typeof oldStreamSession.close === "function") {
+        try { oldStreamSession.close(); } catch { /* best effort */ }
+      }
+    }
+    // Clear status so the freshly-spawned child starts cleanly. Without
+    // this, a previously-marked "exited" session would stay visually
+    // dead even after the new child reports "running".
+    session.status = "running";
+    session.exitCode = null;
+    session.exitSignal = null;
+    session.streamInputBuffer = "";
+    session.streamWorking = false;
+    try {
+      this.startSession(session, provider, { restored: true });
+      return { ok: true };
+    } catch (error) {
+      return { ok: false, reason: "start-failed", message: String(error.message || error) };
+    }
+  }
+
   startClaudeStreamSession(session, provider, { restored = false } = {}) {
     const sessionCwd = resolveCwd(session.cwd, this.cwd);
     session.cwd = sessionCwd;
-    const sessionEnv = this.buildSessionEnvironment(session, provider.id);
+    // Inject the vibe-research-stored OAuth token if present. Fixes the
+    // user-reported "authentication_failed" symptom: the spawned claude
+    // subprocess otherwise inherits whatever auth state HOME/keychain
+    // happen to expose, which can drift from the user's terminal claude.
+    // CLAUDE_CODE_OAUTH_TOKEN is the documented env override.
+    const sessionEnv = envWithClaudeTokenSync(
+      this.buildSessionEnvironment(session, provider.id),
+      this.stateDir,
+    );
     writeProviderCredentialEnvFile(sessionEnv);
 
     // When `restored` is true, the session predates this server process —
@@ -6115,7 +6218,23 @@ export class SessionManager {
       this.scheduleSessionMetaBroadcast(session, { immediate: true });
     });
 
+    // Capture this exact streamSession instance so the handler can tell
+    // "I'm the live child" from "I'm the just-killed predecessor". When
+    // restartStreamSession() kills the previous child to pick up a new
+    // CLAUDE_CODE_OAUTH_TOKEN env, the old child's exit event fires
+    // asynchronously *after* startSession() has already wired up the
+    // replacement. Without these guards the old handler stomps
+    // session.status -> "exited" and the user sees their freshly-spawned
+    // child get marked dead.
+    const ownStreamSession = streamSession;
     streamSession.on("exit", ({ code, signal }) => {
+      // (a) mid-flight restart marker: set true by restartStreamSession
+      //     before calling close(); cleared once the new spawn is wired.
+      if (ownStreamSession._restarting) return;
+      // (b) replacement guard: by the time we got here, session may
+      //     already be pointing at a fresh streamSession.
+      if (session.streamSession && session.streamSession !== ownStreamSession) return;
+
       session.status = "exited";
       session.exitCode = code;
       session.exitSignal = signal;
@@ -6306,7 +6425,23 @@ export class SessionManager {
       this.scheduleSessionMetaBroadcast(session, { immediate: true });
     });
 
+    // Capture this exact streamSession instance so the handler can tell
+    // "I'm the live child" from "I'm the just-killed predecessor". When
+    // restartStreamSession() kills the previous child to pick up a new
+    // CLAUDE_CODE_OAUTH_TOKEN env, the old child's exit event fires
+    // asynchronously *after* startSession() has already wired up the
+    // replacement. Without these guards the old handler stomps
+    // session.status -> "exited" and the user sees their freshly-spawned
+    // child get marked dead.
+    const ownStreamSession = streamSession;
     streamSession.on("exit", ({ code, signal }) => {
+      // (a) mid-flight restart marker: set true by restartStreamSession
+      //     before calling close(); cleared once the new spawn is wired.
+      if (ownStreamSession._restarting) return;
+      // (b) replacement guard: by the time we got here, session may
+      //     already be pointing at a fresh streamSession.
+      if (session.streamSession && session.streamSession !== ownStreamSession) return;
+
       session.status = "exited";
       session.exitCode = code;
       session.exitSignal = signal;
@@ -6374,6 +6509,8 @@ export class SessionManager {
       workspaceRepair: snapshot.workspaceRepair || null,
       occupationId: snapshot.occupationId || snapshot.promptId || this.occupationId,
       streamMode: resolvedStreamMode,
+      entrySeqCounter: snapshot.entrySeqCounter || 0,
+      broadcastSeq: snapshot.broadcastSeq || 0,
     });
 
     this.sessions.set(session.id, session);
@@ -6456,10 +6593,32 @@ export class SessionManager {
     return {
       ...this.serializeSession(session),
       buffer: session.buffer,
-      nativeNarrativeEntries: session.nativeNarrativeEntries,
+      // Persist seq alongside each entry so chat order survives restarts.
+      // Pre-existing on-disk records that were saved before this change
+      // come back without seq; buildSessionRecord backfills monotonically.
+      nativeNarrativeEntries: Array.isArray(session.nativeNarrativeEntries)
+        ? session.nativeNarrativeEntries.map((entry) => (
+            entry && typeof entry === "object"
+              ? {
+                  ...entry,
+                  seq: Number.isFinite(Number(entry.seq)) && Number(entry.seq) > 0
+                    ? Number(entry.seq)
+                    : 0,
+                }
+              : entry
+          ))
+        : [],
       nativeNarrativeInputBuffer: session.nativeNarrativeInputBuffer,
       providerState: session.providerState,
       restoreOnStartup: session.restoreOnStartup,
+      // Persistent seq counters — buildSessionRecord on restore will
+      // reconcile these with restoredMaxSeq so ordering survives.
+      entrySeqCounter: Number.isFinite(Number(session.entrySeqCounter))
+        ? Number(session.entrySeqCounter)
+        : 0,
+      broadcastSeq: Number.isFinite(Number(session.broadcastSeq))
+        ? Number(session.broadcastSeq)
+        : 0,
     };
   }
 
