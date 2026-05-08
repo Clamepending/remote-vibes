@@ -6616,7 +6616,7 @@ function renderRichSessionEntry(entry, index) {
   const toolImageRefs = kind === "tool" && !browserWidget
     ? (() => {
         if (Array.isArray(entry?.imageRefs) && entry.imageRefs.length) {
-          return entry.imageRefs.slice(0, 4);
+          return entry.imageRefs.slice(0, 12);
         }
         const labelStr = String(entry?.label || "");
         const looksImageProducing = /^(?:Write|Edit|MultiEdit|Read|NotebookEdit|Open|View)$/i.test(labelStr)
@@ -6635,7 +6635,7 @@ function renderRichSessionEntry(entry, index) {
   // composer's explicit attachment markdown ("![dropped image: foo.png]
   // (/abs/path)"). Plain prose mentions of an image stay as text.
   const userImageRefs = kind === "user" && Array.isArray(entry?.imageRefs)
-    ? entry.imageRefs.slice(0, 4)
+    ? entry.imageRefs.slice(0, 12)
     : [];
   const userImageStripHtml = renderRichSessionImageStrip(userImageRefs);
 

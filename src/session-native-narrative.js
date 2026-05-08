@@ -125,7 +125,7 @@ export function extractSlashActionFromText(text) {
   return null;
 }
 
-export function extractImageRefsFromText(text, { includeMarkdown = false, maxRefs = 4 } = {}) {
+export function extractImageRefsFromText(text, { includeMarkdown = false, maxRefs = 12 } = {}) {
   const seen = new Set();
   const out = [];
   const source = stripAnsiSequences(String(text ?? ""));
@@ -164,6 +164,23 @@ export function extractImageRefsFromText(text, { includeMarkdown = false, maxRef
     }
     for (const match of source.matchAll(/!\[[^\]]*\]\(([^)<>\s]+)(?:\s+"[^"]*")?\)/gu)) {
       pushIfImage(match[1]);
+      if (out.length >= maxRefs) {
+        return out;
+      }
+    }
+  }
+
+  // Backticked code spans frequently wrap file paths in Claude's output:
+  //   "the figure is at `figures/x.png`"
+  //   "- `/Users/me/projects/foo/figures/y.png`"
+  // Run path extraction on the contents of inline code spans BEFORE the
+  // backtick-stripping pass below. Without this, Claude's most common
+  // formatting (single-backtick-wrapped paths) silently disappears from
+  // the imageRefs output and nothing renders inline.
+  for (const match of source.matchAll(/`([^`\n]+)`/gu)) {
+    const inner = match[1].trim();
+    if (INLINE_IMAGE_EXTENSIONS_RE.test(inner) && !inner.includes(" ")) {
+      pushIfImage(inner);
       if (out.length >= maxRefs) {
         return out;
       }
@@ -990,7 +1007,7 @@ function buildClaudeNarrativeFromText(text, session = {}, { maxEntries = DEFAULT
           if (messageHasToolUse) {
             assistantEntry.preamble = true;
           }
-          const imageRefs = extractImageRefsFromText(item.text);
+          const imageRefs = extractImageRefsFromText(item.text, { includeMarkdown: true });
           if (imageRefs.length) {
             assistantEntry.imageRefs = imageRefs;
           }
