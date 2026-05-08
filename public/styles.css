@@ -19753,3 +19753,172 @@ select:disabled {
     gap: 10px;
   }
 }
+
+/* ============================================================
+ * Claude OAuth sign-in modal — paste-back flow.
+ * Triggered when the user clicks Sign in on an authentication_failed
+ * status pill (or types /login). See src/client/main.js
+ * openClaudeOAuthSignInModal() for the JS and src/claude-oauth-flow.js
+ * for the underlying PKCE flow.
+ * ============================================================ */
+.claude-oauth-modal-backdrop {
+  position: fixed;
+  inset: 0;
+  background: rgba(8, 10, 18, 0.72);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  z-index: 9000;
+  backdrop-filter: blur(4px);
+}
+.claude-oauth-modal {
+  background: #14171f;
+  color: #e7e9ee;
+  border: 1px solid rgba(255, 255, 255, 0.08);
+  border-radius: 14px;
+  padding: 28px 28px 20px;
+  width: min(560px, calc(100vw - 32px));
+  max-height: calc(100vh - 64px);
+  overflow-y: auto;
+  box-shadow: 0 24px 64px rgba(0, 0, 0, 0.5);
+  position: relative;
+  font-size: 0.92rem;
+  line-height: 1.5;
+}
+.claude-oauth-modal h2 {
+  margin: 0 0 18px;
+  font-size: 1.18rem;
+  font-weight: 600;
+  letter-spacing: -0.01em;
+}
+.claude-oauth-modal-close {
+  position: absolute;
+  top: 10px;
+  right: 12px;
+  background: transparent;
+  border: 0;
+  color: rgba(231, 233, 238, 0.6);
+  font-size: 1.6rem;
+  width: 32px;
+  height: 32px;
+  cursor: pointer;
+  border-radius: 8px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 0;
+}
+.claude-oauth-modal-close:hover {
+  background: rgba(255, 255, 255, 0.06);
+  color: #fff;
+}
+.claude-oauth-modal-step {
+  margin: 14px 0 8px;
+  display: flex;
+  gap: 10px;
+  align-items: flex-start;
+  color: rgba(231, 233, 238, 0.86);
+}
+.claude-oauth-step-num {
+  flex: 0 0 22px;
+  height: 22px;
+  border-radius: 50%;
+  background: rgba(255, 255, 255, 0.08);
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 0.78rem;
+  font-weight: 600;
+  margin-top: 1px;
+}
+.claude-oauth-modal-url-row {
+  display: flex;
+  gap: 8px;
+  align-items: stretch;
+  margin: 4px 0 6px;
+}
+.claude-oauth-modal-url {
+  flex: 1;
+  min-width: 0;
+  padding: 10px 12px;
+  background: rgba(255, 255, 255, 0.04);
+  border: 1px solid rgba(255, 255, 255, 0.06);
+  border-radius: 8px;
+  color: #b8d4ff;
+  text-decoration: none;
+  font-family: ui-monospace, "SF Mono", Menlo, Consolas, monospace;
+  font-size: 0.78rem;
+  word-break: break-all;
+  white-space: pre-wrap;
+}
+.claude-oauth-modal-url:hover {
+  text-decoration: underline;
+}
+.claude-oauth-modal-copy {
+  background: rgba(255, 255, 255, 0.06);
+  color: #e7e9ee;
+  border: 1px solid rgba(255, 255, 255, 0.08);
+  border-radius: 8px;
+  padding: 0 12px;
+  font-size: 0.82rem;
+  cursor: pointer;
+}
+.claude-oauth-modal-copy:hover:not([disabled]) {
+  background: rgba(255, 255, 255, 0.1);
+}
+.claude-oauth-modal-copy[disabled] {
+  opacity: 0.45;
+  cursor: not-allowed;
+}
+.claude-oauth-modal-input {
+  width: 100%;
+  background: rgba(255, 255, 255, 0.04);
+  border: 1px solid rgba(255, 255, 255, 0.08);
+  border-radius: 8px;
+  padding: 10px 12px;
+  color: #e7e9ee;
+  font-family: ui-monospace, "SF Mono", Menlo, Consolas, monospace;
+  font-size: 0.85rem;
+  resize: vertical;
+  min-height: 64px;
+  margin-top: 4px;
+  box-sizing: border-box;
+}
+.claude-oauth-modal-input:focus {
+  outline: 2px solid rgba(184, 212, 255, 0.5);
+  outline-offset: -1px;
+}
+.claude-oauth-modal-status {
+  margin: 8px 0 16px;
+  font-size: 0.84rem;
+  min-height: 18px;
+  color: rgba(231, 233, 238, 0.7);
+}
+.claude-oauth-modal-status[data-kind="error"] {
+  color: #ff8e8e;
+}
+.claude-oauth-modal-status[data-kind="success"] {
+  color: #95e3a8;
+}
+.claude-oauth-modal-actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 8px;
+}
+.claude-oauth-modal-cancel {
+  background: transparent;
+  color: rgba(231, 233, 238, 0.7);
+  border: 1px solid rgba(255, 255, 255, 0.08);
+  border-radius: 8px;
+  padding: 8px 14px;
+  cursor: pointer;
+  font-size: 0.86rem;
+}
+.claude-oauth-modal-cancel:hover {
+  background: rgba(255, 255, 255, 0.04);
+  color: #e7e9ee;
+}
+.claude-oauth-modal-submit.is-success {
+  background: #2d6f3f;
+  border-color: #2d6f3f;
+}
