@@ -223,16 +223,25 @@ export function resolveRichSessionSlashAction(entry) {
 }
 
 // Resolves the image refs for an entry. Reads the structured field set by
-// the server-side narrative shaper. See resolveRichSessionSlashAction for
-// why the regex fallback was removed.
+// the server-side narrative shaper, then falls back to a client-side
+// regex extractor when the field is empty. The fallback is critical for
+// entries that were parsed by an OLDER server build before backticked
+// path extraction was added — without it, existing chat history shows
+// paths as plain text where inline thumbnails should appear.
 export function resolveRichSessionImageRefs(entry, options = {}) {
   if (!entry || typeof entry !== "object") {
     return [];
   }
+  const cap = options.maxRefs || 12;
   if (Array.isArray(entry.imageRefs) && entry.imageRefs.length) {
-    return entry.imageRefs.slice(0, options.maxRefs || 4);
+    return entry.imageRefs.slice(0, cap);
   }
-  return [];
+  const text = String(entry.text || "");
+  if (!text) return [];
+  return extractRichSessionImageRefs(text, {
+    includeMarkdown: Boolean(options.includeMarkdown),
+    maxRefs: cap,
+  });
 }
 
 // Pulls every plausible image path out of a CLI / assistant text block.
@@ -240,7 +249,7 @@ export function resolveRichSessionImageRefs(entry, options = {}) {
 //   * POSIX absolute: /Users/.../foo.png
 //   * Workspace-relative: figures/foo.png, src/img/x.jpg
 // Bare filenames like "foo.png" with no slash are skipped (too noisy).
-export function extractRichSessionImageRefs(text, { includeMarkdown = false, maxRefs = 4 } = {}) {
+export function extractRichSessionImageRefs(text, { includeMarkdown = false, maxRefs = 12 } = {}) {
   const seen = new Set();
   const out = [];
   // Strip ANSI before extraction so a coloured "saved [32mfigures/x.png[0m"
@@ -285,14 +294,29 @@ export function extractRichSessionImageRefs(text, { includeMarkdown = false, max
     }
   }
 
+  // Backticked paths first — Claude's most common formatting wraps file
+  // paths in inline-code spans. Without this pass, every assistant
+  // message that lists figure paths in a markdown bullet (`- `path``)
+  // produces zero imageRefs because backticks are stripped below.
+  for (const match of source.matchAll(/`([^`\n]+)`/gu)) {
+    const inner = match[1].trim();
+    if (RICH_SESSION_INLINE_IMAGE_EXTENSIONS.test(inner) && !inner.includes(" ")) {
+      pushIfImage(inner);
+      if (out.length >= maxRefs) {
+        return out;
+      }
+    }
+  }
+
   // Strip markdown image syntax before scanning for plain paths so we don't
   // double-extract a path that already appeared inside ![](...) above.
   const sanitized = source
     .replace(/!\[[^\]]*\]\(<[^>]*>(?:\s+"[^"]*")?\)/gu, "")
     .replace(/!\[[^\]]*\]\([^)]+\)/gu, "");
 
-  // Skip text inside ` `-delimited inline code: every plot script's grep
-  // -rn output ends up here, and embedding all of it bloats the feed.
+  // Strip the contents of inline-code spans so prose-extraction below
+  // doesn't double-match a path we already pulled out via the backtick
+  // pass above.
   const codeStripped = sanitized.replace(/`[^`]*`/g, "");
 
   // Bracketed forms — angle brackets and double-quotes — explicitly let the

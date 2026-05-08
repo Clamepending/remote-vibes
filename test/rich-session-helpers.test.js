@@ -61,11 +61,12 @@ test("image extractor: deduplicates the same path mentioned twice", () => {
   );
 });
 
-test("image extractor: caps at 4 refs by default to keep the strip bounded", () => {
-  const text = "p1/a.png p2/b.png p3/c.png p4/d.png p5/e.png p6/f.png";
+test("image extractor: default cap is 12 (raised from 4) so multi-figure assistant lists fit", () => {
+  // Old default was 4 which truncated common assistant outputs that list
+  // ~6 figures. 12 is comfortable for per-project figure dumps.
+  const text = Array.from({ length: 14 }, (_, i) => `p${i}/x${i}.png`).join(" ");
   const refs = extractRichSessionImageRefs(text);
-  assert.equal(refs.length, 4);
-  assert.deepEqual(refs, ["p1/a.png", "p2/b.png", "p3/c.png", "p4/d.png"]);
+  assert.equal(refs.length, 12);
 });
 
 test("image extractor: respects maxRefs option", () => {
@@ -592,9 +593,20 @@ test("resolver: reads structured imageRefs field when present", () => {
   assert.deepEqual(resolveRichSessionImageRefs(entry), ["figures/a.png", "figures/b.png"]);
 });
 
-test("resolver: returns [] when imageRefs absent (no regex fallback)", () => {
-  const entry = { kind: "tool", text: "saved to figures/x.png" };
-  assert.deepEqual(resolveRichSessionImageRefs(entry), []);
+test("resolver: falls back to regex extraction when entry.imageRefs is absent or empty", () => {
+  // Regression: existing chat history saved before backticked-path
+  // extraction was added has imageRefs:[] baked in. The resolver must
+  // re-extract from text on read so those entries render inline images
+  // without requiring a server-side reparse.
+  assert.deepEqual(
+    resolveRichSessionImageRefs({ kind: "tool", text: "saved to figures/x.png" }),
+    ["figures/x.png"],
+  );
+  assert.deepEqual(
+    resolveRichSessionImageRefs({ kind: "assistant", text: "see `figures/y.png` for details" }),
+    ["figures/y.png"],
+  );
+  assert.deepEqual(resolveRichSessionImageRefs({ kind: "tool", text: "" }), []);
 });
 
 // =====================================================================
