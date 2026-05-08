@@ -397,15 +397,7 @@ test("runResearchAutopilot can complete a gated long-horizon move after synthesi
         },
       };
     }
-    if (String(url).endsWith("/canvases")) {
-      return {
-        ok: true,
-        status: 201,
-        async json() {
-          return { canvas: { id: body.id, title: body.title, imagePath: body.imagePath, href: body.href } };
-        },
-      };
-    }
+    // /canvases endpoint removed (agent canvas feature deleted).
     return {
       ok: false,
       status: 404,
@@ -437,11 +429,6 @@ test("runResearchAutopilot can complete a gated long-horizon move after synthesi
       finishPaperCaption: "Long-horizon harness finalized.",
       finishPaperLimitations: "This harness uses a synthetic metric and does not test external provider quality.",
       finishPaperDiscussion: "The harness proves the mechanics from queue to resolved paper update.",
-      finishPublishCanvas: true,
-      finishCanvasSessionId: "human-chat",
-      finishCanvasAgentId: "codex",
-      finishCanvasTitle: "Long-horizon harness",
-      finishCanvasCaption: "Resolved from a synthesized review decision.",
       fetchImpl,
     });
 
@@ -454,7 +441,6 @@ test("runResearchAutopilot can complete a gated long-horizon move after synthesi
     assert.equal(report.actions[1].result.kind, "finish");
     assert.equal(report.actions[1].result.finish.applied, true);
     assert.equal(report.actions[1].result.finish.paper.figure.generated, true);
-    assert.equal(report.actions[1].result.finish.canvas.title, "Long-horizon harness");
 
     const readme = readFileSync(join(dir, "README.md"), "utf8");
     assert.doesNotMatch(readme, /\| queued-move \| \[queued-move\]\(results\/queued-move\.md\)/);
@@ -470,7 +456,6 @@ test("runResearchAutopilot can complete a gated long-horizon move after synthesi
     assert.match(paper, /figures\/queued-move-summary\.svg/);
     assert.ok(calls.some((call) => call.url.endsWith("/action-items")), "review card was created");
     assert.ok(calls.some((call) => call.url.endsWith("/wait")), "review card was waited on");
-    assert.ok(calls.some((call) => call.url.endsWith("/canvases")), "final canvas was published");
   } finally {
     rmSync(dir, { recursive: true, force: true });
   }

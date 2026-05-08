@@ -349,50 +349,8 @@ test("AgentTownStore supports research-runner review choices", async () => {
   }
 });
 
-test("AgentTownStore upserts and persists per-session canvases", async () => {
-  const stateDir = await createTempStateDir();
-
-  try {
-    const firstStore = new AgentTownStore({ stateDir });
-    await firstStore.initialize();
-    const { canvas } = await firstStore.upsertCanvas({
-      sourceSessionId: "session-1",
-      sourceAgentId: "agent-1",
-      title: "Learning curve",
-      caption: "Validation accuracy by epoch.",
-      imagePath: "results/curve.png",
-      href: "?view=knowledge-base",
-    });
-
-    assert.equal(canvas.id, "session-1");
-    assert.equal(canvas.sourceSessionId, "session-1");
-    assert.equal(canvas.sourceAgentId, "agent-1");
-    assert.equal(canvas.title, "Learning curve");
-    assert.equal(canvas.caption, "Validation accuracy by epoch.");
-    assert.equal(canvas.imagePath, "results/curve.png");
-
-    await firstStore.upsertCanvas({
-      sourceSessionId: "session-1",
-      title: "Updated curve",
-      imagePath: "",
-      imageUrl: "https://example.test/updated.png",
-    });
-
-    const reloadedStore = new AgentTownStore({ stateDir });
-    await reloadedStore.initialize();
-    const state = reloadedStore.getState();
-    assert.equal(state.canvases.length, 1);
-    assert.equal(state.canvases[0].id, "session-1");
-    assert.equal(state.canvases[0].title, "Updated curve");
-    assert.equal(state.canvases[0].imagePath, "");
-    assert.equal(state.canvases[0].imageUrl, "https://example.test/updated.png");
-
-    await reloadedStore.deleteCanvas("session-1");
-    assert.equal(reloadedStore.getState().canvases.length, 0);
-  } finally {
-    await removeTempStateDir(stateDir);
-  }
-});
+// "AgentTownStore upserts and persists per-session canvases" removed:
+// agent canvas feature deleted.
 
 test("AgentTownStore publishes and imports shareable town layouts", async () => {
   const stateDir = await createTempStateDir();

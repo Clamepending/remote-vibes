@@ -6,7 +6,7 @@ const AGENT_TOWN_STATE_FILENAME = "agent-town-state.json";
 const AGENT_TOWN_STATE_VERSION = 6;
 const MAX_ACTION_ITEMS = 100;
 const MAX_EVENTS = 200;
-const MAX_CANVASES = 100;
+// MAX_CANVASES removed: agent canvas feature deleted.
 const MAX_LAYOUT_HISTORY = 60;
 const MAX_LAYOUT_SNAPSHOTS = 30;
 const MAX_TOWN_SHARES = 60;
@@ -828,46 +828,8 @@ function pickField(source, keys) {
   return undefined;
 }
 
-function pickCanvasField(value, keys, fallback = {}, defaultValue = "") {
-  const directValue = pickField(value, keys);
-  if (directValue !== undefined) {
-    return directValue;
-  }
-
-  const fallbackValue = pickField(fallback, keys);
-  return fallbackValue === undefined ? defaultValue : fallbackValue;
-}
-
-function normalizeCanvas(value = {}, fallback = {}) {
-  const sourceSessionId = normalizeText(
-    pickCanvasField(value, ["sourceSessionId", "sessionId"], fallback),
-    96,
-  );
-  const sourceAgentId = normalizeText(pickCanvasField(value, ["sourceAgentId", "agentId"], fallback), 96);
-  const id = normalizeId(pickCanvasField(value, ["id", "canvasId"], fallback) || sourceSessionId || sourceAgentId, "canvas");
-  const title = normalizeText(pickCanvasField(value, ["title"], fallback, "Agent canvas"), 120) || "Agent canvas";
-  const createdAt = normalizeText(pickCanvasField(fallback, ["createdAt"], value), 64) || nowIso();
-
-  return {
-    id,
-    sourceSessionId,
-    sourceAgentId,
-    title,
-    caption: normalizeText(pickCanvasField(value, ["caption", "detail"], fallback), 1_000),
-    alt: normalizeText(pickCanvasField(value, ["alt"], fallback, title), 200) || title,
-    imagePath: normalizeText(pickCanvasField(value, ["imagePath", "path"], fallback), 1_000),
-    imageUrl: normalizeText(pickCanvasField(value, ["imageUrl", "url"], fallback), 2_000),
-    href: normalizeText(pickCanvasField(value, ["href"], fallback), 2_000),
-    createdAt,
-    updatedAt: normalizeText(pickCanvasField(value, ["updatedAt"]), 64) || nowIso(),
-  };
-}
-
-function normalizeCanvases(value) {
-  return Array.isArray(value)
-    ? value.map((entry) => normalizeCanvas(entry)).slice(0, MAX_CANVASES)
-    : [];
-}
+// normalizeCanvas / normalizeCanvases / pickCanvasField removed:
+// agent canvas feature deleted.
 
 function normalizeState(value = {}) {
   const layout = normalizeLayout(value.layout);
@@ -890,7 +852,6 @@ function normalizeState(value = {}) {
     layoutSnapshots: normalizeLayoutSnapshots(value.layoutSnapshots || value.snapshots),
     townShares: normalizeTownShares(value.townShares || value.shares),
     signals: normalizeSignals(value.signals),
-    canvases: normalizeCanvases(value.canvases),
     actionItems,
     events,
     highlight: normalizeHighlight(value.highlight),
@@ -906,11 +867,10 @@ function getOnboardingPhase(state) {
   }
   const hasFunctional = layoutSummary.functionalCount > 0;
   const hasCosmetic = layoutSummary.cosmeticCount > 0;
-  const hasCanvas = Array.isArray(state.canvases) && state.canvases.length > 0;
   const hasLibraryNote = signals.libraryNoteSavedCount > 0;
   const hasAutomation = signals.automationCreatedCount > 0;
-  const completedQuests = [hasFunctional, hasCanvas, hasLibraryNote, hasAutomation].filter(Boolean).length;
-  if (hasFunctional && hasCanvas && hasLibraryNote && hasAutomation) {
+  const completedQuests = [hasFunctional, hasLibraryNote, hasAutomation].filter(Boolean).length;
+  if (hasFunctional && hasLibraryNote && hasAutomation) {
     return "seasoned";
   }
   if (completedQuests >= 2 || hasFunctional) {
@@ -955,15 +915,6 @@ const QUEST_DEFINITIONS = Object.freeze([
     priority: "normal",
   },
   {
-    id: "publish-agent-canvas",
-    title: "Publish an agent canvas",
-    detail: "Have an agent attach one visual artifact so the town shows current work.",
-    href: "?view=agent-inbox",
-    cta: "Start",
-    signal: "canvas",
-    priority: "normal",
-  },
-  {
     id: "save-library-note",
     title: "Save one Library note",
     detail: "Capture a durable note so future agents can pick up context.",
@@ -984,10 +935,6 @@ const QUEST_DEFINITIONS = Object.freeze([
 ]);
 
 function getQuestCompleted(state, quest) {
-  if (quest.signal === "canvas") {
-    return state.canvases.length > 0;
-  }
-
   if (quest.predicate === "first_building_placed" || quest.predicate === "building_placed") {
     return state.layoutSummary.cosmeticCount + state.layoutSummary.functionalCount >= 1;
   }
@@ -1138,12 +1085,6 @@ export class AgentTownStore {
     return state;
   }
 
-  getCanvas(canvasId) {
-    const id = normalizeId(canvasId, "canvas");
-    const canvas = this.state.canvases.find((entry) => entry.id === id);
-    return canvas ? clone(canvas) : null;
-  }
-
   getTownShare(shareId) {
     const id = normalizeSlug(shareId, 96);
     if (!id) {
@@ -1274,7 +1215,6 @@ export class AgentTownStore {
     const nextLayoutSummary = payload.layoutSummary || payload.agentTown?.layoutSummary;
     const nextLayout = payload.layout || payload.agentTown?.layout;
     const nextSignals = payload.signals || payload.agentTown?.signals;
-    const nextCanvases = payload.canvases || payload.agentTown?.canvases;
     const mirrorSessionId = normalizeText(
       payload.sourceSessionId || payload.sessionId || payload.agentTown?.sourceSessionId || payload.agentTown?.sessionId,
       96,
@@ -1299,10 +1239,6 @@ export class AgentTownStore {
         ...this.state.signals,
         ...nextSignals,
       });
-    }
-
-    if (Array.isArray(nextCanvases)) {
-      this.state.canvases = normalizeCanvases(nextCanvases);
     }
 
     await this.afterStateChange();
@@ -1642,41 +1578,7 @@ export class AgentTownStore {
     };
   }
 
-  async upsertCanvas(input = {}) {
-    const canvas = normalizeCanvas(input, {});
-    const existingIndex = this.state.canvases.findIndex((entry) => entry.id === canvas.id);
-    const existing = existingIndex >= 0 ? this.state.canvases[existingIndex] : null;
-    const nextCanvas = normalizeCanvas(
-      {
-        ...existing,
-        ...input,
-        id: canvas.id,
-        updatedAt: input.updatedAt || nowIso(),
-      },
-      existing || {},
-    );
-
-    if (existingIndex >= 0) {
-      this.state.canvases.splice(existingIndex, 1);
-    }
-    this.state.canvases = [nextCanvas, ...this.state.canvases].slice(0, MAX_CANVASES);
-    await this.afterStateChange();
-    return { canvas: this.state.canvases.find((entry) => entry.id === nextCanvas.id), state: this.getState() };
-  }
-
-  async deleteCanvas(canvasId) {
-    const id = normalizeId(canvasId, "canvas");
-    const existingIndex = this.state.canvases.findIndex((entry) => entry.id === id);
-    if (existingIndex < 0) {
-      const error = new Error("Agent canvas not found.");
-      error.statusCode = 404;
-      throw error;
-    }
-
-    const [canvas] = this.state.canvases.splice(existingIndex, 1);
-    await this.afterStateChange();
-    return { canvas, state: this.getState() };
-  }
+  // upsertCanvas / deleteCanvas removed: agent canvas feature deleted.
 
   async waitForPredicate(input = {}) {
     const predicate = normalizePredicate(input.predicate);

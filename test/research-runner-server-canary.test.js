@@ -127,24 +127,18 @@ test("research runner completes a real-server Agent Town canary", { timeout: 30_
     assert.equal(run.cycle.reviewDecision.resolution, "continued");
     assert.match(run.cycle.reviewDecision.resolutionNote, /human review gate/);
     assert.equal(run.cycle.agentReviewSession.id, reviewerSession.id);
-    assert.equal(run.cycle.monitorCanvas.sourceSessionId, reviewerSession.id);
-    assert.equal(run.cycle.monitorCanvas.sourceAgentId, "shell");
+    // monitorCanvas assertions removed: agent canvas feature deleted.
 
     const finish = await finishMove({
       projectDir,
       slug: "session-linked-card",
-      takeaway: "Automated real-server canary completed the runner, human gate, canvas, finish, paper, and dashboard path.",
+      takeaway: "Automated real-server canary completed the runner, human gate, finish, paper, and dashboard path.",
       analysis: "The canary exercises the live app HTTP APIs and a real Shell session; it is intentionally not a cloud deployment or heavy ML workload.",
       decision: "do not admit; this is a plumbing canary rather than a scientific result",
       aggregateMetric: true,
       metricName: "score",
       higherIsBetter: true,
       updatePaper: true,
-      publishCanvas: true,
-      canvasTitle: "Server canary final result",
-      canvasCaption: "Final generated result figure from the automated real-server canary.",
-      canvasSessionId: reviewerSession.id,
-      canvasAgentId: "shell",
       agentTownApi,
       summary: "automated real-server canary completed",
       apply: true,
@@ -152,8 +146,6 @@ test("research runner completes a real-server Agent Town canary", { timeout: 30_
     assert.equal(finish.status, "resolved");
     assert.equal(finish.applied, true);
     assert.equal(finish.paper.lint.summary.error, 0);
-    assert.equal(finish.canvas.sourceSessionId, reviewerSession.id);
-    assert.match(finish.canvas.imagePath, /session-linked-card-summary\.svg$/);
 
     const stateResponse = await fetch(`${baseUrl}/api/agent-town/state`);
     assert.equal(stateResponse.status, 200);
@@ -162,10 +154,7 @@ test("research runner completes a real-server Agent Town canary", { timeout: 30_
     assert.equal(completedItem.status, "completed");
     assert.equal(completedItem.resolution, "continued");
     assert.equal(completedItem.sourceSessionId, reviewerSession.id);
-    const finalCanvas = agentTown.canvases.find((entry) => entry.id === `${reviewerSession.id}-shell`);
-    assert.equal(finalCanvas.title, "Server canary final result");
-    assert.equal(finalCanvas.sourceSessionId, reviewerSession.id);
-    assert.match(finalCanvas.imagePath, /session-linked-card-summary\.svg$/);
+    // canvas assertions removed: agent canvas feature deleted.
 
     const projectResponse = await fetch(`${baseUrl}/api/research/projects/${projectName}`);
     assert.equal(projectResponse.status, 200);

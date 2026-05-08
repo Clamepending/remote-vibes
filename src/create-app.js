@@ -766,35 +766,11 @@ async function saveImageAttachment({ stateDir, session, dataUrl, originalName, s
   };
 }
 
+// Shared image-mime-type lookup. Originally part of the (now-deleted)
+// agent-canvas image route; kept because the town-share image route
+// also calls it. Renamed if you need a friendlier export name later.
 function getAgentCanvasImageMimeType(filePath) {
   return AGENT_CANVAS_IMAGE_MIME_TYPES_BY_EXTENSION.get(path.extname(filePath).toLowerCase()) || "";
-}
-
-async function resolveAgentCanvasImage({ canvas, session, fallbackCwd }) {
-  const rawImagePath = String(canvas?.imagePath || "").trim();
-  if (!rawImagePath) {
-    throw buildHttpError("Agent canvas image path is not set.", 404);
-  }
-
-  const targetPath = path.resolve(session?.cwd || fallbackCwd, expandHomePath(rawImagePath));
-  const mimeType = getAgentCanvasImageMimeType(targetPath);
-  if (!mimeType) {
-    throw buildHttpError("Agent canvas image type is not supported.", 415);
-  }
-
-  const stats = await stat(targetPath).catch((error) => {
-    if (error?.code === "ENOENT") {
-      throw buildHttpError("Agent canvas image not found.", 404);
-    }
-
-    throw error;
-  });
-
-  if (!stats.isFile()) {
-    throw buildHttpError("Agent canvas image path is not a file.", 400);
-  }
-
-  return { targetPath, mimeType };
 }
 
 function normalizeTownShareId(value) {
@@ -4565,65 +4541,10 @@ export async function createVibeResearchApp({
     response.json({ tutorial });
   });
 
-  app.get("/api/agent-town/canvases", (_request, response) => {
-    response.json({
-      canvases: agentTownStore.getState().canvases,
-    });
-  });
-
-  app.post("/api/agent-town/canvases", async (request, response) => {
-    try {
-      const payload = await agentTownStore.upsertCanvas(request.body || {});
-      response.status(201).json({
-        canvas: payload.canvas,
-        agentTown: payload.state,
-      });
-    } catch (error) {
-      response.status(error.statusCode || 400).json({ error: error.message || "Could not update Agent Town canvas." });
-    }
-  });
-
-  app.delete("/api/agent-town/canvases/:canvasId", async (request, response) => {
-    try {
-      const payload = await agentTownStore.deleteCanvas(request.params.canvasId);
-      response.json({
-        canvas: payload.canvas,
-        agentTown: payload.state,
-      });
-    } catch (error) {
-      response.status(error.statusCode || 400).json({ error: error.message || "Could not clear Agent Town canvas." });
-    }
-  });
-
-  app.get("/api/agent-town/canvases/:canvasId/image", async (request, response) => {
-    try {
-      const canvas = agentTownStore.getCanvas(request.params.canvasId);
-      if (!canvas) {
-        response.status(404).json({ error: "Agent canvas not found." });
-        return;
-      }
-
-      const session = canvas.sourceSessionId ? sessionManager.getSession(canvas.sourceSessionId) : null;
-      const image = await resolveAgentCanvasImage({ canvas, session, fallbackCwd: cwd });
-      response.setHeader("Cache-Control", "no-store");
-      response.setHeader("Content-Type", image.mimeType);
-      response.setHeader("X-Content-Type-Options", "nosniff");
-      response.sendFile(image.targetPath, { dotfiles: "allow" }, (error) => {
-        if (!error) {
-          return;
-        }
-
-        if (response.headersSent) {
-          response.destroy(error);
-          return;
-        }
-
-        response.status(error.statusCode || 500).json({ error: error.message });
-      });
-    } catch (error) {
-      response.status(error.statusCode || 400).json({ error: error.message || "Could not read Agent Town canvas image." });
-    }
-  });
+  // Agent Town canvas routes were removed: the canvas feature is gone
+  // (separate user-driven simplification). Image rendering inside the
+  // chat now happens via inline imageRefs on narrative entries — no
+  // separate publish-to-canvas surface area.
 
   app.post("/api/agent-town/action-items", async (request, response) => {
     try {

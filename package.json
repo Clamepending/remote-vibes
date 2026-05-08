@@ -7,7 +7,6 @@
   "bin": {
     "vibe-research": "./bin/vibe-research",
     "vr-agent-ask": "./bin/vr-agent-ask",
-    "vr-agent-canvas": "./bin/vr-agent-canvas",
     "vr-agent-town": "./bin/vr-agent-town",
     "vr-claude-stream-chat": "./bin/vr-claude-stream-chat",
     "vr-claude-stream-experiment": "./bin/vr-claude-stream-experiment",
@@ -37,7 +36,6 @@
     "vr-videomemory": "./bin/vr-videomemory",
     "rv-browser": "./bin/rv-browser",
     "rv-agent-ask": "./bin/vr-agent-ask",
-    "rv-agent-canvas": "./bin/rv-agent-canvas",
     "rv-agentmail-reply": "./bin/rv-agentmail-reply",
     "rv-browser-use": "./bin/rv-browser-use",
     "rv-mailwatch": "./bin/rv-mailwatch",
