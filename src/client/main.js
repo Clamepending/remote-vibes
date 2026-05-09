@@ -6395,7 +6395,12 @@ function renderRichSessionImageStrip(refs, { caption = "" } = {}) {
     return "";
   }
 
-  const tiles = refs
+  // Row layout: small thumbnail on the left, full path text on the right.
+  // The user's mental model is "I want to see WHICH file is being shown",
+  // so we keep the path string visible (in monospace) instead of just a
+  // basename caption underneath the image. The thumbnail stays small
+  // (~64px) so a long list of figure paths doesn't dominate the chat.
+  const rows = refs
     .map((rawPath) => {
       const url = getRichSessionImageUrl(rawPath);
       if (!url) {
@@ -6403,28 +6408,29 @@ function renderRichSessionImageStrip(refs, { caption = "" } = {}) {
       }
       const altText = rawPath.split("/").filter(Boolean).pop() || rawPath;
       return `
-        <a class="rich-session-image-tile" href="#" data-rich-path="${escapeHtml(rawPath)}">
+        <a class="rich-session-image-row" href="#" data-rich-path="${escapeHtml(rawPath)}" title="${escapeHtml(rawPath)}">
           <img
+            class="rich-session-image-thumb"
             src="${escapeHtml(url)}"
             alt="${escapeHtml(altText)}"
             loading="lazy"
             decoding="async"
           />
-          <span class="rich-session-image-caption">${escapeHtml(altText)}</span>
+          <code class="rich-session-image-path">${escapeHtml(rawPath)}</code>
         </a>
       `;
     })
     .filter(Boolean)
     .join("");
 
-  if (!tiles) {
+  if (!rows) {
     return "";
   }
 
   return `
     <div class="rich-session-image-strip" data-rich-image-strip>
       ${caption ? `<div class="rich-session-image-strip-caption">${escapeHtml(caption)}</div>` : ""}
-      <div class="rich-session-image-strip-tiles">${tiles}</div>
+      <div class="rich-session-image-strip-rows">${rows}</div>
     </div>
   `;
 }
