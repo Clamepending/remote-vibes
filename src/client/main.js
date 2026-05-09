@@ -7778,6 +7778,109 @@ function renderRichSessionQueueStrip(activeSession) {
   return `<div class="rich-session-queue ${items.length ? "" : "is-empty"}" id="rich-session-queue" data-rich-session-queue-mount aria-label="Queued messages">${renderRichSessionQueueStripHtml(activeSession)}</div>`;
 }
 
+// Auto-reply banner: a small panel above the composer with one textarea
+// that, when non-empty, gets sent as a fresh user message every time
+// the agent goes idle. Replaces the supervisor with a single-purpose
+// "keep this thing running while I sleep" control.
+//
+// State: the textarea value lives in state.autoReplyDrafts[sessionId]
+// (locally edited) and the server-confirmed value lives in
+// activeSession.autoReplyText. We POST on blur / Stop click — no
+// per-keystroke save, to avoid spamming the server while the user types.
+function renderAutoReplyBanner(activeSession) {
+  if (!activeSession?.id) return "";
+  const sessionId = activeSession.id;
+  const armedText = String(activeSession.autoReplyText || "").trim();
+  const draft = state.autoReplyDrafts && Object.prototype.hasOwnProperty.call(state.autoReplyDrafts, sessionId)
+    ? String(state.autoReplyDrafts[sessionId] || "")
+    : armedText;
+  const armed = Boolean(armedText);
+  return `
+    <div class="auto-reply-banner ${armed ? "is-armed" : ""}" data-auto-reply-banner data-session-id="${escapeHtml(sessionId)}">
+      <div class="auto-reply-banner-head">
+        <span class="auto-reply-banner-kicker">${armed ? "Auto-reply armed" : "Auto-reply (when agent goes idle)"}</span>
+        ${armed ? `<button type="button" class="auto-reply-banner-stop" data-auto-reply-stop>Stop</button>` : ""}
+      </div>
+      <textarea
+        class="auto-reply-banner-input"
+        data-auto-reply-input
+        rows="2"
+        placeholder="Type a message that will be sent every time the agent finishes a turn (use this to keep work moving while you sleep). Leave empty to disarm."
+        spellcheck="true"
+        autocomplete="off"
+      >${escapeHtml(draft)}</textarea>
+    </div>
+  `;
+}
+
+// Save the auto-reply text for a session (or clear it if text is empty).
+// Returns the server-confirmed value so the caller can update local state.
+async function saveAutoReplyText(sessionId, text) {
+  const sid = String(sessionId || "").trim();
+  if (!sid) return null;
+  try {
+    const response = await fetch(`/api/sessions/${encodeURIComponent(sid)}/auto-reply`, {
+      method: "PUT",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ text: String(text || "") }),
+    });
+    if (!response.ok) {
+      console.warn(`[vibe-research] auto-reply save failed: ${response.status}`);
+      return null;
+    }
+    const data = await response.json();
+    // Update the in-memory session record so the next render sees the
+    // server-confirmed value without waiting for a meta broadcast.
+    const session = state.sessions.find((s) => s.id === sid);
+    if (session) session.autoReplyText = String(data.autoReplyText || "");
+    return data.autoReplyText || "";
+  } catch (error) {
+    console.warn("[vibe-research] auto-reply save errored", error);
+    return null;
+  }
+}
+
+function bindAutoReplyEvents(root = document) {
+  if (!state.autoReplyDrafts) state.autoReplyDrafts = {};
+  const banner = root.querySelector("[data-auto-reply-banner]");
+  if (!(banner instanceof HTMLElement)) return;
+  if (banner.dataset.autoReplyBound === "true") return;
+  banner.dataset.autoReplyBound = "true";
+
+  const sessionId = banner.dataset.sessionId || "";
+  const input = banner.querySelector("[data-auto-reply-input]");
+  if (input instanceof HTMLTextAreaElement) {
+    input.addEventListener("input", () => {
+      state.autoReplyDrafts[sessionId] = input.value;
+    });
+    // Save on blur (committed value), and on Cmd/Ctrl+Enter for power users.
+    input.addEventListener("blur", async () => {
+      const draft = state.autoReplyDrafts[sessionId] ?? input.value;
+      const session = state.sessions.find((s) => s.id === sessionId);
+      const current = String(session?.autoReplyText || "");
+      if (draft.trim() === current.trim()) return;
+      await saveAutoReplyText(sessionId, draft);
+      refreshRichSessionSurfaceUi();
+    });
+    input.addEventListener("keydown", (event) => {
+      if ((event.metaKey || event.ctrlKey) && event.key === "Enter") {
+        event.preventDefault();
+        input.blur();
+      }
+    });
+  }
+
+  const stopBtn = banner.querySelector("[data-auto-reply-stop]");
+  if (stopBtn instanceof HTMLButtonElement) {
+    stopBtn.addEventListener("click", async (event) => {
+      event.preventDefault();
+      state.autoReplyDrafts[sessionId] = "";
+      await saveAutoReplyText(sessionId, "");
+      refreshRichSessionSurfaceUi();
+    });
+  }
+}
+
 function getChatAutopilotSessionConfig(sessionId) {
   const sid = String(sessionId || "").trim();
   if (!sid) {
@@ -8561,6 +8664,7 @@ function renderRichSessionSurface(activeSession) {
       <div class="rich-session-autopilot-mount" id="rich-session-autopilot-mount" data-rich-session-autopilot-mount>${renderRichSessionAutopilotPanel(activeSession)}</div>
       <div class="rich-session-supervisor-drawer-mount" data-rich-session-supervisor-drawer-mount>${renderChatAutopilotSupervisorDrawer(activeSession)}</div>
       ${renderRichSessionQueueStrip(activeSession)}
+      ${renderAutoReplyBanner(activeSession)}
       ${canSend ? `
         <form class="rich-session-composer" id="rich-session-form">
           <label class="sr-only" for="rich-session-input">Send input</label>
@@ -8868,6 +8972,12 @@ function refreshRichSessionSurfaceUi({ scrollToBottom = false } = {}) {
     queueMount.classList.toggle("is-empty", !items.length);
     queueMount.innerHTML = renderRichSessionQueueStripHtml(activeSession);
   }
+
+  // Auto-reply banner: bind input/blur/Stop handlers AFTER the surface
+  // re-renders. The render itself is part of the feed-area HTML; we
+  // just attach event listeners. dataset.autoReplyBound prevents
+  // double-binding across refreshes.
+  bindAutoReplyEvents();
 
   // Working→idle transition detector. When a session was working on the
   // previous refresh and is no longer working, flush the next queued

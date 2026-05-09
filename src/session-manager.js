@@ -93,6 +93,17 @@ const PROVIDER_SESSION_CAPTURE_RETRY_WINDOW_MS = 90_000;
 const CODEX_SESSION_INDEX_LIMIT = 100;
 const CODEX_SESSION_META_READ_LIMIT = 512 * 1024;
 const NATIVE_NARRATIVE_EVENT_LIMIT = 128;
+// Auto-reply throttle: when the user sets a sticky auto-reply, we fire
+// it on every streamWorking → false transition. A misbehaving agent
+// that ends turns immediately could otherwise loop at full network
+// speed; this floor ensures at least N seconds elapse between fires,
+// so a runaway loop is bounded rather than instantaneous.
+const AUTO_REPLY_MIN_INTERVAL_MS = 2_000;
+// Brief delay between observing idle and firing the auto-reply so a
+// human sitting at the keyboard has a chance to type something else
+// first or clear the field. Two seconds is short enough not to waste
+// time when the user IS asleep; long enough for a human to react.
+const AUTO_REPLY_FIRE_DELAY_MS = 2_000;
 const NATIVE_NARRATIVE_TEXT_LIMIT = 4_000;
 const CLAUDE_SUBAGENT_TRANSCRIPT_READ_LIMIT = 1_000_000;
 const CLAUDE_BACKGROUND_TASK_TAIL_BYTES = 900_000;
@@ -4808,6 +4819,11 @@ export class SessionManager {
       // shape is [{command, label, hint?, aliases?}]; the renderer
       // already reads it via resolveRichSessionSlashCommands.
       availableSlashCommands: Array.isArray(session.availableSlashCommands) ? session.availableSlashCommands : [],
+      // Sticky auto-reply text. Sent as a fresh user input every time
+      // the agent goes idle while this is non-empty. Edit via
+      // PUT /api/sessions/:id/auto-reply or the composer's auto-reply
+      // banner; see setAutoReplyText below.
+      autoReplyText: typeof session.autoReplyText === "string" ? session.autoReplyText : "",
     };
   }
 
@@ -4845,6 +4861,7 @@ export class SessionManager {
     streamMode = false,
     entrySeqCounter = 0,
     broadcastSeq = 0,
+    autoReplyText = "",
   }) {
     // Restore persisted entries while preserving each entry's seq. Without
     // this round-trip every restored entry was stamped seq=0, which used to
@@ -4968,6 +4985,16 @@ export class SessionManager {
       // streaming / tool-use phases — a single source of truth for "is the
       // agent done yet?".
       streamWorking: false,
+      // Sticky auto-reply: when set to a non-empty string, the manager
+      // sends this text as a fresh user input every time the agent goes
+      // idle (streamWorking flips true → false). Replaces the old
+      // "supervisor" feature — one textbox, fires forever until cleared.
+      // Use case: keep the agent moving overnight on a pre-typed prompt.
+      autoReplyText: typeof autoReplyText === "string" ? autoReplyText.slice(0, 4096) : "",
+      // Wall-clock timestamp of the last auto-reply firing, used to
+      // throttle the loop to AUTO_REPLY_MIN_INTERVAL_MS so a misbehaving
+      // agent that ends turns immediately can't burn through the API.
+      lastAutoReplyAt: 0,
     };
   }
 
@@ -6010,6 +6037,53 @@ export class SessionManager {
     }
   }
 
+  // Set or clear the sticky auto-reply text for a session. Called by
+  // PUT /api/sessions/:id/auto-reply. An empty string disarms the
+  // auto-reply; the next streamWorking → false transition stops firing.
+  setAutoReplyText(sessionId, text) {
+    const session = this.sessions.get(sessionId);
+    if (!session) return { ok: false, reason: "session-not-found" };
+    const sanitized = typeof text === "string" ? text.slice(0, 4096) : "";
+    session.autoReplyText = sanitized;
+    this.scheduleSessionMetaBroadcast(session, { immediate: true });
+    this.schedulePersist({ immediate: true });
+    return { ok: true, autoReplyText: sanitized };
+  }
+
+  // Called from the turn-complete event handler. If the session has a
+  // non-empty autoReplyText, schedules a single fire after a small
+  // delay; the throttle and busy-check ensure the loop is bounded if
+  // the agent ends turns too fast or starts working again before the
+  // delay elapses (e.g. a manual user message between idle and fire).
+  maybeFireAutoReply(session) {
+    if (!session) return;
+    const text = String(session.autoReplyText || "").trim();
+    if (!text) return;
+    if (!session.streamSession) return;
+    if (session.status === "exited") return;
+    const now = Date.now();
+    if (now - (session.lastAutoReplyAt || 0) < AUTO_REPLY_MIN_INTERVAL_MS) return;
+    setTimeout(() => {
+      // Re-validate at fire time — the text may have been cleared, the
+      // user may have just sent a message themselves (streamWorking
+      // would be true again), the session may have exited, or the user
+      // may have edited the auto-reply to something else.
+      const live = this.sessions.get(session.id);
+      if (!live) return;
+      if (live.status === "exited") return;
+      if (live.streamWorking) return;
+      const liveText = String(live.autoReplyText || "").trim();
+      if (!liveText) return;
+      if (now - (live.lastAutoReplyAt || 0) < AUTO_REPLY_MIN_INTERVAL_MS) return;
+      live.lastAutoReplyAt = Date.now();
+      try {
+        this.write(live.id, `${liveText}\r`, {});
+      } catch (error) {
+        console.warn(`[vibe-research] auto-reply send failed for ${live.id}:`, error.message);
+      }
+    }, AUTO_REPLY_FIRE_DELAY_MS);
+  }
+
   // Stop the current claude subprocess (if any) and re-spawn it via
   // startSession({ restored: true }). Used after the user signs in via
   // the OAuth flow — the env var CLAUDE_CODE_OAUTH_TOKEN was injected
@@ -6197,6 +6271,7 @@ export class SessionManager {
       this.broadcastNarrativeDiff(session);
       this.scheduleSessionMetaBroadcast(session, { immediate: true });
       this.schedulePersist();
+      this.maybeFireAutoReply(session);
     });
 
     streamSession.on("stderr", (chunk) => {
@@ -6404,6 +6479,7 @@ export class SessionManager {
       this.broadcastNarrativeDiff(session);
       this.scheduleSessionMetaBroadcast(session, { immediate: true });
       this.schedulePersist();
+      this.maybeFireAutoReply(session);
     });
 
     streamSession.on("stderr", (chunk) => {
@@ -6511,6 +6587,7 @@ export class SessionManager {
       streamMode: resolvedStreamMode,
       entrySeqCounter: snapshot.entrySeqCounter || 0,
       broadcastSeq: snapshot.broadcastSeq || 0,
+      autoReplyText: snapshot.autoReplyText || "",
     });
 
     this.sessions.set(session.id, session);
@@ -6619,6 +6696,10 @@ export class SessionManager {
       broadcastSeq: Number.isFinite(Number(session.broadcastSeq))
         ? Number(session.broadcastSeq)
         : 0,
+      // Auto-reply text survives restart so the user can set it before
+      // sleep and have it still firing the next morning even if the
+      // server (or laptop) reboots overnight.
+      autoReplyText: typeof session.autoReplyText === "string" ? session.autoReplyText : "",
     };
   }
 

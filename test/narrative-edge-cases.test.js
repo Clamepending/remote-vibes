@@ -656,6 +656,104 @@ test("clientMessageId: user-echo seq is monotonic and strictly above any prior s
   });
 });
 
+// ---------------------------------------------------------------------------
+// Auto-reply: sticky textbox that fires on idle (replaces the supervisor)
+// ---------------------------------------------------------------------------
+
+test("auto-reply: setAutoReplyText stores text on the session and survives serialize round-trip", async () => {
+  await withManager(async (manager) => {
+    const session = makeStreamSession(manager, { id: "auto-reply-store" });
+    assert.equal(session.autoReplyText, "", "starts empty");
+
+    const result = manager.setAutoReplyText(session.id, "keep going");
+    assert.deepEqual(result, { ok: true, autoReplyText: "keep going" });
+    assert.equal(session.autoReplyText, "keep going");
+
+    // Round-trip through persist + restore.
+    const persisted = manager.serializePersistedSession(session);
+    assert.equal(persisted.autoReplyText, "keep going");
+    const restored = manager.buildSessionRecord({
+      id: persisted.id,
+      providerId: persisted.providerId,
+      providerLabel: persisted.providerLabel,
+      name: persisted.name,
+      cwd: persisted.cwd,
+      streamMode: true,
+      autoReplyText: persisted.autoReplyText,
+    });
+    assert.equal(restored.autoReplyText, "keep going");
+  });
+});
+
+test("auto-reply: setAutoReplyText slices long text at 4096 chars (defensive cap)", async () => {
+  await withManager(async (manager) => {
+    const session = makeStreamSession(manager, { id: "auto-reply-cap" });
+    const huge = "x".repeat(8000);
+    manager.setAutoReplyText(session.id, huge);
+    assert.equal(session.autoReplyText.length, 4096);
+  });
+});
+
+test("auto-reply: setAutoReplyText returns session-not-found for unknown ids", async () => {
+  await withManager(async (manager) => {
+    const result = manager.setAutoReplyText("does-not-exist", "hi");
+    assert.deepEqual(result, { ok: false, reason: "session-not-found" });
+  });
+});
+
+test("auto-reply: maybeFireAutoReply no-ops when text is empty, session is exited, or stream is busy", async () => {
+  await withManager(async (manager) => {
+    const session = makeStreamSession(manager, { id: "auto-reply-noops" });
+    let writeCalls = 0;
+    session.streamSession = {
+      send() { writeCalls += 1; },
+      sendWithImages() { writeCalls += 1; },
+    };
+
+    // 1. Empty text -> no fire.
+    manager.maybeFireAutoReply(session);
+    await new Promise((r) => setTimeout(r, 50));
+    assert.equal(writeCalls, 0, "empty text doesn't fire");
+
+    // 2. Set text but mark exited -> no fire.
+    manager.setAutoReplyText(session.id, "go");
+    session.status = "exited";
+    manager.maybeFireAutoReply(session);
+    await new Promise((r) => setTimeout(r, 50));
+    assert.equal(writeCalls, 0, "exited session doesn't fire");
+    session.status = "running";
+
+    // 3. streamWorking true at fire-time -> no fire (re-validated in setTimeout).
+    manager.maybeFireAutoReply(session);
+    session.streamWorking = true;
+    await new Promise((r) => setTimeout(r, 2_500));
+    assert.equal(writeCalls, 0, "streamWorking gate honored at fire time");
+  });
+});
+
+test("auto-reply: throttle prevents back-to-back fires within AUTO_REPLY_MIN_INTERVAL_MS", async () => {
+  await withManager(async (manager) => {
+    const session = makeStreamSession(manager, { id: "auto-reply-throttle" });
+    let writeCalls = 0;
+    session.streamSession = {
+      send() { writeCalls += 1; },
+      sendWithImages() { writeCalls += 1; },
+    };
+    manager.setAutoReplyText(session.id, "go");
+
+    // Fire 1 -> queued, will fire after AUTO_REPLY_FIRE_DELAY_MS (~2s).
+    manager.maybeFireAutoReply(session);
+    await new Promise((r) => setTimeout(r, 2_500));
+    assert.equal(writeCalls, 1, "first fire happened after delay");
+
+    // Immediately try again — throttle floor is 2s; we just fired, so this
+    // call should bail out before scheduling.
+    manager.maybeFireAutoReply(session);
+    await new Promise((r) => setTimeout(r, 2_500));
+    assert.equal(writeCalls, 1, "throttle prevented a second fire within 2s");
+  });
+});
+
 test("plan-mode idempotency: a second resolvePlanMode after the first returns no-plan-awaiting", async () => {
   await withManager(async (manager) => {
     const session = manager.buildSessionRecord({

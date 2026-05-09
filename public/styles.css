@@ -19970,3 +19970,72 @@ select:disabled {
   background: #2d6f3f;
   border-color: #2d6f3f;
 }
+
+/* ============================================================
+ * Auto-reply banner — single-textarea control above the composer.
+ * Replaces the old supervisor side-chat: when armed, the textarea
+ * value is sent as a fresh user input every time the agent goes
+ * idle. See renderAutoReplyBanner / setAutoReplyText.
+ * ============================================================ */
+.auto-reply-banner {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  padding: 8px 10px;
+  margin: 0 0 8px;
+  border-radius: 10px;
+  border: 1px dashed rgba(255, 255, 255, 0.08);
+  background: rgba(255, 255, 255, 0.02);
+}
+.auto-reply-banner.is-armed {
+  border-style: solid;
+  border-color: rgba(255, 200, 120, 0.5);
+  background: rgba(255, 200, 120, 0.06);
+}
+.auto-reply-banner-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+}
+.auto-reply-banner-kicker {
+  font-size: 0.74rem;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  color: rgba(244, 244, 242, 0.55);
+  font-family: "IBM Plex Mono", monospace;
+}
+.auto-reply-banner.is-armed .auto-reply-banner-kicker {
+  color: #ffc878;
+}
+.auto-reply-banner-stop {
+  background: transparent;
+  border: 1px solid rgba(255, 200, 120, 0.5);
+  color: #ffc878;
+  font-size: 0.74rem;
+  padding: 2px 10px;
+  border-radius: 999px;
+  cursor: pointer;
+  font-family: inherit;
+}
+.auto-reply-banner-stop:hover {
+  background: rgba(255, 200, 120, 0.12);
+}
+.auto-reply-banner-input {
+  width: 100%;
+  background: transparent;
+  border: 0;
+  color: inherit;
+  font: inherit;
+  font-size: 0.85rem;
+  resize: vertical;
+  min-height: 36px;
+  padding: 4px 0;
+  box-sizing: border-box;
+}
+.auto-reply-banner-input::placeholder {
+  color: rgba(244, 244, 242, 0.3);
+}
+.auto-reply-banner-input:focus {
+  outline: none;
+}

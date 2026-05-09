@@ -6953,6 +6953,28 @@ export async function createVibeResearchApp({
     }
   });
 
+  // Sticky auto-reply: when set to non-empty, the session manager fires
+  // this text as a fresh user input every time the agent goes idle.
+  // Use case: keep an agent moving overnight on a pre-typed prompt.
+  // GET returns the current text; PUT { text } sets/clears it.
+  app.get("/api/sessions/:sessionId/auto-reply", (request, response) => {
+    const session = sessionManager.getSession(request.params.sessionId);
+    if (!session) {
+      response.status(404).json({ error: "Session not found." });
+      return;
+    }
+    response.json({ autoReplyText: session.autoReplyText || "" });
+  });
+  app.put("/api/sessions/:sessionId/auto-reply", (request, response) => {
+    const text = typeof request.body?.text === "string" ? request.body.text : "";
+    const result = sessionManager.setAutoReplyText(request.params.sessionId, text);
+    if (!result.ok) {
+      response.status(result.reason === "session-not-found" ? 404 : 400).json(result);
+      return;
+    }
+    response.json(result);
+  });
+
   // Re-spawn the claude subprocess for an existing stream-mode session,
   // preserving the JSONL transcript via `--resume`. Triggered by the
   // OAuth sign-in modal so a freshly-issued token (CLAUDE_CODE_OAUTH_TOKEN)
