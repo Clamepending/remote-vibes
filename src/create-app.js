@@ -86,12 +86,21 @@ import { compileBriefToQueue, updateResearchState } from "./research/brief.js";
 import { formatOrgBenchReport, runOrgBench } from "./research/org-bench.js";
 import { tickResearchOrchestrator } from "./research/orchestrator.js";
 import { parseProjectReadme } from "./research/project-readme.js";
-import {
-  appendResearchSupervisorThread,
-  decideResearchSupervisorIntervention,
-  normalizeResearchSupervisorState,
-  updateResearchSupervisorState,
-} from "./research/supervisor.js";
+// Supervisor module removed: replaced by the simpler auto-reply textbox.
+// Stub the four import names so any leftover call site degrades to a
+// safe no-op until someone chases the references in a follow-up.
+const normalizeResearchSupervisorState = () => ({
+  enabled: false,
+  objective: "",
+  watchlist: "",
+  thread: [],
+  primarySessionId: "",
+  sessionIds: [],
+  lastObservedAt: 0,
+});
+const updateResearchSupervisorState = (current) => current || normalizeResearchSupervisorState();
+const appendResearchSupervisorThread = (current) => current || normalizeResearchSupervisorState();
+const decideResearchSupervisorIntervention = () => ({ shouldIntervene: false });
 import {
   createEmptyWorkspaceFile,
   ensureWorkspaceDirectory,
@@ -8876,279 +8885,9 @@ export async function createVibeResearchApp({
     }
   });
 
-  app.post("/api/sessions/:sessionId/research-autopilot/supervisor/chat", async (request, response) => {
-    try {
-      const session = requireChatAutopilotSession(request.params.sessionId);
-      const body = request.body && typeof request.body === "object" && !Array.isArray(request.body)
-        ? request.body
-        : {};
-      const current = getChatAutopilotAttachment(request.params.sessionId);
-      const projectName = trimText(body.projectName) || current.projectName;
-      const objective = trimText(body.objective) || current.objective;
-      const message = compactSupervisorChatText(body.message || body.text || body.prompt || "", 2_000);
-      const mode = ["directive", "send", "tell-worker"].includes(trimText(body.mode).toLowerCase())
-        ? "directive"
-        : "ask";
-      if (!message) {
-        throw routeError("Supervisor message is required.", 400);
-      }
+  // Supervisor /chat and /tick routes removed: replaced by the
+  // auto-reply textbox (PUT /api/sessions/:id/auto-reply).
 
-      let orchestrator = null;
-      let supervisorError = "";
-      const driver = normalizeChatAutopilotDriver(current.driver, current.jobId ? "runner" : "session");
-      const projectSupervisor = projectName ? getResearchProjectSupervisor(projectName) : null;
-      const watchlist = normalizeSupervisorWatchlist(
-        body.watchlist === undefined
-          ? current.watchlist || projectSupervisor?.watchlist
-          : body.watchlist,
-      );
-      const supervisorState = projectSupervisor?.state || current.supervisor;
-      const runtime = await getSupervisorRuntimeForSession(session, {
-        ignoreTexts: [
-          current.lastMessage,
-          current.supervisor?.lastDirectivePreview,
-          projectSupervisor?.state?.lastDirectivePreview,
-        ],
-      });
-      if (projectName) {
-        try {
-          const resolved = await resolveResearchProjectDir(projectName);
-          orchestrator = await tickResearchOrchestrator({
-            projectDir: resolved.projectDir,
-            apply: false,
-            askHuman: false,
-            waitHuman: false,
-            allowCrossVersion: Boolean(body.allowCrossVersion),
-            checkPaper: Boolean(body.checkPaper),
-          });
-        } catch (error) {
-          supervisorError = error.message || "could not inspect project state";
-        }
-      }
-
-      const reply = supervisorError
-        ? `I could not inspect the durable project state: ${supervisorError}`
-        : buildSupervisorSideChatReply({ message, mode, projectName, orchestrator, runtime });
-      const directiveText = mode === "directive" && !supervisorError
-        ? buildSupervisorSideChatDirective({ message, orchestrator, runtime, watchlist })
-        : "";
-      const event = {
-        type: "supervisor-chat",
-        action: mode,
-        source: "human",
-      };
-      const card = {
-        label: "Supervisor side chat",
-        mode: mode === "directive" ? "route" : "review",
-        action: mode === "directive" ? "send directive" : "answer human",
-        reason: message,
-        evidence: "Answer from durable project state, worker/subagent trace, runtime, and validation artifacts.",
-        integrity: "Worker and subagent output are observations; human messages are supervisory input.",
-        compute: "Keep safe idle GPUs/subagents saturated only when work is independent and provenance-preserving.",
-        continuity: supervisorRuntimeSummary(runtime),
-        stop: "Send one directive only when explicitly requested.",
-        preview: directiveText || reply,
-      };
-      const decision = {
-        action: directiveText ? "directive" : "silent",
-        shouldSend: Boolean(directiveText),
-        reason: directiveText ? "human asked supervisor to tell the worker" : "human asked supervisor side chat",
-        event,
-        signature: `supervisor-chat|${mode}|${projectName}|${message}`.slice(0, 300),
-        card,
-        directive: directiveText ? { source: "supervisor-chat", text: directiveText, card } : null,
-      };
-      const now = new Date();
-      let supervisor = appendResearchSupervisorThread(supervisorState, [
-        {
-          role: "human",
-          kind: mode === "directive" ? "directive_request" : "question",
-          title: "You",
-          text: message,
-          source: "human",
-        },
-        {
-          role: "supervisor",
-          kind: supervisorError ? "error" : mode === "directive" ? "decision" : "answer",
-          title: supervisorError ? "Supervisor blocked" : "Supervisor",
-          text: reply,
-          source: "supervisor",
-        },
-      ], { now });
-      supervisor = updateResearchSupervisorState(supervisor, decision, event, { now });
-
-      let nextProjectSupervisor = projectSupervisor;
-      if (projectName) {
-        const sessionIds = normalizeResearchProjectSupervisorSessionIds(
-          [...(projectSupervisor?.sessionIds || []), request.params.sessionId],
-        );
-        nextProjectSupervisor = await setResearchProjectSupervisor(projectName, {
-          enabled: current.enabled && driver === "session",
-          objective,
-          watchlist,
-          primarySessionId: request.params.sessionId,
-          sessionIds,
-          state: supervisor,
-        });
-      }
-      const attachment = await setChatAutopilotAttachment(request.params.sessionId, {
-        ...current,
-        enabled: current.enabled,
-        driver,
-        projectName,
-        objective,
-        watchlist,
-        jobId: driver === "session" ? "" : current.jobId,
-        statusText: directiveText ? "supervisor directive ready" : "supervisor answered",
-        lastMessage: current.lastMessage,
-        supervisor,
-      });
-      response.json({
-        ok: true,
-        mode,
-        reply,
-        directive: directiveText ? { text: directiveText, card } : null,
-        attachment: serializeChatAutopilotAttachment(attachment),
-        projectSupervisor: nextProjectSupervisor ? serializeResearchProjectSupervisor(nextProjectSupervisor) : null,
-        runtime,
-        orchestrator: orchestrator
-          ? {
-              recommendation: orchestrator.recommendation,
-              counts: orchestrator.counts,
-              phase: orchestrator.phase,
-              projectContext: orchestrator.projectContext,
-            }
-          : null,
-      });
-    } catch (error) {
-      response.status(error.statusCode || 500).json({ error: error.message || "Could not chat with supervisor." });
-    }
-  });
-
-  app.post("/api/sessions/:sessionId/research-autopilot/supervisor/tick", async (request, response) => {
-    try {
-      const session = requireChatAutopilotSession(request.params.sessionId);
-      const body = request.body && typeof request.body === "object" && !Array.isArray(request.body)
-        ? request.body
-        : {};
-      const current = getChatAutopilotAttachment(request.params.sessionId);
-      const projectName = trimText(body.projectName) || current.projectName;
-      const observedMessage = trimText(body.observedMessage || body.message || body.text);
-      let event = body.event && typeof body.event === "object" && !Array.isArray(body.event)
-        ? body.event
-        : {
-            type: trimText(body.event || body.type || "tick"),
-            action: trimText(body.action),
-            source: trimText(body.source) || "chat",
-          };
-      const eventType = trimText(event.type || event.event || "tick").toLowerCase();
-      if (observedMessage && !(event && typeof event === "object" && !Array.isArray(event) && (event.message || event.observedMessage || event.text))) {
-        event = { ...event, message: observedMessage };
-      }
-
-      let orchestrator = null;
-      let supervisorError = "";
-      const driver = normalizeChatAutopilotDriver(current.driver, current.jobId ? "runner" : "session");
-      const projectSupervisor = projectName ? getResearchProjectSupervisor(projectName) : null;
-      const watchlist = normalizeSupervisorWatchlist(
-        body.watchlist === undefined
-          ? current.watchlist || projectSupervisor?.watchlist
-          : body.watchlist,
-      );
-      const supervisorState = projectSupervisor?.state || current.supervisor;
-      const runtime = await getSupervisorRuntimeForSession(session, {
-        ignoreTexts: [
-          current.lastMessage,
-          current.supervisor?.lastDirectivePreview,
-          projectSupervisor?.state?.lastDirectivePreview,
-        ],
-      });
-      if (current.enabled && driver === "session" && projectName) {
-        try {
-          const resolved = await resolveResearchProjectDir(projectName);
-          orchestrator = await tickResearchOrchestrator({
-            projectDir: resolved.projectDir,
-            apply: false,
-            askHuman: false,
-            waitHuman: false,
-            allowCrossVersion: Boolean(body.allowCrossVersion),
-            checkPaper: Boolean(body.checkPaper),
-          });
-        } catch (error) {
-          supervisorError = error.message || "could not inspect project state";
-        }
-      }
-
-      const observedAttachment = {
-        ...current,
-        projectName,
-        objective: trimText(body.objective) || current.objective,
-        watchlist,
-        runtime,
-      };
-      const decision = supervisorError
-        ? {
-            action: "human-gate",
-            shouldSend: false,
-            reason: supervisorError,
-            event,
-            signature: `supervisor-error|${projectName}|${supervisorError}`.slice(0, 300),
-          }
-        : decideResearchSupervisorIntervention({
-            attachment: observedAttachment,
-            event,
-            orchestratorReport: orchestrator,
-            supervisorState,
-          });
-      const supervisor = updateResearchSupervisorState(supervisorState, decision, event);
-      let nextProjectSupervisor = projectSupervisor;
-      if (projectName) {
-        const sessionIds = normalizeResearchProjectSupervisorSessionIds(
-          [...(projectSupervisor?.sessionIds || []), request.params.sessionId],
-        );
-        nextProjectSupervisor = await setResearchProjectSupervisor(projectName, {
-          enabled: current.enabled && driver === "session",
-          objective: observedAttachment.objective,
-          watchlist,
-          primarySessionId: request.params.sessionId,
-          sessionIds,
-          state: supervisor,
-        });
-      }
-      const attachment = await setChatAutopilotAttachment(request.params.sessionId, {
-        ...current,
-        enabled: current.enabled,
-        driver,
-        projectName,
-        objective: observedAttachment.objective,
-        watchlist,
-        jobId: driver === "session" ? "" : current.jobId,
-        statusText: decision.shouldSend
-          ? "supervisor queued a directive"
-          : current.statusText || (current.enabled ? "supervisor listening" : ""),
-        lastMessage: eventType === "human-message" ? observedMessage || current.lastMessage : current.lastMessage,
-        supervisor,
-      });
-      response.json({
-        ok: true,
-        decision,
-        directive: decision.shouldSend ? decision.directive : null,
-        attachment: serializeChatAutopilotAttachment(attachment),
-        projectSupervisor: nextProjectSupervisor ? serializeResearchProjectSupervisor(nextProjectSupervisor) : null,
-        runtime,
-        orchestrator: orchestrator
-          ? {
-              recommendation: orchestrator.recommendation,
-              counts: orchestrator.counts,
-              phase: orchestrator.phase,
-              projectContext: orchestrator.projectContext,
-            }
-          : null,
-      });
-    } catch (error) {
-      response.status(error.statusCode || 500).json({ error: error.message || "Could not tick chat autopilot supervisor." });
-    }
-  });
 
   app.post("/api/sessions/:sessionId/research-autopilot/start", async (request, response) => {
     try {
@@ -9325,19 +9064,7 @@ export async function createVibeResearchApp({
     }
   });
 
-  app.get("/api/research/projects/:name/supervisor", async (request, response) => {
-    try {
-      const { projectName } = await resolveResearchProjectDir(request.params.name);
-      const supervisor = getResearchProjectSupervisor(projectName);
-      response.json({
-        ok: true,
-        projectName,
-        supervisor: serializeResearchProjectSupervisor(supervisor),
-      });
-    } catch (error) {
-      response.status(error.statusCode || 500).json({ error: error.message || "Could not load research supervisor." });
-    }
-  });
+  // Supervisor route removed: replaced by the auto-reply textbox.
 
   app.post("/api/research/projects/:name/orchestrator/tick", async (request, response) => {
     try {

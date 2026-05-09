@@ -8339,7 +8339,16 @@ function getChatAutopilotSupervisorWatchlist(sessionId, config = getChatAutopilo
   return normalizeChatAutopilotSupervisorWatchlist(config.watchlist || config.projectSupervisor?.watchlist || "");
 }
 
-function renderChatAutopilotSupervisorDrawer(activeSession) {
+// Supervisor drawer: feature deleted, replaced by the auto-reply textbox.
+// Stub returns "" so the supervisor mount point in the surface render
+// is empty. The 230 internal supervisor helper references (state writes,
+// signal computations, watchlist management, scroll capture) remain as
+// dead code in this file; they're unreachable from the UI but kept in
+// place so a follow-up cleanup can chase them without coupling to this
+// commit. The on-the-wire surface (routes, supervisor.js) is gone.
+function renderChatAutopilotSupervisorDrawer() { return ""; }
+
+function _deadCodeChatAutopilotSupervisorDrawer(activeSession) {
   const sessionId = activeSession?.id || "";
   if (!sessionId) return "";
   const open = isChatAutopilotSupervisorDrawerOpen(activeSession);
