@@ -8494,130 +8494,16 @@ function renderChatAutopilotProjectOptions(config = {}, activeSession = getActiv
     .join("");
 }
 
-function renderRichSessionAutopilotPanel(activeSession) {
-  if (!activeSession?.id) return "";
-  const config = getChatAutopilotSessionConfig(activeSession.id);
-  const job = getChatAutopilotJob(config);
-  const enabled = Boolean(config.enabled);
-  const pending = getChatAutopilotPending(activeSession.id);
-  const sessionDriver = isChatAutopilotSessionDriver(config);
-  const sessionExited = activeSession.status === "exited";
-  const running = isResearchAutopilotRunning(job) || (enabled && sessionDriver && Boolean(activeSession.streamWorking));
-  const projectName = getChatAutopilotSelectedProjectName(config, activeSession);
-  const objective = getChatAutopilotDefaultObjective(config, activeSession);
-  const objectiveSource = getChatAutopilotObjectiveSource(config, activeSession);
-  const objectivePreview = summarizeChatAutopilotObjective(objective);
-  const queuedSupervisorMessage = getQueuedChatAutopilotSupervisorMessage(activeSession.id);
-  const noProjects = state.researchAutopilot.projectsLoaded
-    && !state.researchAutopilot.projects.length
-    && !state.researchAutopilot.projectsLoading;
-  const projectCreating = Boolean(state.researchAutopilot.projectCreating);
-  const pickerOpen = Boolean(state.chatAutopilotProjectPickerOpen[activeSession.id]) || !projectName;
-  const title = enabled
-    ? sessionDriver ? "Supervisor on" : "Runner on"
-    : "Human driving";
-  const status = pending
-    || (enabled && sessionDriver
-      ? sessionExited
-        ? queuedSupervisorMessage
-          ? "supervisor handoff ready to resume"
-          : "agent stopped; ready to resume"
-        : activeSession.streamWorking
-        ? queuedSupervisorMessage
-          ? "supervisor next step queued"
-          : "watching current turn"
-        : objectivePreview
-          ? `using ${objectiveSource === "wiki" ? "wiki goal" : "goal"}: ${objectivePreview}`
-          : "needs project goal"
-      : job
-      ? `${job.status || "running"} · step ${job.stepCount || 0}/${job.maxSteps || "?"}${job.stopReason ? ` · ${job.stopReason}` : ""}`
-      : enabled
-        ? objectivePreview
-          ? `${objectiveSource === "wiki" ? "wiki" : "saved"} objective: ${objectivePreview}`
-          : "needs research objective"
-        : projectCreating
-          ? "preparing supervisor"
-        : noProjects
-          ? "ready to supervise this chat"
-        : projectName
-          ? "ready to hand off"
-          : "choose a project");
-  const historyOpen = isChatAutopilotSupervisorDrawerOpen(activeSession);
-  const historyTitle = historyOpen
-    ? "Close the side-by-side supervisor chat and history."
-    : "Open the side-by-side supervisor chat and history.";
-  const historyButton = `<button class="rich-session-autopilot-action" type="button" data-chat-autopilot-supervisor-history aria-expanded="${historyOpen ? "true" : "false"}" aria-label="${escapeHtml(historyTitle)}" title="${escapeHtml(historyTitle)}">Side chat</button>`;
-  const toggleTitle = enabled
-    ? "Turn off the supervisor for this chat."
-    : noProjects
-      ? "Create durable research memory for this chat and arm the supervisor without messaging the worker."
-      : "Turn on the supervisor for this chat without messaging the worker.";
-  if (enabled) {
-    return `
-      <section class="rich-session-autopilot is-enabled ${running ? "is-running" : ""}" id="rich-session-autopilot" data-rich-session-autopilot-mount>
-        <div class="rich-session-autopilot-main">
-          <button
-            class="rich-session-autopilot-toggle rich-session-autopilot-indicator"
-            type="button"
-            data-chat-autopilot-toggle
-            data-chat-autopilot-indicator
-            aria-pressed="true"
-            aria-label="${escapeHtml(`${toggleTitle} Current status: ${status}`)}"
-            title="${escapeHtml(status)}"
-          >
-            <span class="rich-session-autopilot-dot" aria-hidden="true"></span>
-            <span>${escapeHtml(title)}</span>
-          </button>
-        </div>
-        <div class="rich-session-autopilot-actions">
-          ${historyButton}
-        </div>
-      </section>
-    `;
-  }
-
-  const showProjectPicker = !noProjects && !running && pickerOpen;
-  const projectSource = getChatAutopilotProjectSource(activeSession, config);
-  const projectLabel = projectName ? summarizeChatAutopilotProjectName(projectName) : "No project";
-  const projectTitle = projectName
-    ? `The supervisor will use ${projectName}${projectSource ? ` (${projectSource})` : ""}.${objectivePreview ? ` Objective: ${objectivePreview}` : ""} Click to change.`
-    : "Choose the research project for this chat.";
-  const actionDisabled = pending || projectCreating ? "disabled" : "";
-  return `
-    <section class="rich-session-autopilot ${running ? "is-running" : ""}" id="rich-session-autopilot" data-rich-session-autopilot-mount>
-      <div class="rich-session-autopilot-main">
-        <button
-          class="rich-session-autopilot-toggle"
-          type="button"
-          data-chat-autopilot-toggle
-          aria-pressed="${enabled ? "true" : "false"}"
-          title="${escapeHtml(toggleTitle)}"
-        >
-          <span class="rich-session-autopilot-dot" aria-hidden="true"></span>
-          <span>${escapeHtml(title)}</span>
-        </button>
-        <span class="rich-session-autopilot-status" title="${escapeHtml(status)}">${escapeHtml(status)}</span>
-      </div>
-      <div class="rich-session-autopilot-actions">
-        ${noProjects ? `
-          <button class="rich-session-autopilot-action is-primary" type="button" data-chat-autopilot-start-project title="Create durable research memory for this chat and arm the supervisor." ${actionDisabled}>
-            ${projectCreating ? "Starting..." : "Start"}
-          </button>
-        ` : showProjectPicker ? `
-          <label class="sr-only" for="chat-autopilot-project">Research project</label>
-          <select class="rich-session-autopilot-project" id="chat-autopilot-project" data-chat-autopilot-project title="Change the research project for this chat." ${state.researchAutopilot.projectsLoading ? "disabled" : ""}>
-            ${renderChatAutopilotProjectOptions(config, activeSession)}
-          </select>
-        ` : `
-          <button class="rich-session-autopilot-project-pill" type="button" data-chat-autopilot-change-project title="${escapeHtml(projectTitle)}">
-            ${escapeHtml(projectLabel)}
-          </button>
-        `}
-        ${historyButton}
-      </div>
-    </section>
-  `;
+function renderRichSessionAutopilotPanel() {
+  // Autopilot panel removed: the "Human driving / Side chat / choose
+  // project" bar above the composer was the supervisor's UI surface.
+  // Supervisor is gone (replaced by the auto-reply textbox); this
+  // panel had nothing useful left to show, so it returns "" and the
+  // mount node renders empty. The research autopilot job feature
+  // still exists at the API + CLI level for users who want it.
+  return "";
 }
+
 
 function renderRichSessionComposerAttachmentTilesHtml(attachments) {
   if (!Array.isArray(attachments) || !attachments.length) return "";

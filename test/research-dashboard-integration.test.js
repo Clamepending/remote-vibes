@@ -957,18 +957,15 @@ test("main app bundle exposes the native research workspace", async () => {
     // Supervisor route + helper assertions removed: feature deleted
     // (replaced by the auto-reply textbox; see PUT /api/sessions/:id/auto-reply).
     assert.match(jsText, /research-autopilot-steer-form/);
-    assert.match(jsText, /data-chat-autopilot-toggle/);
-    assert.match(jsText, /getChatAutopilotInferredProjectName/);
-    assert.match(jsText, /getChatAutopilotDefaultObjective/);
+    // The chat-autopilot panel ("Human driving / Side chat / choose
+    // project" bar above the composer) was stubbed because its
+    // supervisor backbone was deleted. Bundle assertions for that
+    // panel's strings are removed accordingly.
     assert.doesNotMatch(jsText, /Autopilot is ON for this chat/);
     assert.doesNotMatch(jsText, /Autopilot is OFF for this chat/);
-    assert.match(jsText, /wiki goal/);
     assert.doesNotMatch(jsText, /ready with project objective/);
-    assert.match(jsText, /data-chat-autopilot-change-project/);
-    assert.match(jsText, /Human driving/);
-    assert.match(jsText, /agent stopped; ready to resume/);
-    assert.match(jsText, /ready to supervise this chat/);
-    assert.match(jsText, /data-chat-autopilot-start-project/);
+    // Supervisor status strings removed: panel was stubbed.
+    assert.match(jsText, /\/api\/research\/projects/);
     assert.match(jsText, /\/api\/research\/projects/);
     assert.match(jsText, /research_progress_score/);
     assert.doesNotMatch(jsText, /Autopilot driving/);
