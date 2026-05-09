@@ -6395,11 +6395,11 @@ function renderRichSessionImageStrip(refs, { caption = "" } = {}) {
     return "";
   }
 
-  // Row layout: small thumbnail on the left, full path text on the right.
-  // The user's mental model is "I want to see WHICH file is being shown",
-  // so we keep the path string visible (in monospace) instead of just a
-  // basename caption underneath the image. The thumbnail stays small
-  // (~64px) so a long list of figure paths doesn't dominate the chat.
+  // Card layout: image is the primary content (large, max-width 100% of
+  // the strip column), with the full path shown as a tiny monospace
+  // caption underneath. Clicking opens the image fullscreen via the
+  // lightbox overlay below — what the user wants is to focus on the
+  // image content, not the path string.
   const rows = refs
     .map((rawPath) => {
       const url = getRichSessionImageUrl(rawPath);
@@ -6408,7 +6408,7 @@ function renderRichSessionImageStrip(refs, { caption = "" } = {}) {
       }
       const altText = rawPath.split("/").filter(Boolean).pop() || rawPath;
       return `
-        <a class="rich-session-image-row" href="#" data-rich-path="${escapeHtml(rawPath)}" title="${escapeHtml(rawPath)}">
+        <a class="rich-session-image-row" href="${escapeHtml(url)}" target="_blank" rel="noreferrer noopener" data-rich-image-zoom data-rich-image-url="${escapeHtml(url)}" data-rich-image-alt="${escapeHtml(altText)}" data-rich-path="${escapeHtml(rawPath)}" title="${escapeHtml(rawPath)}">
           <img
             class="rich-session-image-thumb"
             src="${escapeHtml(url)}"
@@ -7778,39 +7778,122 @@ function renderRichSessionQueueStrip(activeSession) {
   return `<div class="rich-session-queue ${items.length ? "" : "is-empty"}" id="rich-session-queue" data-rich-session-queue-mount aria-label="Queued messages">${renderRichSessionQueueStripHtml(activeSession)}</div>`;
 }
 
-// Auto-reply banner: a small panel above the composer with one textarea
-// that, when non-empty, gets sent as a fresh user message every time
-// the agent goes idle. Replaces the supervisor with a single-purpose
-// "keep this thing running while I sleep" control.
-//
-// State: the textarea value lives in state.autoReplyDrafts[sessionId]
-// (locally edited) and the server-confirmed value lives in
-// activeSession.autoReplyText. We POST on blur / Stop click — no
-// per-keystroke save, to avoid spamming the server while the user types.
+// Auto-reply: minimal UI.
+//   - Not set → render nothing. Zero space.
+//   - Set    → a one-line pill above the composer showing the text + Stop.
+//                The whole pill is clickable to re-edit via the modal.
+// Setting / editing happens in openAutoReplyModal — a small dialog like
+// the OAuth sign-in modal, never inline. This keeps the composer at full
+// width and never blocks typing.
 function renderAutoReplyBanner(activeSession) {
   if (!activeSession?.id) return "";
-  const sessionId = activeSession.id;
   const armedText = String(activeSession.autoReplyText || "").trim();
-  const draft = state.autoReplyDrafts && Object.prototype.hasOwnProperty.call(state.autoReplyDrafts, sessionId)
-    ? String(state.autoReplyDrafts[sessionId] || "")
-    : armedText;
-  const armed = Boolean(armedText);
+  if (!armedText) return "";
+  // Truncate the displayed text to keep the pill on one line; full text
+  // is in the title attribute and visible when the modal opens to edit.
+  const shortText = armedText.length > 80 ? `${armedText.slice(0, 80)}…` : armedText;
   return `
-    <div class="auto-reply-banner ${armed ? "is-armed" : ""}" data-auto-reply-banner data-session-id="${escapeHtml(sessionId)}">
-      <div class="auto-reply-banner-head">
-        <span class="auto-reply-banner-kicker">${armed ? "Auto-reply armed" : "Auto-reply (when agent goes idle)"}</span>
-        ${armed ? `<button type="button" class="auto-reply-banner-stop" data-auto-reply-stop>Stop</button>` : ""}
-      </div>
+    <button
+      class="auto-reply-pill is-armed"
+      type="button"
+      data-auto-reply-pill
+      data-session-id="${escapeHtml(activeSession.id)}"
+      title="${escapeHtml(armedText)}"
+      aria-label="Auto-reply armed: ${escapeHtml(armedText)}. Click to edit."
+    >
+      <span class="auto-reply-pill-kicker">Auto-reply</span>
+      <span class="auto-reply-pill-text">${escapeHtml(shortText)}</span>
+      <span class="auto-reply-pill-stop" data-auto-reply-stop title="Stop auto-reply">Stop</span>
+    </button>
+  `;
+}
+
+// "Set auto-reply" small link inside the composer footer — only place
+// the user can OPEN the modal when nothing is armed yet. Returns "" if
+// the session can't take input. This is what makes the empty state
+// take zero space above the composer.
+function renderAutoReplyComposerLink(activeSession) {
+  if (!activeSession?.id) return "";
+  const armed = Boolean(String(activeSession.autoReplyText || "").trim());
+  if (armed) return "";
+  return `
+    <button
+      class="auto-reply-link"
+      type="button"
+      data-auto-reply-open
+      data-session-id="${escapeHtml(activeSession.id)}"
+      title="Send a pre-typed message every time the agent finishes a turn. Useful for keeping work moving while you sleep."
+    >Auto-reply…</button>
+  `;
+}
+
+let __autoReplyModal = null;
+function openAutoReplyModal(sessionId) {
+  if (__autoReplyModal) return; // already open
+  const session = state.sessions.find((s) => s.id === sessionId);
+  if (!session) return;
+  const initial = String(session.autoReplyText || "");
+
+  const root = document.createElement("div");
+  root.className = "auto-reply-modal-backdrop";
+  root.innerHTML = `
+    <div class="auto-reply-modal" role="dialog" aria-labelledby="auto-reply-modal-title">
+      <button type="button" class="auto-reply-modal-close" aria-label="Close">×</button>
+      <h2 id="auto-reply-modal-title">Auto-reply when agent goes idle</h2>
+      <p class="auto-reply-modal-hint">
+        This text gets sent as a fresh message every time the agent finishes a turn. Use it to keep work moving overnight on a pre-typed prompt. Leave empty to disarm.
+      </p>
       <textarea
-        class="auto-reply-banner-input"
-        data-auto-reply-input
-        rows="2"
-        placeholder="Type a message that will be sent every time the agent finishes a turn (use this to keep work moving while you sleep). Leave empty to disarm."
+        class="auto-reply-modal-input"
+        rows="4"
+        placeholder="e.g. continue working on the test suite; ping me only if you're truly stuck"
         spellcheck="true"
         autocomplete="off"
-      >${escapeHtml(draft)}</textarea>
+      >${escapeHtml(initial)}</textarea>
+      <div class="auto-reply-modal-actions">
+        <button type="button" class="auto-reply-modal-cancel">Cancel</button>
+        <button type="button" class="auto-reply-modal-save primary-button">Save</button>
+      </div>
     </div>
   `;
+  document.body.appendChild(root);
+  __autoReplyModal = { root };
+  const input = root.querySelector(".auto-reply-modal-input");
+  const cancel = root.querySelector(".auto-reply-modal-cancel");
+  const save = root.querySelector(".auto-reply-modal-save");
+  const closeBtn = root.querySelector(".auto-reply-modal-close");
+  setTimeout(() => input?.focus(), 0);
+
+  const close = () => {
+    if (__autoReplyModal?.root && __autoReplyModal.root.parentNode) {
+      __autoReplyModal.root.parentNode.removeChild(__autoReplyModal.root);
+    }
+    __autoReplyModal = null;
+  };
+
+  cancel.addEventListener("click", close);
+  closeBtn.addEventListener("click", close);
+  root.addEventListener("click", (event) => {
+    if (event.target === root) close();
+  });
+  save.addEventListener("click", async () => {
+    const text = input?.value || "";
+    save.disabled = true;
+    save.textContent = "Saving…";
+    await saveAutoReplyText(sessionId, text);
+    refreshRichSessionSurfaceUi();
+    close();
+  });
+  // Cmd/Ctrl+Enter to save, Esc to cancel.
+  input?.addEventListener("keydown", (event) => {
+    if ((event.metaKey || event.ctrlKey) && event.key === "Enter") {
+      event.preventDefault();
+      save.click();
+    } else if (event.key === "Escape") {
+      event.preventDefault();
+      close();
+    }
+  });
 }
 
 // Save the auto-reply text for a session (or clear it if text is empty).
@@ -7840,45 +7923,92 @@ async function saveAutoReplyText(sessionId, text) {
   }
 }
 
-function bindAutoReplyEvents(root = document) {
-  if (!state.autoReplyDrafts) state.autoReplyDrafts = {};
-  const banner = root.querySelector("[data-auto-reply-banner]");
-  if (!(banner instanceof HTMLElement)) return;
-  if (banner.dataset.autoReplyBound === "true") return;
-  banner.dataset.autoReplyBound = "true";
-
-  const sessionId = banner.dataset.sessionId || "";
-  const input = banner.querySelector("[data-auto-reply-input]");
-  if (input instanceof HTMLTextAreaElement) {
-    input.addEventListener("input", () => {
-      state.autoReplyDrafts[sessionId] = input.value;
-    });
-    // Save on blur (committed value), and on Cmd/Ctrl+Enter for power users.
-    input.addEventListener("blur", async () => {
-      const draft = state.autoReplyDrafts[sessionId] ?? input.value;
-      const session = state.sessions.find((s) => s.id === sessionId);
-      const current = String(session?.autoReplyText || "");
-      if (draft.trim() === current.trim()) return;
-      await saveAutoReplyText(sessionId, draft);
-      refreshRichSessionSurfaceUi();
-    });
-    input.addEventListener("keydown", (event) => {
-      if ((event.metaKey || event.ctrlKey) && event.key === "Enter") {
-        event.preventDefault();
-        input.blur();
-      }
-    });
-  }
-
-  const stopBtn = banner.querySelector("[data-auto-reply-stop]");
-  if (stopBtn instanceof HTMLButtonElement) {
-    stopBtn.addEventListener("click", async (event) => {
+// Bind clicks on the auto-reply pill (when armed), the "Auto-reply…"
+// link in the composer footer (when not armed), and the image-zoom
+// click handler. Idempotent — uses a single delegated document-level
+// click listener installed once per page load.
+let __autoReplyClickInstalled = false;
+function bindAutoReplyEvents() {
+  if (__autoReplyClickInstalled) return;
+  __autoReplyClickInstalled = true;
+  document.addEventListener("click", async (event) => {
+    const target = event.target instanceof Element ? event.target : null;
+    if (!target) return;
+    const stop = target.closest("[data-auto-reply-stop]");
+    if (stop instanceof HTMLElement) {
       event.preventDefault();
-      state.autoReplyDrafts[sessionId] = "";
+      event.stopPropagation();
+      const pill = stop.closest("[data-auto-reply-pill]");
+      const sessionId = pill instanceof HTMLElement ? pill.dataset.sessionId || "" : "";
+      if (!sessionId) return;
       await saveAutoReplyText(sessionId, "");
       refreshRichSessionSurfaceUi();
-    });
-  }
+      return;
+    }
+    const pill = target.closest("[data-auto-reply-pill]");
+    if (pill instanceof HTMLElement) {
+      event.preventDefault();
+      openAutoReplyModal(pill.dataset.sessionId || "");
+      return;
+    }
+    const link = target.closest("[data-auto-reply-open]");
+    if (link instanceof HTMLElement) {
+      event.preventDefault();
+      openAutoReplyModal(link.dataset.sessionId || "");
+      return;
+    }
+    // Image lightbox: click an inline image to focus on it fullscreen.
+    // Modifier-clicks (cmd/ctrl/middle/shift) keep the native open-in-
+    // new-tab/window behavior — only plain left-click triggers the
+    // lightbox so power users can still open the file directly.
+    const img = target.closest("[data-rich-image-zoom]");
+    if (img instanceof HTMLElement
+      && !event.metaKey && !event.ctrlKey && !event.shiftKey && event.button === 0) {
+      event.preventDefault();
+      const url = img.dataset.richImageUrl || "";
+      const alt = img.dataset.richImageAlt || "";
+      const path = img.dataset.richPath || "";
+      if (url) openImageLightbox({ url, alt, path });
+    }
+  });
+}
+
+let __imageLightbox = null;
+function openImageLightbox({ url, alt = "", path = "" }) {
+  if (__imageLightbox) return;
+  const root = document.createElement("div");
+  root.className = "image-lightbox-backdrop";
+  root.innerHTML = `
+    <button type="button" class="image-lightbox-close" aria-label="Close">×</button>
+    <figure class="image-lightbox-figure">
+      <img class="image-lightbox-img" src="${escapeHtml(url)}" alt="${escapeHtml(alt)}" />
+      ${path ? `<figcaption class="image-lightbox-caption">${escapeHtml(path)}</figcaption>` : ""}
+    </figure>
+  `;
+  document.body.appendChild(root);
+  __imageLightbox = { root };
+  const close = () => {
+    if (__imageLightbox?.root && __imageLightbox.root.parentNode) {
+      __imageLightbox.root.parentNode.removeChild(__imageLightbox.root);
+    }
+    __imageLightbox = null;
+    document.removeEventListener("keydown", escHandler);
+  };
+  const escHandler = (event) => {
+    if (event.key === "Escape") {
+      event.preventDefault();
+      close();
+    }
+  };
+  document.addEventListener("keydown", escHandler);
+  root.querySelector(".image-lightbox-close")?.addEventListener("click", close);
+  root.addEventListener("click", (event) => {
+    // Click backdrop OR the image to dismiss; click the caption stays
+    // open so the path can be selected/copied.
+    const inCaption = (event.target instanceof Element)
+      && event.target.closest(".image-lightbox-caption");
+    if (!inCaption) close();
+  });
 }
 
 function getChatAutopilotSessionConfig(sessionId) {
@@ -8574,6 +8704,9 @@ function renderRichSessionSurface(activeSession) {
             autocomplete="off"
           >${escapeHtml(draft)}</textarea>
           <div class="rich-session-composer-foot">
+            <div class="rich-session-composer-foot-meta">
+              ${renderAutoReplyComposerLink(activeSession)}
+            </div>
             <div class="rich-session-composer-actions">
               <button
                 class="primary-button toolbar-control rich-session-send ${isWorking ? "is-working" : ""}"

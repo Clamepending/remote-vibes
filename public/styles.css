@@ -17264,19 +17264,22 @@ details.rich-session-compact-output[open] .rich-session-compact-output-toggle {
 .rich-session-image-strip-rows {
   display: flex;
   flex-direction: column;
-  gap: 6px;
+  gap: 14px;
 }
 
+/* Card layout: the image is the primary content (large), full path is
+ * a tiny monospace caption underneath. Click → lightbox. */
 .rich-session-image-row {
   display: flex;
-  align-items: center;
-  gap: 10px;
+  flex-direction: column;
+  gap: 4px;
   text-decoration: none;
   border-radius: 10px;
-  padding: 4px;
+  padding: 6px;
   border: 1px solid rgba(255, 255, 255, 0.05);
   background: rgba(8, 9, 11, 0.55);
   transition: border-color 120ms ease, background 120ms ease;
+  max-width: min(640px, 100%);
 }
 
 .rich-session-image-row:hover,
@@ -17288,24 +17291,88 @@ details.rich-session-compact-output[open] .rich-session-compact-output-toggle {
 
 .rich-session-image-thumb {
   display: block;
-  width: 64px;
-  height: 64px;
-  object-fit: cover;
+  width: 100%;
+  max-height: 380px;
+  object-fit: contain;
   border-radius: 6px;
   background: rgba(0, 0, 0, 0.18);
-  flex: 0 0 64px;
+  cursor: zoom-in;
 }
 
 .rich-session-image-path {
-  flex: 1 1 auto;
-  min-width: 0;
-  color: rgba(244, 244, 242, 0.78);
+  display: block;
+  color: rgba(244, 244, 242, 0.5);
   font-family: "IBM Plex Mono", monospace;
-  font-size: 0.78rem;
-  line-height: 1.35;
+  font-size: 0.7rem;
+  line-height: 1.3;
   word-break: break-all;
   background: transparent;
+  padding: 2px 4px 0;
+}
+
+/* Fullscreen lightbox: click an inline image to focus on it.
+ * Click backdrop / image / Esc to dismiss; the path caption is
+ * selectable text so the user can copy it. */
+.image-lightbox-backdrop {
+  position: fixed;
+  inset: 0;
+  background: rgba(0, 0, 0, 0.88);
+  z-index: 10000;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 32px;
+  cursor: zoom-out;
+}
+.image-lightbox-figure {
+  margin: 0;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 10px;
+  max-width: 100%;
+  max-height: 100%;
+  cursor: default;
+}
+.image-lightbox-img {
+  max-width: 100%;
+  max-height: calc(100vh - 120px);
+  object-fit: contain;
+  border-radius: 6px;
+  background: rgba(0, 0, 0, 0.4);
+  cursor: zoom-out;
+}
+.image-lightbox-caption {
+  color: rgba(244, 244, 242, 0.7);
+  font-family: "IBM Plex Mono", monospace;
+  font-size: 0.78rem;
+  word-break: break-all;
+  text-align: center;
+  user-select: text;
+  cursor: text;
+  max-width: 80ch;
+}
+.image-lightbox-close {
+  position: fixed;
+  top: 16px;
+  right: 20px;
+  background: transparent;
+  border: 0;
+  color: rgba(244, 244, 242, 0.7);
+  font-size: 2rem;
+  width: 40px;
+  height: 40px;
+  cursor: pointer;
+  border-radius: 8px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
   padding: 0;
+  z-index: 10001;
+}
+.image-lightbox-close:hover {
+  background: rgba(255, 255, 255, 0.08);
+  color: #fff;
 }
 
 /* Backward-compat: legacy tile classes remain on entries that reference
@@ -19972,70 +20039,174 @@ select:disabled {
 }
 
 /* ============================================================
- * Auto-reply banner — single-textarea control above the composer.
- * Replaces the old supervisor side-chat: when armed, the textarea
- * value is sent as a fresh user input every time the agent goes
- * idle. See renderAutoReplyBanner / setAutoReplyText.
+ * Auto-reply: minimal UI.
+ *
+ * - Empty state: a tiny "Auto-reply…" link inside the composer
+ *   footer-meta (left of the Send button area). Zero space above
+ *   the composer.
+ * - Armed state: a one-line pill above the composer showing the
+ *   text + a Stop region. Click anywhere on the pill to re-edit
+ *   in the modal.
+ * - Editing: small modal dialog (matches the OAuth sign-in modal).
  * ============================================================ */
-.auto-reply-banner {
-  display: flex;
-  flex-direction: column;
-  gap: 6px;
-  padding: 8px 10px;
-  margin: 0 0 8px;
-  border-radius: 10px;
-  border: 1px dashed rgba(255, 255, 255, 0.08);
-  background: rgba(255, 255, 255, 0.02);
-}
-.auto-reply-banner.is-armed {
-  border-style: solid;
-  border-color: rgba(255, 200, 120, 0.5);
-  background: rgba(255, 200, 120, 0.06);
-}
-.auto-reply-banner-head {
+.auto-reply-pill {
   display: flex;
   align-items: center;
-  justify-content: space-between;
-  gap: 10px;
-}
-.auto-reply-banner-kicker {
-  font-size: 0.74rem;
-  letter-spacing: 0.04em;
-  text-transform: uppercase;
-  color: rgba(244, 244, 242, 0.55);
-  font-family: "IBM Plex Mono", monospace;
-}
-.auto-reply-banner.is-armed .auto-reply-banner-kicker {
-  color: #ffc878;
-}
-.auto-reply-banner-stop {
-  background: transparent;
-  border: 1px solid rgba(255, 200, 120, 0.5);
-  color: #ffc878;
-  font-size: 0.74rem;
-  padding: 2px 10px;
+  gap: 8px;
+  padding: 4px 8px 4px 10px;
+  margin: 0 0 6px;
   border-radius: 999px;
-  cursor: pointer;
+  border: 1px solid rgba(255, 200, 120, 0.5);
+  background: rgba(255, 200, 120, 0.06);
+  color: #ffc878;
   font-family: inherit;
+  font-size: 0.78rem;
+  cursor: pointer;
+  text-align: left;
+  width: fit-content;
+  max-width: 100%;
 }
-.auto-reply-banner-stop:hover {
+.auto-reply-pill:hover {
   background: rgba(255, 200, 120, 0.12);
 }
-.auto-reply-banner-input {
-  width: 100%;
+.auto-reply-pill-kicker {
+  font-family: "IBM Plex Mono", monospace;
+  font-size: 0.68rem;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  color: #ffc878;
+}
+.auto-reply-pill-text {
+  color: rgba(244, 244, 242, 0.85);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  max-width: 60ch;
+  font-family: inherit;
+}
+.auto-reply-pill-stop {
+  border-left: 1px solid rgba(255, 200, 120, 0.4);
+  padding-left: 8px;
+  margin-left: 4px;
+  font-size: 0.7rem;
+  letter-spacing: 0.02em;
+  color: #ffc878;
+}
+.auto-reply-pill-stop:hover {
+  text-decoration: underline;
+}
+.auto-reply-link {
   background: transparent;
   border: 0;
-  color: inherit;
-  font: inherit;
-  font-size: 0.85rem;
+  color: rgba(244, 244, 242, 0.45);
+  font-size: 0.74rem;
+  cursor: pointer;
+  padding: 2px 6px;
+  border-radius: 6px;
+  font-family: inherit;
+}
+.auto-reply-link:hover {
+  color: rgba(244, 244, 242, 0.8);
+  background: rgba(255, 255, 255, 0.04);
+}
+.rich-session-composer-foot-meta {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-right: auto;
+  min-width: 0;
+}
+
+/* Modal for setting/editing the auto-reply. Same backdrop pattern as
+ * the Claude OAuth sign-in modal. */
+.auto-reply-modal-backdrop {
+  position: fixed;
+  inset: 0;
+  background: rgba(8, 10, 18, 0.72);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  z-index: 9000;
+  backdrop-filter: blur(4px);
+}
+.auto-reply-modal {
+  background: #14171f;
+  color: #e7e9ee;
+  border: 1px solid rgba(255, 255, 255, 0.08);
+  border-radius: 14px;
+  padding: 24px 24px 18px;
+  width: min(520px, calc(100vw - 32px));
+  max-height: calc(100vh - 64px);
+  overflow-y: auto;
+  box-shadow: 0 24px 64px rgba(0, 0, 0, 0.5);
+  position: relative;
+  font-size: 0.92rem;
+  line-height: 1.5;
+}
+.auto-reply-modal h2 {
+  margin: 0 0 6px;
+  font-size: 1.04rem;
+  font-weight: 600;
+}
+.auto-reply-modal-close {
+  position: absolute;
+  top: 8px;
+  right: 10px;
+  background: transparent;
+  border: 0;
+  color: rgba(231, 233, 238, 0.6);
+  font-size: 1.6rem;
+  width: 30px;
+  height: 30px;
+  cursor: pointer;
+  border-radius: 6px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 0;
+}
+.auto-reply-modal-close:hover {
+  background: rgba(255, 255, 255, 0.06);
+  color: #fff;
+}
+.auto-reply-modal-hint {
+  margin: 0 0 12px;
+  color: rgba(231, 233, 238, 0.7);
+  font-size: 0.84rem;
+}
+.auto-reply-modal-input {
+  width: 100%;
+  background: rgba(255, 255, 255, 0.04);
+  border: 1px solid rgba(255, 255, 255, 0.08);
+  border-radius: 8px;
+  padding: 8px 10px;
+  color: #e7e9ee;
+  font-family: inherit;
+  font-size: 0.88rem;
   resize: vertical;
-  min-height: 36px;
-  padding: 4px 0;
+  min-height: 80px;
+  margin-bottom: 12px;
   box-sizing: border-box;
 }
-.auto-reply-banner-input::placeholder {
-  color: rgba(244, 244, 242, 0.3);
+.auto-reply-modal-input:focus {
+  outline: 2px solid rgba(184, 212, 255, 0.5);
+  outline-offset: -1px;
 }
-.auto-reply-banner-input:focus {
-  outline: none;
+.auto-reply-modal-actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 8px;
+}
+.auto-reply-modal-cancel {
+  background: transparent;
+  color: rgba(231, 233, 238, 0.7);
+  border: 1px solid rgba(255, 255, 255, 0.08);
+  border-radius: 8px;
+  padding: 6px 12px;
+  cursor: pointer;
+  font-size: 0.82rem;
+}
+.auto-reply-modal-cancel:hover {
+  background: rgba(255, 255, 255, 0.04);
+  color: #e7e9ee;
 }
