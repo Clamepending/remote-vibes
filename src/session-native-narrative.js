@@ -632,8 +632,23 @@ function summarizeClaudeToolInput(toolUse) {
       return truncateInline(input.description, 220);
     }
 
-    if (typeof input.path === "string" && input.path.trim()) {
-      return truncateInline(input.path, 220);
+    // Path-bearing tools — try every official Claude Code field name we
+    // know. `file_path` is what Read/Write/Edit/MultiEdit emit;
+    // `notebook_path` is the Jupyter variant; `path` was an older form
+    // and stays as a fallback. Without this list, Read on an image
+    // shows "Read called" with no visible path, the imageRef extractor
+    // gets nothing to match on, and the inline thumbnail doesn't render.
+    const pathFields = [
+      input.file_path,
+      input.notebook_path,
+      input.path,
+      input.filePath,
+      input.absolute_path,
+    ];
+    for (const candidate of pathFields) {
+      if (typeof candidate === "string" && candidate.trim()) {
+        return truncateInline(candidate, 220);
+      }
     }
   }
 
