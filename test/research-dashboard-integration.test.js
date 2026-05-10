@@ -984,11 +984,7 @@ test("main app bundle exposes the native research workspace", async () => {
     assert.match(cssText, /rich-session-autopilot-indicator/);
     assert.match(cssText, /rich-session-autopilot-project-pill/);
     assert.match(cssText, /rich-session-autopilot-action\.is-primary/);
-    assert.match(cssText, /rich-session-supervisor-drawer/);
-    assert.match(cssText, /rich-session-supervisor-history/);
-    assert.match(cssText, /rich-session-supervisor-watchlist/);
-    assert.match(cssText, /rich-session-supervisor-chat-log/);
-    assert.match(cssText, /rich-session-supervisor-composer/);
+    // Supervisor CSS rules removed: feature deleted (replaced by auto-reply textbox).
     assert.match(cssText, /research-org-bench-card/);
     assert.match(cssText, /research-bench-table/);
   });
