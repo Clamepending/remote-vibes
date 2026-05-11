@@ -8,8 +8,8 @@ import { promisify } from "node:util";
 import { getGitHubHttpsRemoteUrl, UpdateManager } from "../src/update-manager.js";
 
 const execFile = promisify(execFileCallback);
-const releaseChannelUrl = "https://raw.githubusercontent.com/Clamepending/vibe-research/main/release-channel.json";
-const githubLatestUrl = "https://api.github.com/repos/Clamepending/vibe-research/releases/latest";
+const releaseChannelUrl = "https://raw.githubusercontent.com/Clamepending/swarmlab/main/release-channel.json";
+const githubLatestUrl = "https://api.github.com/repos/Clamepending/swarmlab/releases/latest";
 const MANAGED_PROMPT_MARKER = "<!-- vibe-research:managed-agent-prompt -->";
 const LEGACY_MANAGED_PROMPT_MARKER = "<!-- remote-vibes:managed-agent-prompt -->";
 
@@ -44,16 +44,16 @@ async function commitSourceVersion(sourceDir, version) {
 
 test("getGitHubHttpsRemoteUrl converts GitHub SSH remotes to public HTTPS remotes", () => {
   assert.equal(
-    getGitHubHttpsRemoteUrl("git@github.com:Clamepending/vibe-research.git"),
-    "https://github.com/Clamepending/vibe-research.git",
+    getGitHubHttpsRemoteUrl("git@github.com:Clamepending/swarmlab.git"),
+    "https://github.com/Clamepending/swarmlab.git",
   );
   assert.equal(
-    getGitHubHttpsRemoteUrl("ssh://git@github.com/Clamepending/vibe-research"),
-    "https://github.com/Clamepending/vibe-research.git",
+    getGitHubHttpsRemoteUrl("ssh://git@github.com/Clamepending/swarmlab"),
+    "https://github.com/Clamepending/swarmlab.git",
   );
   assert.equal(
-    getGitHubHttpsRemoteUrl("https://github.com/Clamepending/vibe-research"),
-    "https://github.com/Clamepending/vibe-research.git",
+    getGitHubHttpsRemoteUrl("https://github.com/Clamepending/swarmlab"),
+    "https://github.com/Clamepending/swarmlab.git",
   );
 });
 
@@ -291,7 +291,7 @@ test("UpdateManager schedules a detached pull and restart for clean updates", as
 test("UpdateManager falls back to the static release channel when GitHub Releases are unavailable", async () => {
   const { checkoutDir, sourceDir, tempRoot } = await createRepoPair();
   const latestCommit = await commitSourceVersion(sourceDir, "v2");
-  await git(checkoutDir, ["remote", "set-url", "origin", "git@github.com:Clamepending/vibe-research.git"]);
+  await git(checkoutDir, ["remote", "set-url", "origin", "git@github.com:Clamepending/swarmlab.git"]);
 
   try {
     const manager = new UpdateManager({
@@ -316,7 +316,7 @@ test("UpdateManager falls back to the static release channel when GitHub Release
               name: "Vibe Research",
               version: "2.0.0",
               tag: "v2.0.0",
-              releaseUrl: "https://github.com/Clamepending/vibe-research/releases/tag/v2.0.0",
+              releaseUrl: "https://github.com/Clamepending/swarmlab/releases/tag/v2.0.0",
             };
           },
         };
@@ -325,7 +325,7 @@ test("UpdateManager falls back to the static release channel when GitHub Release
         if (
           command === "git" &&
           args[2] === "ls-remote" &&
-          args[3] === "https://github.com/Clamepending/vibe-research.git" &&
+          args[3] === "https://github.com/Clamepending/swarmlab.git" &&
           args[4] === "refs/tags/v2.0.0"
         ) {
           return Promise.resolve({
@@ -355,7 +355,7 @@ test("UpdateManager ignores stale release-channel tags when remote semver tags a
   const { checkoutDir, sourceDir, tempRoot } = await createRepoPair();
   const staleReleaseCommit = await commitSourceVersion(sourceDir, "v2");
   const latestCommit = await commitSourceVersion(sourceDir, "v3");
-  await git(checkoutDir, ["remote", "set-url", "origin", "git@github.com:Clamepending/vibe-research.git"]);
+  await git(checkoutDir, ["remote", "set-url", "origin", "git@github.com:Clamepending/swarmlab.git"]);
 
   try {
     const manager = new UpdateManager({
@@ -380,7 +380,7 @@ test("UpdateManager ignores stale release-channel tags when remote semver tags a
               name: "Vibe Research",
               version: "2.0.0",
               tag: "v2.0.0",
-              releaseUrl: "https://github.com/Clamepending/vibe-research/releases/tag/v2.0.0",
+              releaseUrl: "https://github.com/Clamepending/swarmlab/releases/tag/v2.0.0",
             };
           },
         };
@@ -389,7 +389,7 @@ test("UpdateManager ignores stale release-channel tags when remote semver tags a
         if (
           command === "git" &&
           args[2] === "ls-remote" &&
-          args[3] === "https://github.com/Clamepending/vibe-research.git" &&
+          args[3] === "https://github.com/Clamepending/swarmlab.git" &&
           args[4] === "refs/tags/v2.0.0"
         ) {
           return Promise.resolve({
@@ -402,7 +402,7 @@ test("UpdateManager ignores stale release-channel tags when remote semver tags a
           command === "git" &&
           args[2] === "ls-remote" &&
           args[3] === "--tags" &&
-          args[4] === "https://github.com/Clamepending/vibe-research.git" &&
+          args[4] === "https://github.com/Clamepending/swarmlab.git" &&
           args[5] === "refs/tags/v*"
         ) {
           return Promise.resolve({
@@ -436,7 +436,7 @@ test("UpdateManager ignores stale release-channel tags when remote semver tags a
 test("UpdateManager prefers GitHub Releases and schedules a tag checkout", async () => {
   const { checkoutDir, sourceDir, tempRoot } = await createRepoPair();
   const latestCommit = await commitSourceVersion(sourceDir, "v2");
-  await git(checkoutDir, ["remote", "set-url", "origin", "git@github.com:Clamepending/vibe-research.git"]);
+  await git(checkoutDir, ["remote", "set-url", "origin", "git@github.com:Clamepending/swarmlab.git"]);
   const spawnCalls = [];
 
   try {
@@ -462,7 +462,7 @@ test("UpdateManager prefers GitHub Releases and schedules a tag checkout", async
             return {
               tag_name: "v2.0.0",
               name: "Vibe Research v2.0.0",
-              html_url: "https://github.com/Clamepending/vibe-research/releases/tag/v2.0.0",
+              html_url: "https://github.com/Clamepending/swarmlab/releases/tag/v2.0.0",
               published_at: "2026-04-16T08:00:00Z",
             };
           },
@@ -472,7 +472,7 @@ test("UpdateManager prefers GitHub Releases and schedules a tag checkout", async
         if (
           command === "git" &&
           args[2] === "ls-remote" &&
-          args[3] === "https://github.com/Clamepending/vibe-research.git" &&
+          args[3] === "https://github.com/Clamepending/swarmlab.git" &&
           args[4] === "refs/tags/v2.0.0"
         ) {
           return Promise.resolve({
@@ -497,14 +497,14 @@ test("UpdateManager prefers GitHub Releases and schedules a tag checkout", async
     assert.equal(status.latestVersion, "v2.0.0");
     assert.equal(status.latestTag, "v2.0.0");
     assert.equal(status.latestCommit, latestCommit);
-    assert.equal(status.releaseUrl, "https://github.com/Clamepending/vibe-research/releases/tag/v2.0.0");
+    assert.equal(status.releaseUrl, "https://github.com/Clamepending/swarmlab/releases/tag/v2.0.0");
 
     const result = await manager.scheduleUpdateAndRestart();
     assert.equal(result.scheduled, true);
     assert.equal(spawnCalls.length, 1);
     assert.match(
       spawnCalls[0].args[1],
-      /git fetch --force --depth 1 'https:\/\/github\.com\/Clamepending\/vibe-research\.git' 'refs\/tags\/v2\.0\.0:refs\/tags\/v2\.0\.0'/,
+      /git fetch --force --depth 1 'https:\/\/github\.com\/Clamepending\/swarmlab\.git' 'refs\/tags\/v2\.0\.0:refs\/tags\/v2\.0\.0'/,
     );
     assert.match(spawnCalls[0].args[1], /git checkout --detach 'refs\/tags\/v2\.0\.0'/);
     assert.match(spawnCalls[0].args[1], /npm run build/);
@@ -519,7 +519,7 @@ test("UpdateManager falls back to remote version tags for detached release check
   const currentCommit = currentCommitStdout.trim();
   const latestCommit = await commitSourceVersion(sourceDir, "v2");
   await git(checkoutDir, ["checkout", "--detach"]);
-  await git(checkoutDir, ["remote", "set-url", "origin", "git@github.com:Clamepending/vibe-research.git"]);
+  await git(checkoutDir, ["remote", "set-url", "origin", "git@github.com:Clamepending/swarmlab.git"]);
   const spawnCalls = [];
 
   try {
@@ -538,7 +538,7 @@ test("UpdateManager falls back to remote version tags for detached release check
           command === "git" &&
           args[2] === "ls-remote" &&
           args[3] === "--tags" &&
-          args[4] === "https://github.com/Clamepending/vibe-research.git" &&
+          args[4] === "https://github.com/Clamepending/swarmlab.git" &&
           args[5] === "refs/tags/v*"
         ) {
           return Promise.resolve({
@@ -577,7 +577,7 @@ test("UpdateManager falls back to remote version tags for detached release check
     assert.equal(spawnCalls.length, 1);
     assert.match(
       spawnCalls[0].args[1],
-      /git fetch --force --depth 1 'https:\/\/github\.com\/Clamepending\/vibe-research\.git' 'refs\/tags\/v2\.0\.0:refs\/tags\/v2\.0\.0'/,
+      /git fetch --force --depth 1 'https:\/\/github\.com\/Clamepending\/swarmlab\.git' 'refs\/tags\/v2\.0\.0:refs\/tags\/v2\.0\.0'/,
     );
     assert.match(spawnCalls[0].args[1], /git checkout --detach 'refs\/tags\/v2\.0\.0'/);
   } finally {
@@ -593,7 +593,7 @@ test("UpdateManager does not offer stale release-channel downgrades for newer re
   await git(sourceDir, ["commit", "-m", "Release v3 package"]);
   await git(checkoutDir, ["pull", "--ff-only"]);
   await git(checkoutDir, ["checkout", "--detach"]);
-  await git(checkoutDir, ["remote", "set-url", "origin", "git@github.com:Clamepending/vibe-research.git"]);
+  await git(checkoutDir, ["remote", "set-url", "origin", "git@github.com:Clamepending/swarmlab.git"]);
 
   try {
     const manager = new UpdateManager({
@@ -618,7 +618,7 @@ test("UpdateManager does not offer stale release-channel downgrades for newer re
               name: "Vibe Research",
               version: "0.2.2",
               tag: "v0.2.2",
-              releaseUrl: "https://github.com/Clamepending/vibe-research/releases/tag/v0.2.2",
+              releaseUrl: "https://github.com/Clamepending/swarmlab/releases/tag/v0.2.2",
             };
           },
         };
@@ -627,7 +627,7 @@ test("UpdateManager does not offer stale release-channel downgrades for newer re
         if (
           command === "git" &&
           args[2] === "ls-remote" &&
-          args[3] === "https://github.com/Clamepending/vibe-research.git" &&
+          args[3] === "https://github.com/Clamepending/swarmlab.git" &&
           args[4] === "refs/tags/v0.2.2"
         ) {
           return Promise.resolve({
@@ -640,7 +640,7 @@ test("UpdateManager does not offer stale release-channel downgrades for newer re
           command === "git" &&
           args[2] === "ls-remote" &&
           args[3] === "--tags" &&
-          args[4] === "https://github.com/Clamepending/vibe-research.git" &&
+          args[4] === "https://github.com/Clamepending/swarmlab.git" &&
           args[5] === "refs/tags/v*"
         ) {
           return Promise.resolve({
@@ -675,7 +675,7 @@ test("UpdateManager does not offer to downgrade branch checkouts ahead of the la
   const releaseCommit = await commitSourceVersion(sourceDir, "v2");
   await commitSourceVersion(sourceDir, "v3");
   await git(checkoutDir, ["pull", "--ff-only"]);
-  await git(checkoutDir, ["remote", "set-url", "origin", "git@github.com:Clamepending/vibe-research.git"]);
+  await git(checkoutDir, ["remote", "set-url", "origin", "git@github.com:Clamepending/swarmlab.git"]);
 
   try {
     const manager = new UpdateManager({
@@ -698,7 +698,7 @@ test("UpdateManager does not offer to downgrade branch checkouts ahead of the la
             return {
               tag_name: "v2.0.0",
               name: "Vibe Research v2.0.0",
-              html_url: "https://github.com/Clamepending/vibe-research/releases/tag/v2.0.0",
+              html_url: "https://github.com/Clamepending/swarmlab/releases/tag/v2.0.0",
               published_at: "2026-04-16T08:00:00Z",
             };
           },
@@ -708,7 +708,7 @@ test("UpdateManager does not offer to downgrade branch checkouts ahead of the la
         if (
           command === "git" &&
           args[2] === "ls-remote" &&
-          args[3] === "https://github.com/Clamepending/vibe-research.git" &&
+          args[3] === "https://github.com/Clamepending/swarmlab.git" &&
           args[4] === "refs/tags/v2.0.0"
         ) {
           return Promise.resolve({

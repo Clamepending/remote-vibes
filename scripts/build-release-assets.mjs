@@ -46,7 +46,7 @@ mkdirSync(outDir, { recursive: true });
 const commit = run("git", ["rev-parse", "HEAD"]);
 const installerBuffer = readFileSync(path.join(rootDir, "install.sh"));
 const installer = writeAsset("install.sh", installerBuffer);
-const releaseUrl = `https://github.com/Clamepending/vibe-research/releases/tag/${encodeURIComponent(tag)}`;
+const releaseUrl = `https://github.com/Clamepending/swarmlab/releases/tag/${encodeURIComponent(tag)}`;
 const manifestPayload = {
   schemaVersion: 1,
   name: "Vibe Research",
@@ -56,9 +56,9 @@ const manifestPayload = {
   generatedAt: new Date().toISOString(),
   official: {
     website: "https://vibe-research.net",
-    repository: "https://github.com/Clamepending/vibe-research",
+    repository: "https://github.com/Clamepending/swarmlab",
     release: releaseUrl,
-    installer: `https://raw.githubusercontent.com/Clamepending/vibe-research/${tag}/install.sh`,
+    installer: `https://raw.githubusercontent.com/Clamepending/swarmlab/${tag}/install.sh`,
   },
   assets: [
     {

@@ -27,7 +27,7 @@
       {
         "provider": "github",
         "owner": "Clamepending",
-        "repo": "vibe-research",
+        "repo": "swarmlab",
         "releaseType": "release"
       }
     ],

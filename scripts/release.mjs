@@ -185,13 +185,13 @@ if (fs.existsSync(desktopPackageLockPath)) {
 writeJson(releaseChannelPath, {
   schemaVersion: 1,
   name: "Vibe Research",
-  repository: "https://github.com/Clamepending/vibe-research",
+  repository: "https://github.com/Clamepending/swarmlab",
   website: "https://vibe-research.net",
   channel: "stable",
   version,
   tag,
-  releaseUrl: `https://github.com/Clamepending/vibe-research/releases/tag/${tag}`,
-  installer: `https://raw.githubusercontent.com/Clamepending/vibe-research/${tag}/install.sh`,
+  releaseUrl: `https://github.com/Clamepending/swarmlab/releases/tag/${tag}`,
+  installer: `https://raw.githubusercontent.com/Clamepending/swarmlab/${tag}/install.sh`,
 });
 
 run("git", [

@@ -143,7 +143,9 @@ jobs:
       - name: Upload stable-named DMG for website download link
         if: env.RELEASE_MODE == 'true'
         run: |
-          dmg="$(ls desktop/dist/Vibe-Research-*-mac-*.dmg 2>/dev/null | head -n1)"
+          # Match the new Swarmlab-*.dmg artifactName as well as the legacy
+          # Vibe-Research-*.dmg name produced by older builds.
+          dmg="$(ls desktop/dist/Swarmlab-*-mac-*.dmg desktop/dist/Vibe-Research-*-mac-*.dmg 2>/dev/null | head -n1)"
           if [ -z "$dmg" ]; then
             echo "No DMG found in desktop/dist; skipping stable-name upload" >&2
             exit 0
@@ -155,7 +157,12 @@ jobs:
             echo "::error::Could not determine release tag for stable-name upload (GITHUB_REF=$GITHUB_REF INPUT_TAG=$INPUT_TAG)"
             exit 1
           fi
+          # Upload under the new stable name (Swarmlab-macOS.dmg) AND keep the
+          # legacy name (Vibe-Research-macOS.dmg) so old cached download links
+          # on the website keep working until they're refreshed.
+          cp "$dmg" "$RUNNER_TEMP/Swarmlab-macOS.dmg"
           cp "$dmg" "$RUNNER_TEMP/Vibe-Research-macOS.dmg"
+          gh release upload "$tag" "$RUNNER_TEMP/Swarmlab-macOS.dmg" --repo "$GITHUB_REPOSITORY" --clobber
           gh release upload "$tag" "$RUNNER_TEMP/Vibe-Research-macOS.dmg" --repo "$GITHUB_REPOSITORY" --clobber
         env:
           GH_TOKEN: ${{ github.token }}

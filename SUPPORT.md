@@ -2,7 +2,7 @@
 
 For normal questions, bugs, and install problems, open a GitHub issue at:
 
-https://github.com/Clamepending/vibe-research/issues
+https://github.com/Clamepending/swarmlab/issues
 
 For security-sensitive reports, follow `SECURITY.md` and avoid posting private
 details publicly.

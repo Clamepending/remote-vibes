@@ -8,8 +8,8 @@ instance like access to the machine running it.
 ## Official Sources
 
 - Website: https://swarmlab.vibe-research.net
-- Repository: https://github.com/Clamepending/vibe-research
-- Releases: https://github.com/Clamepending/vibe-research/releases
+- Repository: https://github.com/Clamepending/swarmlab
+- Releases: https://github.com/Clamepending/swarmlab/releases
 - Installer: `curl -fsSL https://swarmlab.vibe-research.net/install.sh | bash`
 
 Do not run installers, update commands, or BuildingHub catalogs from lookalike

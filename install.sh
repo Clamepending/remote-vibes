@@ -42,7 +42,7 @@ default_node_install_root() {
   fi
 }
 
-REPO_SLUG="${VIBE_RESEARCH_REPO_SLUG:-${REMOTE_VIBES_REPO_SLUG:-Clamepending/vibe-research}}"
+REPO_SLUG="${VIBE_RESEARCH_REPO_SLUG:-${REMOTE_VIBES_REPO_SLUG:-Clamepending/swarmlab}}"
 INSTALL_DIR="${VIBE_RESEARCH_HOME:-${REMOTE_VIBES_HOME:-$(default_install_dir)}}"
 if [ -n "${VIBE_RESEARCH_REF+x}" ] || [ -n "${REMOTE_VIBES_REF+x}" ]; then
   REPO_REF_WAS_SET=1

@@ -8,8 +8,8 @@ Swarmlab is a project within the Vibe Research lab — open-source agent-powered
 
 - Website: https://swarmlab.vibe-research.net
 - Lab homepage: https://vibe-research.net
-- Repository: https://github.com/Clamepending/vibe-research
-- Releases: https://github.com/Clamepending/vibe-research/releases
+- Repository: https://github.com/Clamepending/swarmlab
+- Releases: https://github.com/Clamepending/swarmlab/releases
 - Installer: `curl -fsSL https://swarmlab.vibe-research.net/install.sh | bash`
 
 Do not run lookalike installers from unrelated domains, forks, package names, or social posts. Release pages include checksum assets for high-trust verification when available.
