@@ -5,7 +5,7 @@ import path from "node:path";
 import process from "node:process";
 
 const TERMINAL_STATUSES = new Set(["canceled", "cancelled", "completed", "failed"]);
-const DEFAULT_SKILL_URL = "https://ottoauth.vercel.app/skill.md";
+const DEFAULT_SKILL_URL = "https://ottoauth.vibe-research.net/skill.md";
 
 function printHelp() {
   process.stdout.write(`vr-ottoauth

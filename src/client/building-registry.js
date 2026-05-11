@@ -1166,7 +1166,7 @@ const CORE_BUILDING_MANIFESTS = [
       docs: [
         { label: "Anthropic Console keys", url: "https://console.anthropic.com/settings/keys" },
         { label: "browser-use repo", url: "https://github.com/browser-use/browser-use" },
-        { label: "OttoAuth dashboard", url: "https://ottoauth.vercel.app/dashboard" },
+        { label: "OttoAuth dashboard", url: "https://ottoauth.vibe-research.net/dashboard" },
       ],
     },
     onboarding: {
@@ -1218,7 +1218,7 @@ const CORE_BUILDING_MANIFESTS = [
           {
             kind: "http",
             method: "POST",
-            url: "https://ottoauth.vercel.app/api/agents/create",
+            url: "https://ottoauth.vibe-research.net/api/agents/create",
             body: {},
             headers: { "content-type": "application/json" },
             label: "Register a new OttoAuth agent identity",
@@ -1237,7 +1237,7 @@ const CORE_BUILDING_MANIFESTS = [
         auth: {
           kind: "auth-paste",
           setting: "ottoAuthPairingConfirmed",
-          setupUrl: "https://ottoauth.vercel.app/dashboard",
+          setupUrl: "https://ottoauth.vibe-research.net/dashboard",
           setupLabel: "Open OttoAuth dashboard",
           detail: "Sign into OttoAuth and enter the pairing code from the install log.",
         },
@@ -1266,8 +1266,8 @@ const CORE_BUILDING_MANIFESTS = [
         { name: "VIBE_RESEARCH_AGENT_CALLBACK_URL", detail: "Automatically passed by vr-ottoauth so OttoAuth services can send multi-turn updates back to this agent." },
       ],
       docs: [
-        { label: "OttoAuth dashboard", url: "https://ottoauth.vercel.app/dashboard" },
-        { label: "OttoAuth skill", url: "https://ottoauth.vercel.app/skill.md" },
+        { label: "OttoAuth dashboard", url: "https://ottoauth.vibe-research.net/dashboard" },
+        { label: "OttoAuth skill", url: "https://ottoauth.vibe-research.net/skill.md" },
       ],
     },
     onboarding: {
@@ -1280,7 +1280,7 @@ const CORE_BUILDING_MANIFESTS = [
           configuredSetting: "ottoAuthPrivateKeyConfigured",
           secret: true,
           required: true,
-          setupUrl: "https://ottoauth.vercel.app/skill.md",
+          setupUrl: "https://ottoauth.vibe-research.net/skill.md",
           setupLabel: "Open skill",
           setupHint: "Open the OttoAuth skill, then paste the private key here.",
         },

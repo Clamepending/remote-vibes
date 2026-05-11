@@ -132,7 +132,7 @@ export function stripAnsi(value) {
 }
 
 
-export const RICH_SESSION_INLINE_IMAGE_EXTENSIONS = /\.(?:png|jpe?g|gif|webp|bmp)\b/iu;
+export const RICH_SESSION_INLINE_IMAGE_EXTENSIONS = /\.(?:png|jpe?g|gif|webp|bmp|svg)\b/iu;
 
 // Slash commands the native composer recognises. Order matters: the slash
 // menu surfaces them top-down. The `aliases` array is the prose triggers

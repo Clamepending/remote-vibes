@@ -70,7 +70,7 @@ test("OttoAuth service creates hosted computeruse tasks and exposes live subagen
   const service = new OttoAuthService({
     fetchImpl: createFakeOttoAuthFetch(calls),
     settings: {
-      ottoAuthBaseUrl: "https://ottoauth.vercel.app",
+      ottoAuthBaseUrl: "https://ottoauth.vibe-research.net",
       ottoAuthEnabled: true,
       ottoAuthPrivateKey: "pk_test",
       ottoAuthUsername: "codex_agent",
@@ -90,7 +90,7 @@ test("OttoAuth service creates hosted computeruse tasks and exposes live subagen
 
     assert.equal(task.serviceId, "computeruse");
     assert.equal(task.hostedTaskId, "task-1");
-    assert.equal(task.orderUrl, "https://ottoauth.vercel.app/orders/task-1");
+    assert.equal(task.orderUrl, "https://ottoauth.vibe-research.net/orders/task-1");
     assert.equal(service.listSubagentsForSession("session-1").length, 1);
     assert.equal(service.listSubagentsForSession("session-1")[0].source, "ottoauth");
 
@@ -204,7 +204,7 @@ test("vr-ottoauth starts a hosted task under the caller session", async () => {
     const helperPayload = JSON.parse(helperStdout);
     assert.equal(helperPayload.status, "completed");
     assert.equal(helperPayload.serviceId, "computeruse");
-    assert.match(helperPayload.orderUrl, /https:\/\/ottoauth\.vercel\.app\/orders\/task-/);
+    assert.match(helperPayload.orderUrl, /https:\/\/ottoauth\.vibe-research\.net\/orders\/task-/);
   } finally {
     await app.close();
     await rm(workspaceDir, { recursive: true, force: true });

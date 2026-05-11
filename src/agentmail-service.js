@@ -207,6 +207,13 @@ function providerHasReadyHint(providerId, buffer) {
     return /OpenClaw|Molty|lobster|tui|>\s*$/i.test(text);
   }
 
+  if (providerId === "openswarm") {
+    if (/setup\s*wizard|onboarding|choose\s+(?:one\s+)?provider|(?:openai|anthropic|google|composio|fal|search)[_\s-]*api[_\s-]*key|default_model/i.test(text)) {
+      return false;
+    }
+    return /OpenSwarm|AgentSwarm/i.test(text) && /Type\s+your\s+message|[❯>]\s*$/i.test(text);
+  }
+
   return true;
 }
 

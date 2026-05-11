@@ -174,6 +174,24 @@ function normalizeBuildingHubUrl(value) {
   }
 }
 
+function normalizeLocalHttpUrl(value, fallback = "http://127.0.0.1:8080") {
+  const rawValue = String(value || "").trim();
+  const candidate = rawValue || fallback;
+
+  try {
+    const parsed = new URL(candidate);
+    if (parsed.protocol !== "http:" && parsed.protocol !== "https:") {
+      return fallback;
+    }
+    parsed.pathname = parsed.pathname.replace(/\/+$/u, "");
+    parsed.search = "";
+    parsed.hash = "";
+    return parsed.toString().replace(/\/$/u, "");
+  } catch {
+    return fallback;
+  }
+}
+
 function normalizeBuildingHubAuthProvider(value) {
   const provider = String(value || "").trim().toLowerCase();
   return provider === "google" || provider === "github" ? provider : "";
@@ -529,6 +547,35 @@ export class SettingsStore {
       ottoAuthEnabled: false,
       ottoAuthPrivateKey: String(this.env.OTTOAUTH_PRIVATE_KEY || "").trim(),
       ottoAuthUsername: String(this.env.OTTOAUTH_USERNAME || "").trim(),
+      openSwarmApiBaseUrl: normalizeLocalHttpUrl(
+        this.env.VIBE_RESEARCH_OPENSWARM_API_URL ||
+          this.env.REMOTE_VIBES_OPENSWARM_API_URL ||
+          "http://127.0.0.1:8080",
+      ),
+      openSwarmApiMode: normalizeBooleanEnv(
+        this.env.VIBE_RESEARCH_OPENSWARM_STREAM_MODE ||
+          this.env.REMOTE_VIBES_OPENSWARM_STREAM_MODE ||
+          "",
+        false,
+      ),
+      openSwarmComposioApiKey: String(this.env.COMPOSIO_API_KEY || "").trim(),
+      openSwarmComposioUserId: String(this.env.COMPOSIO_USER_ID || "").trim(),
+      openSwarmDefaultModel: String(
+        this.env.VIBE_RESEARCH_OPENSWARM_MODEL ||
+          this.env.DEFAULT_MODEL ||
+          "gpt-5.2",
+      ).trim(),
+      openSwarmFalKey: String(this.env.FAL_KEY || "").trim(),
+      openSwarmGoogleApiKey: String(this.env.GOOGLE_API_KEY || "").trim(),
+      openSwarmPexelsApiKey: String(this.env.PEXELS_API_KEY || "").trim(),
+      openSwarmPixabayApiKey: String(this.env.PIXABAY_API_KEY || "").trim(),
+      openSwarmSearchApiKey: String(this.env.SEARCH_API_KEY || "").trim(),
+      openSwarmServerCommand: String(
+        this.env.VIBE_RESEARCH_OPENSWARM_SERVER_COMMAND ||
+          this.env.REMOTE_VIBES_OPENSWARM_SERVER_COMMAND ||
+          "",
+      ).trim(),
+      openSwarmUnsplashAccessKey: String(this.env.UNSPLASH_ACCESS_KEY || "").trim(),
       telegramAllowedChatIds: String(this.env.TELEGRAM_ALLOWED_CHAT_IDS || "").trim(),
       telegramBotToken: String(this.env.TELEGRAM_BOT_TOKEN || "").trim(),
       telegramEnabled: false,
@@ -1024,6 +1071,48 @@ export class SettingsStore {
           ? defaults.ottoAuthPrivateKey
           : String(payload.ottoAuthPrivateKey || "").trim(),
       ottoAuthUsername: String(payload.ottoAuthUsername || defaults.ottoAuthUsername || "").trim(),
+      openSwarmApiBaseUrl: normalizeLocalHttpUrl(
+        payload.openSwarmApiBaseUrl === undefined ? defaults.openSwarmApiBaseUrl : payload.openSwarmApiBaseUrl,
+        defaults.openSwarmApiBaseUrl || "http://127.0.0.1:8080",
+      ),
+      openSwarmApiMode: normalizeBoolean(payload.openSwarmApiMode, defaults.openSwarmApiMode),
+      openSwarmComposioApiKey:
+        payload.openSwarmComposioApiKey === undefined
+          ? defaults.openSwarmComposioApiKey
+          : normalizeSecret(payload.openSwarmComposioApiKey),
+      openSwarmComposioUserId:
+        payload.openSwarmComposioUserId === undefined
+          ? defaults.openSwarmComposioUserId
+          : normalizeSecret(payload.openSwarmComposioUserId),
+      openSwarmDefaultModel: String(payload.openSwarmDefaultModel || defaults.openSwarmDefaultModel || "gpt-5.2").trim(),
+      openSwarmFalKey:
+        payload.openSwarmFalKey === undefined
+          ? defaults.openSwarmFalKey
+          : normalizeSecret(payload.openSwarmFalKey),
+      openSwarmGoogleApiKey:
+        payload.openSwarmGoogleApiKey === undefined
+          ? defaults.openSwarmGoogleApiKey
+          : normalizeSecret(payload.openSwarmGoogleApiKey),
+      openSwarmPexelsApiKey:
+        payload.openSwarmPexelsApiKey === undefined
+          ? defaults.openSwarmPexelsApiKey
+          : normalizeSecret(payload.openSwarmPexelsApiKey),
+      openSwarmPixabayApiKey:
+        payload.openSwarmPixabayApiKey === undefined
+          ? defaults.openSwarmPixabayApiKey
+          : normalizeSecret(payload.openSwarmPixabayApiKey),
+      openSwarmSearchApiKey:
+        payload.openSwarmSearchApiKey === undefined
+          ? defaults.openSwarmSearchApiKey
+          : normalizeSecret(payload.openSwarmSearchApiKey),
+      openSwarmServerCommand:
+        payload.openSwarmServerCommand === undefined
+          ? defaults.openSwarmServerCommand
+          : String(payload.openSwarmServerCommand || "").trim(),
+      openSwarmUnsplashAccessKey:
+        payload.openSwarmUnsplashAccessKey === undefined
+          ? defaults.openSwarmUnsplashAccessKey
+          : normalizeSecret(payload.openSwarmUnsplashAccessKey),
       telegramAllowedChatIds: String(payload.telegramAllowedChatIds || defaults.telegramAllowedChatIds || "").trim(),
       telegramBotToken:
         payload.telegramBotToken === undefined
@@ -1325,6 +1414,22 @@ export class SettingsStore {
       ottoAuthPrivateKey: "",
       ottoAuthPrivateKeyConfigured: Boolean(this.settings.ottoAuthPrivateKey),
       ottoAuthStatus,
+      openSwarmComposioApiKey: "",
+      openSwarmComposioApiKeyConfigured: Boolean(this.settings.openSwarmComposioApiKey || this.env.COMPOSIO_API_KEY),
+      openSwarmComposioUserId: "",
+      openSwarmComposioUserIdConfigured: Boolean(this.settings.openSwarmComposioUserId || this.env.COMPOSIO_USER_ID),
+      openSwarmFalKey: "",
+      openSwarmFalKeyConfigured: Boolean(this.settings.openSwarmFalKey || this.env.FAL_KEY),
+      openSwarmGoogleApiKey: "",
+      openSwarmGoogleApiKeyConfigured: Boolean(this.settings.openSwarmGoogleApiKey || this.env.GOOGLE_API_KEY),
+      openSwarmPexelsApiKey: "",
+      openSwarmPexelsApiKeyConfigured: Boolean(this.settings.openSwarmPexelsApiKey || this.env.PEXELS_API_KEY),
+      openSwarmPixabayApiKey: "",
+      openSwarmPixabayApiKeyConfigured: Boolean(this.settings.openSwarmPixabayApiKey || this.env.PIXABAY_API_KEY),
+      openSwarmSearchApiKey: "",
+      openSwarmSearchApiKeyConfigured: Boolean(this.settings.openSwarmSearchApiKey || this.env.SEARCH_API_KEY),
+      openSwarmUnsplashAccessKey: "",
+      openSwarmUnsplashAccessKeyConfigured: Boolean(this.settings.openSwarmUnsplashAccessKey || this.env.UNSPLASH_ACCESS_KEY),
       telegramBotToken: "",
       telegramBotTokenConfigured: Boolean(this.settings.telegramBotToken),
       telegramStatus,
@@ -1389,6 +1494,47 @@ export function buildAgentCredentialEnv(settings = {}, env = process.env) {
   const wandbEntity = String(settings.wandbEntity || "").trim();
   if (wandbEntity) {
     nextEnv.WANDB_ENTITY = wandbEntity;
+  }
+
+  return nextEnv;
+}
+
+export function buildOpenSwarmSessionEnv(settings = {}, env = process.env) {
+  const nextEnv = { ...(env && typeof env === "object" ? env : process.env) };
+  const defaultModel = String(settings.openSwarmDefaultModel || "").trim();
+  const apiBaseUrl = String(settings.openSwarmApiBaseUrl || "").trim();
+  const serverCommand = String(settings.openSwarmServerCommand || "").trim();
+
+  if (defaultModel) {
+    nextEnv.DEFAULT_MODEL = defaultModel;
+    nextEnv.VIBE_RESEARCH_OPENSWARM_MODEL = defaultModel;
+  }
+  if (apiBaseUrl) {
+    nextEnv.VIBE_RESEARCH_OPENSWARM_API_URL = apiBaseUrl;
+  }
+  if (serverCommand) {
+    nextEnv.VIBE_RESEARCH_OPENSWARM_SERVER_COMMAND = serverCommand;
+  }
+  nextEnv.VIBE_RESEARCH_OPENSWARM_STREAM_MODE = settings.openSwarmApiMode ? "1" : "0";
+  nextEnv.VIBE_RESEARCH_OPENSWARM_TRANSPORT =
+    String(nextEnv.VIBE_RESEARCH_OPENSWARM_TRANSPORT || "").trim() || "cli";
+
+  const keyMappings = [
+    ["COMPOSIO_API_KEY", settings.openSwarmComposioApiKey],
+    ["COMPOSIO_USER_ID", settings.openSwarmComposioUserId],
+    ["FAL_KEY", settings.openSwarmFalKey],
+    ["GOOGLE_API_KEY", settings.openSwarmGoogleApiKey],
+    ["PEXELS_API_KEY", settings.openSwarmPexelsApiKey],
+    ["PIXABAY_API_KEY", settings.openSwarmPixabayApiKey],
+    ["SEARCH_API_KEY", settings.openSwarmSearchApiKey],
+    ["UNSPLASH_ACCESS_KEY", settings.openSwarmUnsplashAccessKey],
+  ];
+
+  for (const [key, value] of keyMappings) {
+    const secret = normalizeSecret(value);
+    if (secret) {
+      nextEnv[key] = secret;
+    }
   }
 
   return nextEnv;

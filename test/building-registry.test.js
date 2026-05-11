@@ -435,7 +435,7 @@ test("modal + ottoauth declare install plans", () => {
   assert.ok(otto.install.plan);
   const httpStep = otto.install.plan.install.find((step) => step.kind === "http");
   assert.ok(httpStep, "ottoauth should declare an http install step");
-  assert.equal(httpStep.url, "https://ottoauth.vercel.app/api/agents/create");
+  assert.equal(httpStep.url, "https://ottoauth.vibe-research.net/api/agents/create");
   assert.deepEqual(httpStep.captureSettings, {
     username: "ottoAuthUsername",
     privateKey: "ottoAuthPrivateKey",

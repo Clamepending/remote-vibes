@@ -4,7 +4,7 @@ import path from "node:path";
 
 const STORE_FILENAME = "ottoauth-tasks.json";
 const STORE_VERSION = 1;
-const DEFAULT_BASE_URL = "https://ottoauth.vercel.app";
+const DEFAULT_BASE_URL = "https://ottoauth.vibe-research.net";
 const DEFAULT_SKILL_URL = `${DEFAULT_BASE_URL}/skill.md`;
 const TERMINAL_STATUSES = new Set(["canceled", "cancelled", "completed", "failed"]);
 
