@@ -40,6 +40,7 @@ import {
 import { ClaudeStreamSession } from "./claude-stream-session.js";
 import { envWithClaudeTokenSync } from "./claude-oauth-flow.js";
 import { CodexStreamSession } from "./codex-stream-session.js";
+import { OpenSwarmApiSession } from "./openswarm-api-session.js";
 import { SessionStore } from "./session-store.js";
 import { getLegacyWorkspaceStateDir, getVibeResearchStateDir, getVibeResearchSystemDir } from "./state-paths.js";
 import { WorkspaceStore } from "./workspace-store.js";
@@ -120,11 +121,25 @@ const PERSISTENT_TERMINAL_PROVIDER_IDS = new Set([
   "gemini",
   "ml-intern",
   "openclaw",
+  "openswarm",
   "opencode",
   "shell",
 ]);
 const IDLE_TERMINAL_COMMANDS = new Set(["bash", "csh", "dash", "fish", "ksh", "login", "sh", "tcsh", "zsh"]);
-const PROVIDER_CREDENTIAL_ENV_KEYS = ["ANTHROPIC_API_KEY", "CLAUDE_API_KEY", "OPENAI_API_KEY", "HF_TOKEN"];
+const PROVIDER_CREDENTIAL_ENV_KEYS = [
+  "ANTHROPIC_API_KEY",
+  "CLAUDE_API_KEY",
+  "COMPOSIO_API_KEY",
+  "COMPOSIO_USER_ID",
+  "FAL_KEY",
+  "GOOGLE_API_KEY",
+  "HF_TOKEN",
+  "OPENAI_API_KEY",
+  "PEXELS_API_KEY",
+  "PIXABAY_API_KEY",
+  "SEARCH_API_KEY",
+  "UNSPLASH_ACCESS_KEY",
+];
 const TMUX_SESSION_ENV_KEYS = new Set([
   "CLICOLOR",
   "CODEX_HOME",
@@ -235,6 +250,20 @@ function isCodexStreamModeEnabled(env = process.env) {
     return true;
   }
   return !/^(?:0|false|off|no)$/i.test(value);
+}
+
+function isOpenSwarmStreamModeEnabled(env = process.env) {
+  // OpenSwarm's native API path depends on its FastAPI server, so keep it
+  // explicit. The PTY/TUI path remains the zero-config default.
+  const value = String(
+    env?.VIBE_RESEARCH_OPENSWARM_STREAM_MODE
+      ?? env?.REMOTE_VIBES_OPENSWARM_STREAM_MODE
+      ?? "",
+  ).trim();
+  if (!value) {
+    return false;
+  }
+  return /^(?:1|true|on|yes)$/i.test(value);
 }
 
 function isCodexBypassPermissionsEnabled(env = process.env) {
@@ -1096,6 +1125,13 @@ function providerHasReadyHint(providerId, buffer) {
 
   if (providerId === "openclaw") {
     return /OpenClaw|Molty|lobster|tui|>\s*$/i.test(text);
+  }
+
+  if (providerId === "openswarm") {
+    if (/setup\s*wizard|onboarding|choose\s+(?:one\s+)?provider|(?:openai|anthropic|google|composio|fal|search)[_\s-]*api[_\s-]*key|default_model/i.test(text)) {
+      return false;
+    }
+    return /OpenSwarm|AgentSwarm/i.test(text) && /Type\s+your\s+message|[❯>]\s*$/i.test(text);
   }
 
   return true;
@@ -3820,6 +3856,8 @@ export class SessionManager {
       session.streamMode = isClaudeStreamModeEnabled(this.env);
     } else if (provider.id === "codex") {
       session.streamMode = isCodexStreamModeEnabled(this.env);
+    } else if (provider.id === "openswarm") {
+      session.streamMode = isOpenSwarmStreamModeEnabled(this.env);
     } else {
       session.streamMode = false;
     }
@@ -4059,7 +4097,7 @@ export class SessionManager {
       try {
         session.streamSession.close();
       } catch (error) {
-        console.warn("[vibe-research] error closing claude stream session", error);
+        console.warn("[vibe-research] error closing stream session", error);
       }
       session.streamSession = null;
     }
@@ -4202,13 +4240,13 @@ export class SessionManager {
     session.streamInputBuffer = `${session.streamInputBuffer || ""}${String(input ?? "")}`;
     const lines = session.streamInputBuffer.split(/\r\n?|\n/);
     session.streamInputBuffer = lines.pop() ?? "";
+    const turnBasedStream = session.providerId === "openswarm" || session.providerId === "codex";
+    const prompts = turnBasedStream
+      ? [lines.join("\n").trim()].filter(Boolean)
+      : lines.map((rawLine) => rawLine.trim()).filter(Boolean);
     let sentAny = false;
-    let firstLine = true;
-    for (const rawLine of lines) {
-      const line = rawLine.trim();
-      if (!line) {
-        continue;
-      }
+    let firstPrompt = true;
+    for (const line of prompts) {
       // Stamp + push the user entry BEFORE handing the prompt to Claude so the
       // user message timestamp is unambiguously earlier than any partial /
       // final assistant entry the stream emits afterwards.
@@ -4218,7 +4256,7 @@ export class SessionManager {
       // shaper can't recover the original file paths from the transcript.
       // Stash them on the user entry directly so the chat history shows the
       // image tile strip alongside the prompt the user sent.
-      const userImageRefs = firstLine && Array.isArray(attachments) && attachments.length
+      const userImageRefs = firstPrompt && Array.isArray(attachments) && attachments.length
         ? attachments
             .map((att) => String(att?.absolutePath || att?.path || "").trim())
             .filter(Boolean)
@@ -4227,7 +4265,7 @@ export class SessionManager {
       // multi-line paste. Subsequent lines synthesize their own ids — the
       // client only allocates one per send action, and we must not collide
       // them across pushes inside the same loop iteration.
-      const userEntryId = firstLine && clientMessageId ? clientMessageId : undefined;
+      const userEntryId = firstPrompt && clientMessageId ? clientMessageId : undefined;
       this.pushNativeNarrativeEntry(session, {
         id: userEntryId,
         kind: "user",
@@ -4245,13 +4283,18 @@ export class SessionManager {
       // mutates into the streaming reply, so there is no race to clear.
 
       try {
-        // Attachments ride on the FIRST line only — they're tied to the
+        // Attachments ride on the first submitted prompt only — they're tied to the
         // user's "what should we do with these images?" prompt. Subsequent
-        // lines (rare; happens when a user pastes multi-line text) go as
+        // prompts in the same write (rare; happens with pasted terminal text) go as
         // plain text. sendWithImages is async because it reads file bytes;
         // we fire-and-forget — errors land via the stderr/error events on
         // the stream session and end up in the chat as status entries.
-        if (firstLine && Array.isArray(attachments) && attachments.length) {
+        if (
+          firstPrompt
+          && Array.isArray(attachments)
+          && attachments.length
+          && typeof session.streamSession.sendWithImages === "function"
+        ) {
           session.streamSession.sendWithImages(line, attachments).catch((error) => {
             console.warn(`[vibe-research] sendWithImages failed: ${error.message}`);
             this.pushNativeNarrativeEntry(session, {
@@ -4267,7 +4310,7 @@ export class SessionManager {
         }
         session.streamWorking = true;
         sentAny = true;
-        firstLine = false;
+        firstPrompt = false;
       } catch (error) {
         this.pushNativeNarrativeEntry(session, {
           kind: "status",
@@ -5842,6 +5885,10 @@ export class SessionManager {
         this.startCodexStreamSession(session, provider, { restored });
         return;
       }
+      if (provider.id === "openswarm") {
+        this.startOpenSwarmApiSession(session, provider, { restored });
+        return;
+      }
       // Unknown stream-mode provider — fall back to PTY.
       session.streamMode = false;
     }
@@ -6538,6 +6585,110 @@ export class SessionManager {
     streamSession.start();
   }
 
+  startOpenSwarmApiSession(session, provider, { restored = false } = {}) {
+    const sessionCwd = resolveCwd(session.cwd, this.cwd);
+    session.cwd = sessionCwd;
+    const sessionEnv = this.buildSessionEnvironment(session, provider.id);
+    writeProviderCredentialEnvFile(sessionEnv);
+
+    const streamSession = new OpenSwarmApiSession({
+      sessionId: session.id,
+      cwd: sessionCwd,
+      env: sessionEnv,
+      provider: {
+        ...provider,
+        launchCommand: getManagedProviderLaunchCommand(provider) || provider.launchCommand,
+      },
+      allocateSeq: () => {
+        if (typeof session.entrySeqCounter !== "number") {
+          session.entrySeqCounter = 0;
+        }
+        session.entrySeqCounter += 1;
+        return session.entrySeqCounter;
+      },
+    });
+
+    session.streamSession = streamSession;
+    session.streamInputBuffer = "";
+    session.streamEntries = [];
+    session.status = "running";
+    session.exitCode = null;
+    session.exitSignal = null;
+    session.restoreOnStartup = true;
+    session.activityInputBuffer = "";
+    session.nativeNarrativeInputBuffer = "";
+    session.providerReadyNotified = true;
+    session.updatedAt = new Date().toISOString();
+    session.lastOutputAt = session.updatedAt;
+
+    this.pushNativeNarrativeEntry(session, {
+      kind: "status",
+      label: "OpenSwarm native",
+      text: restored
+        ? `Native OpenSwarm JSON mode is active again for ${provider.label}.`
+        : `Native OpenSwarm JSON mode is active. Model: ${sessionEnv.DEFAULT_MODEL || "OpenSwarm default"}.`,
+      timestamp: session.updatedAt,
+      meta: "stream-mode",
+    });
+
+    streamSession.on("event", () => {
+      session.lastOutputAt = new Date().toISOString();
+      session.updatedAt = session.lastOutputAt;
+    });
+
+    streamSession.on("entries", (entries) => {
+      session.streamEntries = Array.isArray(entries) ? entries : [];
+      this.broadcastNarrativeDiff(session);
+      this.scheduleSessionMetaBroadcast(session, { immediate: true });
+    });
+
+    streamSession.on("turn-complete", () => {
+      session.streamWorking = false;
+      this.broadcastNarrativeDiff(session);
+      this.scheduleSessionMetaBroadcast(session, { immediate: true });
+      this.schedulePersist();
+    });
+
+    streamSession.on("stderr", (chunk) => {
+      const text = String(chunk || "").trim();
+      if (text) {
+        console.warn(`[vibe-research] openswarm native stderr (${session.id}):`, text);
+      }
+    });
+
+    streamSession.on("error", (error) => {
+      this.pushNativeNarrativeEntry(session, {
+        kind: "status",
+        label: "Error",
+        text: `OpenSwarm native error: ${error.message}`,
+        timestamp: new Date().toISOString(),
+        meta: "stream-mode",
+      });
+      this.broadcastNarrativeDiff(session);
+      this.scheduleSessionMetaBroadcast(session, { immediate: true });
+    });
+
+    streamSession.on("exit", ({ code, signal }) => {
+      session.status = "exited";
+      session.exitCode = code;
+      session.exitSignal = signal;
+      session.streamSession = null;
+      session.streamWorking = false;
+      this.pushNativeNarrativeEntry(session, {
+        kind: "status",
+        label: "Exited",
+        text: `OpenSwarm native session exited (code=${code ?? "n/a"}, signal=${signal || "n/a"}).`,
+        timestamp: new Date().toISOString(),
+        meta: "stream-mode",
+      });
+      this.broadcastNarrativeDiff(session);
+      this.scheduleSessionMetaBroadcast(session, { immediate: true });
+      this.schedulePersist({ immediate: true });
+    });
+
+    streamSession.start();
+  }
+
   restoreSession(snapshot) {
     // streamMode is a server-level config (env-var-driven), not a per-
     // session preference. Recompute on restore so a user upgrading from
@@ -6550,6 +6701,8 @@ export class SessionManager {
       resolvedStreamMode = isClaudeStreamModeEnabled(this.env);
     } else if (snapshot.providerId === "codex") {
       resolvedStreamMode = isCodexStreamModeEnabled(this.env);
+    } else if (snapshot.providerId === "openswarm") {
+      resolvedStreamMode = isOpenSwarmStreamModeEnabled(this.env);
     } else {
       resolvedStreamMode = false;
     }

@@ -2463,13 +2463,25 @@ const state = {
     githubOAuthClientSecretConfigured: false,
     githubOAuthStatus: null,
     googleOAuthClientId: "",
-    ottoAuthBaseUrl: "https://ottoauth.vercel.app",
+    ottoAuthBaseUrl: "https://ottoauth.vibe-research.net",
     ottoAuthCallbackUrl: "",
     ottoAuthDefaultMaxChargeCents: "",
     ottoAuthEnabled: false,
     ottoAuthPrivateKeyConfigured: false,
     ottoAuthStatus: null,
     ottoAuthUsername: "",
+    openSwarmApiBaseUrl: "http://127.0.0.1:8080",
+    openSwarmApiMode: false,
+    openSwarmComposioApiKeyConfigured: false,
+    openSwarmComposioUserIdConfigured: false,
+    openSwarmDefaultModel: "gpt-5.2",
+    openSwarmFalKeyConfigured: false,
+    openSwarmGoogleApiKeyConfigured: false,
+    openSwarmPexelsApiKeyConfigured: false,
+    openSwarmPixabayApiKeyConfigured: false,
+    openSwarmSearchApiKeyConfigured: false,
+    openSwarmServerCommand: "",
+    openSwarmUnsplashAccessKeyConfigured: false,
     telegramAllowedChatIds: "",
     telegramBotTokenConfigured: false,
     telegramEnabled: false,
@@ -6161,7 +6173,7 @@ function renderRichSessionPathLinks(text) {
       truncatedFull = truncatedFull.slice(0, -1);
     }
 
-    if (!truncatedPath) {
+    if (!truncatedPath || isLikelyModelSpecifierPath(truncatedPath)) {
       result += escapeHtml(full);
     } else {
       const escapedPath = escapeHtml(truncatedPath);
@@ -6177,6 +6189,18 @@ function renderRichSessionPathLinks(text) {
   }
 
   return result;
+}
+
+function isLikelyModelSpecifierPath(rawPath) {
+  const value = String(rawPath || "").trim();
+  if (!value || value.startsWith("/") || !value.includes("/")) {
+    return false;
+  }
+  const [provider] = value.split("/");
+  if (!/^(?:anthropic|google|groq|huggingface|hf|ollama|openai|openrouter)$/iu.test(provider)) {
+    return false;
+  }
+  return /^[A-Za-z0-9_.-]+(?:\/[A-Za-z0-9_.-]+){1,3}$/u.test(value);
 }
 
 function getRichSessionImageUrl(rawPath) {
@@ -6292,6 +6316,75 @@ function renderRichSessionImageStrip(refs, { caption = "" } = {}) {
   `;
 }
 
+function extractRichSessionArtifactRefs(entry, { maxRefs = 4 } = {}) {
+  const source = [
+    entry?.text || "",
+    entry?.outputPreview || "",
+  ].join("\n");
+  const imageRefs = new Set(resolveRichSessionImageRefs(entry || {}, { includeMarkdown: true }));
+  const seen = new Set();
+  const refs = [];
+  const push = (rawPath) => {
+    let value = String(rawPath || "").trim();
+    while (value.length && /[.,;:!?)\]]/u.test(value[value.length - 1])) {
+      value = value.slice(0, -1);
+    }
+    if (!value || imageRefs.has(value) || seen.has(value)) return;
+    if (!/\.(?:pptx?|pdf|html?)$/iu.test(value)) return;
+    seen.add(value);
+    refs.push(value);
+  };
+
+  for (const match of source.matchAll(/\[[^\]]+\]\(<([^>]+)>(?:\s+"[^"]*")?\)/gu)) {
+    push(match[1]);
+    if (refs.length >= maxRefs) return refs;
+  }
+  for (const match of source.matchAll(/\[[^\]]+\]\(([^)<>\s]+)(?:\s+"[^"]*")?\)/gu)) {
+    push(match[1]);
+    if (refs.length >= maxRefs) return refs;
+  }
+  for (const match of source.matchAll(/<([^<>\n]+\.(?:pptx?|pdf|html?))>/giu)) {
+    push(match[1]);
+    if (refs.length >= maxRefs) return refs;
+  }
+  const pathChar = "[\\p{L}\\p{N}_.@~+-]";
+  const re = new RegExp(
+    `(\\/(?:${pathChar}+\\/)+${pathChar}+\\.(?:pptx?|pdf|html?)|(?:${pathChar}+\\/)+${pathChar}+\\.(?:pptx?|pdf|html?))`,
+    "giu",
+  );
+  for (const match of source.matchAll(re)) {
+    push(match[1]);
+    if (refs.length >= maxRefs) break;
+  }
+  return refs;
+}
+
+function getRichSessionArtifactType(rawPath) {
+  const value = String(rawPath || "").toLowerCase();
+  if (/\.pptx?$/u.test(value)) return "Presentation";
+  if (/\.pdf$/u.test(value)) return "PDF";
+  if (/\.html?$/u.test(value)) return "HTML slide";
+  return "Artifact";
+}
+
+function renderRichSessionArtifactStrip(refs) {
+  if (!Array.isArray(refs) || !refs.length) return "";
+  const cards = refs.map((rawPath) => {
+    const filename = rawPath.split("/").filter(Boolean).pop() || rawPath;
+    const type = getRichSessionArtifactType(rawPath);
+    return `
+      <a class="rich-session-artifact-card" href="#" data-rich-path="${escapeHtml(rawPath)}">
+        <span class="rich-session-artifact-icon">${renderIcon(FileText, { className: "rich-session-artifact-svg" })}</span>
+        <span class="rich-session-artifact-body">
+          <span class="rich-session-artifact-kind">${escapeHtml(type)}</span>
+          <span class="rich-session-artifact-name">${escapeHtml(filename)}</span>
+        </span>
+      </a>
+    `;
+  }).join("");
+  return `<div class="rich-session-artifact-strip" data-rich-artifact-strip>${cards}</div>`;
+}
+
 function renderRichSessionAssistantBody(text, entry = null) {
   const normalized = String(text || "");
   // Prefer the server-emitted `entry.imageRefs` field so the renderer is a
@@ -6299,11 +6392,13 @@ function renderRichSessionAssistantBody(text, entry = null) {
   // legacy entries that pre-date the field.
   const imageRefs = resolveRichSessionImageRefs(entry || { text: normalized });
   const imageStripHtml = renderRichSessionImageStrip(imageRefs);
+  const artifactStripHtml = renderRichSessionArtifactStrip(extractRichSessionArtifactRefs(entry || { text: normalized }));
 
   if (!isRichSessionMarkdownContent(normalized)) {
     return `
       <div class="rich-session-entry-copy">${escapeHtml(normalized)}</div>
       ${imageStripHtml}
+      ${artifactStripHtml}
     `;
   }
 
@@ -6312,6 +6407,7 @@ function renderRichSessionAssistantBody(text, entry = null) {
       ${renderKnowledgeBaseMarkdown(normalized, "")}
     </div>
     ${imageStripHtml}
+    ${artifactStripHtml}
   `;
 }
 
@@ -10403,6 +10499,20 @@ function getAgentCredentialsStatusText() {
   ].filter(Boolean);
 
   return configuredProviders.length ? `configured: ${configuredProviders.join(", ")}` : "not configured";
+}
+
+function getOpenSwarmStatusText() {
+  const configured = [
+    state.settings.openSwarmGoogleApiKeyConfigured ? "Google" : "",
+    state.settings.openSwarmSearchApiKeyConfigured ? "Search" : "",
+    state.settings.openSwarmFalKeyConfigured ? "Fal" : "",
+    state.settings.openSwarmComposioApiKeyConfigured ? "Composio" : "",
+  ].filter(Boolean);
+  const apiMode = state.settings.openSwarmApiMode ? "native JSON mode on" : "terminal mode";
+  const model = state.settings.openSwarmDefaultModel || "OpenSwarm default";
+  return configured.length
+    ? `${apiMode}; ${model}; keys: ${configured.join(", ")}`
+    : `${apiMode}; ${model}; optional tool keys not configured`;
 }
 
 function getSecretPlaceholder(configured, fallback) {
@@ -18711,7 +18821,7 @@ function renderOttoAuthInstallForm() {
           <h3 class="plugin-install-step-title">Sign up at OttoAuth</h3>
           <p class="plugin-install-step-hint">OttoAuth lets agents pay for metered services with a spending cap. Create a username and copy a private key — we'll paste it next.</p>
           <div class="plugin-onboarding-actions">
-            <a class="primary-button plugin-install-step-link" href="https://ottoauth.vercel.app" target="_blank" rel="noreferrer" data-plugin-install-advance="ottoauth" data-plugin-install-next-step="1">
+            <a class="primary-button plugin-install-step-link" href="https://ottoauth.vibe-research.net" target="_blank" rel="noreferrer" data-plugin-install-advance="ottoauth" data-plugin-install-next-step="1">
               <span>Open OttoAuth</span>
             </a>
             <button class="ghost-button plugin-install-step-skip" type="button" data-plugin-install-advance="ottoauth" data-plugin-install-next-step="1">I have credentials</button>
@@ -18730,14 +18840,14 @@ function renderOttoAuthInstallForm() {
   const privateKeyValue = typeof draft.ottoAuthPrivateKey === "string" ? draft.ottoAuthPrivateKey : "";
   const baseUrlValue = typeof draft.ottoAuthBaseUrl === "string"
     ? draft.ottoAuthBaseUrl
-    : (state.settings.ottoAuthBaseUrl || status.baseUrl || "https://ottoauth.vercel.app");
+    : (state.settings.ottoAuthBaseUrl || status.baseUrl || "https://ottoauth.vibe-research.net");
   const spendCapValue = typeof draft.ottoAuthDefaultMaxChargeCents === "string"
     ? draft.ottoAuthDefaultMaxChargeCents
     : String(state.settings.ottoAuthDefaultMaxChargeCents || status.defaultMaxChargeCents || "");
   const callbackValue = typeof draft.ottoAuthCallbackUrl === "string"
     ? draft.ottoAuthCallbackUrl
     : (state.settings.ottoAuthCallbackUrl || status.callbackUrl || "");
-  const advancedOpen = Boolean(spendCapValue || callbackValue || baseUrlValue !== "https://ottoauth.vercel.app");
+  const advancedOpen = Boolean(spendCapValue || callbackValue || baseUrlValue !== "https://ottoauth.vibe-research.net");
 
   return `
     <form class="settings-form plugin-install-form ottoauth-form plugin-install-progressive" data-plugin-install-step-root="ottoauth">
@@ -19452,6 +19562,94 @@ function renderAgentCredentialsSettingsPanel() {
         </div>
       </form>
       <p class="mcp-import-paths"><code>ANTHROPIC_API_KEY</code> · <code>OPENAI_API_KEY</code> · <code>HF_TOKEN</code></p>
+    </aside>
+  `;
+}
+
+function renderOpenSwarmSettingsPanel() {
+  return `
+    <aside class="mcp-import-card openswarm-settings-card">
+      <span class="main-search-kind">OpenSwarm</span>
+      <strong>Native OpenSwarm setup</strong>
+      <p>Use the terminal wizard for first login, then save model and tool keys here so new OpenSwarm sessions inherit them.</p>
+      <form class="settings-form openswarm-settings-form" id="openswarm-settings-form" method="post" action="javascript:void(0)">
+        <label class="field-label" for="openswarm-default-model">Default model</label>
+        <input
+          class="file-root-input"
+          id="openswarm-default-model"
+          name="openSwarmDefaultModel"
+          type="text"
+          value="${escapeHtml(state.settings.openSwarmDefaultModel || "gpt-5.2")}"
+          list="openswarm-model-options"
+          placeholder="gpt-5.2"
+          autocomplete="off"
+          autocorrect="off"
+          autocapitalize="none"
+          spellcheck="false"
+        />
+        <datalist id="openswarm-model-options">
+          <option value="gpt-5.2"></option>
+          <option value="gpt-5.5"></option>
+          <option value="gpt-5.4-mini"></option>
+          <option value="anthropic/claude-sonnet-4-6"></option>
+          <option value="gemini/gemini-3-pro"></option>
+          <option value="huggingface/zai-org/GLM-4.7-Flash"></option>
+          <option value="groq/llama-3.1-8b-instant"></option>
+        </datalist>
+        <label class="checkbox-row compact-toggle">
+          <input type="checkbox" name="openSwarmApiMode" ${state.settings.openSwarmApiMode ? "checked" : ""}>
+          <span>Use native JSON chat mode when starting OpenSwarm sessions</span>
+        </label>
+        <label class="field-label" for="openswarm-api-url">Legacy API server URL</label>
+        <input
+          class="file-root-input"
+          id="openswarm-api-url"
+          name="openSwarmApiBaseUrl"
+          type="url"
+          value="${escapeHtml(state.settings.openSwarmApiBaseUrl || "http://127.0.0.1:8080")}"
+          placeholder="http://127.0.0.1:8080"
+          autocomplete="off"
+          autocorrect="off"
+          autocapitalize="none"
+          spellcheck="false"
+        />
+        <label class="field-label" for="openswarm-server-command">Legacy server command (optional)</label>
+        <input
+          class="file-root-input"
+          id="openswarm-server-command"
+          name="openSwarmServerCommand"
+          type="text"
+          value="${escapeHtml(state.settings.openSwarmServerCommand || "")}"
+          placeholder="python server.py"
+          autocomplete="off"
+          autocorrect="off"
+          autocapitalize="none"
+          spellcheck="false"
+        />
+        <div class="settings-inline-grid">
+          <label class="field-label" for="openswarm-google-api-key">Google API key</label>
+          <input class="file-root-input" id="openswarm-google-api-key" name="openSwarmGoogleApiKey" type="password" placeholder="${escapeHtml(getSecretPlaceholder(state.settings.openSwarmGoogleApiKeyConfigured, "AIza..."))}" autocomplete="off">
+          <label class="field-label" for="openswarm-search-api-key">Search API key</label>
+          <input class="file-root-input" id="openswarm-search-api-key" name="openSwarmSearchApiKey" type="password" placeholder="${escapeHtml(getSecretPlaceholder(state.settings.openSwarmSearchApiKeyConfigured, "search key"))}" autocomplete="off">
+          <label class="field-label" for="openswarm-fal-key">Fal key</label>
+          <input class="file-root-input" id="openswarm-fal-key" name="openSwarmFalKey" type="password" placeholder="${escapeHtml(getSecretPlaceholder(state.settings.openSwarmFalKeyConfigured, "fal-..."))}" autocomplete="off">
+          <label class="field-label" for="openswarm-composio-api-key">Composio API key</label>
+          <input class="file-root-input" id="openswarm-composio-api-key" name="openSwarmComposioApiKey" type="password" placeholder="${escapeHtml(getSecretPlaceholder(state.settings.openSwarmComposioApiKeyConfigured, "composio key"))}" autocomplete="off">
+          <label class="field-label" for="openswarm-composio-user-id">Composio user ID</label>
+          <input class="file-root-input" id="openswarm-composio-user-id" name="openSwarmComposioUserId" type="password" placeholder="${escapeHtml(getSecretPlaceholder(state.settings.openSwarmComposioUserIdConfigured, "user id"))}" autocomplete="off">
+          <label class="field-label" for="openswarm-pexels-api-key">Pexels API key</label>
+          <input class="file-root-input" id="openswarm-pexels-api-key" name="openSwarmPexelsApiKey" type="password" placeholder="${escapeHtml(getSecretPlaceholder(state.settings.openSwarmPexelsApiKeyConfigured, "pexels key"))}" autocomplete="off">
+          <label class="field-label" for="openswarm-pixabay-api-key">Pixabay API key</label>
+          <input class="file-root-input" id="openswarm-pixabay-api-key" name="openSwarmPixabayApiKey" type="password" placeholder="${escapeHtml(getSecretPlaceholder(state.settings.openSwarmPixabayApiKeyConfigured, "pixabay key"))}" autocomplete="off">
+          <label class="field-label" for="openswarm-unsplash-access-key">Unsplash access key</label>
+          <input class="file-root-input" id="openswarm-unsplash-access-key" name="openSwarmUnsplashAccessKey" type="password" placeholder="${escapeHtml(getSecretPlaceholder(state.settings.openSwarmUnsplashAccessKeyConfigured, "unsplash key"))}" autocomplete="off">
+        </div>
+        <div class="knowledge-settings-actions">
+          <button class="primary-button settings-save-button" type="submit" data-openswarm-settings-action>save OpenSwarm</button>
+          <div class="settings-status" id="openswarm-settings-status">${escapeHtml(getOpenSwarmStatusText())}</div>
+        </div>
+      </form>
+      <p class="mcp-import-paths"><code>DEFAULT_MODEL</code> · <code>GOOGLE_API_KEY</code> · <code>COMPOSIO_API_KEY</code> · <code>FAL_KEY</code></p>
     </aside>
   `;
 }
@@ -20261,7 +20459,7 @@ function renderBrowserUsePluginPanel() {
 
 function renderOttoAuthPluginPanel() {
   const status = state.settings.ottoAuthStatus || {};
-  const skillUrl = status.skillUrl || "https://ottoauth.vercel.app/skill.md";
+  const skillUrl = status.skillUrl || "https://ottoauth.vibe-research.net/skill.md";
 
   return `
     <aside class="mcp-import-card ottoauth-plugin-card">
@@ -20307,7 +20505,7 @@ function renderOttoAuthPluginPanel() {
           id="ottoauth-base-url"
           name="ottoAuthBaseUrl"
           type="url"
-          value="${escapeHtml(state.settings.ottoAuthBaseUrl || status.baseUrl || "https://ottoauth.vercel.app")}"
+          value="${escapeHtml(state.settings.ottoAuthBaseUrl || status.baseUrl || "https://ottoauth.vibe-research.net")}"
           autocomplete="off"
           autocorrect="off"
           autocapitalize="none"
@@ -20886,6 +21084,7 @@ function renderSettingsView() {
       <div class="settings-layout">
         <div class="settings-common-grid">
           ${renderAgentCredentialsSettingsPanel()}
+          ${renderOpenSwarmSettingsPanel()}
           ${renderKnowledgeSettingsForm({ remoteControls: false })}
         </div>
         <details class="settings-advanced-panel">
@@ -40972,6 +41171,34 @@ function bindAgentCredentialsForm() {
   });
 }
 
+function bindOpenSwarmForm() {
+  document.querySelector("#openswarm-settings-form")?.addEventListener("submit", async (event) => {
+    event.preventDefault();
+    const form = event.currentTarget;
+
+    if (!(form instanceof HTMLFormElement)) {
+      return;
+    }
+
+    const button = form.querySelector("[data-openswarm-settings-action]");
+    if (button instanceof HTMLButtonElement) {
+      button.disabled = true;
+      button.textContent = "saving...";
+    }
+
+    try {
+      await saveOpenSwarmSettingsFromForm(form);
+      renderShell();
+    } catch (error) {
+      window.alert(error.message);
+      if (button instanceof HTMLButtonElement) {
+        button.disabled = false;
+        button.textContent = "save OpenSwarm";
+      }
+    }
+  });
+}
+
 function refreshUpdateUi({ force = false } = {}) {
   const updateBanner = document.querySelector("#update-banner");
   if (!updateBanner) {
@@ -44178,7 +44405,7 @@ function applySettingsState(payload) {
         : String(settings.googleOAuthClientId || ""),
     ottoAuthBaseUrl:
       settings.ottoAuthBaseUrl === undefined
-        ? state.settings.ottoAuthBaseUrl || "https://ottoauth.vercel.app"
+        ? state.settings.ottoAuthBaseUrl || "https://ottoauth.vibe-research.net"
         : String(settings.ottoAuthBaseUrl || ""),
     ottoAuthCallbackUrl:
       settings.ottoAuthCallbackUrl === undefined
@@ -44199,6 +44426,54 @@ function applySettingsState(payload) {
     ottoAuthStatus: ottoAuthStatus || null,
     ottoAuthUsername:
       settings.ottoAuthUsername === undefined ? state.settings.ottoAuthUsername || "" : String(settings.ottoAuthUsername || ""),
+    openSwarmApiBaseUrl:
+      settings.openSwarmApiBaseUrl === undefined
+        ? state.settings.openSwarmApiBaseUrl || "http://127.0.0.1:8080"
+        : String(settings.openSwarmApiBaseUrl || "http://127.0.0.1:8080"),
+    openSwarmApiMode:
+      settings.openSwarmApiMode === undefined
+        ? state.settings.openSwarmApiMode
+        : Boolean(settings.openSwarmApiMode),
+    openSwarmComposioApiKeyConfigured:
+      settings.openSwarmComposioApiKeyConfigured === undefined
+        ? state.settings.openSwarmComposioApiKeyConfigured
+        : Boolean(settings.openSwarmComposioApiKeyConfigured),
+    openSwarmComposioUserIdConfigured:
+      settings.openSwarmComposioUserIdConfigured === undefined
+        ? state.settings.openSwarmComposioUserIdConfigured
+        : Boolean(settings.openSwarmComposioUserIdConfigured),
+    openSwarmDefaultModel:
+      settings.openSwarmDefaultModel === undefined
+        ? state.settings.openSwarmDefaultModel || "gpt-5.2"
+        : String(settings.openSwarmDefaultModel || "gpt-5.2"),
+    openSwarmFalKeyConfigured:
+      settings.openSwarmFalKeyConfigured === undefined
+        ? state.settings.openSwarmFalKeyConfigured
+        : Boolean(settings.openSwarmFalKeyConfigured),
+    openSwarmGoogleApiKeyConfigured:
+      settings.openSwarmGoogleApiKeyConfigured === undefined
+        ? state.settings.openSwarmGoogleApiKeyConfigured
+        : Boolean(settings.openSwarmGoogleApiKeyConfigured),
+    openSwarmPexelsApiKeyConfigured:
+      settings.openSwarmPexelsApiKeyConfigured === undefined
+        ? state.settings.openSwarmPexelsApiKeyConfigured
+        : Boolean(settings.openSwarmPexelsApiKeyConfigured),
+    openSwarmPixabayApiKeyConfigured:
+      settings.openSwarmPixabayApiKeyConfigured === undefined
+        ? state.settings.openSwarmPixabayApiKeyConfigured
+        : Boolean(settings.openSwarmPixabayApiKeyConfigured),
+    openSwarmSearchApiKeyConfigured:
+      settings.openSwarmSearchApiKeyConfigured === undefined
+        ? state.settings.openSwarmSearchApiKeyConfigured
+        : Boolean(settings.openSwarmSearchApiKeyConfigured),
+    openSwarmServerCommand:
+      settings.openSwarmServerCommand === undefined
+        ? state.settings.openSwarmServerCommand || ""
+        : String(settings.openSwarmServerCommand || ""),
+    openSwarmUnsplashAccessKeyConfigured:
+      settings.openSwarmUnsplashAccessKeyConfigured === undefined
+        ? state.settings.openSwarmUnsplashAccessKeyConfigured
+        : Boolean(settings.openSwarmUnsplashAccessKeyConfigured),
     telegramAllowedChatIds:
       settings.telegramAllowedChatIds === undefined
         ? state.settings.telegramAllowedChatIds || ""
@@ -46139,7 +46414,7 @@ function bindShellEvents() {
   document.querySelector("#rich-session-feed")?.addEventListener("click", (event) => {
     const target = event.target instanceof Element ? event.target : null;
 
-    const pathLink = target?.closest("a.rich-session-path-link, a.rich-session-image-tile");
+    const pathLink = target?.closest("a.rich-session-path-link, a.rich-session-image-tile, a.rich-session-artifact-card");
     if (pathLink instanceof HTMLAnchorElement) {
       event.preventDefault();
       const rawPath = pathLink.getAttribute("data-rich-path") || "";
@@ -46832,6 +47107,7 @@ function bindShellEvents() {
     }
   });
   bindAgentCredentialsForm();
+  bindOpenSwarmForm();
   bindBrowserUseForm();
   bindOttoAuthForm();
   bindCommunicationsForm();
@@ -48522,6 +48798,30 @@ async function saveAgentCredentialsFromForm(form) {
       agentAnthropicApiKey: agentAnthropicApiKey || undefined,
       agentOpenAiApiKey: agentOpenAiApiKey || undefined,
       agentHfToken: agentHfToken || undefined,
+    }),
+  });
+
+  applySettingsState(payload.settings);
+}
+
+async function saveOpenSwarmSettingsFromForm(form) {
+  const formData = new FormData(form);
+  const secretValue = (name) => String(formData.get(name) || "").trim() || undefined;
+  const payload = await fetchJson("/api/settings", {
+    method: "PATCH",
+    body: JSON.stringify({
+      openSwarmApiBaseUrl: String(formData.get("openSwarmApiBaseUrl") || "").trim(),
+      openSwarmApiMode: formData.get("openSwarmApiMode") === "on",
+      openSwarmComposioApiKey: secretValue("openSwarmComposioApiKey"),
+      openSwarmComposioUserId: secretValue("openSwarmComposioUserId"),
+      openSwarmDefaultModel: String(formData.get("openSwarmDefaultModel") || "").trim(),
+      openSwarmFalKey: secretValue("openSwarmFalKey"),
+      openSwarmGoogleApiKey: secretValue("openSwarmGoogleApiKey"),
+      openSwarmPexelsApiKey: secretValue("openSwarmPexelsApiKey"),
+      openSwarmPixabayApiKey: secretValue("openSwarmPixabayApiKey"),
+      openSwarmSearchApiKey: secretValue("openSwarmSearchApiKey"),
+      openSwarmServerCommand: String(formData.get("openSwarmServerCommand") || "").trim(),
+      openSwarmUnsplashAccessKey: secretValue("openSwarmUnsplashAccessKey"),
     }),
   });
 

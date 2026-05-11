@@ -55,7 +55,7 @@ import {
   ScaffoldRecipeService,
 } from "./scaffold-recipe-service.js";
 import { TutorialRegistry } from "./tutorial-registry.js";
-import { buildAgentCredentialEnv, SettingsStore } from "./settings-store.js";
+import { buildAgentCredentialEnv, buildOpenSwarmSessionEnv, SettingsStore } from "./settings-store.js";
 import { SessionManager } from "./session-manager.js";
 import { startLibraryActivityWatcher } from "./library-activity-watcher.js";
 import { SleepPreventionService } from "./sleep-prevention.js";
@@ -1754,6 +1754,8 @@ export async function createVibeResearchApp({
       ...ottoAuthService.listSubagentsForSession(session.id),
       ...(videoMemoryService ? videoMemoryService.listSubagentsForSession(session.id) : []),
     ],
+    sessionEnvironmentProvider: (_session, providerId, env) =>
+      providerId === "openswarm" ? buildOpenSwarmSessionEnv(settingsStore.settings, env) : null,
   });
   const agentPromptStore = new AgentPromptStore({
     cwd,
@@ -1814,9 +1816,15 @@ export async function createVibeResearchApp({
     sessionManager,
     stateDir,
   });
-  sessionManager.setSessionEnvironmentProvider((session) => {
+  sessionManager.setSessionEnvironmentProvider((session, providerId, env) => {
     const callback = agentCallbackService.getCallback(session.id);
+    const normalizedProviderId = String(providerId || session?.providerId || "").trim();
+    const providerEnv =
+      normalizedProviderId === "openswarm"
+        ? buildOpenSwarmSessionEnv(settingsStore.settings, env)
+        : {};
     return {
+      ...providerEnv,
       REMOTE_VIBES_AGENT_CALLBACK_HELP:
         "Pass this URL to buildings or services that need to notify this exact agent later. POST JSON with buildingId, serviceId, event, message, and payload.",
       REMOTE_VIBES_AGENT_CALLBACK_URL: callback.url,
@@ -2501,6 +2509,9 @@ export async function createVibeResearchApp({
       VIBE_RESEARCH_URL: publicBaseUrl || serverBaseUrl,
       VIBE_RESEARCH_AGENT_CALLBACK_BASE_URL: agentCallbackService.getCallbackBaseUrl(),
       VIBE_RESEARCH_AGENT_TOWN_API: `${serverBaseUrl}/api/agent-town`,
+      VIBE_RESEARCH_OPENSWARM_API_URL: settingsStore.settings.openSwarmApiBaseUrl || "http://127.0.0.1:8080",
+      VIBE_RESEARCH_OPENSWARM_SERVER_COMMAND: settingsStore.settings.openSwarmServerCommand || "",
+      VIBE_RESEARCH_OPENSWARM_STREAM_MODE: settingsStore.settings.openSwarmApiMode ? "1" : "0",
       VIBE_RESEARCH_SCAFFOLD_RECIPES_API: `${serverBaseUrl}/api/scaffold-recipes`,
       VIBE_RESEARCH_WALLET_API: `${serverBaseUrl}/api/wallet`,
     };
@@ -4712,6 +4723,18 @@ export async function createVibeResearchApp({
         ottoAuthEnabled: request.body?.ottoAuthEnabled,
         ottoAuthPrivateKey: request.body?.ottoAuthPrivateKey,
         ottoAuthUsername: request.body?.ottoAuthUsername,
+        openSwarmApiBaseUrl: request.body?.openSwarmApiBaseUrl,
+        openSwarmApiMode: request.body?.openSwarmApiMode,
+        openSwarmComposioApiKey: request.body?.openSwarmComposioApiKey,
+        openSwarmComposioUserId: request.body?.openSwarmComposioUserId,
+        openSwarmDefaultModel: request.body?.openSwarmDefaultModel,
+        openSwarmFalKey: request.body?.openSwarmFalKey,
+        openSwarmGoogleApiKey: request.body?.openSwarmGoogleApiKey,
+        openSwarmPexelsApiKey: request.body?.openSwarmPexelsApiKey,
+        openSwarmPixabayApiKey: request.body?.openSwarmPixabayApiKey,
+        openSwarmSearchApiKey: request.body?.openSwarmSearchApiKey,
+        openSwarmServerCommand: request.body?.openSwarmServerCommand,
+        openSwarmUnsplashAccessKey: request.body?.openSwarmUnsplashAccessKey,
         telegramAllowedChatIds: request.body?.telegramAllowedChatIds,
         telegramBotToken: request.body?.telegramBotToken,
         telegramEnabled: request.body?.telegramEnabled,

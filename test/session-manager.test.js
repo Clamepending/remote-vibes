@@ -43,6 +43,14 @@ const fakeAgentProviders = [
     launchCommand: "codex",
   },
   {
+    id: "openswarm",
+    label: "OpenSwarm",
+    command: "openswarm",
+    defaultName: "OpenSwarm",
+    available: true,
+    launchCommand: "openswarm",
+  },
+  {
     id: "openclaw",
     label: "OpenClaw",
     command: "openclaw",
@@ -1684,6 +1692,26 @@ test("OpenClaw launches the TUI without unsupported session capture", async () =
   }
 });
 
+test("OpenSwarm launches without unsupported session capture", async () => {
+  const { manager, workspaceDir, userHomeDir } = await createManager();
+
+  try {
+    const session = manager.buildSessionRecord({
+      providerId: "openswarm",
+      providerLabel: "OpenSwarm",
+      name: "OpenSwarm 1",
+      cwd: workspaceDir,
+    });
+    const launch = await manager.prepareProviderLaunch(session, manager.getProvider("openswarm"), { restored: false });
+
+    assert.equal(launch.commandString, "'openswarm'");
+    assert.equal(launch.afterLaunch, null);
+    assert.equal(session.pendingProviderCapture, null);
+  } finally {
+    await cleanupManager(manager, workspaceDir, userHomeDir);
+  }
+});
+
 test("OpenClaw launch uses a sibling node runtime when available", async () => {
   const runtimeDir = await mkdtemp(path.join(os.tmpdir(), "vibe-research-openclaw-runtime-"));
   const fakeOpenClawPath = path.join(runtimeDir, "openclaw");
@@ -1714,7 +1742,7 @@ test("OpenClaw launch uses a sibling node runtime when available", async () => {
   }
 });
 
-test("ML Intern is eligible for persistent tmux terminals", async () => {
+test("ML Intern and OpenSwarm are eligible for persistent tmux terminals", async () => {
   const workspaceDir = await mkdtemp(path.join(os.tmpdir(), "vibe-research-ml-intern-tmux-workspace-"));
   const userHomeDir = await mkdtemp(path.join(os.tmpdir(), "vibe-research-ml-intern-tmux-home-"));
   const fakeTmuxPath = path.join(userHomeDir, "fake-tmux");
@@ -1753,8 +1781,18 @@ exit 0
       cwd: workspaceDir,
     });
     const provider = manager.getProvider("ml-intern");
+    const openSwarmProvider = manager.getProvider("openswarm");
+    const openSwarmSession = {
+      ...session,
+      providerId: "openswarm",
+      providerLabel: "OpenSwarm",
+    };
 
     assert.equal(manager.shouldUsePersistentTerminal(provider, manager.buildSessionEnvironment(session)), true);
+    assert.equal(
+      manager.shouldUsePersistentTerminal(openSwarmProvider, manager.buildSessionEnvironment(openSwarmSession)),
+      true,
+    );
   } finally {
     await cleanupManager(manager, workspaceDir, userHomeDir);
   }
