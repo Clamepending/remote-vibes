@@ -14,7 +14,7 @@ const {
   shouldSyncTemplate,
 } = require("./runtime.cjs");
 
-const appName = "Vibe Research";
+const appName = "Swarmlab";
 const isMacAppStoreBuild = process.mas === true;
 const defaultPort = Number(process.env.VIBE_RESEARCH_PORT || process.env.REMOTE_VIBES_PORT || 4826);
 const localUrl = `http://127.0.0.1:${defaultPort}/`;
@@ -193,8 +193,8 @@ function requestJson(url) {
 
 async function probeServer() {
   const payload = await requestJson(`${localUrl}api/state`);
-  if (payload?.appName !== "Vibe Research" && payload?.appName !== "Remote Vibes") {
-    throw new Error("Port is not serving Vibe Research");
+  if (payload?.appName !== "Swarmlab" && payload?.appName !== "Vibe Research" && payload?.appName !== "Remote Vibes") {
+    throw new Error("Port is not serving Swarmlab");
   }
   return payload;
 }
@@ -210,7 +210,7 @@ async function waitForServer({ timeoutMs = 60000 } = {}) {
       await new Promise((resolve) => setTimeout(resolve, 500));
     }
   }
-  throw lastError || new Error("Timed out waiting for Vibe Research");
+  throw lastError || new Error("Timed out waiting for Swarmlab");
 }
 
 async function externalNodeIsReady() {
@@ -232,7 +232,7 @@ async function ensureExternalNodeRuntime() {
 
   if (isMacAppStoreBuild) {
     throw new Error(
-      "Mac App Store builds cannot install Node.js automatically. Install Node.js 20+ first, then relaunch Vibe Research.",
+      "Mac App Store builds cannot install Node.js automatically. Install Node.js 20+ first, then relaunch Swarmlab.",
     );
   }
 
@@ -250,7 +250,7 @@ async function ensureExternalNodeRuntime() {
   sendStatus({
     phase: "installing",
     title: "Installing Node.js",
-    detail: "Vibe Research needs a local Node.js runtime. macOS may ask for an administrator password.",
+    detail: "Swarmlab needs a local Node.js runtime. macOS may ask for an administrator password.",
   });
 
   await runCommand("bash", [script, "--ensure-node-only"], {
@@ -284,12 +284,12 @@ async function installViaShellInstaller() {
 
   sendStatus({
     phase: "installing",
-    title: "Installing Vibe Research",
+    title: "Installing Swarmlab",
     detail: "Downloading the latest release and preparing the local app.",
   });
 
   await runCommand("bash", [script], {
-    label: "Vibe Research installer",
+    label: "Swarmlab installer",
     env: desktopEnv({
       VIBE_RESEARCH_SKIP_RUN: "1",
       REMOTE_VIBES_SKIP_RUN: "1",
@@ -317,8 +317,8 @@ async function prepareAppInstall() {
       const templateVersion = readPackageVersion(templateDir);
       sendStatus({
         phase: "installing",
-        title: looksLikeVibeResearchApp(appDir) ? "Updating Vibe Research" : "Installing Vibe Research",
-        detail: `Copying the bundled Vibe Research ${templateVersion || "release"} into your local app folder.`,
+        title: looksLikeVibeResearchApp(appDir) ? "Updating Swarmlab" : "Installing Swarmlab",
+        detail: `Copying the bundled Swarmlab ${templateVersion || "release"} into your local app folder.`,
       });
 
       const result = copyTemplateApp({
@@ -326,7 +326,7 @@ async function prepareAppInstall() {
         appDir,
         logger: appendLog,
       });
-      appendLog(`Prepared bundled Vibe Research ${result.templateVersion} (${result.fileCount} files).`);
+      appendLog(`Prepared bundled Swarmlab ${result.templateVersion} (${result.fileCount} files).`);
     } else {
       appendLog(`Bundled Vibe Research ${readPackageVersion(templateDir)} is already installed.`);
     }

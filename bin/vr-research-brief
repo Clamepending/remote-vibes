@@ -1,4 +1,5 @@
 #!/usr/bin/env node
+import "../src/env-aliases.js";
 // vr-research-brief - bridge brainstorm/research into concrete moves.
 
 import path from "node:path";

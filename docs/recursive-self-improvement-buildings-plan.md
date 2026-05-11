@@ -1,6 +1,6 @@
 # Recursive Self-Improvement Buildings Plan
 
-User request (2026-04-28): continue developing buildings to enable sandboxing and recursive self-improvement of Vibe Research. Develop Harbor, Modal, RunPod, Google Drive, AWS, GCP. Onboard "all the services one could ever hope for" — but **only ship a building when its onboarding can be fully exercised end-to-end on this machine**. Test the VideoMemory building extensively, including that it can give agents access to the camera.
+User request (2026-04-28): continue developing buildings to enable sandboxing and recursive self-improvement of Swarmlab. Develop Harbor, Modal, RunPod, Google Drive, AWS, GCP. Onboard "all the services one could ever hope for" — but **only ship a building when its onboarding can be fully exercised end-to-end on this machine**. Test the VideoMemory building extensively, including that it can give agents access to the camera.
 
 This plan exists so the work survives context loss. Update as buildings move between buckets.
 
@@ -99,7 +99,7 @@ What's in the registry today (from `src/client/building-registry.js`):
 | runpod | Cloud Compute | exists | `runpodctl` 2.1.9 | `~/.runpod/config.toml` present; `runpodctl pod list` returns `[]` cleanly |
 | harbor | Evals | exists | not installed | n/a |
 | google-drive | (pending audit) | exists | n/a | n/a |
-| videomemory | Vibe Research | exists | service runs in-process | needs camera permission grant |
+| videomemory | Swarmlab | exists | service runs in-process | needs camera permission grant |
 | aws | — | **not registered** | `aws` 1.44.49 | **no creds configured** |
 | gcp | — | **not registered** | `gcloud` not installed | n/a |
 
@@ -180,7 +180,7 @@ Camera access from inside a sandboxed agent is **mediated**, not direct: the hum
 - Ran `node --test --test-concurrency=1` over `test/videomemory-service.test.js`, `test/videomemory-service-loader.test.js`, `test/videomemory-integration.test.js`, `test/videomemory-end-to-end.test.js`.
 - Result: **15 passed, 0 failed**, total ~780 ms. Covers monitor creation, webhook delivery (correct token + wrong token), Claude readiness wait, provider-agnostic wakeups, fresh-session creation, device inventory refresh, paste-then-submit wake, cooldown suppression, status polling for camera-permission notes, end-to-end webhook → caller-session wake.
 - Ran `node bin/vr-videomemory --help`: exit 0, full usage block prints. The bin script is the agent-facing CLI for `devices`, `create`, `list`, `delete`, `webhook-info`.
-- Camera-access contract (confirmed by reading `src/client/main.js:6914`): the browser is the only thing that can call `navigator.mediaDevices.getUserMedia`. The `.videomemory-camera-permission-button` triggers `requestVideoMemoryCameraPermission()`, which opens the OS prompt, takes the granted stream, immediately stops every track to release the device, then refreshes VideoMemory status. **Agents do NOT bypass the browser permission grant** — they request that a human click the button via the building panel, then drive monitors via `vr-videomemory create --io-id ...`. This is the right design (Vibe Research's Mac entitlement is what gates `mediaDevices`; the in-process service then uses the granted handle).
+- Camera-access contract (confirmed by reading `src/client/main.js:6914`): the browser is the only thing that can call `navigator.mediaDevices.getUserMedia`. The `.videomemory-camera-permission-button` triggers `requestVideoMemoryCameraPermission()`, which opens the OS prompt, takes the granted stream, immediately stops every track to release the device, then refreshes VideoMemory status. **Agents do NOT bypass the browser permission grant** — they request that a human click the button via the building panel, then drive monitors via `vr-videomemory create --io-id ...`. This is the right design (Swarmlab's Mac entitlement is what gates `mediaDevices`; the in-process service then uses the granted handle).
 
 #### Modal — VERIFIED
 
@@ -226,7 +226,7 @@ Caveat: `harbor run` paths require model + sandbox credentials that aren't on th
 - Per the hard rule, no manifest gets committed for GCP in this pass.
 - Follow-up: after the human installs `gcloud` and runs `gcloud auth login` + `gcloud config set project`, define the building with `gcloud auth list`, `gcloud projects list`, and `gcloud compute regions list` as the smoke-check trio.
 
-### Friend onboarding flow — "ship a Calendar building without touching Vibe Research source"
+### Friend onboarding flow — "ship a Calendar building without touching Swarmlab source"
 
 Verified by scaffolding a throwaway building inside the BuildingHub starter catalog at `/Users/mark/Desktop/projects/buildinghub`:
 
@@ -259,7 +259,7 @@ safety: manifest-only loader, no executable package lane enabled
 3. Edit `buildings/<slug>/building.json`: set `category: "Planning"`, `icon: "calendar"`, fill `description`, list `tools`, `endpoints`, `capabilities` env, and `onboarding.steps`. The Google Calendar manifest at `buildings/google-calendar/building.json` is the closest reference for "MCP-backed calendar".
 4. `node bin/buildinghub.mjs validate` — schema check, fails the build if anything is wrong.
 5. `node bin/buildinghub.mjs build` — regenerates `registry.json`.
-6. Open a PR. Vibe Research consumes BuildingHub through `src/buildinghub-service.js`, which forces `source: "buildinghub"`, strips executable-only fields, and refuses id collisions with first-party buildings.
+6. Open a PR. Swarmlab consumes BuildingHub through `src/buildinghub-service.js`, which forces `source: "buildinghub"`, strips executable-only fields, and refuses id collisions with first-party buildings.
 
 **Things community manifests cannot do** (intentional — see `docs/buildings.md`): register executable client code, add custom workspace routes, reserve special Agent Town places, toggle arbitrary local settings, or store secrets. Calendars that need MCP execution (e.g. Google Calendar's existing one) declare `trust: "mcp"` and rely on the host agent's MCP connector for credentials and execution; the BuildingHub manifest only describes the integration shape and onboarding copy.
 

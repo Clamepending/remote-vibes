@@ -2,13 +2,13 @@
 
 Snapshot date: 2026-04-30
 
-This is a synthesis of recent work on multi-agent LLM systems, AlphaEvolve-style evolutionary discovery, autonomous research systems, and human-in-the-loop communication. The goal is to extract design principles for Vibe Research, not to produce a full survey.
+This is a synthesis of recent work on multi-agent LLM systems, AlphaEvolve-style evolutionary discovery, autonomous research systems, and human-in-the-loop communication. The goal is to extract design principles for Swarmlab, not to produce a full survey.
 
-Roadmap distilled from this review: [Agent-Native Vibe Research Roadmap](./agent-native-vibe-research-roadmap.md).
+Roadmap distilled from this review: [Agent-Native Swarmlab Roadmap](./agent-native-vibe-research-roadmap.md).
 
 ## Executive Synthesis
 
-Vibe Research should not copy "many agents talking" as the central metaphor. The stronger pattern across the literature is an auditable research organization:
+Swarmlab should not copy "many agents talking" as the central metaphor. The stronger pattern across the literature is an auditable research organization:
 
 - A small number of explicit roles with written state, not a free-form chat swarm.
 - Automated evaluation wherever the task admits it, with provenance and noise estimates treated as first-class.
@@ -16,18 +16,18 @@ Vibe Research should not copy "many agents talking" as the central metaphor. The
 - Human attention routed through small, interruptible, capability-scoped cards rather than long transcripts.
 - A durable scientific ledger that lets agents resume, compare, review, and learn without rewriting history.
 
-Vibe Research already has unusually good bones for this: Library, project README, ACTIVE, QUEUE, LOG, result docs, paper, doctor, admit, lint-paper, agent canvas, Agent Inbox, buildings, scaffold recipes, and persistent terminals. The next step is to make the organization itself measurable and evolvable.
+Swarmlab already has unusually good bones for this: Library, project README, ACTIVE, QUEUE, LOG, result docs, paper, doctor, admit, lint-paper, agent canvas, Agent Inbox, buildings, scaffold recipes, and persistent terminals. The next step is to make the organization itself measurable and evolvable.
 
 ## Deep Reading Ledger
 
-This section records what I actually retrieved and read closely in the second pass. "Deep read" here means full text or full HTML was retrieved and I read the abstract, method/system design, evaluation, results, limitations, and the parts most relevant to Vibe Research. It does not mean every appendix table was exhaustively audited.
+This section records what I actually retrieved and read closely in the second pass. "Deep read" here means full text or full HTML was retrieved and I read the abstract, method/system design, evaluation, results, limitations, and the parts most relevant to Swarmlab. It does not mean every appendix table was exhaustively audited.
 
 Items that appear later in the Source Map or References but not in this ledger were used as context or citation-trail support, not as deep-reading inputs.
 
-| Source | Retrieval | Sections read closely | Evidence strength | Vibe Research implication |
+| Source | Retrieval | Sections read closely | Evidence strength | Swarmlab implication |
 | --- | --- | --- | --- | --- |
 | [AlphaEvolve](https://arxiv.org/abs/2506.13131) | arXiv PDF | Introduction; task specification; prompt sampling; creative generation; evaluation; evolution database; distributed pipeline; results; ablations; discussion | Strong for evaluator-grounded code evolution; white paper, but detailed system mechanics and ablations | Treat result docs, branches, figures, and insights as the "program database"; only evolve where evaluators are hard enough. |
-| [FunSearch](https://www.nature.com/articles/s41586-023-06924-6) | Nature PDF | Abstract; specification; evaluator; program database; prompt construction; distributed workers; cap-set and bin-packing results | Strong; peer-reviewed, clear evaluator/program database mechanism | Vibe Research should prefer evolving interpretable programs/protocols over opaque chat transcripts. |
+| [FunSearch](https://www.nature.com/articles/s41586-023-06924-6) | Nature PDF | Abstract; specification; evaluator; program database; prompt construction; distributed workers; cap-set and bin-packing results | Strong; peer-reviewed, clear evaluator/program database mechanism | Swarmlab should prefer evolving interpretable programs/protocols over opaque chat transcripts. |
 | [Towards end-to-end automation of AI research](https://www.nature.com/articles/s41586-026-10265-5) | Nature PDF | Workflow; automated reviewer; human workshop submission; limitations; methods | Strong as a milestone, but the paper itself emphasizes uneven quality, manual filtering, and workshop-level bar | Full research lifecycle automation is plausible, but Vibe should log human filtering and keep paper quality checks separate from self-review. |
 | [AI Scientist-v2](https://arxiv.org/abs/2504.08066) | arXiv PDF | Workflow; agentic tree search; experiment manager; VLM feedback; peer-review discussion | Useful for system design; preprint companion to later Nature article | Stage-specific node types map cleanly to Vibe cycles: debug, rerun, ablation, aggregation, analysis. |
 | [AI co-scientist](https://arxiv.org/abs/2502.18864) | arXiv PDF | System overview; specialized agents; tournament; expert-in-the-loop; evaluation; limitations; safety | Strong architecture signal; biomedical validations are promising but small and expert-mediated | Use generate, reflect, rank, evolve, meta-review roles, but keep expert oversight and independent validation explicit. |
@@ -63,7 +63,7 @@ The danger is building a beautiful swarm UI that increases coordination cost. Th
 
 The strong scientific claim across AlphaEvolve, FunSearch, and AI Scientist is that test-time search can turn LLMs into discovery engines when feedback is grounded. The weak claim is that LLM self-evaluation alone is enough. It is not.
 
-Scientific requirements for Vibe Research:
+Scientific requirements for Swarmlab:
 
 - Separate generation from evaluation. The same model family may propose, but admission needs independent evidence.
 - Do not let Elo, LLM judges, or reviewer agents become leaderboard truth unless calibrated against human or hard-test outcomes.
@@ -72,7 +72,7 @@ Scientific requirements for Vibe Research:
 - Preserve negative results. AI co-scientist notes limited access to negative unpublished data; Vibe can make negative results a local advantage by preserving falsified moves, limitations, and failed branches.
 - Treat "autonomous science" as staged autonomy. Ideation, execution, review, and publication have different risk profiles and should have different approval gates.
 
-The Vibe Research advantage is methodological discipline: pre-registration, falsifiers, noise estimates, paper lint, doctor, and result docs. That is closer to a lab notebook than most agent frameworks. Protect that.
+The Swarmlab advantage is methodological discipline: pre-registration, falsifiers, noise estimates, paper lint, doctor, and result docs. That is closer to a lab notebook than most agent frameworks. Protect that.
 
 ### Grad Student With Two Years Experience
 
@@ -173,29 +173,29 @@ Vibe requirement: Agent Inbox should support short, contextual, actionable cards
 
 ## Source Map
 
-| Area | Representative sources | Mechanism | Lesson for Vibe Research |
+| Area | Representative sources | Mechanism | Lesson for Swarmlab |
 | --- | --- | --- | --- |
 | Multi-agent LLM frameworks | [AutoGen](https://arxiv.org/abs/2308.08155), [MetaGPT](https://arxiv.org/abs/2308.00352) | Conversable/tool-using agents, role specialization, SOPs | Make agent interaction programmable, but keep handoffs typed and auditable. SOPs beat improvised role-play. |
 | Multi-agent scaling | [Towards a Science of Scaling Agent Systems](https://arxiv.org/abs/2512.08296), [Towards a Science of Collective AI](https://arxiv.org/abs/2602.05289) | Controlled comparisons across architectures and task structures | Add agents only for decomposable work. Sequential research loops need a single owner plus verifiers more than a crowd. |
 | Evolutionary discovery | [FunSearch](https://www.nature.com/articles/s41586-023-06924-6), [AlphaEvolve](https://arxiv.org/abs/2506.13131), [Mathematical exploration and discovery at scale](https://arxiv.org/abs/2511.02864) | LLM sampler + executable evaluator + population/archive + selection | Treat result docs and branches as a program database. Let evaluators, not vibes, select what survives. |
-| Autonomous science | [The AI Scientist](https://arxiv.org/abs/2408.06292), [AI Scientist-v2](https://arxiv.org/abs/2504.08066), [Nature 2026 AI Scientist article](https://www.nature.com/articles/s41586-026-10265-5), [Agent Laboratory](https://arxiv.org/abs/2501.04227), [AI co-scientist](https://arxiv.org/abs/2502.18864) | Ideation, literature check, experiment execution, visualization, writeup, automated review | Vibe Research should own the ledger and review loop, not just task execution. Human feedback at stages is a feature, not a failure of autonomy. |
+| Autonomous science | [The AI Scientist](https://arxiv.org/abs/2408.06292), [AI Scientist-v2](https://arxiv.org/abs/2504.08066), [Nature 2026 AI Scientist article](https://www.nature.com/articles/s41586-026-10265-5), [Agent Laboratory](https://arxiv.org/abs/2501.04227), [AI co-scientist](https://arxiv.org/abs/2502.18864) | Ideation, literature check, experiment execution, visualization, writeup, automated review | Swarmlab should own the ledger and review loop, not just task execution. Human feedback at stages is a feature, not a failure of autonomy. |
 | Agentic self-design | [Automated Design of Agentic Systems](https://arxiv.org/abs/2408.08435) | A meta-agent searches over agent designs represented in code | Use scaffold recipes and occupation prompts as the evolvable artifacts. Evaluate them with benchmark projects. |
 | Human-agent teaming | [Guidelines for Human-AI Interaction](https://www.microsoft.com/en-us/research/blog/guidelines-for-human-ai-interaction-design/), [Human-Autonomy Teaming review](https://journals.sagepub.com/doi/10.1177/0018720820960865), [Human control of AI systems](https://link.springer.com/article/10.1007/s43681-024-00489-4), [HULA](https://arxiv.org/abs/2411.12924), [Adaptive HAT review](https://arxiv.org/abs/2504.10918), [Elhuyar literature system](https://arxiv.org/abs/2604.01452) | Shared mental models, role clarity, intervention points, staged feedback | Agent Inbox should support mid-task steering, not only final approval. Canvases and action items should create shared situational awareness. |
 | Transparency and governance | [Multi-agent AI systems need transparency](https://www.nature.com/articles/s42256-026-01183-2) | Clear motivation and explanation for multi-agent scientific workflows | Every extra agent, evaluator, and reviewer should have an explicit reason in the project ledger. |
 
 ## 1. Multi-Agent Systems: Useful When Structured
 
-AutoGen's important contribution is not "more agents." It is conversation programming: agents can combine LLMs, tools, code execution, and human inputs under configurable interaction patterns. That maps well to Vibe Research's current direction: the system should expose reusable coordination patterns, not depend on each agent improvising its own social protocol.
+AutoGen's important contribution is not "more agents." It is conversation programming: agents can combine LLMs, tools, code execution, and human inputs under configurable interaction patterns. That maps well to Swarmlab's current direction: the system should expose reusable coordination patterns, not depend on each agent improvising its own social protocol.
 
-MetaGPT is a sharper warning. The paper frames naive chained agents as vulnerable to cascading hallucinations, then uses standard operating procedures and role-specific structured outputs to reduce inconsistency. For Vibe Research, this argues for:
+MetaGPT is a sharper warning. The paper frames naive chained agents as vulnerable to cascading hallucinations, then uses standard operating procedures and role-specific structured outputs to reduce inconsistency. For Swarmlab, this argues for:
 
 - roles that map to artifacts: proposer writes QUEUE candidates, operator runs cycles, reviewer writes verdicts, librarian maintains insights;
 - handoffs through files, tables, commits, and action items, not loose chat;
 - validators at artifact boundaries, such as doctor, admit, lint-paper, and future queue/leaderboard commands.
 
-The newer scaling literature is especially important. Kim et al. report that architecture-task fit dominates agent count: multi-agent coordination can help decomposable tasks, but can severely hurt sequential planning. This is directly relevant because a Vibe Research move is often sequential: claim, preflight, change one thing, run, commit, analyze, resolve. Parallelism belongs at the project level as independent moves, literature passes, eval reruns, or reviewer checks, not inside a single fragile cycle.
+The newer scaling literature is especially important. Kim et al. report that architecture-task fit dominates agent count: multi-agent coordination can help decomposable tasks, but can severely hurt sequential planning. This is directly relevant because a Swarmlab move is often sequential: claim, preflight, change one thing, run, commit, analyze, resolve. Parallelism belongs at the project level as independent moves, literature passes, eval reruns, or reviewer checks, not inside a single fragile cycle.
 
-Design implication: Vibe Research should have a "topology policy":
+Design implication: Swarmlab should have a "topology policy":
 
 - default: one owning agent per move;
 - parallel: many agents only when work decomposes cleanly into separate move slugs, seeds, literature questions, or independent review passes;
@@ -212,7 +212,7 @@ FunSearch and AlphaEvolve both wrap an LLM in a loop where generated code is exe
 - selection pressure toward high-scoring and diverse candidates;
 - asynchronous parallel sampling and evaluation.
 
-AlphaEvolve extends the pattern from small functions toward larger algorithmic codebases and production-relevant optimizations. The key transfer to Vibe Research is not "evolve code blindly." It is:
+AlphaEvolve extends the pattern from small functions toward larger algorithmic codebases and production-relevant optimizations. The key transfer to Swarmlab is not "evolve code blindly." It is:
 
 ```text
 program database : result docs + branches + paper figures + insights
@@ -222,13 +222,13 @@ selection        : leaderboard + review-mode insight promotion
 diversity        : separate moves, branches, seeds, and project scopes
 ```
 
-The caution is just as strong: AlphaEvolve works best when a solution can be scored automatically. Vibe Research should only run AlphaEvolve-like open search when it has a hard evaluator: tests, benchmark score, cost, latency, loss, pass rate, human rubric with repeated ratings, or a real peer-review-like process. Without that, the loop can evolve fluent nonsense.
+The caution is just as strong: AlphaEvolve works best when a solution can be scored automatically. Swarmlab should only run AlphaEvolve-like open search when it has a hard evaluator: tests, benchmark score, cost, latency, loss, pass rate, human rubric with repeated ratings, or a real peer-review-like process. Without that, the loop can evolve fluent nonsense.
 
 Concrete application:
 
 - Build an "evolutionary queue proposer" that samples from top result docs and insights, then emits candidate `ADD:` lines with novelty and evaluator rationale.
 - Build an "occupation/prompt search" project where the artifacts being evolved are AGENTS/CLAUDE prompt variants, scaffold recipes, and agent topologies.
-- Use bugbench, real Vibe Research move completion, doctor clean-rate, admission correctness, and human review time as evaluators.
+- Use bugbench, real Swarmlab move completion, doctor clean-rate, admission correctness, and human review time as evaluators.
 - Keep the human as PI: auto-proposed queue changes become review cards unless they are inside an explicitly autonomous sandbox project.
 
 ## 3. Autonomous Research Systems: Full Loop, Weak Links
@@ -237,7 +237,7 @@ The AI Scientist line of work shows that LLM agents can cover a full computation
 
 AI Scientist-v2 improves the search story with agentic tree search and an experiment manager agent. Google AI co-scientist uses a generate, debate, and evolve approach for biomedical hypotheses, with asynchronous execution and tournament-style evolution. Agent Laboratory is especially relevant to product design because it reports that human feedback at each stage improves research quality.
 
-For Vibe Research, the lesson is that "autonomous research organization" should mean a staged, inspectable factory:
+For Swarmlab, the lesson is that "autonomous research organization" should mean a staged, inspectable factory:
 
 1. Ideation: generate candidate moves and priors.
 2. Grounding: literature/current-docs pass and dataset/API inspection.
@@ -247,7 +247,7 @@ For Vibe Research, the lesson is that "autonomous research organization" should 
 6. Review: admission, paper update, limitations, insight candidates.
 7. Governance: budget, safety, publishing, and pivot gates.
 
-Vibe Research already encodes most of this in the researcher occupation. The missing pieces are stronger automation around role transitions and stage-specific human touchpoints.
+Swarmlab already encodes most of this in the researcher occupation. The missing pieces are stronger automation around role transitions and stage-specific human touchpoints.
 
 ## 4. Human-In-The-Loop: Treat The Human As A Teammate, Not A Button
 
@@ -271,9 +271,9 @@ This is stronger than a final "approve" button. For long research moves, useful 
 - decide whether to turn a result into an insight;
 - approve publication or PR creation.
 
-Vibe Research's current action items and canvas contract are pointed in the right direction. The upgrade is to make mid-task steering a normal state in the run loop, with predicates the agent can wait on.
+Swarmlab's current action items and canvas contract are pointed in the right direction. The upgrade is to make mid-task steering a normal state in the run loop, with predicates the agent can wait on.
 
-## 5. The Vibe Research Organizational Model
+## 5. The Swarmlab Organizational Model
 
 The most promising architecture is a small research org, not an agent swarm.
 
@@ -287,7 +287,7 @@ The most promising architecture is a small research org, not an agent swarm.
 | Evaluator service | Tests, metrics, artifact checks | Scores automatically where possible | Reports uncertainty and missing evaluator coverage |
 | Safety/budget officer | Capability tags, budget ledger | Blocks risky actions by policy | Converts risk to approval cards |
 
-This model preserves Vibe Research's current rule that one agent owns one move, while allowing parallel work at the organization layer.
+This model preserves Swarmlab's current rule that one agent owns one move, while allowing parallel work at the organization layer.
 
 ## 6. Product Roadmap From The Literature
 
@@ -304,7 +304,7 @@ topology:
   evaluator_strength: "hard-tests" # hard-tests | noisy-metric | rubric | qualitative
 ```
 
-Why: this lets Vibe Research measure when multi-agent coordination actually helps.
+Why: this lets Swarmlab measure when multi-agent coordination actually helps.
 
 ### B. Build `vr-research-queue`
 
@@ -351,7 +351,7 @@ Why: human-in-the-loop needs timely intervention, not only final review.
 
 ### E. Create An Evolutionary Prompt/Scaffold Project
 
-Use Vibe Research on itself:
+Use Swarmlab on itself:
 
 - CODE REPO: vibe-research.
 - Artifacts: occupation prompt variants, scaffold recipes, topology policies.
@@ -373,7 +373,7 @@ Expose a project-level archive of:
 - tags/failure modes;
 - queued follow-ups.
 
-Why: AlphaEvolve's power comes from sampling prior successful programs. Vibe Research should let agents sample prior successful research moves.
+Why: AlphaEvolve's power comes from sampling prior successful programs. Swarmlab should let agents sample prior successful research moves.
 
 ### G. Add Transparency Reports For Multi-Agent Runs
 
@@ -390,9 +390,9 @@ For every multi-agent or autonomous review run, generate a short report:
 
 Why: the 2026 transparency warning is correct. Multi-agent science can waste compute and human trust if the motivation is not explicit.
 
-## 7. Research Claims To Test Inside Vibe Research
+## 7. Research Claims To Test Inside Swarmlab
 
-These should become Vibe Research projects or moves:
+These should become Swarmlab projects or moves:
 
 1. Multi-agent benefit is task-structure dependent.
    - Hypothesis: parallel literature/review agents reduce wall time without hurting correctness, but parallel agents inside one sequential move increase bookkeeping errors.
@@ -416,7 +416,7 @@ These should become Vibe Research projects or moves:
 
 ## 8. Strong Product Principle
 
-Vibe Research should become an operating system for accountable autonomous research, not just a launcher for autonomous agents.
+Swarmlab should become an operating system for accountable autonomous research, not just a launcher for autonomous agents.
 
 The durable unit is not the agent message. It is the research artifact:
 

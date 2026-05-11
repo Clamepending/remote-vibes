@@ -805,7 +805,7 @@ test("state is available without authentication", async () => {
     assert.equal(response.status, 200);
 
     const state = await response.json();
-    assert.equal(state.appName, "Vibe Research");
+    assert.equal(state.appName, "Swarmlab");
     const expectedDefaultProviderId =
       state.providers.find((provider) => provider.id === "claude" && provider.available)?.id
       || state.providers.find((provider) => provider.id !== "shell" && provider.available)?.id

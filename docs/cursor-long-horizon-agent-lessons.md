@@ -2,7 +2,7 @@
 
 Date: 2026-04-30
 
-Roadmap distilled from these notes: [Agent-Native Vibe Research Roadmap](./agent-native-vibe-research-roadmap.md).
+Roadmap distilled from these notes: [Agent-Native Swarmlab Roadmap](./agent-native-vibe-research-roadmap.md).
 
 ## Sources Read
 
@@ -33,9 +33,9 @@ The runtime mattered. Cursor's cloud agents run on isolated VMs; the Composer 2 
 
 The human role moved upward. Cursor's posts describe humans defining the problem, reviewing plans, approving or redirecting, and evaluating artifacts, rather than watching each line of code. Plan approval before long execution is a recurring theme.
 
-## Implications For Vibe Research
+## Implications For Swarmlab
 
-What we just implemented moves Vibe Research in the right direction:
+What we just implemented moves Swarmlab in the right direction:
 
 - `vr-research-brief` is the planner-facing artifact.
 - `vr-research-runner claim/run/cycle/finish` is now the worker loop.
@@ -55,4 +55,4 @@ The remaining high-leverage gap is a real orchestrator above the runner:
 
 ## Product Translation
 
-For Vibe Research, the Cursor lesson is: make the human review throughput, not token throughput, the scarce resource. The interface should show the latest artifact, the metric/noise state, the next recommended action, and one-click steering. The system underneath can run many cycles, but the human should only see crisp decision points.
+For Swarmlab, the Cursor lesson is: make the human review throughput, not token throughput, the scarce resource. The interface should show the latest artifact, the metric/noise state, the next recommended action, and one-click steering. The system underneath can run many cycles, but the human should only see crisp decision points.

@@ -1,10 +1,10 @@
 # Visual OS Foundation
 
-Vibe Research is growing toward a visual operating system for agents: nontechnical people should be able to understand agent work through visible objects instead of terminal-only transcripts.
+Swarmlab is growing toward a visual operating system for agents: nontechnical people should be able to understand agent work through visible objects instead of terminal-only transcripts.
 
 The foundation is not the town art by itself. The foundation is the contract between the visual interface, the local control plane, and the agents.
 
-Research-org roadmap: [Agent-Native Vibe Research Roadmap](./agent-native-vibe-research-roadmap.md).
+Research-org roadmap: [Agent-Native Swarmlab Roadmap](./agent-native-vibe-research-roadmap.md).
 
 ## Core Objects
 

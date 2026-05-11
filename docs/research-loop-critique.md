@@ -1,6 +1,6 @@
 # Research-loop critique — suggestions for improving CLAUDE.md
 
-Walked the Vibe Research researcher prompt (currently in `CLAUDE.md`, 225 lines) end-to-end against `projects/horror-prompt-tuning` (which clearly used the loop and produced a leaderboard, paper, and result docs). What follows is concrete: each item names the line/concept the prompt currently has, the friction that hits in practice, and a specific change.
+Walked the Swarmlab researcher prompt (currently in `CLAUDE.md`, 225 lines) end-to-end against `projects/horror-prompt-tuning` (which clearly used the loop and produced a leaderboard, paper, and result docs). What follows is concrete: each item names the line/concept the prompt currently has, the friction that hits in practice, and a specific change.
 
 ## Top suggestions, ranked by leverage
 

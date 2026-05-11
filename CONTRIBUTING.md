@@ -1,6 +1,6 @@
 # Contributing
 
-Thanks for helping make Vibe Research sturdier. The project is still young, so
+Thanks for helping make Swarmlab sturdier. The project is still young, so
 small focused changes are much easier to review than broad rewrites.
 
 ## Before Opening A PR

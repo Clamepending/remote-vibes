@@ -1,10 +1,38 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
+# Mirror SWARMLAB_X <-> VIBE_RESEARCH_X env vars so users (and old shell rc
+# files) can use either name. The rest of this script reads VIBE_RESEARCH_*
+# names. Runs once at startup before any var is read.
+mirror_swarmlab_env_aliases() {
+  local short_name vibe_val swarm_val
+  for short_name in $(env | awk -F= '/^(SWARMLAB|VIBE_RESEARCH)_[A-Z0-9_]+=/ { sub(/^(SWARMLAB|VIBE_RESEARCH)_/, "", $1); print $1 }' | sort -u); do
+    vibe_val="$(printenv "VIBE_RESEARCH_$short_name" 2>/dev/null || true)"
+    swarm_val="$(printenv "SWARMLAB_$short_name" 2>/dev/null || true)"
+    if [ -n "$swarm_val" ] && [ -z "$vibe_val" ]; then
+      export "VIBE_RESEARCH_$short_name=$swarm_val"
+    elif [ -n "$vibe_val" ] && [ -z "$swarm_val" ]; then
+      export "SWARMLAB_$short_name=$vibe_val"
+    fi
+  done
+}
+mirror_swarmlab_env_aliases
+
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd -P)"
-DEFAULT_VIBE_RESEARCH_HOME="$HOME/.vibe-research"
+# Resolve the default runtime home. Prefer ~/.swarmlab; fall back to the
+# legacy ~/.vibe-research only if it already exists on this machine, so
+# existing installs continue to work in place.
+if [ -d "$HOME/.swarmlab" ]; then
+  DEFAULT_SWARMLAB_HOME="$HOME/.swarmlab"
+elif [ -d "$HOME/.vibe-research" ]; then
+  DEFAULT_SWARMLAB_HOME="$HOME/.vibe-research"
+else
+  DEFAULT_SWARMLAB_HOME="$HOME/.swarmlab"
+fi
+# Keep the legacy variable name for back-compat with references later in the file.
+DEFAULT_VIBE_RESEARCH_HOME="$DEFAULT_SWARMLAB_HOME"
 LEGACY_REMOTE_VIBES_HOME="$HOME/.remote-vibes"
-RUNTIME_DIR="${VIBE_RESEARCH_STATE_DIR:-${REMOTE_VIBES_STATE_DIR:-$DEFAULT_VIBE_RESEARCH_HOME}}"
+RUNTIME_DIR="${VIBE_RESEARCH_STATE_DIR:-${REMOTE_VIBES_STATE_DIR:-$DEFAULT_SWARMLAB_HOME}}"
 LEGACY_RUNTIME_DIR="$ROOT_DIR/.vibe-research"
 LEGACY_REMOTE_VIBES_RUNTIME_DIR="$ROOT_DIR/.remote-vibes"
 WIKI_DIR="${VIBE_RESEARCH_WIKI_DIR:-${REMOTE_VIBES_WIKI_DIR:-}}"
@@ -40,11 +68,11 @@ fi
 cd "$ROOT_DIR"
 
 log() {
-  printf '[vibe-research] %s\n' "$*"
+  printf '[swarmlab] %s\n' "$*"
 }
 
 fail() {
-  printf '[vibe-research] %s\n' "$*" >&2
+  printf '[swarmlab] %s\n' "$*" >&2
   exit 1
 }
 
@@ -110,7 +138,7 @@ ensure_node_runtime() {
   refresh_managed_node_path
 
   if ! node_is_supported; then
-    fail "Node.js $(node -v 2>/dev/null || printf 'missing') is not supported. Vibe Research needs Node.js >=${MIN_NODE_MAJOR}."
+    fail "Node.js $(node -v 2>/dev/null || printf 'missing') is not supported. Swarmlab needs Node.js >=${MIN_NODE_MAJOR}."
   fi
 
   if ! command -v npm >/dev/null 2>&1; then
@@ -296,7 +324,7 @@ migrate_home_checkout_to_app() {
   fi
 
   if looks_like_vibe_research_checkout "$DEFAULT_VIBE_RESEARCH_HOME"; then
-    move_checkout_contents_to_app "$DEFAULT_VIBE_RESEARCH_HOME" "$app_dir" "Vibe Research"
+    move_checkout_contents_to_app "$DEFAULT_VIBE_RESEARCH_HOME" "$app_dir" "Swarmlab"
     return
   fi
 
@@ -333,8 +361,8 @@ ensure_git_identity() {
     return
   fi
 
-  git -C "$target_dir" config user.name >/dev/null 2>&1 || git -C "$target_dir" config user.name "Vibe Research"
-  git -C "$target_dir" config user.email >/dev/null 2>&1 || git -C "$target_dir" config user.email "vibe-research@local"
+  git -C "$target_dir" config user.name >/dev/null 2>&1 || git -C "$target_dir" config user.name "Swarmlab"
+  git -C "$target_dir" config user.email >/dev/null 2>&1 || git -C "$target_dir" config user.email "swarmlab@local"
 }
 
 commit_staged_changes() {
@@ -374,9 +402,9 @@ ensure_vibe_research_settings_repo() {
 
   if [ ! -f "$RUNTIME_DIR/README.md" ]; then
     cat >"$RUNTIME_DIR/README.md" <<EOF
-# Vibe Research State
+# Swarmlab State
 
-This directory stores local Vibe Research settings for this Mac.
+This directory stores local Swarmlab settings for this Mac.
 
 Tracked settings include:
 - agent-prompt.md
@@ -407,7 +435,7 @@ EOF
 
   if command -v git >/dev/null 2>&1 && [ -d "$RUNTIME_DIR/.git" ]; then
     git_add_existing "$RUNTIME_DIR" README.md .gitignore agent-prompt.md port-aliases.json
-    commit_staged_changes "$RUNTIME_DIR" "Track Vibe Research settings"
+    commit_staged_changes "$RUNTIME_DIR" "Track Swarmlab settings"
   fi
 }
 
@@ -428,7 +456,7 @@ ensure_mac_brain_wiki() {
 
 Local Library for this Mac.
 
-Vibe Research settings live in:
+Swarmlab settings live in:
 
 \`\`\`
 $RUNTIME_DIR
@@ -783,7 +811,7 @@ stop_existing_server() {
     return
   fi
 
-  log "Stopping existing Vibe Research server (pid $pid)"
+  log "Stopping existing Swarmlab server (pid $pid)"
   kill "$pid" >/dev/null 2>&1 || true
 
   local attempt
@@ -897,7 +925,7 @@ process.stdin.on("end", () => {
     const payload = JSON.parse(source);
 
     if (
-      (payload?.appName === "Vibe Research" || payload?.appName === "Remote Vibes") &&
+      (payload?.appName === "Swarmlab" || payload?.appName === "Vibe Research" || payload?.appName === "Remote Vibes") &&
       typeof payload.cwd === "string" &&
       payload.cwd
     ) {
@@ -930,7 +958,7 @@ process.stdin.on("end", () => {
     const payload = JSON.parse(source);
 
     if (
-      (payload?.appName === "Vibe Research" || payload?.appName === "Remote Vibes") &&
+      (payload?.appName === "Swarmlab" || payload?.appName === "Vibe Research" || payload?.appName === "Remote Vibes") &&
       typeof payload.stateDir === "string" &&
       payload.stateDir
     ) {
@@ -951,14 +979,14 @@ fail_for_foreign_workspace() {
   local port
   port="${VIBE_RESEARCH_PORT:-${REMOTE_VIBES_PORT:-4826}}"
 
-  fail "Port $port is already serving Vibe Research from $workspace_cwd. Stop that server or relaunch with VIBE_RESEARCH_PORT=<free-port>."
+  fail "Port $port is already serving Swarmlab from $workspace_cwd. Stop that server or relaunch with SWARMLAB_PORT=<free-port> (or legacy VIBE_RESEARCH_PORT)."
 }
 
 terminate_running_vibe_research() {
   local port
   port="${VIBE_RESEARCH_PORT:-${REMOTE_VIBES_PORT:-4826}}"
 
-  log "Stopping existing Vibe Research server on port $port"
+  log "Stopping existing Swarmlab server on port $port"
   curl -fsS -X POST "$(terminate_url)" >/dev/null 2>&1 || true
 
   local attempt
@@ -969,7 +997,7 @@ terminate_running_vibe_research() {
     sleep 0.2
   done
 
-  fail "Existing Vibe Research server on port $port did not stop in time."
+  fail "Existing Swarmlab server on port $port did not stop in time."
 }
 
 wait_for_server_ready() {
@@ -1061,14 +1089,14 @@ if workspace_cwd="$(probe_running_vibe_research_workspace)"; then
     running_state_dir="$(probe_running_vibe_research_state_dir || true)"
 
     if [ "$running_state_dir" = "$RUNTIME_DIR" ] && [ "${VIBE_RESEARCH_FORCE_RESTART:-${REMOTE_VIBES_FORCE_RESTART:-0}}" != "1" ]; then
-      log "Vibe Research is already running for this workspace at $(healthcheck_url)"
+      log "Swarmlab is already running for this workspace at $(healthcheck_url)"
       exit 0
     fi
 
     if [ -n "$running_state_dir" ]; then
-      log "Vibe Research is running for this workspace with state $running_state_dir; relaunching with $RUNTIME_DIR"
+      log "Swarmlab is running for this workspace with state $running_state_dir; relaunching with $RUNTIME_DIR"
     else
-      log "Vibe Research is running for this workspace; relaunching with state $RUNTIME_DIR"
+      log "Swarmlab is running for this workspace; relaunching with state $RUNTIME_DIR"
     fi
 
     terminate_running_vibe_research
@@ -1093,7 +1121,7 @@ if ! wait_for_server_ready "$server_pid"; then
     fail_for_foreign_workspace "$workspace_cwd"
   fi
 
-  fail "Vibe Research failed to start within ${READY_TIMEOUT_SECONDS}s."
+  fail "Swarmlab failed to start within ${READY_TIMEOUT_SECONDS}s."
 fi
 
 track_vibe_research_settings

@@ -1,13 +1,13 @@
 # Building Architecture
 
-Buildings are the extension unit for Vibe Research integrations. A building gives an integration a visible home, install state, onboarding checklist, settings variables, and optional Agent Town behavior.
+Buildings are the extension unit for Swarmlab integrations. A building gives an integration a visible home, install state, onboarding checklist, settings variables, and optional Agent Town behavior.
 
 For the broader visual operating-system contract that buildings plug into, see `docs/visual-os-foundation.md`.
 
 ## Files
 
 - `src/client/building-sdk.js` owns the manifest primitives: `defineBuilding`, `createBuildingRegistry`, and `normalizeBuildingId`.
-- `src/client/building-registry.js` registers the core buildings shipped with Vibe Research.
+- `src/client/building-registry.js` registers the core buildings shipped with Swarmlab.
 - `src/client/main.js` consumes the registry to render install cards, onboarding steps, install toggles, and generic Agent Town building lots.
 
 ## Manifest Shape
@@ -122,13 +122,13 @@ export default defineBuilding({
 
 ## BuildingHub
 
-BuildingHub is the installed system building for the local building catalog, Agent Town skins/themes, and the community catalog path for people who want to contribute buildings without editing Vibe Research itself. Community catalog loading is off by default. It is intentionally manifest-only: catalogs can add building cards, install checklist copy, required variables, access notes, visual treatment, docs links, capability descriptions, `agentGuide` manuals, and optional `ui.sidebarTab` labels/meta for the community tabs section, but they cannot register executable client code, add custom workspace routes, reserve special Agent Town places, or toggle arbitrary local settings.
+BuildingHub is the installed system building for the local building catalog, Agent Town skins/themes, and the community catalog path for people who want to contribute buildings without editing Swarmlab itself. Community catalog loading is off by default. It is intentionally manifest-only: catalogs can add building cards, install checklist copy, required variables, access notes, visual treatment, docs links, capability descriptions, `agentGuide` manuals, and optional `ui.sidebarTab` labels/meta for the community tabs section, but they cannot register executable client code, add custom workspace routes, reserve special Agent Town places, or toggle arbitrary local settings.
 
-Vibe Research can load BuildingHub from a local folder such as `/Users/mark/Desktop/projects/buildinghub`, a direct JSON file, or a reviewed remote registry JSON URL. A folder source may contain a top-level `registry.json`, `buildinghub.json`, or `catalog.json`, plus individual manifests at `buildings/<slug>/building.json`, Agent Town layouts at `layouts/<slug>/layout.json`, and scaffold recipes at `recipes/<slug>/recipe.json`.
+Swarmlab can load BuildingHub from a local folder such as `/Users/mark/Desktop/projects/buildinghub`, a direct JSON file, or a reviewed remote registry JSON URL. A folder source may contain a top-level `registry.json`, `buildinghub.json`, or `catalog.json`, plus individual manifests at `buildings/<slug>/building.json`, Agent Town layouts at `layouts/<slug>/layout.json`, and scaffold recipes at `recipes/<slug>/recipe.json`.
 
 Community manifests are normalized on the server by `src/buildinghub-service.js` before they reach the browser. The loader forces `source: "buildinghub"`, strips `install.enabledSetting`, disables `install.system`, clears `onboarding.setupSelector`, coerces workspace UI modes back to panel/wide, prevents `visual.specialTownPlace`, and sanitizes `agentGuide` strings and docs URLs. The browser also refuses community manifests whose normalized id collides with a core building id.
 
-Scaffold recipes are portable setup snapshots for sharing a whole working Vibe Research shape: building set, portable settings, communication policy, occupation metadata, sandbox assumptions, Library binding requirements, and Agent Town layout. They intentionally do not carry secrets, personal identity values, or machine-local paths; those are expressed as local bindings that must be supplied during apply. See `docs/scaffold-recipes.md`.
+Scaffold recipes are portable setup snapshots for sharing a whole working Swarmlab shape: building set, portable settings, communication policy, occupation metadata, sandbox assumptions, Library binding requirements, and Agent Town layout. They intentionally do not carry secrets, personal identity values, or machine-local paths; those are expressed as local bindings that must be supplied during apply. See `docs/scaffold-recipes.md`.
 
 The app exposes `GET /api/buildinghub/catalog?force=1` for explicit refreshes and includes `{ buildingHub: { buildings, layouts, recipes, status } }` in `GET /api/state`. Runtime configuration lives in settings keys:
 
@@ -144,14 +144,14 @@ Built-in Agent Town themes live in first-party client code and are exposed throu
 
 Toolshed is the built-in Agent Town building for people and agents creating new buildings. It should answer two questions without making a newcomer leave the canvas:
 
-- how Vibe Research works as a whole: Agent Town, buildings, Library, settings, occupations, automations, and communication bridges
+- how Swarmlab works as a whole: Agent Town, buildings, Library, settings, occupations, automations, and communication bridges
 - how a building moves from idea to publishable artifact: draft a manifest, keep credentials out of client data, validate the catalog, rebuild `registry.json`, and open a reviewed BuildingHub PR
 
 Toolshed is first-party app code, not a BuildingHub community manifest, because it links together workspace routes and local project conventions. Community buildings should still start in BuildingHub unless they need executable server routes, custom client code, or special Agent Town behavior.
 
 ## Current Scope
 
-The core registry is client-side, while BuildingHub catalogs are loaded by a server-side manifest reader and merged into the client catalog at runtime. Runtime helper services, API routes, session env vars, generated building guides, and custom Agent Town behavior still need first-party Vibe Research code. The intended direction is to make more safe pieces declarative as the building SDK matures.
+The core registry is client-side, while BuildingHub catalogs are loaded by a server-side manifest reader and merged into the client catalog at runtime. Runtime helper services, API routes, session env vars, generated building guides, and custom Agent Town behavior still need first-party Swarmlab code. The intended direction is to make more safe pieces declarative as the building SDK matures.
 
 ## Generative Media Buildings
 

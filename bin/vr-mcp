@@ -1,4 +1,5 @@
 #!/usr/bin/env node
+import "../src/env-aliases.js";
 // vr-mcp — agent-callable CLI for the MCP install pipeline.
 //
 // Without this script, an agent in a session that realizes mid-loop

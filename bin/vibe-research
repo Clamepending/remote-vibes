@@ -1,12 +1,29 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
+# Mirror SWARMLAB_X <-> VIBE_RESEARCH_X env vars so users (and old shell rc
+# files) can use either name. The rest of this script reads VIBE_RESEARCH_*
+# names. Runs once at startup before any var is read.
+mirror_swarmlab_env_aliases() {
+  local short_name vibe_val swarm_val
+  for short_name in $(env | awk -F= '/^(SWARMLAB|VIBE_RESEARCH)_[A-Z0-9_]+=/ { sub(/^(SWARMLAB|VIBE_RESEARCH)_/, "", $1); print $1 }' | sort -u); do
+    vibe_val="$(printenv "VIBE_RESEARCH_$short_name" 2>/dev/null || true)"
+    swarm_val="$(printenv "SWARMLAB_$short_name" 2>/dev/null || true)"
+    if [ -n "$swarm_val" ] && [ -z "$vibe_val" ]; then
+      export "VIBE_RESEARCH_$short_name=$swarm_val"
+    elif [ -n "$vibe_val" ] && [ -z "$swarm_val" ]; then
+      export "SWARMLAB_$short_name=$vibe_val"
+    fi
+  done
+}
+mirror_swarmlab_env_aliases
+
 log() {
-  printf '[vibe-research] %s\n' "$*"
+  printf '[swarmlab] %s\n' "$*"
 }
 
 fail() {
-  printf '[vibe-research] %s\n' "$*" >&2
+  printf '[swarmlab] %s\n' "$*" >&2
   exit 1
 }
 
@@ -45,11 +62,35 @@ resolve_app_dir() {
     return
   fi
 
-  printf '%s\n' "$HOME/.vibe-research/app"
+  # Prefer the new ~/.swarmlab/app path. If only the legacy ~/.vibe-research/app
+  # exists, keep using it so existing installs continue to work in place.
+  if [ -d "$HOME/.swarmlab/app" ]; then
+    printf '%s\n' "$HOME/.swarmlab/app"
+  elif [ -d "$HOME/.vibe-research/app" ]; then
+    printf '%s\n' "$HOME/.vibe-research/app"
+  else
+    printf '%s\n' "$HOME/.swarmlab/app"
+  fi
 }
 
 resolve_state_dir() {
-  printf '%s\n' "${VIBE_RESEARCH_STATE_DIR:-${REMOTE_VIBES_STATE_DIR:-$HOME/.vibe-research}}"
+  if [ -n "${VIBE_RESEARCH_STATE_DIR:-}" ]; then
+    printf '%s\n' "$VIBE_RESEARCH_STATE_DIR"
+    return
+  fi
+  if [ -n "${REMOTE_VIBES_STATE_DIR:-}" ]; then
+    printf '%s\n' "$REMOTE_VIBES_STATE_DIR"
+    return
+  fi
+  # Prefer the new ~/.swarmlab path; fall back to legacy ~/.vibe-research if
+  # only the old state directory exists on this machine.
+  if [ -d "$HOME/.swarmlab" ]; then
+    printf '%s\n' "$HOME/.swarmlab"
+  elif [ -d "$HOME/.vibe-research" ]; then
+    printf '%s\n' "$HOME/.vibe-research"
+  else
+    printf '%s\n' "$HOME/.swarmlab"
+  fi
 }
 
 has_command() {
@@ -189,6 +230,7 @@ looks_like_vibe_research_server() {
   command="$(ps -p "$pid" -o command= 2>/dev/null || true)"
   case "$command" in
     *"node src/server.js"*) return 0 ;;
+    *"swarmlab"*"/src/server.js"*) return 0 ;;
     *"vibe-research"*"/src/server.js"*) return 0 ;;
     *"remote-vibes"*"/src/server.js"*) return 0 ;;
     *) return 1 ;;
@@ -216,7 +258,7 @@ stop_pid_with_grace() {
     return
   fi
 
-  log "Stopping Vibe Research $label (pid $pid)"
+  log "Stopping Swarmlab $label (pid $pid)"
   kill "$pid" >/dev/null 2>&1 || true
 
   if wait_for_pid_exit "$pid"; then
@@ -228,9 +270,9 @@ stop_pid_with_grace() {
   wait_for_pid_exit "$pid" || true
 }
 
-# List server pids on this host that look like Vibe Research / Remote Vibes:
-# checks the full command line for `node ... src/server.js` invocations so we
-# catch stragglers that the pid file no longer points at.
+# List server pids on this host that look like Swarmlab / Vibe Research /
+# Remote Vibes: checks the full command line for `node ... src/server.js`
+# invocations so we catch stragglers that the pid file no longer points at.
 collect_orphan_server_pids() {
   local user pid
   user="$(id -un 2>/dev/null || true)"
@@ -257,16 +299,16 @@ collect_orphan_server_pids() {
 }
 
 # Kill tmux sessions whose names start with the managed prefix. The server
-# spawns sessions named `vibe-research-<sessionId>` (or `remote-vibes-<id>` on
-# legacy installs) — those reference paths under the now-removed app/state dir
-# and serve no purpose after uninstall.
+# spawns sessions named `swarmlab-<sessionId>` (or `vibe-research-<id>` /
+# `remote-vibes-<id>` on legacy installs) — those reference paths under the
+# now-removed app/state dir and serve no purpose after uninstall.
 stop_managed_tmux_sessions() {
   if ! has_command tmux; then
     return
   fi
 
   local session prefixes prefix
-  prefixes="vibe-research- remote-vibes-"
+  prefixes="swarmlab- vibe-research- remote-vibes-"
 
   # `tmux list-sessions` exits non-zero with no server running; that's fine.
   for session in $(tmux list-sessions -F '#{session_name}' 2>/dev/null); do
@@ -292,7 +334,7 @@ stop_managed_server() {
       if looks_like_vibe_research_server "$pid"; then
         stop_pid_with_grace "$pid" "server"
       else
-        log "Leaving pid $pid running because it does not look like a managed Vibe Research server."
+        log "Leaving pid $pid running because it does not look like a managed Swarmlab server."
       fi
     fi
   fi
@@ -345,7 +387,7 @@ uninstall_one_systemd_service() {
 
 uninstall_systemd_service() {
   local primary_name service_dir name seen
-  primary_name="${VIBE_RESEARCH_SERVICE_NAME:-${REMOTE_VIBES_SERVICE_NAME:-vibe-research}}"
+  primary_name="${VIBE_RESEARCH_SERVICE_NAME:-${REMOTE_VIBES_SERVICE_NAME:-swarmlab}}"
   service_dir="${VIBE_RESEARCH_SYSTEMD_SERVICE_DIR:-${REMOTE_VIBES_SYSTEMD_SERVICE_DIR:-/etc/systemd/system}}"
 
   if [ "${VIBE_RESEARCH_UNINSTALL_SERVICE:-${REMOTE_VIBES_UNINSTALL_SERVICE:-1}}" = "0" ]; then
@@ -356,10 +398,11 @@ uninstall_systemd_service() {
     return
   fi
 
-  # Clean up the configured service name plus the legacy "remote-vibes" name
-  # left behind by older installs that ran before the rename.
+  # Clean up the configured service name plus the legacy "vibe-research" /
+  # "remote-vibes" names left behind by older installs that ran before
+  # subsequent renames.
   seen=""
-  for name in "$primary_name" vibe-research remote-vibes; do
+  for name in "$primary_name" swarmlab vibe-research remote-vibes; do
     [ -n "$name" ] || continue
     case ":$seen:" in
       *":$name:"*) continue ;;
@@ -370,28 +413,36 @@ uninstall_systemd_service() {
 }
 
 remove_launcher_commands() {
-  local app_dir launcher_source command_path candidate link_target canonical_source canonical_target
+  local app_dir launcher_source command_name command_path candidate link_target canonical_source canonical_target bin_dir
   local candidates=()
   app_dir="$1"
   launcher_source="$app_dir/bin/vibe-research"
   canonical_source="$(canonical_path "$launcher_source")"
 
-  if command_path="$(command -v vibe-research 2>/dev/null)" && [ -n "$command_path" ]; then
-    candidates+=("$command_path")
-  fi
+  # Clean up both the new (swarmlab) and legacy (vibe-research) command names.
+  for command_name in swarmlab vibe-research; do
+    if command_path="$(command -v "$command_name" 2>/dev/null)" && [ -n "$command_path" ]; then
+      candidates+=("$command_path")
+    fi
+  done
 
   case "${0:-}" in
     */*) candidates+=("$0") ;;
   esac
 
-  if [ -n "${VIBE_RESEARCH_BIN_DIR:-${REMOTE_VIBES_BIN_DIR:-}}" ]; then
-    candidates+=("${VIBE_RESEARCH_BIN_DIR:-${REMOTE_VIBES_BIN_DIR:-}}/vibe-research")
+  bin_dir="${VIBE_RESEARCH_BIN_DIR:-${REMOTE_VIBES_BIN_DIR:-}}"
+  if [ -n "$bin_dir" ]; then
+    candidates+=("$bin_dir/swarmlab" "$bin_dir/vibe-research")
   fi
 
   candidates+=(
+    "$HOME/.local/bin/swarmlab"
     "$HOME/.local/bin/vibe-research"
+    "$HOME/bin/swarmlab"
     "$HOME/bin/vibe-research"
+    "/usr/local/bin/swarmlab"
     "/usr/local/bin/vibe-research"
+    "/opt/homebrew/bin/swarmlab"
     "/opt/homebrew/bin/vibe-research"
   )
 
@@ -411,7 +462,7 @@ remove_launcher_commands() {
 
     canonical_target="$(canonical_path "$link_target")"
     if [ "$canonical_target" != "$canonical_source" ]; then
-      log "Leaving unrelated vibe-research symlink in place: $candidate"
+      log "Leaving unrelated swarmlab symlink in place: $candidate"
       continue
     fi
 
@@ -430,7 +481,7 @@ confirm_uninstall() {
     return
   fi
 
-  log "This will uninstall Vibe Research from this system."
+  log "This will uninstall Swarmlab from this system."
   log "App checkout: $app_dir"
   log "State directory: $state_dir ($(if [ "$purge" = "1" ]; then printf 'will remove'; else printf 'will keep'; fi))"
 
@@ -438,7 +489,7 @@ confirm_uninstall() {
     fail "Refusing to uninstall without --yes in a non-interactive shell."
   fi
 
-  printf 'Uninstall Vibe Research? [y/N] '
+  printf 'Uninstall Swarmlab? [y/N] '
   read -r answer
   case "$answer" in
     y|Y|yes|YES|Yes)
@@ -462,7 +513,7 @@ remove_app_checkout() {
   fi
 
   if ! looks_like_vibe_research_checkout "$app_dir"; then
-    fail "Refusing to remove $app_dir because it does not look like a Vibe Research app checkout."
+    fail "Refusing to remove $app_dir because it does not look like a Swarmlab app checkout."
   fi
 
   log "Removing app checkout: $app_dir"
@@ -535,7 +586,7 @@ open_browser() {
   local open_command
 
   if [ "${VIBE_RESEARCH_OPEN_BROWSER:-${REMOTE_VIBES_OPEN_BROWSER:-1}}" = "0" ]; then
-    log "Open Vibe Research: $url"
+    log "Open Swarmlab: $url"
     return
   fi
 
@@ -545,7 +596,7 @@ open_browser() {
       log "Could not open browser automatically. Open: $url"
       return
     }
-    log "Opened Vibe Research: $url"
+    log "Opened Swarmlab: $url"
     return
   fi
 
@@ -569,16 +620,18 @@ open_browser() {
     return
   fi
 
-  log "Open Vibe Research: $url"
+  log "Open Swarmlab: $url"
 }
 
 print_usage() {
   cat <<'EOF'
 Usage:
-  vibe-research [--no-browser] [--url]
-  vibe-research uninstall [--yes] [--purge]
+  swarmlab [--no-browser] [--url]
+  swarmlab uninstall [--yes] [--purge]
 
-Launch Vibe Research if needed and open the local UI in your browser.
+Launch Swarmlab if needed and open the local UI in your browser.
+
+The legacy `vibe-research` command still works as an alias for `swarmlab`.
 
 Options:
   --no-browser   Start or reuse the server without opening a browser.
@@ -586,9 +639,10 @@ Options:
   -h, --help     Show this help.
 
 Uninstall:
-  uninstall      Stop Vibe Research and remove the terminal command and app checkout.
+  uninstall      Stop Swarmlab and remove the terminal command and app checkout.
   --yes          Do not prompt for confirmation.
-  --purge        Also remove local state under VIBE_RESEARCH_STATE_DIR (default ~/.vibe-research).
+  --purge        Also remove local state under SWARMLAB_STATE_DIR (default ~/.swarmlab).
+                 VIBE_RESEARCH_STATE_DIR is honored as a legacy alias.
 EOF
 }
 
@@ -654,7 +708,7 @@ fi
 
 app_dir="$(resolve_app_dir)"
 if [ ! -x "$app_dir/start.sh" ]; then
-  fail "Could not find Vibe Research at $app_dir. Re-run the installer, or set VIBE_RESEARCH_HOME to the app checkout."
+  fail "Could not find Swarmlab at $app_dir. Re-run the installer, or set SWARMLAB_HOME (or VIBE_RESEARCH_HOME) to the app checkout."
 fi
 
 "$app_dir/start.sh"

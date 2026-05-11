@@ -1,3 +1,4 @@
+import "./env-aliases.js";
 import { spawn } from "node:child_process";
 import { createVibeResearchApp } from "./create-app.js";
 import { buildStartupOutput } from "./startup-output.js";

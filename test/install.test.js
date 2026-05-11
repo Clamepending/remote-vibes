@@ -337,10 +337,10 @@ test("install.sh restores generated package-lock churn before updating a checkou
   }
 });
 
-test("install.sh defaults to an app checkout under the home Vibe Research directory", async () => {
+test("install.sh defaults to an app checkout under the home Swarmlab directory", async () => {
   const { tempRoot, repoDir } = await createSourceRepo();
   const homeDir = path.join(tempRoot, "home");
-  const installDir = path.join(homeDir, ".vibe-research", "app");
+  const installDir = path.join(homeDir, ".swarmlab", "app");
 
   try {
     const result = await execFile("bash", [installScript], {
@@ -868,7 +868,7 @@ exit 0
     const response = await fetch(`http://127.0.0.1:${port}/api/state`);
     assert.equal(response.status, 200);
     const payload = await response.json();
-    assert.equal(payload.appName, "Vibe Research");
+    assert.equal(payload.appName, "Swarmlab");
   } finally {
     try {
       await fetch(`http://127.0.0.1:${port}/api/terminate`, {
@@ -924,7 +924,7 @@ test("start.sh refreshes PATH after the installer adds managed Linux Node.js", a
     const response = await fetch(`http://127.0.0.1:${port}/api/state`);
     assert.equal(response.status, 200);
     const payload = await response.json();
-    assert.equal(payload.appName, "Vibe Research");
+    assert.equal(payload.appName, "Swarmlab");
   } finally {
     try {
       await fetch(`http://127.0.0.1:${port}/api/terminate`, {
@@ -940,7 +940,7 @@ test("start.sh refreshes PATH after the installer adds managed Linux Node.js", a
   }
 });
 
-test("install.sh installs a vibe-research launcher command", async () => {
+test("install.sh installs swarmlab + vibe-research launcher commands", async () => {
   const { tempRoot, repoDir } = await createWorkingTreeRepoSnapshot();
   const installRoot = await mkdtemp(path.join(os.tmpdir(), "vibe-research-launcher-install-"));
   const installDir = path.join(installRoot, "vibe-research");
@@ -956,12 +956,18 @@ test("install.sh installs a vibe-research launcher command", async () => {
       }),
     });
 
-    assert.match(result.stdout, /Installed terminal command:/);
-    assert.match(result.stdout, /If 'vibe-research' is not found yet/);
-    const launcherPath = path.join(userBinDir, "vibe-research");
-    const launcherStat = await lstat(launcherPath);
-    assert.equal(launcherStat.isSymbolicLink(), true);
-    assert.equal(await realpath(launcherPath), await realpath(path.join(installDir, "bin", "vibe-research")));
+    assert.match(result.stdout, /Installed terminal command:.*swarmlab/);
+    assert.match(result.stdout, /Installed terminal command:.*vibe-research/);
+    assert.match(result.stdout, /If 'swarmlab' is not found yet/);
+    // Both the new (swarmlab) and legacy (vibe-research) launcher symlinks
+    // should be created and resolve to the same underlying script.
+    const expectedSource = await realpath(path.join(installDir, "bin", "vibe-research"));
+    for (const name of ["swarmlab", "vibe-research"]) {
+      const launcherPath = path.join(userBinDir, name);
+      const launcherStat = await lstat(launcherPath);
+      assert.equal(launcherStat.isSymbolicLink(), true);
+      assert.equal(await realpath(launcherPath), expectedSource);
+    }
   } finally {
     await rm(tempRoot, { recursive: true, force: true });
     await rm(installRoot, { recursive: true, force: true });
@@ -1119,7 +1125,7 @@ printf '%s\\n' "$1" >> ${JSON.stringify(openLog)}
       }),
     });
 
-    assert.match(result.stdout, new RegExp(`Opened Vibe Research: http://localhost:${port}/`));
+    assert.match(result.stdout, new RegExp(`Opened Swarmlab: http://localhost:${port}/`));
     assert.equal(await readFile(startLog, "utf8"), `started with port=${port}\n`);
     assert.equal(await readFile(openLog, "utf8"), `http://localhost:${port}/\n`);
   } finally {
@@ -1846,7 +1852,7 @@ exit 0
     });
 
     assert.match(result.stdout, /systemd restart did not report success; checking vibe-research-test\.service status/);
-    assert.match(result.stdout, /Vibe Research is running; vibe-research-test\.service is enabled but still settling/);
+    assert.match(result.stdout, /Swarmlab is running; vibe-research-test\.service is enabled but still settling/);
     assert.doesNotMatch(result.stdout, /Could not start systemd service/);
     assert.deepEqual((await readFile(systemctlLog, "utf8")).trim().split("\n"), [
       "cat vibe-research-test.service",
@@ -2068,7 +2074,7 @@ test("start.sh refuses to reuse a different workspace already running on the req
         assert.match(
           combinedOutput,
           new RegExp(
-            `Port ${port} is already serving Vibe Research from ${escapeRegExp(foreignWorkspace)}`,
+            `Port ${port} is already serving Swarmlab from ${escapeRegExp(foreignWorkspace)}`,
           ),
         );
         return true;
@@ -2128,7 +2134,7 @@ test("start.sh relaunches the same workspace when the running state dir differs"
     const response = await fetch(`http://127.0.0.1:${port}/api/state`);
     assert.equal(response.status, 200);
     const payload = await response.json();
-    assert.equal(payload.appName, "Vibe Research");
+    assert.equal(payload.appName, "Swarmlab");
     assert.equal(payload.cwd, canonicalRepoDir);
     assert.equal(payload.stateDir, newStateDir);
   } finally {
@@ -2160,7 +2166,7 @@ test("start.sh keeps the same workspace running when state already matches", asy
   const runningServer = http.createServer((request, response) => {
     if (request.url === "/api/state") {
       response.setHeader("Content-Type", "application/json");
-      response.end(JSON.stringify({ appName: "Vibe Research", cwd: canonicalRepoDir, stateDir }));
+      response.end(JSON.stringify({ appName: "Swarmlab", cwd: canonicalRepoDir, stateDir }));
       return;
     }
 
@@ -2190,12 +2196,12 @@ test("start.sh keeps the same workspace running when state already matches", asy
     const combinedOutput = `${result.stdout}${result.stderr}`;
 
     assert.equal(terminateRequested, false);
-    assert.match(combinedOutput, /Vibe Research is already running for this workspace/);
+    assert.match(combinedOutput, /Swarmlab is already running for this workspace/);
 
     const response = await fetch(`http://127.0.0.1:${port}/api/state`);
     assert.equal(response.status, 200);
     const payload = await response.json();
-    assert.equal(payload.appName, "Vibe Research");
+    assert.equal(payload.appName, "Swarmlab");
     assert.equal(payload.cwd, canonicalRepoDir);
     assert.equal(payload.stateDir, stateDir);
   } finally {
@@ -2228,7 +2234,7 @@ const server = http.createServer((request, response) => {
   if (request.url === "/api/state") {
     response.setHeader("Content-Type", "application/json");
     response.end(JSON.stringify({
-      appName: "Vibe Research",
+      appName: "Swarmlab",
       cwd: process.cwd(),
       stateDir: process.env.VIBE_RESEARCH_STATE_DIR,
     }));
@@ -2380,7 +2386,7 @@ esac
     const response = await fetch(`http://127.0.0.1:${port}/api/state`);
     assert.equal(response.status, 200);
     const payload = await response.json();
-    assert.equal(payload.appName, "Vibe Research");
+    assert.equal(payload.appName, "Swarmlab");
     assert.equal(payload.cwd, canonicalRepoDir);
     assert.equal(payload.stateDir, stateDir);
   } finally {
@@ -2452,7 +2458,7 @@ test("install.sh can launch vibe research in one command", async () => {
     const response = await fetch(`http://127.0.0.1:${port}/api/state`);
     assert.equal(response.status, 200);
     const payload = await response.json();
-    assert.equal(payload.appName, "Vibe Research");
+    assert.equal(payload.appName, "Swarmlab");
     assert.equal(payload.stateDir, path.join(installRoot, "state"));
     assert.equal(payload.settings.wikiPathConfigured, true);
     assert.equal(payload.settings.wikiPath, path.join(installRoot, "mac-brain"));
@@ -2465,7 +2471,7 @@ test("install.sh can launch vibe research in one command", async () => {
     const afterHangupResponse = await fetch(`http://127.0.0.1:${port}/api/state`);
     assert.equal(afterHangupResponse.status, 200);
     const afterHangupPayload = await afterHangupResponse.json();
-    assert.equal(afterHangupPayload.appName, "Vibe Research");
+    assert.equal(afterHangupPayload.appName, "Swarmlab");
   } finally {
     try {
       await fetch(`http://127.0.0.1:${port}/api/terminate`, {
@@ -2525,7 +2531,7 @@ test("start.sh migrates an old home checkout into app and uses home root for set
     });
     const combinedOutput = `${result.stdout}${result.stderr}`;
 
-    assert.match(combinedOutput, /Moving old Vibe Research checkout/);
+    assert.match(combinedOutput, /Moving old Swarmlab checkout/);
     assert.match(
       combinedOutput,
       new RegExp(`State directory: ${escapeRegExp(homeVibeResearchDir)}`),
@@ -2548,7 +2554,7 @@ test("start.sh migrates an old home checkout into app and uses home root for set
     const response = await fetch(`http://127.0.0.1:${port}/api/state`);
     assert.equal(response.status, 200);
     const payload = await response.json();
-    assert.equal(payload.appName, "Vibe Research");
+    assert.equal(payload.appName, "Swarmlab");
     assert.equal(payload.stateDir, homeVibeResearchDir);
   } finally {
     try {
@@ -2564,11 +2570,13 @@ test("start.sh migrates an old home checkout into app and uses home root for set
   }
 });
 
-test("start.sh migrates a Remote Vibes home checkout and state into Vibe Research", async () => {
+test("start.sh migrates a Remote Vibes home checkout and state into Swarmlab", async () => {
   const { tempRoot, repoDir } = await createWorkingTreeRepoSnapshot();
   const homeDir = path.join(tempRoot, "home");
   const legacyRemoteVibesDir = path.join(homeDir, ".remote-vibes");
-  const homeVibeResearchDir = path.join(homeDir, ".vibe-research");
+  // Fresh install (no ~/.vibe-research, no ~/.swarmlab) defaults to the new
+  // ~/.swarmlab location after the Vibe Research -> Swarmlab project rename.
+  const homeSwarmlabDir = path.join(homeDir, ".swarmlab");
   const port = await getFreePort();
 
   try {
@@ -2594,25 +2602,25 @@ test("start.sh migrates a Remote Vibes home checkout and state into Vibe Researc
     assert.match(combinedOutput, /Moving old Remote Vibes checkout/);
     assert.match(
       combinedOutput,
-      new RegExp(`State directory: ${escapeRegExp(homeVibeResearchDir)}`),
+      new RegExp(`State directory: ${escapeRegExp(homeSwarmlabDir)}`),
     );
-    assert.ok(await stat(path.join(homeVibeResearchDir, "app", "package.json")));
-    assert.ok(await stat(path.join(homeVibeResearchDir, "app", "src", "server.js")));
-    const migratedPrompt = await readFile(path.join(homeVibeResearchDir, "agent-prompt.md"), "utf8");
+    assert.ok(await stat(path.join(homeSwarmlabDir, "app", "package.json")));
+    assert.ok(await stat(path.join(homeSwarmlabDir, "app", "src", "server.js")));
+    const migratedPrompt = await readFile(path.join(homeSwarmlabDir, "agent-prompt.md"), "utf8");
     assert.match(migratedPrompt, /^# Old Remote Vibes Prompt\n/);
     assert.match(migratedPrompt, /vibe-research:library-v2-protocol:v2/);
     assert.equal(
-      await readFile(path.join(homeVibeResearchDir, "port-aliases.json"), "utf8"),
+      await readFile(path.join(homeSwarmlabDir, "port-aliases.json"), "utf8"),
       "{\"aliases\":{\"api\":4123}}\n",
     );
-    const sessionsPayload = JSON.parse(await readFile(path.join(homeVibeResearchDir, "sessions.json"), "utf8"));
+    const sessionsPayload = JSON.parse(await readFile(path.join(homeSwarmlabDir, "sessions.json"), "utf8"));
     assert.deepEqual(sessionsPayload.sessions, []);
 
     const response = await fetch(`http://127.0.0.1:${port}/api/state`);
     assert.equal(response.status, 200);
     const payload = await response.json();
-    assert.equal(payload.appName, "Vibe Research");
-    assert.equal(payload.stateDir, homeVibeResearchDir);
+    assert.equal(payload.appName, "Swarmlab");
+    assert.equal(payload.stateDir, homeSwarmlabDir);
   } finally {
     try {
       await fetch(`http://127.0.0.1:${port}/api/terminate`, {

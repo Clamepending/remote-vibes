@@ -1,10 +1,10 @@
 # Scaffold Recipes
 
-Scaffold recipes are shareable Vibe Research setup snapshots. They let agents and humans reproduce a useful operating shape without switching into a special benchmark mode: the normal system exports its current policy, layout, and setup metadata, and another normal system previews or applies it.
+Scaffold recipes are shareable Swarmlab setup snapshots. They let agents and humans reproduce a useful operating shape without switching into a special benchmark mode: the normal system exports its current policy, layout, and setup metadata, and another normal system previews or applies it.
 
 ## What A Recipe Captures
 
-- recipe schema and Vibe Research compatibility metadata
+- recipe schema and Swarmlab compatibility metadata
 - core and BuildingHub buildings, including enabled/required state and portable building settings
 - Agent Town layout: cosmetic pieces, functional building placements, theme, and pending functional buildings
 - agent communication policy: DM enabled state, body format, visibility, group inboxes, logging, and throttles
@@ -61,4 +61,4 @@ site/recipes/<slug>/index.html
 
 ## Policy
 
-Recipes are evaluation and sharing artifacts, not alternate runtime modes. A PostTrainBench run, a Library/occupation experiment, or a Harbor-backed sandbox comparison should use the same live Vibe Research behavior that normal work uses. The recipe only makes the scaffold explicit enough to reproduce, compare, and improve on policy.
+Recipes are evaluation and sharing artifacts, not alternate runtime modes. A PostTrainBench run, a Library/occupation experiment, or a Harbor-backed sandbox comparison should use the same live Swarmlab behavior that normal work uses. The recipe only makes the scaffold explicit enough to reproduce, compare, and improve on policy.

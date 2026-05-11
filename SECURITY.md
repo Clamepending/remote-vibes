@@ -1,16 +1,16 @@
 # Security Policy
 
-Vibe Research is a local-first control plane for coding-agent terminals. It can
+Swarmlab is a local-first control plane for coding-agent terminals. It can
 start local agent sessions, read and write selected workspace files, proxy local
-ports, and store provider settings. Treat access to a running Vibe Research
+ports, and store provider settings. Treat access to a running Swarmlab
 instance like access to the machine running it.
 
 ## Official Sources
 
-- Website: https://vibe-research.net
+- Website: https://swarmlab.vibe-research.net
 - Repository: https://github.com/Clamepending/vibe-research
 - Releases: https://github.com/Clamepending/vibe-research/releases
-- Installer: `curl -fsSL https://vibe-research.net/install.sh | bash`
+- Installer: `curl -fsSL https://swarmlab.vibe-research.net/install.sh | bash`
 
 Do not run installers, update commands, or BuildingHub catalogs from lookalike
 domains, unrelated forks, or social posts that do not point back to these
@@ -48,8 +48,8 @@ Include:
 
 ## Deployment Guidance
 
-Vibe Research is intended for localhost, trusted LAN, or private Tailscale use.
-Do not expose port `4826` or any Vibe Research URL to the open internet unless
+Swarmlab is intended for localhost, trusted LAN, or private Tailscale use.
+Do not expose port `4826` or any Swarmlab URL to the open internet unless
 you put a separate authentication layer in front of it.
 
 For safest local-only use:

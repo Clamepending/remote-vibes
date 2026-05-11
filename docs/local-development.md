@@ -33,7 +33,7 @@ Open `http://localhost:4828` for development. Leave `http://localhost:4826` for 
 
 ## Local Claude/Ollama Agent
 
-Vibe Research exposes `Local Claude Code (Ollama)` as an agent provider when both `claude` and `ollama` are installed. It launches the regular Claude Code harness, but routes Anthropic API calls to Ollama's Anthropic-compatible endpoint at `http://localhost:11434`.
+Swarmlab exposes `Local Claude Code (Ollama)` as an agent provider when both `claude` and `ollama` are installed. It launches the regular Claude Code harness, but routes Anthropic API calls to Ollama's Anthropic-compatible endpoint at `http://localhost:11434`.
 
 Useful knobs:
 
@@ -49,7 +49,7 @@ ollama pull qwen2.5-coder:1.5b
 VIBE_RESEARCH_CLAUDE_OLLAMA_MODEL=qwen2.5-coder:1.5b npm run dev:local
 ```
 
-For a still-small local model that has passed a basic Claude Code tool-use smoke in Vibe Research:
+For a still-small local model that has passed a basic Claude Code tool-use smoke in Swarmlab:
 
 ```sh
 ollama pull qwen3:1.7b

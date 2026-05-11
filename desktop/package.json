@@ -1,7 +1,7 @@
 {
-  "name": "vibe-research-desktop",
+  "name": "swarmlab-desktop",
   "version": "1.0.19",
-  "description": "Desktop launcher and first-run installer for Vibe Research.",
+  "description": "Desktop launcher and first-run installer for Swarmlab. A Vibe Research project.",
   "private": true,
   "main": "src/main.cjs",
   "scripts": {
@@ -18,8 +18,8 @@
   },
   "build": {
     "appId": "net.vibe-research.desktop",
-    "productName": "Vibe Research",
-    "artifactName": "Vibe-Research-${version}-${os}-${arch}.${ext}",
+    "productName": "Swarmlab",
+    "artifactName": "Swarmlab-${version}-${os}-${arch}.${ext}",
     "directories": {
       "output": "dist"
     },
@@ -82,10 +82,10 @@
         "zip"
       ],
       "extendInfo": {
-        "NSCameraUsageDescription": "Vibe Research uses the camera only when you choose camera or browser features that request it.",
-        "NSMicrophoneUsageDescription": "Vibe Research uses the microphone only when you choose voice input or browser features that request it.",
-        "NSBluetoothAlwaysUsageDescription": "Vibe Research does not use Bluetooth directly.",
-        "NSBluetoothPeripheralUsageDescription": "Vibe Research does not use Bluetooth directly."
+        "NSCameraUsageDescription": "Swarmlab uses the camera only when you choose camera or browser features that request it.",
+        "NSMicrophoneUsageDescription": "Swarmlab uses the microphone only when you choose voice input or browser features that request it.",
+        "NSBluetoothAlwaysUsageDescription": "Swarmlab does not use Bluetooth directly.",
+        "NSBluetoothPeripheralUsageDescription": "Swarmlab does not use Bluetooth directly."
       }
     },
     "mas": {

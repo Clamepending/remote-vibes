@@ -3540,7 +3540,7 @@ export async function createVibeResearchApp({
       // refresh.
       const lastHealth = mcpLaunchHealthMonitor.lastResult();
       response.json({
-        appName: "Vibe Research",
+        appName: "Swarmlab",
         agentPrompt: agentPromptState,
         agentTown: agentTownStore.getState(),
         buildingHub: {
@@ -10127,7 +10127,7 @@ export async function createVibeResearchApp({
     app,
     close,
     config: {
-      appName: "Vibe Research",
+      appName: "Swarmlab",
       agentPrompt: await agentPromptStore.getState(),
       cwd,
       defaultSessionCwd: sessionDefaultCwd,

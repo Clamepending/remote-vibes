@@ -1,8 +1,49 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
+# Mirror SWARMLAB_X <-> VIBE_RESEARCH_X env vars so users (and old shell rc
+# files) can use either name. The rest of this script reads VIBE_RESEARCH_*
+# names. Runs once at startup before any var is read.
+mirror_swarmlab_env_aliases() {
+  local short_name vibe_val swarm_val
+  for short_name in $(env | awk -F= '/^(SWARMLAB|VIBE_RESEARCH)_[A-Z0-9_]+=/ { sub(/^(SWARMLAB|VIBE_RESEARCH)_/, "", $1); print $1 }' | sort -u); do
+    vibe_val="$(printenv "VIBE_RESEARCH_$short_name" 2>/dev/null || true)"
+    swarm_val="$(printenv "SWARMLAB_$short_name" 2>/dev/null || true)"
+    if [ -n "$swarm_val" ] && [ -z "$vibe_val" ]; then
+      export "VIBE_RESEARCH_$short_name=$swarm_val"
+    elif [ -n "$vibe_val" ] && [ -z "$swarm_val" ]; then
+      export "SWARMLAB_$short_name=$vibe_val"
+    fi
+  done
+}
+mirror_swarmlab_env_aliases
+
+# Default install dir: prefer ~/.swarmlab/app, but if a legacy
+# ~/.vibe-research/app checkout already exists, keep using it in place so we
+# don't strand existing installs.
+default_install_dir() {
+  if [ -d "$HOME/.swarmlab/app" ]; then
+    printf '%s\n' "$HOME/.swarmlab/app"
+  elif [ -d "$HOME/.vibe-research/app" ]; then
+    printf '%s\n' "$HOME/.vibe-research/app"
+  else
+    printf '%s\n' "$HOME/.swarmlab/app"
+  fi
+}
+
+# Default node install root: same fallback logic.
+default_node_install_root() {
+  if [ -d "$HOME/.local/share/swarmlab/node" ]; then
+    printf '%s\n' "$HOME/.local/share/swarmlab/node"
+  elif [ -d "$HOME/.local/share/vibe-research/node" ]; then
+    printf '%s\n' "$HOME/.local/share/vibe-research/node"
+  else
+    printf '%s\n' "$HOME/.local/share/swarmlab/node"
+  fi
+}
+
 REPO_SLUG="${VIBE_RESEARCH_REPO_SLUG:-${REMOTE_VIBES_REPO_SLUG:-Clamepending/vibe-research}}"
-INSTALL_DIR="${VIBE_RESEARCH_HOME:-${REMOTE_VIBES_HOME:-$HOME/.vibe-research/app}}"
+INSTALL_DIR="${VIBE_RESEARCH_HOME:-${REMOTE_VIBES_HOME:-$(default_install_dir)}}"
 if [ -n "${VIBE_RESEARCH_REF+x}" ] || [ -n "${REMOTE_VIBES_REF+x}" ]; then
   REPO_REF_WAS_SET=1
 else
@@ -27,16 +68,17 @@ CLAUDE_COMMAND="${VIBE_RESEARCH_CLAUDE_COMMAND:-${REMOTE_VIBES_CLAUDE_COMMAND:-c
 TAILSCALE_AUTHKEY="${VIBE_RESEARCH_TAILSCALE_AUTHKEY:-${REMOTE_VIBES_TAILSCALE_AUTHKEY:-}}"
 TAILSCALE_USE_SUDO="${VIBE_RESEARCH_TAILSCALE_USE_SUDO:-${REMOTE_VIBES_TAILSCALE_USE_SUDO:-1}}"
 TAILSCALE_DAEMON_WAIT_SECONDS="${VIBE_RESEARCH_TAILSCALE_DAEMON_WAIT_SECONDS:-${REMOTE_VIBES_TAILSCALE_DAEMON_WAIT_SECONDS:-15}}"
-TAILSCALED_LOG_FILE="${VIBE_RESEARCH_TAILSCALED_LOG_FILE:-${REMOTE_VIBES_TAILSCALED_LOG_FILE:-/tmp/vibe-research-tailscaled.log}}"
-SERVICE_NAME="${VIBE_RESEARCH_SERVICE_NAME:-${REMOTE_VIBES_SERVICE_NAME:-vibe-research}}"
+TAILSCALED_LOG_FILE="${VIBE_RESEARCH_TAILSCALED_LOG_FILE:-${REMOTE_VIBES_TAILSCALED_LOG_FILE:-/tmp/swarmlab-tailscaled.log}}"
+SERVICE_NAME="${VIBE_RESEARCH_SERVICE_NAME:-${REMOTE_VIBES_SERVICE_NAME:-swarmlab}}"
 SYSTEMD_SERVICE_DIR="${VIBE_RESEARCH_SYSTEMD_SERVICE_DIR:-${REMOTE_VIBES_SYSTEMD_SERVICE_DIR:-/etc/systemd/system}}"
 NODE_MAJOR="${VIBE_RESEARCH_NODE_MAJOR:-${REMOTE_VIBES_NODE_MAJOR:-22}}"
 MIN_NODE_MAJOR=20
-NODE_INSTALL_ROOT="${VIBE_RESEARCH_NODE_INSTALL_ROOT:-${REMOTE_VIBES_NODE_INSTALL_ROOT:-$HOME/.local/share/vibe-research/node}}"
+NODE_INSTALL_ROOT="${VIBE_RESEARCH_NODE_INSTALL_ROOT:-${REMOTE_VIBES_NODE_INSTALL_ROOT:-$(default_node_install_root)}}"
 NODE_BIN_DIR="${VIBE_RESEARCH_NODE_BIN_DIR:-${REMOTE_VIBES_NODE_BIN_DIR:-$HOME/.local/bin}}"
 APT_UPDATED=0
-MANAGED_PROMPT_MARKER="<!-- vibe-research:managed-agent-prompt -->"
-LEGACY_MANAGED_PROMPT_MARKER="<!-- remote-vibes:managed-agent-prompt -->"
+MANAGED_PROMPT_MARKER="<!-- swarmlab:managed-agent-prompt -->"
+LEGACY_MANAGED_PROMPT_MARKER="<!-- vibe-research:managed-agent-prompt -->"
+LEGACY_REMOTE_VIBES_PROMPT_MARKER="<!-- remote-vibes:managed-agent-prompt -->"
 INSTALL_STEP=0
 INSTALL_TOTAL_STEPS=10
 INSTALL_SPINNER_PID=""
@@ -156,8 +198,8 @@ print_installer_banner() {
   terminal_ui_enabled || return 0
   repo_url="$(resolve_repo_url)"
 
-  printf '\n%s%sVibe Research%s\n' "$INSTALL_BOLD" "$INSTALL_BLUE" "$INSTALL_RESET"
-  printf '%sInstaller for local agent workspaces%s\n' "$INSTALL_DIM" "$INSTALL_RESET"
+  printf '\n%s%sSwarmlab%s\n' "$INSTALL_BOLD" "$INSTALL_BLUE" "$INSTALL_RESET"
+  printf '%sInstaller for local agent workspaces — a Vibe Research project%s\n' "$INSTALL_DIM" "$INSTALL_RESET"
   printf '%srepo%s   %s\n' "$INSTALL_DIM" "$INSTALL_RESET" "$repo_url"
   printf '%starget%s %s\n\n' "$INSTALL_DIM" "$INSTALL_RESET" "$INSTALL_DIR"
 }
@@ -222,7 +264,7 @@ cleanup_terminal_ui() {
 
 log() {
   stop_spinner
-  printf '[vibe-research-install] %s\n' "$*"
+  printf '[swarmlab-install] %s\n' "$*"
 }
 
 fail() {
@@ -230,7 +272,7 @@ fail() {
   if terminal_ui_enabled; then
     printf '%s[error]%s %s\n' "$INSTALL_RED" "$INSTALL_RESET" "$*" >&2
   fi
-  printf '[vibe-research-install] %s\n' "$*" >&2
+  printf '[swarmlab-install] %s\n' "$*" >&2
   exit 1
 }
 
@@ -667,7 +709,7 @@ ensure_node() {
   install_nodesource_node
 
   if ! node_is_supported; then
-    fail "Node.js $(node -v 2>/dev/null || printf 'missing') is not supported. Vibe Research needs Node.js >=${MIN_NODE_MAJOR}."
+    fail "Node.js $(node -v 2>/dev/null || printf 'missing') is not supported. Swarmlab needs Node.js >=${MIN_NODE_MAJOR}."
   fi
 
   if ! has_command npm; then
@@ -1189,7 +1231,7 @@ stop_existing_systemd_service() {
   # friend upgrading from the pre-rename install doesn't end up with two
   # servers fighting for port 4826.
   seen=""
-  for name in "$SERVICE_NAME" vibe-research remote-vibes; do
+  for name in "$SERVICE_NAME" swarmlab vibe-research remote-vibes; do
     [ -n "$name" ] || continue
     case ":$seen:" in
       *":$name:"*) continue ;;
@@ -1351,7 +1393,17 @@ install_systemd_service() {
   fi
 
   service_user="$(id -un)"
-  state_dir="${VIBE_RESEARCH_STATE_DIR:-${REMOTE_VIBES_STATE_DIR:-$HOME/.vibe-research}}"
+  if [ -n "${VIBE_RESEARCH_STATE_DIR:-}" ]; then
+    state_dir="$VIBE_RESEARCH_STATE_DIR"
+  elif [ -n "${REMOTE_VIBES_STATE_DIR:-}" ]; then
+    state_dir="$REMOTE_VIBES_STATE_DIR"
+  elif [ -d "$HOME/.swarmlab" ]; then
+    state_dir="$HOME/.swarmlab"
+  elif [ -d "$HOME/.vibe-research" ]; then
+    state_dir="$HOME/.vibe-research"
+  else
+    state_dir="$HOME/.swarmlab"
+  fi
   wiki_dir="$(resolve_service_wiki_dir "$state_dir")"
   workspace_dir="${VIBE_RESEARCH_WORKSPACE_DIR:-${REMOTE_VIBES_WORKSPACE_DIR:-$HOME/vibe-projects}}"
   port="${VIBE_RESEARCH_PORT:-${REMOTE_VIBES_PORT:-4826}}"
@@ -1360,7 +1412,7 @@ install_systemd_service() {
 
   cat >"$temp_file" <<EOF
 [Unit]
-Description=Vibe Research
+Description=Swarmlab
 After=network-online.target tailscaled.service
 Wants=network-online.target
 # Cap respawn attempts: if start.sh fails 5 times within 60s (e.g. port 4826
@@ -1393,19 +1445,19 @@ EOF
   log "Installing systemd service $SERVICE_NAME.service"
   if ! try_run_as_root_noninteractive install -m 0644 "$temp_file" "$service_file"; then
     rm -f "$temp_file"
-    log "Could not install systemd service; Vibe Research is still running for this session"
+    log "Could not install systemd service; Swarmlab is still running for this session"
     return
   fi
 
   rm -f "$temp_file"
 
   if ! try_run_as_root_noninteractive systemctl daemon-reload; then
-    log "Could not reload systemd; Vibe Research is still running for this session"
+    log "Could not reload systemd; Swarmlab is still running for this session"
     return
   fi
 
   if ! try_run_as_root_noninteractive systemctl enable "${SERVICE_NAME}.service"; then
-    log "Could not enable systemd service; Vibe Research is still running for this session"
+    log "Could not enable systemd service; Swarmlab is still running for this session"
     return
   fi
 
@@ -1413,18 +1465,18 @@ EOF
     log "systemd restart did not report success; checking ${SERVICE_NAME}.service status"
     if ! wait_for_systemd_service_active; then
       if wait_for_vibe_research_server "$state_dir" "$port"; then
-        log "Vibe Research is running; ${SERVICE_NAME}.service is enabled but still settling"
+        log "Swarmlab is running; ${SERVICE_NAME}.service is enabled but still settling"
         return
       fi
-      log "Could not start systemd service; Vibe Research is still running for this session"
+      log "Could not start systemd service; Swarmlab is still running for this session"
       return
     fi
   elif ! wait_for_systemd_service_active; then
     if wait_for_vibe_research_server "$state_dir" "$port"; then
-      log "Vibe Research is running; ${SERVICE_NAME}.service is enabled but still settling"
+      log "Swarmlab is running; ${SERVICE_NAME}.service is enabled but still settling"
       return
     fi
-    log "Could not confirm systemd service startup; Vibe Research is still running for this session"
+    log "Could not confirm systemd service startup; Swarmlab is still running for this session"
     return
   fi
 
@@ -1548,12 +1600,12 @@ clone_repo() {
 restore_managed_prompt_file() {
   local file="$1"
 
-  if [ -f "$file" ] && grep -Fq -e "$MANAGED_PROMPT_MARKER" -e "$LEGACY_MANAGED_PROMPT_MARKER" "$file"; then
+  if [ -f "$file" ] && grep -Fq -e "$MANAGED_PROMPT_MARKER" -e "$LEGACY_MANAGED_PROMPT_MARKER" -e "$LEGACY_REMOTE_VIBES_PROMPT_MARKER" "$file"; then
     git checkout -- "$file" >/dev/null 2>&1 || true
     return
   fi
 
-  if git show "HEAD:$file" 2>/dev/null | grep -Fq -e "$MANAGED_PROMPT_MARKER" -e "$LEGACY_MANAGED_PROMPT_MARKER"; then
+  if git show "HEAD:$file" 2>/dev/null | grep -Fq -e "$MANAGED_PROMPT_MARKER" -e "$LEGACY_MANAGED_PROMPT_MARKER" -e "$LEGACY_REMOTE_VIBES_PROMPT_MARKER"; then
     git checkout -- "$file" >/dev/null 2>&1 || true
   fi
 }
@@ -1641,7 +1693,7 @@ prepare_app_checkout() {
   fi
 
   if [ -d "$INSTALL_DIR/bin" ]; then
-    for helper in vibe-research vr-browser vr-browser-detour vr-browser-use vr-mailwatch vr-playwright vr-session-name vr-agentmail-reply vr-videomemory rv-browser rv-browser-detour rv-browser-use rv-mailwatch rv-playwright rv-session-name rv-agentmail-reply rv-videomemory codex claude open osascript google-chrome chrome chromium chromium-browser firefox; do
+    for helper in vibe-research vr-browser vr-browser-detour vr-browser-use vr-mailwatch vr-playwright vr-session-name vr-agentmail-reply vr-videomemory rv-browser rv-browser-detour rv-browser-use rv-mailwatch rv-playwright rv-session-name rv-agentmail-reply rv-videomemory codex claude open osascript google-chrome chrome chromium chromium-browser firefox swarmlab sl-browser sl-browser-use sl-mailwatch sl-playwright sl-session-name sl-agentmail-reply sl-videomemory; do
       if [ -f "$INSTALL_DIR/bin/$helper" ] && [ ! -x "$INSTALL_DIR/bin/$helper" ]; then
         chmod +x "$INSTALL_DIR/bin/$helper"
       fi
@@ -1649,8 +1701,37 @@ prepare_app_checkout() {
   fi
 }
 
+install_one_launcher_symlink() {
+  local launcher_source launcher_dir launcher_name launcher_path
+  launcher_source="$1"
+  launcher_dir="$2"
+  launcher_name="$3"
+  launcher_path="$launcher_dir/$launcher_name"
+
+  if [ -e "$launcher_path" ] && [ ! -L "$launcher_path" ]; then
+    log "Leaving existing $launcher_path in place; run $launcher_source directly or set SWARMLAB_BIN_DIR (or legacy VIBE_RESEARCH_BIN_DIR) to another directory."
+    return
+  fi
+
+  if [ -L "$launcher_path" ]; then
+    rm -f "$launcher_path" 2>/dev/null || try_run_as_root_noninteractive rm -f "$launcher_path" || {
+      log "Could not update existing $launcher_path; skipping terminal command"
+      return
+    }
+  fi
+
+  if ! ln -s "$launcher_source" "$launcher_path" 2>/dev/null; then
+    try_run_as_root_noninteractive ln -s "$launcher_source" "$launcher_path" || {
+      log "Could not install $launcher_path; run $launcher_source directly or set SWARMLAB_BIN_DIR to a writable directory."
+      return
+    }
+  fi
+
+  log "Installed terminal command: $launcher_path"
+}
+
 install_launcher_command() {
-  local launcher_source launcher_dir launcher_path path_was_ready
+  local launcher_source launcher_dir path_was_ready name
   launcher_source="$INSTALL_DIR/bin/vibe-research"
 
   if [ ! -f "$launcher_source" ]; then
@@ -1659,7 +1740,6 @@ install_launcher_command() {
   fi
 
   launcher_dir="$(resolve_launcher_bin_dir)"
-  launcher_path="$launcher_dir/vibe-research"
   path_was_ready=0
 
   if path_contains_dir "$launcher_dir"; then
@@ -1675,39 +1755,26 @@ install_launcher_command() {
 
   chmod +x "$launcher_source" || true
 
-  if [ -e "$launcher_path" ] && [ ! -L "$launcher_path" ]; then
-    log "Leaving existing $launcher_path in place; run $launcher_source directly or set VIBE_RESEARCH_BIN_DIR to another directory."
-    return
-  fi
+  # Install `swarmlab` as the primary command, and `vibe-research` as a
+  # back-compat alias so existing user workflows and shell history keep
+  # working after the rename.
+  for name in swarmlab vibe-research; do
+    install_one_launcher_symlink "$launcher_source" "$launcher_dir" "$name"
+  done
 
-  if [ -L "$launcher_path" ]; then
-    rm -f "$launcher_path" 2>/dev/null || try_run_as_root_noninteractive rm -f "$launcher_path" || {
-      log "Could not update existing $launcher_path; skipping terminal command"
-      return
-    }
-  fi
-
-  if ! ln -s "$launcher_source" "$launcher_path" 2>/dev/null; then
-    try_run_as_root_noninteractive ln -s "$launcher_source" "$launcher_path" || {
-      log "Could not install $launcher_path; run $launcher_source directly or set VIBE_RESEARCH_BIN_DIR to a writable directory."
-      return
-    }
-  fi
-
-  log "Installed terminal command: $launcher_path"
   if [ "$path_was_ready" != "1" ]; then
-    log "If 'vibe-research' is not found yet, open a new terminal or add $launcher_dir to PATH."
+    log "If 'swarmlab' is not found yet, open a new terminal or add $launcher_dir to PATH."
   fi
 }
 
 launch_vibe_research() {
   if [ "$SKIP_RUN" = "1" ]; then
-    log "Skipping launch because VIBE_RESEARCH_SKIP_RUN=1"
+    log "Skipping launch because SWARMLAB_SKIP_RUN=1 (or legacy VIBE_RESEARCH_SKIP_RUN=1)"
     return
   fi
 
   prepare_start_environment
-  log "Launching Vibe Research"
+  log "Launching Swarmlab"
   "$INSTALL_DIR/start.sh"
 }
 

@@ -1,27 +1,34 @@
+# Swarmlab
+
+Swarmlab is a project within the Vibe Research lab — open-source agent-powered research lab on your GPU cluster.
+
+> Renamed from "Vibe Research" (the project name) to "Swarmlab" (the project name) in 2026. "Vibe Research" is now the lab; Swarmlab is the project. The `vibe-research` CLI, `VIBE_RESEARCH_*` env vars, and `~/.vibe-research/` state directory all keep working as back-compat aliases.
+
 ## Official Sources
 
-- Website: https://vibe-research.net
+- Website: https://swarmlab.vibe-research.net
+- Lab homepage: https://vibe-research.net
 - Repository: https://github.com/Clamepending/vibe-research
 - Releases: https://github.com/Clamepending/vibe-research/releases
-- Installer: `curl -fsSL https://vibe-research.net/install.sh | bash`
+- Installer: `curl -fsSL https://swarmlab.vibe-research.net/install.sh | bash`
 
 Do not run lookalike installers from unrelated domains, forks, package names, or social posts. Release pages include checksum assets for high-trust verification when available.
 
 ## Claude Code Install
 
-The main installer does not require Claude Code to finish setup. It detects an existing `claude` command when present, then lets the onboarding UI install or choose a coding agent. Vibe Research prefers the native `~/.local/bin/claude` binary over older npm/Homebrew shims when both are present.
+The main installer does not require Claude Code to finish setup. It detects an existing `claude` command when present, then lets the onboarding UI install or choose a coding agent. Swarmlab prefers the native `~/.local/bin/claude` binary over older npm/Homebrew shims when both are present.
 
 If you explicitly set `VIBE_RESEARCH_INSTALL_CLAUDE_CODE=1`, the shell installer runs Anthropic's native installer and falls back to a user-local npm install under `~/.local` if the native installer exits or does not finish within 10 minutes. Set `VIBE_RESEARCH_CLAUDE_CODE_INSTALL_TIMEOUT_SECONDS=0` to disable that timeout.
 
 ```bash
-VIBE_RESEARCH_INSTALL_CLAUDE_CODE=1 curl -fsSL https://vibe-research.net/install.sh | bash
+VIBE_RESEARCH_INSTALL_CLAUDE_CODE=1 curl -fsSL https://swarmlab.vibe-research.net/install.sh | bash
 ```
 
 The onboarding UI also offers Claude Code, Codex, OpenClaw, OpenCode, Gemini CLI, and ML Intern install/detection from the provider picker.
 
 ### Local Claude Code with Ollama
 
-Vibe Research also detects a local-only `Local Claude Code (Ollama)` provider when both `claude` and `ollama` are installed. Sessions launched through this provider keep the Claude Code UI and Vibe Research wrapper, but route model traffic to Ollama with:
+Swarmlab also detects a local-only `Local Claude Code (Ollama)` provider when both `claude` and `ollama` are installed. Sessions launched through this provider keep the Claude Code UI and Swarmlab wrapper, but route model traffic to Ollama with:
 
 ```bash
 ANTHROPIC_AUTH_TOKEN=ollama
@@ -36,23 +43,23 @@ The provider launches Claude Code with `--model "${VIBE_RESEARCH_CLAUDE_OLLAMA_M
 
 Use the `vibe-research.net` installer URL directly. It is a small stable wrapper around the canonical installer in this repo. If a very minimal machine does not have `curl` yet, install `curl` first and rerun the quickstart command.
 
-The installer handles git, build tools, Node.js 22.x, Vibe Research, and startup on supported macOS/Linux/Raspberry Pi systems. It detects an already-connected Tailscale setup but does not require Tailscale login on first run. On Linux installs, `tmux` is installed too so coding-agent terminals can survive Vibe Research restarts.
+The installer handles git, build tools, Node.js 22.x, Swarmlab, and startup on supported macOS/Linux/Raspberry Pi systems. It detects an already-connected Tailscale setup but does not require Tailscale login on first run. On Linux installs, `tmux` is installed too so coding-agent terminals can survive Swarmlab restarts.
 
-Interactive terminals get a polished installer view with a Vibe Research header, step progress, and a small loading spinner. Set `VIBE_RESEARCH_INSTALL_UI=plain` for simple logs, or `VIBE_RESEARCH_INSTALL_ANIMATION=0` to keep the styled step output without animation.
+Interactive terminals get a polished installer view with a Swarmlab header, step progress, and a small loading spinner. Set `VIBE_RESEARCH_INSTALL_UI=plain` for simple logs, or `VIBE_RESEARCH_INSTALL_ANIMATION=0` to keep the styled step output without animation.
 
 By default, the installer uses the latest GitHub Release when one exists, then falls back to `main` while the project is still bootstrapping. Set `VIBE_RESEARCH_UPDATE_CHANNEL=branch` or `VIBE_RESEARCH_REF=<branch-or-tag>` before running the installer if you intentionally want a dev checkout.
 
-The install command now launches Vibe Research as a background server, so it keeps running even after the SSH session or terminal closes. The app checkout lives under `~/.vibe-research/app`; onboarding chooses the workspace where the Library and agent-created files live; settings, logs, session history, and the managed pid live under `~/.vibe-research/`. Coding-agent terminals use `tmux` when available so Vibe Research restarts can reattach to live agent work instead of merely replaying a transcript.
+The install command now launches Swarmlab as a background server, so it keeps running even after the SSH session or terminal closes. The app checkout lives under `~/.vibe-research/app`; onboarding chooses the workspace where the Library and agent-created files live; settings, logs, session history, and the managed pid live under `~/.vibe-research/`. Coding-agent terminals use `tmux` when available so Swarmlab restarts can reattach to live agent work instead of merely replaying a transcript.
 
 The installer adds a `vibe-research` terminal command, preferring a bin directory already on `PATH` and falling back to `~/.local/bin`. Running `vibe-research` starts the background server when needed and opens the local browser UI; use `vibe-research --no-browser` on headless machines. If your current shell has not picked up the install location, open a new terminal or add the printed directory to `PATH`.
 
-To remove the terminal command, background service, and app checkout, run `vibe-research uninstall`. It keeps local Vibe Research state by default; use `vibe-research uninstall --purge` only when you also want to remove local settings, logs, and session state.
+To remove the terminal command, background service, and app checkout, run `vibe-research uninstall`. It keeps local Swarmlab state by default; use `vibe-research uninstall --purge` only when you also want to remove local settings, logs, and session state.
 
-New release installs start workspace picking from `~/vibe-projects` when the app checkout is under `~/.vibe-research/app`. New agents start in the configured new-agent folder without asking for a folder each time; Settings can change both the Library folder and the new-agent folder. By default, Vibe Research keeps local git backups of the Library every 10 minutes. To back the Library up off-machine, create a private Git repo, paste its SSH or credential-helper remote URL into the sidebar's private remote backup field, enable remote push, and Vibe Research will push Library backup commits there on each backup run.
+New release installs start workspace picking from `~/vibe-projects` when the app checkout is under `~/.vibe-research/app`. New agents start in the configured new-agent folder without asking for a folder each time; Settings can change both the Library folder and the new-agent folder. By default, Swarmlab keeps local git backups of the Library every 10 minutes. To back the Library up off-machine, create a private Git repo, paste its SSH or credential-helper remote URL into the sidebar's private remote backup field, enable remote push, and Swarmlab will push Library backup commits there on each backup run.
 
 ## Releases
 
-Vibe Research uses GitHub Releases as the stable update channel. Friends' installs update to release tags like `v0.2.1`, not random in-progress commits on `main`. The repo also carries `release-channel.json`, a static stable-channel pointer used as a lower-rate fallback before GitHub's releases API.
+Swarmlab uses GitHub Releases as the stable update channel. Friends' installs update to release tags like `v0.2.1`, not random in-progress commits on `main`. The repo also carries `release-channel.json`, a static stable-channel pointer used as a lower-rate fallback before GitHub's releases API.
 
 The safest path is the manual GitHub Actions workflow:
 
@@ -73,7 +80,7 @@ npm run release:major
 
 Both paths bump `package.json`, update `release-channel.json`, commit `Release vX.Y.Z`, create an annotated git tag, push `main` and the tag, then publish a GitHub Release with generated notes plus checksum assets (`install.sh`, `release.json`, and `SHASUMS256.txt`). The in-app updater checks the static release channel and latest GitHub Release before falling back to semver tags or `main`.
 
-You can access local app ports from the sidebar. Vibe Research prefers direct
+You can access local app ports from the sidebar. Swarmlab prefers direct
 `http://<host-ip>:<port>/` links when a service is already listening on all
 interfaces. When Tailscale is connected, it also shows private tailnet URLs and
 offers an `expose` button for localhost-only services via Tailscale Serve. It
@@ -81,7 +88,7 @@ keeps `/proxy/<port>/` as the fallback.
 
 Example thing I did was text my agent to fix and [pretrain GPT2-small on a 4090!](https://x.com/clamepending/status/2039185482639462763?s=20)
 
-Agents inside Vibe Research get a Playwright CLI browser skill on `PATH` via `vr-playwright`, `playwright-cli`, and `PWCLI`. This is the preferred way for agents to inspect localhost apps with a real browser:
+Agents inside Swarmlab get a Playwright CLI browser skill on `PATH` via `vr-playwright`, `playwright-cli`, and `PWCLI`. This is the preferred way for agents to inspect localhost apps with a real browser:
 
 ```bash
 command -v npx >/dev/null 2>&1
@@ -110,7 +117,7 @@ For model training or experiment loops, the lightweight pattern is:
 
 ## ML Intern
 
-Vibe Research detects Hugging Face's `ml-intern` CLI when it is installed and shows it as an agent provider. Install it from the upstream repo, then start an `ML Intern` session from the provider picker:
+Swarmlab detects Hugging Face's `ml-intern` CLI when it is installed and shows it as an agent provider. Install it from the upstream repo, then start an `ML Intern` session from the provider picker:
 
 ```bash
 git clone https://github.com/huggingface/ml-intern.git
@@ -119,17 +126,17 @@ uv sync
 uv tool install -e .
 ```
 
-`ml-intern` needs `HF_TOKEN`, and usually `ANTHROPIC_API_KEY` and `GITHUB_TOKEN`, in the environment used by the Vibe Research server. `HF_TOKEN`, `ANTHROPIC_API_KEY`, and `OPENAI_API_KEY` can also be saved in Vibe Research under Settings -> Model Provider Keys; saved values are injected into newly started agent sessions without being returned by `/api/settings`. Sessions run in the same persistent terminal system as other agents, so a restart can reattach to live training monitors or long HF job supervision.
+`ml-intern` needs `HF_TOKEN`, and usually `ANTHROPIC_API_KEY` and `GITHUB_TOKEN`, in the environment used by the Swarmlab server. `HF_TOKEN`, `ANTHROPIC_API_KEY`, and `OPENAI_API_KEY` can also be saved in Swarmlab under Settings -> Model Provider Keys; saved values are injected into newly started agent sessions without being returned by `/api/settings`. Sessions run in the same persistent terminal system as other agents, so a restart can reattach to live training monitors or long HF job supervision.
 
-For a one-move Vibe Research handoff, agent sessions expose:
+For a one-move Swarmlab handoff, agent sessions expose:
 
 ```bash
 ml-intern "$(cat "$VIBE_RESEARCH_ML_INTERN_HANDOFF_PROMPT")"
 ```
 
-That prompt tells ML Intern to keep Vibe Research as the research ledger: claim one QUEUE row, run 1-3 committed cycles, cite papers/datasets/jobs/artifacts, update the result doc and leaderboard, and push the Library/code repos.
+That prompt tells ML Intern to keep Swarmlab as the research ledger: claim one QUEUE row, run 1-3 committed cycles, cite papers/datasets/jobs/artifacts, update the result doc and leaderboard, and push the Library/code repos.
 
-For a repeatable live agent smoke test inside a Vibe Research shell session, run:
+For a repeatable live agent smoke test inside a Swarmlab shell session, run:
 
 ```bash
 node scripts/eval-vr-browser-codex.mjs --provider codex

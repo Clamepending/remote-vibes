@@ -7,6 +7,7 @@
 // Used by Claude during the boot-fallback hardening work; not part of the
 // shipping product.
 
+import "../src/env-aliases.js";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { mkdir } from "node:fs/promises";

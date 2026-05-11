@@ -1,8 +1,8 @@
-# Agent-Native Vibe Research Roadmap
+# Agent-Native Swarmlab Roadmap
 
 Date: 2026-04-30
 
-This is the working plan for turning Vibe Research from an agent launcher plus research ledger into an agent-native research organization. It synthesizes:
+This is the working plan for turning Swarmlab from an agent launcher plus research ledger into an agent-native research organization. It synthesizes:
 
 - [Autonomous Research Organizations Literature Review](./autonomous-research-org-literature-review.md)
 - [Cursor Long-Horizon Agent Lessons](./cursor-long-horizon-agent-lessons.md)
@@ -11,7 +11,7 @@ This is the working plan for turning Vibe Research from an agent launcher plus r
 
 ## North Star
 
-Vibe Research should make autonomous research feel like running a small accountable lab:
+Swarmlab should make autonomous research feel like running a small accountable lab:
 
 - The human sets goals, constraints, budgets, and taste.
 - Agents propose plans, run experiments, write results, and surface crisp review points.
@@ -27,7 +27,7 @@ The product principle is: optimize for human review throughput. The human should
 
 Use evolutionary search only where evaluation is strong enough. The transferable pattern is:
 
-| Discovery-system concept | Vibe Research equivalent |
+| Discovery-system concept | Swarmlab equivalent |
 | --- | --- |
 | Program database | Result docs, branches, artifacts, figures, insights |
 | Sampler | Brief/queue proposer, prompt/scaffold/topology generator |
@@ -303,7 +303,7 @@ Track these metrics across dogfood projects:
 
 ## Working Thesis
 
-The next breakthrough for Vibe Research is not a smarter single agent. It is a tighter research operating system:
+The next breakthrough for Swarmlab is not a smarter single agent. It is a tighter research operating system:
 
 - typed state;
 - executable evaluators;
