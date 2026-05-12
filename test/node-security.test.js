@@ -60,6 +60,21 @@ test("local-or-node-token middleware allows loopback and valid tokens only", () 
     },
   );
   assert.equal(passed, true);
+
+  let listed = false;
+  middleware(
+    {
+      socket: { remoteAddress: "100.64.0.5" },
+      headers: { "x-swarmlab-node-token": "secret-node-token" },
+      method: "GET",
+      path: "/api/node/account/nodes",
+    },
+    createResponseProbe(),
+    () => {
+      listed = true;
+    },
+  );
+  assert.equal(listed, true);
 });
 
 test("fleet registry routes are local-or-node-token protected", () => {

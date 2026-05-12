@@ -3780,6 +3780,11 @@ export async function createVibeResearchApp({
         url: request.body?.url || request.body?.baseUrl || request.body?.href,
         label: request.body?.label || request.body?.name,
         source: request.body?.source || "manual",
+        snapshot: request.body?.snapshot || request.body?.nodeSnapshot || request.body?.summary,
+        connectionHints: request.body?.connectionHints,
+        status: request.body?.status,
+        lastSeenAt: request.body?.lastSeenAt,
+        lastError: request.body?.lastError || request.body?.error,
       });
       response.status(201).json({ node, nodes: fleetRegistryStore.listNodes() });
     } catch (error) {
@@ -3879,6 +3884,16 @@ export async function createVibeResearchApp({
   app.get("/api/node/account/status", requireLocalOrNodeToken, (_request, response) => {
     response.setHeader("Cache-Control", "no-store");
     response.json({ account: nodeHeartbeatService.getStatus() });
+  });
+
+  app.get("/api/node/account/nodes", requireLocalOrNodeToken, async (_request, response) => {
+    try {
+      response.setHeader("Cache-Control", "no-store");
+      const nodes = await accountService.listNodes({ settings: settingsStore.settings });
+      response.json({ ...nodes, account: nodeHeartbeatService.getStatus() });
+    } catch (error) {
+      response.status(error.statusCode || 400).json({ error: error.message || "Could not list Vibe account machines." });
+    }
   });
 
   app.post("/api/node/account/pair/start", requireLocalOrNodeToken, async (request, response) => {

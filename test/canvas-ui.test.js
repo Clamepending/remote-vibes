@@ -223,8 +223,33 @@ test("local canvas view renders node snapshot cards and persists drag layout", a
               baseUrl: "https://registry-node.example.test",
               label: "Registry node",
             },
+            {
+              id: "offline-gpu",
+              baseUrl: "https://offline-node.example.test/private?token=registry",
+              label: "Known Offline GPU",
+              displayName: "Known Offline GPU",
+              status: "stale",
+              lastSeenAt: "2026-05-12T11:30:00.000Z",
+              os: "linux",
+              swarmlabVersion: "1.0.18",
+              counts: { sessions: 2, ports: 1, handoffJobs: 1 },
+              capabilities: {
+                gpuCount: 6,
+                providerCount: 2,
+                roles: ["agent-host", "gpu-worker"],
+              },
+            },
           ],
         }),
+      });
+    });
+    await page.route("https://offline-node.example.test/api/node/snapshot?mode=redacted", async (route) => {
+      remoteSnapshotHits.set("https://offline-node.example.test", (remoteSnapshotHits.get("https://offline-node.example.test") || 0) + 1);
+      await route.fulfill({
+        status: 503,
+        contentType: "application/json",
+        headers: { "Access-Control-Allow-Origin": "*" },
+        body: JSON.stringify({ error: "offline in test" }),
       });
     });
     await page.route(/https:\/\/(?:gpu-node|registry-node|query-node|manual-node)\.example\.test\/api\/node\/snapshot\?mode=redacted/u, async (route) => {
@@ -327,13 +352,16 @@ test("local canvas view renders node snapshot cards and persists drag layout", a
     assert.match(rendered, /GPU Cluster/);
     assert.match(rendered, /Registry Box/);
     assert.match(rendered, /Query Box/);
+    assert.match(rendered, /Known Offline GPU/);
     assert.match(rendered, /Remote trainer/);
     assert.match(rendered, /Registry worker/);
     assert.match(rendered, /Query worker/);
     assert.match(rendered, /gpu-node\.example\.test/);
     assert.match(rendered, /registry-node\.example\.test/);
     assert.match(rendered, /query-node\.example\.test/);
-    assert.doesNotMatch(rendered, /private|token=secret/);
+    assert.match(rendered, /2 sessions, 1 apps, 1 handoffs/);
+    assert.match(rendered, /6 gpus/);
+    assert.doesNotMatch(rendered, /private|token=secret|token=registry/);
     assert.match(rendered, /Worker B/);
     assert.match(rendered, /Quiet agents/);
     assert.match(rendered, /Resolved requests/);
@@ -350,7 +378,7 @@ test("local canvas view renders node snapshot cards and persists drag layout", a
     assert.match(rendered, /native session feed/);
     assert.equal(await page.locator(".swarmlab-agent-chat-window").count(), 1);
     assert.equal(await page.locator(".swarmlab-canvas-card.is-summary:not(.is-remote)").count(), 2);
-    assert.equal(await page.locator(".swarmlab-canvas-card.is-remote").count(), 9);
+    assert.equal(await page.locator(".swarmlab-canvas-card.is-remote").count(), 10);
     assert.equal(await page.locator(".swarmlab-canvas-floating-controls").count(), 1);
     assert.equal(await page.locator(".swarmlab-canvas-card.is-app").count(), 8);
     assert.equal(await page.locator(".swarmlab-canvas-card.is-app:not(.is-remote)").count(), 5);
@@ -362,6 +390,7 @@ test("local canvas view renders node snapshot cards and persists drag layout", a
       "fleet:mac-main",
     );
     assert.equal(remoteSnapshotHits.get("https://registry-node.example.test"), 1);
+    assert.equal(remoteSnapshotHits.get("https://offline-node.example.test"), 1);
     assert.equal(
       await page.locator(".swarmlab-canvas-stage").evaluate((element) => getComputedStyle(element).overflow),
       "hidden",
@@ -411,20 +440,22 @@ test("local canvas view renders node snapshot cards and persists drag layout", a
     assert.equal(postedHandoffJobs[0].objective, "train on gpu and validate on pi");
     assert.equal(postedHandoffJobs[0].target.sshTarget, "pi@home-raspi");
 
-    assert.equal(postedFleetNodes.length, 1);
-    assert.equal(postedFleetNodes[0].url, "https://query-node.example.test");
-    assert.equal(postedFleetNodes[0].source, "query");
+    const queryFleetPosts = postedFleetNodes.filter((node) => node.source === "query");
+    assert.equal(queryFleetPosts.length, 1);
+    assert.equal(queryFleetPosts[0].url, "https://query-node.example.test");
+    const snapshotFleetPosts = postedFleetNodes.filter((node) => node.source === "snapshot");
+    assert.ok(snapshotFleetPosts.some((node) => node.url === "https://gpu-node.example.test" && node.snapshot?.node?.name === "GPU Cluster"));
+    assert.ok(snapshotFleetPosts.some((node) => node.url === "https://registry-node.example.test" && node.snapshot?.node?.name === "Registry Box"));
 
     await page.evaluate(() => {
       window.prompt = () => "https://manual-node.example.test/secret?token=manual";
     });
     await page.click("[data-swarmlab-canvas-add-node]");
-    for (let attempt = 0; attempt < 20 && postedFleetNodes.length < 2; attempt += 1) {
+    for (let attempt = 0; attempt < 20 && !postedFleetNodes.some((node) => node.source === "manual"); attempt += 1) {
       await page.waitForTimeout(50);
     }
-    assert.equal(postedFleetNodes.length, 2);
-    assert.equal(postedFleetNodes[1].url, "https://manual-node.example.test");
-    assert.equal(postedFleetNodes[1].source, "manual");
+    const manualFleetPost = postedFleetNodes.find((node) => node.source === "manual");
+    assert.equal(manualFleetPost.url, "https://manual-node.example.test");
     const savedRemoteUrls = await page.evaluate(() =>
       JSON.parse(window.localStorage.getItem("swarmlab.canvas.remoteNodes.v1") || "[]"),
     );

@@ -32,6 +32,7 @@ const VIEW_ROOT_SELECTOR = "[data-swarmlab-canvas-root]";
 const STYLE_ID = "swarmlab-canvas-styles";
 const SNAPSHOT_URL = "/api/node/snapshot?mode=privileged";
 const FLEET_NODES_URL = "/api/fleet/nodes";
+const ACCOUNT_NODES_URL = "/api/node/account/nodes";
 const NARRATIVE_POLL_MS = 4_000;
 const REMOTE_NODES_STORAGE_KEY = "swarmlab.canvas.remoteNodes.v1";
 const REMOTE_NODE_FETCH_TIMEOUT_MS = 4_500;
@@ -797,22 +798,28 @@ function absoluteRemoteHref(href, baseUrl) {
 }
 
 async function fetchRemoteNodeRecord(baseUrl, { fetchImpl, signal }) {
+  const registryNode = typeof baseUrl === "string"
+    ? { baseUrl: normalizeRemoteNodeUrl(baseUrl), url: normalizeRemoteNodeUrl(baseUrl) }
+    : normalizeRegistryFleetNode(baseUrl);
+  const normalizedBaseUrl = registryNode.baseUrl || registryNode.url;
   const timeout = timeoutSignal(signal, REMOTE_NODE_FETCH_TIMEOUT_MS);
   try {
-    const payload = await fetchJson(`${baseUrl}/api/node/snapshot?mode=redacted`, {
+    const payload = await fetchJson(`${normalizedBaseUrl}/api/node/snapshot?mode=redacted`, {
       fetchImpl,
       signal: timeout.signal,
     });
     return {
-      baseUrl,
-      host: remoteNodeHost(baseUrl),
+      baseUrl: normalizedBaseUrl,
+      host: remoteNodeHost(normalizedBaseUrl),
+      registryNode,
       snapshot: normalizeNodeSnapshot(payload),
       error: null,
     };
   } catch (error) {
     return {
-      baseUrl,
-      host: remoteNodeHost(baseUrl),
+      baseUrl: normalizedBaseUrl,
+      host: remoteNodeHost(normalizedBaseUrl),
+      registryNode,
       snapshot: null,
       error: error?.name === "AbortError" ? "timed out fetching redacted snapshot" : (error?.message || "unreachable"),
     };
@@ -821,23 +828,43 @@ async function fetchRemoteNodeRecord(baseUrl, { fetchImpl, signal }) {
   }
 }
 
-function normalizeFleetNodeUrls(payload) {
+function normalizeRegistryFleetNode(node) {
+  const baseUrl = normalizeRemoteNodeUrl(node?.baseUrl || node?.url || node?.href);
+  const connectionHints = Array.isArray(node?.connectionHints) ? node.connectionHints : [];
+  const fallbackUrl = normalizeRemoteNodeUrl(connectionHints.find((hint) => hint?.url)?.url || "");
+  return {
+    id: String(node?.id || node?.nodeId || "").trim(),
+    baseUrl: baseUrl || fallbackUrl,
+    url: baseUrl || fallbackUrl,
+    label: String(node?.label || "").trim(),
+    displayName: String(node?.displayName || node?.name || "").trim(),
+    status: String(node?.status || "").trim(),
+    lastSeenAt: String(node?.lastSeenAt || node?.updatedAt || "").trim(),
+    os: String(node?.os || "").trim(),
+    swarmlabVersion: String(node?.swarmlabVersion || node?.version || "").trim(),
+    counts: node?.counts && typeof node.counts === "object" ? node.counts : {},
+    capabilities: node?.capabilities && typeof node.capabilities === "object" ? node.capabilities : {},
+    connectionHints,
+    lastError: String(node?.lastError || "").trim(),
+  };
+}
+
+function normalizeFleetNodes(payload) {
   const nodes = Array.isArray(payload?.nodes) ? payload.nodes : [];
   return nodes
-    .map((node) => normalizeRemoteNodeUrl(node?.baseUrl || node?.url || node?.href))
-    .filter(Boolean);
+    .map(normalizeRegistryFleetNode)
+    .filter((node) => node.baseUrl);
 }
 
-async function fetchRegistryNodeUrls({ fetchImpl, signal }) {
-  try {
-    const payload = await fetchJson(FLEET_NODES_URL, { fetchImpl, signal });
-    return normalizeFleetNodeUrls(payload);
-  } catch {
-    return [];
-  }
+async function fetchRegistryNodes({ fetchImpl, signal }) {
+  const payloads = await Promise.all([
+    fetchJson(FLEET_NODES_URL, { fetchImpl, signal }).catch(() => null),
+    fetchJson(ACCOUNT_NODES_URL, { fetchImpl, signal }).catch(() => null),
+  ]);
+  return payloads.flatMap((payload) => normalizeFleetNodes(payload));
 }
 
-async function registerFleetNodeUrl(url, { fetchImpl, signal, source = "manual" } = {}) {
+async function registerFleetNodeUrl(url, { fetchImpl, signal, source = "manual", snapshot = null, label = "", lastError = "" } = {}) {
   const normalizedUrl = normalizeRemoteNodeUrl(url);
   if (!normalizedUrl) return null;
   try {
@@ -848,6 +875,9 @@ async function registerFleetNodeUrl(url, { fetchImpl, signal, source = "manual" 
       body: {
         url: normalizedUrl,
         source,
+        ...(label ? { label } : {}),
+        ...(snapshot ? { snapshot } : {}),
+        ...(lastError ? { lastError } : {}),
       },
     });
     return payload?.node || null;
@@ -865,15 +895,51 @@ async function promoteRemoteNodeUrls(urls, { fetchImpl, signal, storage, source 
 }
 
 async function fetchRemoteNodeRecords({ fetchImpl, signal, storage, currentOrigin }) {
-  const urls = [
-    ...await fetchRegistryNodeUrls({ fetchImpl, signal }),
-    ...readRemoteNodeUrls(storage),
-  ]
-    .map(normalizeRemoteNodeUrl)
-    .filter((url) => url && url !== currentOrigin);
-  const uniqueUrls = [...new Set(urls)];
-  if (!uniqueUrls.length) return [];
-  return Promise.all(uniqueUrls.map((url) => fetchRemoteNodeRecord(url, { fetchImpl, signal })));
+  const nodesByUrl = new Map();
+  const addNode = (node) => {
+    const normalized = normalizeRegistryFleetNode(node);
+    if (!normalized.baseUrl || normalized.baseUrl === currentOrigin) return;
+    const existing = nodesByUrl.get(normalized.baseUrl) || {};
+    const counts = Object.keys(normalized.counts || {}).length ? normalized.counts : (existing.counts || {});
+    const capabilities = Object.keys(normalized.capabilities || {}).length ? normalized.capabilities : (existing.capabilities || {});
+    const connectionHints = normalized.connectionHints?.length ? normalized.connectionHints : (existing.connectionHints || []);
+    nodesByUrl.set(normalized.baseUrl, {
+      ...normalized,
+      baseUrl: normalized.baseUrl,
+      url: normalized.baseUrl,
+      id: normalized.id || existing.id || "",
+      label: normalized.label || existing.label || "",
+      displayName: normalized.displayName || existing.displayName || "",
+      status: normalized.status || existing.status || "",
+      lastSeenAt: normalized.lastSeenAt || existing.lastSeenAt || "",
+      os: normalized.os || existing.os || "",
+      swarmlabVersion: normalized.swarmlabVersion || existing.swarmlabVersion || "",
+      counts,
+      capabilities,
+      connectionHints,
+      lastError: normalized.lastError || existing.lastError || "",
+    });
+  };
+  for (const node of await fetchRegistryNodes({ fetchImpl, signal })) {
+    addNode(node);
+  }
+  for (const url of readRemoteNodeUrls(storage)) {
+    addNode({ baseUrl: url });
+  }
+  const nodes = [...nodesByUrl.values()];
+  if (!nodes.length) return [];
+  const records = await Promise.all(nodes.map((node) => fetchRemoteNodeRecord(node, { fetchImpl, signal })));
+  await Promise.all(records.map((record) => {
+    if (!record.snapshot) return null;
+    return registerFleetNodeUrl(record.baseUrl, {
+      fetchImpl,
+      signal,
+      source: "snapshot",
+      snapshot: record.snapshot,
+      label: record.registryNode?.label || record.snapshot.node?.name || "",
+    });
+  }));
+  return records;
 }
 
 function readLayout(storage, key) {
@@ -1333,17 +1399,45 @@ function renderCanvasCard(card, layout) {
   return renderStandardCard(card, layout);
 }
 
+function machineDetailFromRegistryNode(node = {}) {
+  const counts = node.counts && typeof node.counts === "object" ? node.counts : {};
+  const sessions = Number(counts.sessions || 0);
+  const ports = Number(counts.ports || 0);
+  const handoffs = Number(counts.handoffJobs || 0);
+  const parts = [
+    Number.isFinite(sessions) && sessions > 0 ? `${sessions} sessions` : "",
+    Number.isFinite(ports) && ports > 0 ? `${ports} apps` : "",
+    Number.isFinite(handoffs) && handoffs > 0 ? `${handoffs} handoffs` : "",
+  ].filter(Boolean);
+  return parts.join(", ");
+}
+
+function machineTagsFromRegistryNode(node = {}) {
+  const capabilities = node.capabilities && typeof node.capabilities === "object" ? node.capabilities : {};
+  const roles = Array.isArray(capabilities.roles) ? capabilities.roles : [];
+  return [
+    "remote",
+    node.status || "",
+    Number(capabilities.gpuCount || 0) ? `${Number(capabilities.gpuCount)} gpu${Number(capabilities.gpuCount) === 1 ? "" : "s"}` : "",
+    Number(capabilities.providerCount || 0) ? `${Number(capabilities.providerCount)} providers` : "",
+    ...roles,
+  ].filter(Boolean);
+}
+
 function makeRemoteOfflineCard(record) {
+  const registryNode = record.registryNode || {};
   const host = record.host || remoteNodeHost(record.baseUrl);
+  const title = registryNode.displayName || registryNode.label || host;
+  const detail = machineDetailFromRegistryNode(registryNode) || record.error || registryNode.lastError || "Could not fetch redacted node snapshot.";
   return {
     id: `remote:${slugPart(host)}`,
     type: "machine",
-    title: host,
-    subtitle: "remote node",
-    status: "offline",
-    detail: record.error || "Could not fetch redacted node snapshot.",
-    meta: record.baseUrl,
-    tags: ["remote", "unreachable"],
+    title,
+    subtitle: [registryNode.os, registryNode.swarmlabVersion, "remote node"].filter(Boolean).join(" / "),
+    status: registryNode.status || "offline",
+    detail,
+    meta: registryNode.lastSeenAt || record.baseUrl,
+    tags: machineTagsFromRegistryNode(registryNode).length ? machineTagsFromRegistryNode(registryNode) : ["remote", "unreachable"],
     href: absoluteRemoteHref("/?view=canvas", record.baseUrl),
     ref: {
       remoteUrl: record.baseUrl,

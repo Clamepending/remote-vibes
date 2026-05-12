@@ -188,6 +188,22 @@ test("/api/node/account routes pair, register, heartbeat, and never echo account
         node: { nodeId: body.identity.nodeId, displayName: "Mac", status: "online" },
       }), { status: 200 });
     }
+    if (pathname === "/api/account/nodes" && (!init.method || init.method === "GET")) {
+      return new Response(JSON.stringify({
+        nodes: [{
+          id: "node_gpu",
+          nodeId: "node_gpu",
+          displayName: "GPU Cluster",
+          status: "busy",
+          lastSeenAt: "2026-05-12T10:00:00.000Z",
+          connectionHints: [{ kind: "tailscale", url: "https://gpu.tailnet.test/private?token=route-secret" }],
+          summary: {
+            counts: { sessions: 4, runningSessions: 2, ports: 1, handoffJobs: 1 },
+            capabilities: { gpuCount: 6, providerCount: 2, roles: ["agent-host", "gpu-worker"] },
+          },
+        }],
+      }), { status: 200 });
+    }
     if (pathname === "/api/account/nodes") {
       return new Response(JSON.stringify({
         node: {
@@ -243,6 +259,15 @@ test("/api/node/account routes pair, register, heartbeat, and never echo account
     const heartbeatBody = await heartbeatResponse.json();
     assert.equal(heartbeatBody.account.configured, true);
     assert.doesNotMatch(JSON.stringify(heartbeatBody), /secret-account-token/);
+
+    const nodesResponse = await fetch(`${started.baseUrl}/api/node/account/nodes`);
+    assert.equal(nodesResponse.status, 200);
+    const nodesBody = await nodesResponse.json();
+    assert.equal(nodesBody.nodes.length, 1);
+    assert.equal(nodesBody.nodes[0].displayName, "GPU Cluster");
+    assert.equal(nodesBody.nodes[0].baseUrl, "https://gpu.tailnet.test");
+    assert.equal(nodesBody.nodes[0].capabilities.gpuCount, 6);
+    assert.doesNotMatch(JSON.stringify(nodesBody), /secret-account-token|route-secret|\/private/);
 
     const sentText = JSON.stringify(accountRequests.map((request) => request.body));
     assert.match(sentText, /node\.registration|nodeId|heartbeat/);

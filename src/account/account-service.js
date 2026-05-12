@@ -51,6 +51,88 @@ function normalizeNode(node = {}) {
   };
 }
 
+function normalizeNumber(value, fallback = 0) {
+  const number = Number(value);
+  return Number.isFinite(number) && number >= 0 ? Math.round(number) : fallback;
+}
+
+function normalizeNodeCounts(value = {}) {
+  return {
+    sessions: normalizeNumber(value.sessions),
+    runningSessions: normalizeNumber(value.runningSessions),
+    approvals: normalizeNumber(value.approvals ?? value.openActionItems),
+    browserTasks: normalizeNumber(value.browserTasks ?? value.browserSessions),
+    ports: normalizeNumber(value.ports),
+    canvases: normalizeNumber(value.canvases ?? value.artifacts),
+    projects: normalizeNumber(value.projects),
+    handoffJobs: normalizeNumber(value.handoffJobs),
+    brainNotes: normalizeNumber(value.brainNotes),
+  };
+}
+
+function normalizeNodeCapabilities(value = {}) {
+  const roles = Array.isArray(value.roles)
+    ? value.roles
+      .map((role) => String(role || "").replace(/\s+/g, "-").trim().toLowerCase())
+      .filter(Boolean)
+      .slice(0, 20)
+    : [];
+  return {
+    providerCount: normalizeNumber(value.providerCount),
+    buildingCount: normalizeNumber(value.buildingCount),
+    gpuCount: normalizeNumber(value.gpuCount),
+    cameraCount: normalizeNumber(value.cameraCount),
+    handoffCount: normalizeNumber(value.handoffCount),
+    brainNoteCount: normalizeNumber(value.brainNoteCount),
+    hasTailscale: Boolean(value.hasTailscale),
+    roles,
+  };
+}
+
+function normalizeAccountFleetNode(node = {}) {
+  if (!node || typeof node !== "object" || Array.isArray(node)) {
+    return null;
+  }
+  const summary = node.summary && typeof node.summary === "object" ? node.summary : {};
+  const summaryNode = summary.node && typeof summary.node === "object" ? summary.node : {};
+  const id = String(node.id || node.nodeId || summaryNode.nodeId || summaryNode.id || "").trim();
+  const nodeId = String(node.nodeId || summaryNode.nodeId || id || "").trim();
+  const displayName = String(node.displayName || node.name || summaryNode.displayName || summaryNode.name || "")
+    .replace(/\s+/g, " ")
+    .trim()
+    .slice(0, 120);
+  const connectionHints = normalizeConnectionHints(
+    node.connectionHints ||
+      node.urls ||
+      summary.connectionHints ||
+      summary.urls ||
+      [],
+  );
+  const baseUrl = connectionHints[0]?.url || "";
+  if (!id && !nodeId && !displayName && !baseUrl) {
+    return null;
+  }
+  return {
+    id,
+    nodeId,
+    displayName,
+    label: displayName,
+    status: String(node.status || summary.status || "").trim().toLowerCase(),
+    lastSeenAt: String(node.lastSeenAt || node.updatedAt || summary.generatedAt || "").trim(),
+    os: String(node.os || summaryNode.os || summary.system?.platform || "").trim(),
+    arch: String(node.arch || summaryNode.arch || summary.system?.arch || "").trim(),
+    swarmlabVersion: String(node.swarmlabVersion || node.version || summaryNode.swarmlabVersion || "").trim(),
+    commit: String(node.commit || summaryNode.commit || "").trim(),
+    branch: String(node.branch || summaryNode.branch || "").trim(),
+    hostnameHash: String(node.hostnameHash || summaryNode.hostnameHash || "").trim(),
+    baseUrl,
+    url: baseUrl,
+    connectionHints,
+    counts: normalizeNodeCounts(node.counts || summary.counts || {}),
+    capabilities: normalizeNodeCapabilities(node.capabilities || summary.capabilities || {}),
+  };
+}
+
 async function readJsonResponse(response) {
   const raw = await response.text().catch(() => "");
   if (!raw) {
@@ -413,6 +495,35 @@ export class AccountService {
       node,
     });
     return { ok: true, node, payload };
+  }
+
+  async listNodes({ settings = {} } = {}) {
+    const record = this.tokenStore.getRecord();
+    const accessToken = String(record?.accessToken || "").trim();
+    const appBaseUrl = record?.appBaseUrl || this.getAppBaseUrl(settings);
+    if (!accessToken || !appBaseUrl) {
+      return { skipped: true, reason: "account-not-connected", nodes: [] };
+    }
+    if (typeof this.fetch !== "function") {
+      throw buildHttpError("fetch is not available for Vibe account nodes.", 500);
+    }
+
+    const response = await this.fetch(new URL("/api/account/nodes", appBaseUrl).toString(), {
+      method: "GET",
+      headers: {
+        Accept: "application/json",
+        Authorization: `Bearer ${accessToken}`,
+        "User-Agent": "swarmlab",
+      },
+    });
+    const payload = await readJsonResponse(response);
+    if (!response.ok) {
+      throw buildHttpError(payload.error || payload.message || `Vibe account nodes failed (${response.status}).`, response.status || 400);
+    }
+    const nodes = (Array.isArray(payload.nodes) ? payload.nodes : Array.isArray(payload.machines) ? payload.machines : [])
+      .map(normalizeAccountFleetNode)
+      .filter(Boolean);
+    return { nodes };
   }
 
   async disconnect({ settings = {} } = {}) {

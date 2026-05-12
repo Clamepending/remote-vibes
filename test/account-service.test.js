@@ -29,6 +29,22 @@ async function withAccountService(fn) {
           node: { nodeId: body.identity.nodeId, displayName: "Mac", status: "online" },
         });
       }
+      if (pathname === "/api/account/nodes" && (!init.method || init.method === "GET")) {
+        return response({
+          nodes: [{
+            id: "node_gpu",
+            nodeId: "node_gpu",
+            displayName: "GPU Cluster",
+            status: "busy",
+            lastSeenAt: "2026-05-12T10:00:00.000Z",
+            connectionHints: [{ kind: "tailscale", url: "https://gpu.tailnet.test/private?token=secret" }],
+            summary: {
+              counts: { sessions: 4, runningSessions: 2, ports: 1, handoffJobs: 1 },
+              capabilities: { gpuCount: 6, providerCount: 2, roles: ["agent-host", "gpu-worker"] },
+            },
+          }],
+        });
+      }
       if (pathname === "/api/account/nodes") {
         return response({
           node: {
@@ -166,6 +182,17 @@ test("AccountService completes pairing, registers, heartbeats, and revokes with 
     const heartbeatRequest = requests.find((entry) => /\/heartbeat$/u.test(new URL(entry.url).pathname));
     assert.equal(heartbeatRequest.init.headers.Authorization, "Bearer secret-account-token");
     assert.equal(heartbeatRequest.body.heartbeat.status, "idle");
+
+    const listed = await service.listNodes();
+    assert.equal(listed.nodes.length, 1);
+    assert.equal(listed.nodes[0].displayName, "GPU Cluster");
+    assert.equal(listed.nodes[0].baseUrl, "https://gpu.tailnet.test");
+    assert.equal(listed.nodes[0].counts.sessions, 4);
+    assert.equal(listed.nodes[0].capabilities.gpuCount, 6);
+    const listRequest = requests.find((entry) =>
+      new URL(entry.url).pathname === "/api/account/nodes" && (!entry.init.method || entry.init.method === "GET"));
+    assert.equal(listRequest.init.headers.Authorization, "Bearer secret-account-token");
+    assert.doesNotMatch(JSON.stringify(listed), /token=secret|\/private|secret-account-token/);
 
     await service.disconnect();
     assert.equal(tokenStore.getStatus().configured, false);
