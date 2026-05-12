@@ -1,4 +1,4 @@
-import { createHash, randomBytes, randomUUID, verify as verifySignature } from "node:crypto";
+import { createHash, generateKeyPairSync, randomBytes, randomUUID, sign as signPayload, verify as verifySignature } from "node:crypto";
 import { mkdir, readFile, rename, writeFile } from "node:fs/promises";
 import path from "node:path";
 import { canonicalizeNodePayload } from "../node/identity-store.js";
@@ -9,7 +9,15 @@ const ACCOUNT_NODE_REGISTRY_FILENAME = "account-node-registry.json";
 const PAIRING_TTL_MS = 15 * 60 * 1000;
 const NODE_STALE_MS = 2 * 60 * 1000;
 const NODE_OFFLINE_MS = 10 * 60 * 1000;
+const COMMAND_TTL_MS = 10 * 60 * 1000;
+const COMMAND_LEASE_MS = 60 * 1000;
+const COMMAND_RESULT_TTL_MS = 24 * 60 * 60 * 1000;
 const ACCOUNT_NODE_STATUSES = new Set(["online", "idle", "busy", "stale", "offline", "unreachable", "unknown"]);
+const ACCOUNT_NODE_COMMAND_OPERATIONS = new Set([
+  "session.input.write",
+  "session.create",
+]);
+const ACCOUNT_NODE_COMMAND_STATUSES = new Set(["queued", "running", "completed", "failed", "expired", "canceled"]);
 
 function nowIso() {
   return new Date().toISOString();
@@ -62,6 +70,27 @@ function normalizeRoles(value) {
       .filter(Boolean)
       .slice(0, 20)
     : [];
+}
+
+function generateSigningKeypair() {
+  const { publicKey, privateKey } = generateKeyPairSync("ed25519");
+  return {
+    publicKey: publicKey.export({ format: "pem", type: "spki" }),
+    privateKey: privateKey.export({ format: "pem", type: "pkcs8" }),
+    createdAt: nowIso(),
+  };
+}
+
+function normalizeAccountSigningKey(value = {}) {
+  const source = value && typeof value === "object" && !Array.isArray(value) ? value : {};
+  if (typeof source.publicKey === "string" && source.publicKey.trim() && typeof source.privateKey === "string" && source.privateKey.trim()) {
+    return {
+      publicKey: source.publicKey.trim(),
+      privateKey: source.privateKey.trim(),
+      createdAt: compactText(source.createdAt, 80) || nowIso(),
+    };
+  }
+  return generateSigningKeypair();
 }
 
 function normalizeCounts(value = {}) {
@@ -219,6 +248,10 @@ function cloneNode(node) {
   };
 }
 
+function cloneCommand(command) {
+  return JSON.parse(JSON.stringify(command || {}));
+}
+
 function verifyNodeSignature(payload, signature, publicKey) {
   if (!publicKey || !signature) return false;
   try {
@@ -227,6 +260,96 @@ function verifyNodeSignature(payload, signature, publicKey) {
   } catch {
     return false;
   }
+}
+
+function signAccountCommandPayload(payload, privateKey) {
+  return signPayload(null, Buffer.from(canonicalizeNodePayload(payload)), privateKey).toString("base64url");
+}
+
+function normalizeCommandOperation(value) {
+  const operation = compactText(value, 80);
+  if (!ACCOUNT_NODE_COMMAND_OPERATIONS.has(operation)) {
+    throw buildHttpError("Unsupported account node command operation.", 400);
+  }
+  return operation;
+}
+
+function normalizeCommandPayload(operation, value = {}) {
+  const source = value && typeof value === "object" && !Array.isArray(value) ? value : {};
+  if (operation === "session.input.write") {
+    const sessionId = compactText(source.sessionId || source.session_id, 180);
+    const input = String(source.input || source.message || source.text || "").trim().slice(0, 12_000);
+    if (!sessionId) {
+      throw buildHttpError("session.input.write requires sessionId.", 400);
+    }
+    if (!input) {
+      throw buildHttpError("session.input.write requires input.", 400);
+    }
+    return {
+      sessionId,
+      input,
+      clientMessageId: compactText(source.clientMessageId || source.client_message_id, 180),
+    };
+  }
+  if (operation === "session.create") {
+    return {
+      providerId: compactText(source.providerId || source.provider_id, 80),
+      name: compactText(source.name || source.title || "Remote agent", 120),
+      cwd: compactText(source.cwd || source.workspace || source.workspacePath, 600),
+      initialPrompt: String(source.initialPrompt || source.prompt || "").trim().slice(0, 24_000),
+      initialPromptDelayMs: Number.isFinite(Number(source.initialPromptDelayMs)) ? Math.max(0, Math.min(60_000, Math.round(Number(source.initialPromptDelayMs)))) : undefined,
+    };
+  }
+  return {};
+}
+
+function commandTargetFromPayload(operation, payload) {
+  if (operation === "session.input.write") {
+    return { sessionId: payload.sessionId };
+  }
+  if (operation === "session.create") {
+    return {
+      providerId: payload.providerId || "",
+      cwdHint: payload.cwd ? createHash("sha256").update(payload.cwd).digest("hex").slice(0, 16) : "",
+    };
+  }
+  return {};
+}
+
+function normalizeCommandAck(value = {}) {
+  const ack = value && typeof value === "object" && !Array.isArray(value) ? value : {};
+  const status = compactText(ack.status, 40).toLowerCase();
+  if (!["completed", "failed"].includes(status)) {
+    throw buildHttpError("Command ack status must be completed or failed.", 400);
+  }
+  const result = ack.result && typeof ack.result === "object" && !Array.isArray(ack.result)
+    ? JSON.parse(JSON.stringify(ack.result))
+    : {};
+  return {
+    commandId: compactText(ack.commandId || ack.command_id, 180),
+    nodeId: compactText(ack.nodeId || ack.node_id, 180),
+    leaseId: compactText(ack.leaseId || ack.lease_id, 180),
+    status,
+    result: result && typeof result === "object" && !Array.isArray(result) ? result : {},
+    error: compactText(ack.error || ack.message, 500),
+    generatedAt: compactText(ack.generatedAt || nowIso(), 80),
+  };
+}
+
+function commandSigningEnvelope(command = {}) {
+  return {
+    schemaVersion: 1,
+    id: command.id,
+    nodeId: command.nodeId,
+    ownerAccountId: command.ownerAccountId,
+    operation: command.operation,
+    scope: command.scope,
+    target: command.target || {},
+    payload: command.payload || {},
+    clientCommandId: command.clientCommandId || "",
+    createdAt: command.createdAt,
+    expiresAt: command.expiresAt,
+  };
 }
 
 async function readJsonFile(filePath) {
@@ -255,6 +378,8 @@ export class AccountNodeRegistryService {
     this.pairings = new Map();
     this.tokens = new Map();
     this.nodes = new Map();
+    this.commands = new Map();
+    this.accountSigningKey = generateSigningKeypair();
   }
 
   async initialize() {
@@ -270,6 +395,8 @@ export class AccountNodeRegistryService {
     this.pairings = new Map();
     this.tokens = new Map();
     this.nodes = new Map();
+    this.commands = new Map();
+    this.accountSigningKey = normalizeAccountSigningKey(parsed.accountSigningKey);
     for (const pairing of Array.isArray(parsed.pairings) ? parsed.pairings : []) {
       if (pairing?.id) this.pairings.set(pairing.id, { ...pairing });
     }
@@ -278,6 +405,9 @@ export class AccountNodeRegistryService {
     }
     for (const node of Array.isArray(parsed.nodes) ? parsed.nodes : []) {
       if (node?.nodeId) this.nodes.set(node.nodeId, normalizeNodeRecord(node, node, { ownerAccountId: node.ownerAccountId }));
+    }
+    for (const command of Array.isArray(parsed.commands) ? parsed.commands : []) {
+      if (command?.id) this.commands.set(command.id, cloneCommand(command));
     }
     await this.save();
   }
@@ -288,6 +418,8 @@ export class AccountNodeRegistryService {
       pairings: [...this.pairings.values()],
       tokens: [...this.tokens.values()],
       nodes: [...this.nodes.values()],
+      commands: [...this.commands.values()],
+      accountSigningKey: this.accountSigningKey,
       updatedAt: nowIso(),
     });
   }
@@ -300,6 +432,25 @@ export class AccountNodeRegistryService {
   getNowIso() {
     const value = this.now();
     return value instanceof Date ? value.toISOString() : nowIso();
+  }
+
+  getAccountPublicKey() {
+    return this.accountSigningKey.publicKey;
+  }
+
+  pruneExpiredCommands() {
+    const nowMs = this.getNowMs();
+    for (const command of this.commands.values()) {
+      const expiresAtMs = Date.parse(command.expiresAt || "");
+      if (["queued", "running"].includes(command.status) && Number.isFinite(expiresAtMs) && expiresAtMs <= nowMs) {
+        command.status = "expired";
+        command.updatedAt = this.getNowIso();
+      }
+      const completedAtMs = Date.parse(command.completedAt || command.updatedAt || "");
+      if (["completed", "failed", "expired", "canceled"].includes(command.status) && Number.isFinite(completedAtMs) && nowMs - completedAtMs > COMMAND_RESULT_TTL_MS) {
+        this.commands.delete(command.id);
+      }
+    }
   }
 
   isExpired(pairing) {
@@ -439,7 +590,9 @@ export class AccountNodeRegistryService {
       account: {
         id: tokenRecord.ownerAccountId,
         login: tokenRecord.ownerAccountId,
+        commandPublicKey: this.getAccountPublicKey(),
       },
+      commandPublicKey: this.getAccountPublicKey(),
       node: this.presentNode(node),
     };
   }
@@ -583,7 +736,11 @@ export class AccountNodeRegistryService {
     }, existing, { ownerAccountId: token.ownerAccountId });
     this.nodes.set(node.nodeId, node);
     await this.save();
-    return this.presentNode(node);
+    const pendingCommands = this.countPendingCommandsForNode(token.nodeId);
+    return {
+      node: this.presentNode(node),
+      pendingCommands,
+    };
   }
 
   async disconnectToken(authorization = "") {
@@ -602,6 +759,177 @@ export class AccountNodeRegistryService {
     }
     await this.save();
     return true;
+  }
+
+  countPendingCommandsForNode(nodeId = "") {
+    this.pruneExpiredCommands();
+    const normalizedNodeId = compactText(nodeId, 160);
+    return [...this.commands.values()].filter((command) =>
+      command.nodeId === normalizedNodeId && ["queued", "running"].includes(command.status)
+    ).length;
+  }
+
+  presentCommandForOwner(command) {
+    const cloned = cloneCommand(command);
+    return {
+      id: cloned.id,
+      nodeId: cloned.nodeId,
+      operation: cloned.operation,
+      status: cloned.status,
+      target: cloned.target || {},
+      clientCommandId: cloned.clientCommandId || "",
+      createdAt: cloned.createdAt,
+      updatedAt: cloned.updatedAt,
+      expiresAt: cloned.expiresAt,
+      claimedAt: cloned.claimedAt || "",
+      completedAt: cloned.completedAt || "",
+      result: cloned.result && typeof cloned.result === "object" ? cloned.result : {},
+      error: cloned.error || "",
+    };
+  }
+
+  presentCommandForNode(command) {
+    const cloned = cloneCommand(command);
+    return {
+      ...commandSigningEnvelope(cloned),
+      signature: cloned.signature,
+      leaseId: cloned.leaseId || "",
+      leaseExpiresAt: cloned.leaseExpiresAt || "",
+    };
+  }
+
+  getCommandForOwner({ ownerAccountId = "", nodeId = "", commandId = "" } = {}) {
+    this.pruneExpiredCommands();
+    const owner = normalizeOwnerAccountId(ownerAccountId || this.defaultOwnerAccountId);
+    const command = this.commands.get(String(commandId || "").trim());
+    if (!command || command.ownerAccountId !== owner || command.nodeId !== compactText(nodeId, 160)) {
+      throw buildHttpError("Account node command not found.", 404);
+    }
+    return this.presentCommandForOwner(command);
+  }
+
+  listCommandsForOwner({ ownerAccountId = "", nodeId = "", limit = 50 } = {}) {
+    this.pruneExpiredCommands();
+    const owner = normalizeOwnerAccountId(ownerAccountId || this.defaultOwnerAccountId);
+    const normalizedNodeId = compactText(nodeId, 160);
+    return [...this.commands.values()]
+      .filter((command) => command.ownerAccountId === owner && command.nodeId === normalizedNodeId)
+      .sort((left, right) => String(right.createdAt || "").localeCompare(String(left.createdAt || "")))
+      .slice(0, Math.max(1, Math.min(200, Number(limit) || 50)))
+      .map((command) => this.presentCommandForOwner(command));
+  }
+
+  async enqueueCommandForOwner({ ownerAccountId = "", nodeId = "", body = {} } = {}) {
+    this.pruneExpiredCommands();
+    const owner = normalizeOwnerAccountId(ownerAccountId || this.defaultOwnerAccountId);
+    const normalizedNodeId = compactText(nodeId || body?.nodeId || body?.node_id, 160);
+    const node = this.nodes.get(normalizedNodeId);
+    if (!node || node.ownerAccountId !== owner) {
+      throw buildHttpError("Account node not found.", 404);
+    }
+    if (node.disconnectedAt) {
+      throw buildHttpError("Account node is disconnected.", 409);
+    }
+    const operation = normalizeCommandOperation(body?.operation || body?.type);
+    const payload = normalizeCommandPayload(operation, body?.payload || body);
+    const timestamp = this.getNowIso();
+    const command = {
+      schemaVersion: 1,
+      id: `cmd_${randomUUID()}`,
+      ownerAccountId: owner,
+      nodeId: normalizedNodeId,
+      operation,
+      scope: operation,
+      target: commandTargetFromPayload(operation, payload),
+      payload,
+      clientCommandId: compactText(body?.clientCommandId || body?.client_command_id, 180),
+      status: "queued",
+      createdAt: timestamp,
+      updatedAt: timestamp,
+      expiresAt: new Date(this.getNowMs() + COMMAND_TTL_MS).toISOString(),
+      claimedAt: "",
+      leaseId: "",
+      leaseExpiresAt: "",
+      deliveryAttempts: 0,
+      completedAt: "",
+      result: {},
+      error: "",
+      signature: "",
+    };
+    command.signature = signAccountCommandPayload({
+      type: "node.command",
+      command: commandSigningEnvelope(command),
+    }, this.accountSigningKey.privateKey);
+    this.commands.set(command.id, command);
+    await this.save();
+    return this.presentCommandForOwner(command);
+  }
+
+  async leaseCommandsForNode({ authorization = "", nodeId = "", limit = 10 } = {}) {
+    this.pruneExpiredCommands();
+    const token = this.authenticateBearerToken(authorization);
+    const normalizedNodeId = compactText(nodeId || token.nodeId, 160);
+    if (!normalizedNodeId || normalizedNodeId !== token.nodeId) {
+      throw buildHttpError("Node token does not match command node.", 403);
+    }
+    const nowMs = this.getNowMs();
+    const max = Math.max(1, Math.min(25, Number(limit) || 10));
+    const leased = [];
+    for (const command of [...this.commands.values()].sort((left, right) => String(left.createdAt || "").localeCompare(String(right.createdAt || "")))) {
+      if (leased.length >= max) break;
+      if (command.nodeId !== normalizedNodeId || command.ownerAccountId !== token.ownerAccountId) continue;
+      if (command.status === "running" && Date.parse(command.leaseExpiresAt || "") > nowMs) continue;
+      if (!["queued", "running"].includes(command.status)) continue;
+      command.status = "running";
+      command.leaseId = randomToken("lease");
+      command.claimedAt = this.getNowIso();
+      command.leaseExpiresAt = new Date(nowMs + COMMAND_LEASE_MS).toISOString();
+      command.updatedAt = command.claimedAt;
+      command.deliveryAttempts = normalizeNumber(command.deliveryAttempts) + 1;
+      leased.push(this.presentCommandForNode(command));
+    }
+    if (leased.length) {
+      await this.save();
+    }
+    return leased;
+  }
+
+  async acknowledgeCommandFromNode({ authorization = "", nodeId = "", commandId = "", body = {} } = {}) {
+    this.pruneExpiredCommands();
+    const token = this.authenticateBearerToken(authorization);
+    const normalizedNodeId = compactText(nodeId || token.nodeId, 160);
+    if (!normalizedNodeId || normalizedNodeId !== token.nodeId) {
+      throw buildHttpError("Node token does not match command node.", 403);
+    }
+    const command = this.commands.get(String(commandId || "").trim());
+    if (!command || command.nodeId !== normalizedNodeId || command.ownerAccountId !== token.ownerAccountId) {
+      throw buildHttpError("Account node command not found.", 404);
+    }
+    const node = this.nodes.get(normalizedNodeId);
+    if (!node?.publicKey) {
+      throw buildHttpError("Node is not registered.", 404);
+    }
+    const ack = normalizeCommandAck(body?.ack || body);
+    const signature = String(body?.signature || ack.signature || "").trim();
+    const unsignedAck = { ...ack };
+    delete unsignedAck.signature;
+    if (ack.commandId !== command.id || ack.nodeId !== normalizedNodeId) {
+      throw buildHttpError("Command ack does not match command.", 403);
+    }
+    if (command.leaseId && ack.leaseId !== command.leaseId) {
+      throw buildHttpError("Command ack lease does not match.", 403);
+    }
+    if (!verifyNodeSignature({ type: "node.command.ack", ack: unsignedAck }, signature, node.publicKey)) {
+      throw buildHttpError("Command ack signature is invalid.", 403);
+    }
+    command.status = ACCOUNT_NODE_COMMAND_STATUSES.has(ack.status) ? ack.status : "failed";
+    command.result = ack.result && typeof ack.result === "object" ? ack.result : {};
+    command.error = ack.error || "";
+    command.completedAt = ack.generatedAt || this.getNowIso();
+    command.updatedAt = this.getNowIso();
+    command.ackSignature = signature;
+    await this.save();
+    return this.presentCommandForOwner(command);
   }
 }
 

@@ -1,8 +1,8 @@
 # Vibe Account Machine Dashboard
 
 Date: 2026-05-12
-Status: design proposal
-Confidence: high that Swarmlab needs this; moderate on relay details until an account backend exists.
+Status: implementation in progress
+Confidence: high that Swarmlab needs this; moderate on relay breadth until hosted account auth is wired into production.
 
 ## Goal
 
@@ -297,10 +297,13 @@ Scopes should be explicit:
 - `artifact.read:{artifactId}`
 - `session.summary.read:{sessionId}`
 
+Implemented narrow command-queue scope:
+
+- `session.input.write:{sessionId}` through a signed account command queue, node polling, node-side execution, and signed ack
+
 Deferred scopes requiring separate threat review:
 
 - `session.transcript.read:{sessionId}`
-- `session.input.write:{sessionId}`
 - `process.stop:{sessionId}`
 - `port.list`
 - `port.open:{port}`
@@ -549,6 +552,11 @@ GET /api/account/me
 GET /api/account/nodes
 POST /api/account/nodes/pairing
 POST /api/account/nodes/:nodeId/grants
+POST /api/account/nodes/:nodeId/commands
+GET /api/account/nodes/:nodeId/commands
+GET /api/account/nodes/:nodeId/commands/:commandId
+GET /api/account/nodes/:nodeId/commands/pending
+POST /api/account/nodes/:nodeId/commands/:commandId/ack
 GET /api/account/nodes/:nodeId/status
 GET /api/account/nodes/:nodeId/relay
 POST /api/account/nodes/:nodeId/rename
@@ -639,7 +647,7 @@ Done when:
 Add scoped remote actions:
 
 - start agent on chosen machine
-- send message to session
+- send message to session (implemented for `session.input.write` through the command queue)
 - stop agent
 - expose port
 - open artifact

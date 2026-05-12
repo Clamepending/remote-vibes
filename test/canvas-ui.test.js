@@ -68,6 +68,7 @@ test("local canvas view renders node snapshot cards and persists drag layout", a
       );
     });
     const postedInputs = [];
+    const postedRemoteCommands = [];
     const postedFleetNodes = [];
     const postedHandoffJobs = [];
     const remoteSnapshotHits = new Map();
@@ -217,6 +218,21 @@ test("local canvas view renders node snapshot cards and persists drag layout", a
               connectionHints: [{ kind: "public", url: "https://account-node.example.test" }],
             },
           ],
+        }),
+      });
+    });
+    await page.route(`${baseUrl}/api/account/nodes/account-node/commands`, async (route) => {
+      postedRemoteCommands.push(JSON.parse(route.request().postData() || "{}"));
+      await route.fulfill({
+        status: 201,
+        contentType: "application/json",
+        body: JSON.stringify({
+          command: {
+            id: "cmd_canvas",
+            nodeId: "account-node",
+            operation: postedRemoteCommands.at(-1).operation,
+            status: "queued",
+          },
         }),
       });
     });
@@ -402,7 +418,7 @@ test("local canvas view renders node snapshot cards and persists drag layout", a
     assert.match(rendered, /Handoff/);
     assert.match(rendered, /Please inspect the dashboard/);
     assert.match(rendered, /native session feed/);
-    assert.equal(await page.locator(".swarmlab-agent-chat-window").count(), 1);
+    assert.equal(await page.locator(".swarmlab-agent-chat-window").count(), 5);
     assert.equal(await page.locator(".swarmlab-canvas-card.is-summary:not(.is-remote)").count(), 2);
     assert.equal(await page.locator(".swarmlab-canvas-card.is-remote").count(), 13);
     assert.equal(await page.locator(".swarmlab-canvas-floating-controls").count(), 1);
@@ -452,13 +468,23 @@ test("local canvas view renders node snapshot cards and persists drag layout", a
     );
     assert.ok(viewport.zoom > 0.92, "zoom controls should persist a zoomed viewport");
 
-    await page.locator('[data-swarmlab-agent-composer] textarea[name="input"]').fill("continue from canvas");
+    await page.locator('[data-swarmlab-canvas-card-id="session:session-1"] [data-swarmlab-agent-composer] textarea[name="input"]').fill("continue from canvas");
     await page.keyboard.press("Enter");
     for (let attempt = 0; attempt < 20 && postedInputs.length === 0; attempt += 1) {
       await page.waitForTimeout(50);
     }
     assert.equal(postedInputs.length, 1);
     assert.equal(postedInputs[0].input, "continue from canvas");
+
+    await page.locator('[data-swarmlab-canvas-card-id="remote:account-box:session:account-box-agent-1"] [data-swarmlab-agent-composer] textarea[name="input"]').fill("continue remote from canvas");
+    await page.keyboard.press("Enter");
+    for (let attempt = 0; attempt < 20 && postedRemoteCommands.length === 0; attempt += 1) {
+      await page.waitForTimeout(50);
+    }
+    assert.equal(postedRemoteCommands.length, 1);
+    assert.equal(postedRemoteCommands[0].operation, "session.input.write");
+    assert.equal(postedRemoteCommands[0].payload.sessionId, "account-box-agent-1");
+    assert.equal(postedRemoteCommands[0].payload.input, "continue remote from canvas");
 
     await page.evaluate(() => {
       const answers = [

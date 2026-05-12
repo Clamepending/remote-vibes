@@ -558,6 +558,32 @@ uninstall_vibe_research() {
   log "Uninstall complete."
 }
 
+pair_vibe_research() {
+  local app_dir url endpoint response
+  app_dir="$(resolve_app_dir)"
+  if [ ! -x "$app_dir/start.sh" ]; then
+    fail "Could not find Swarmlab at $app_dir. Re-run the installer, or set SWARMLAB_HOME (or VIBE_RESEARCH_HOME) to the app checkout."
+  fi
+
+  "$app_dir/start.sh" >/dev/null
+  url="$(browser_url)"
+  endpoint="${url%/}/api/node/account/pair/start"
+  response="$(curl -fsS -X POST "$endpoint" \
+    -H 'Content-Type: application/json' \
+    -H 'X-Vibe-Research-API: 1' \
+    --data "{\"label\":\"$(hostname 2>/dev/null || printf 'Swarmlab node')\"}" 2>/dev/null)" || {
+      fail "Could not start Vibe account pairing. Open $url and use Settings > account instead."
+    }
+
+  node -e '
+const payload = JSON.parse(process.argv[1] || "{}");
+const pairing = payload.pairing || {};
+console.log(`[swarmlab] Pair this machine: ${pairing.pairingUrl || ""}`);
+console.log(`[swarmlab] Code: ${pairing.pairingCode || ""}`);
+console.log(`[swarmlab] Local dashboard: ${process.argv[2] || ""}`);
+' "$response" "$url"
+}
+
 browser_url() {
   local host port browser_host
   host="${VIBE_RESEARCH_HOST:-${REMOTE_VIBES_HOST:-0.0.0.0}}"
@@ -627,6 +653,7 @@ print_usage() {
   cat <<'EOF'
 Usage:
   swarmlab [--no-browser] [--url]
+  swarmlab pair
   swarmlab uninstall [--yes] [--purge]
 
 Launch Swarmlab if needed and open the local UI in your browser.
@@ -637,6 +664,9 @@ Options:
   --no-browser   Start or reuse the server without opening a browser.
   --url          Print the local browser URL and exit.
   -h, --help     Show this help.
+
+Pairing:
+  pair          Start account pairing and print the Vibe account URL/code.
 
 Uninstall:
   uninstall      Stop Swarmlab and remove the terminal command and app checkout.
@@ -654,6 +684,10 @@ uninstall_purge=0
 case "${1:-}" in
   uninstall)
     command_name="uninstall"
+    shift
+    ;;
+  pair)
+    command_name="pair"
     shift
     ;;
 esac
@@ -688,7 +722,11 @@ while [ "$#" -gt 0 ]; do
         exit 0
         ;;
       *)
-        fail "Unknown option: $1"
+        if [ "$command_name" = "pair" ]; then
+          fail "Unknown pair option: $1"
+        else
+          fail "Unknown option: $1"
+        fi
         ;;
     esac
   fi
@@ -697,6 +735,11 @@ done
 
 if [ "$command_name" = "uninstall" ]; then
   uninstall_vibe_research "$uninstall_purge"
+  exit 0
+fi
+
+if [ "$command_name" = "pair" ]; then
+  pair_vibe_research
   exit 0
 fi
 

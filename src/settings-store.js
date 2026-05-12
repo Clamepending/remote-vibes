@@ -1419,6 +1419,7 @@ export class SettingsStore {
   }
 
   getState({
+    accountCommandRelayStatus = null,
     accountStatus = null,
     agentMailStatus = null,
     backupStatus = null,
@@ -1483,6 +1484,7 @@ export class SettingsStore {
       openSwarmUnsplashAccessKeyConfigured: Boolean(this.settings.openSwarmUnsplashAccessKey || this.env.UNSPLASH_ACCESS_KEY),
       swarmlabAccountHeartbeatEnabled: this.settings.swarmlabAccountHeartbeatEnabled,
       swarmlabAccountHeartbeatIntervalMs: this.settings.swarmlabAccountHeartbeatIntervalMs,
+      swarmlabAccountCommandRelayStatus: accountCommandRelayStatus,
       swarmlabAccountStatus: accountStatus,
       swarmlabAccountUrl: this.settings.swarmlabAccountUrl,
       telegramBotToken: "",

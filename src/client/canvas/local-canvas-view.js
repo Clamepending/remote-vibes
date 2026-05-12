@@ -833,8 +833,10 @@ function normalizeRegistryFleetNode(node) {
   const baseUrl = normalizeRemoteNodeUrl(node?.baseUrl || node?.url || node?.href);
   const connectionHints = Array.isArray(node?.connectionHints) ? node.connectionHints : [];
   const fallbackUrl = normalizeRemoteNodeUrl(connectionHints.find((hint) => hint?.url)?.url || "");
+  const nodeId = String(node?.nodeId || node?.id || "").trim();
   return {
     id: String(node?.id || node?.nodeId || "").trim(),
+    nodeId,
     baseUrl: baseUrl || fallbackUrl,
     url: baseUrl || fallbackUrl,
     label: String(node?.label || "").trim(),
@@ -1095,6 +1097,7 @@ function renderCardAction(card) {
 function cardFrame(card, layout, body, footer = "") {
   const icon = CARD_TYPE_ICONS[card.type] || Box;
   const sessionId = card.ref?.sessionId ? ` data-swarmlab-canvas-session-id="${escapeHtml(card.ref.sessionId)}"` : "";
+  const remoteNodeId = card.ref?.remoteNodeId ? ` data-swarmlab-canvas-remote-node-id="${escapeHtml(card.ref.remoteNodeId)}"` : "";
   const remoteClass = card.ref?.remoteUrl ? " is-remote" : "";
   return `
     <article
@@ -1102,6 +1105,7 @@ function cardFrame(card, layout, body, footer = "") {
       data-swarmlab-canvas-card-id="${escapeHtml(card.id)}"
       data-swarmlab-canvas-card-type="${escapeHtml(card.type)}"
       ${sessionId}
+      ${remoteNodeId}
       style="--card-x: ${layout.x}px; --card-y: ${layout.y}px; width: ${layout.width}px; height: ${layout.height}px; z-index: ${layout.z};"
     >
       <div class="swarmlab-canvas-card-head" data-swarmlab-card-drag-handle>
@@ -1120,7 +1124,7 @@ function cardFrame(card, layout, body, footer = "") {
 
 function renderAgentCard(card, layout) {
   if (card.ref?.remoteUrl) {
-    return renderStandardCard(card, layout);
+    return renderRemoteAgentCard(card, layout);
   }
   const cwd = shortPath(card.detail);
   const status = [card.subtitle, card.status].filter(Boolean).join(" / ") || "agent session";
@@ -1144,6 +1148,29 @@ function renderAgentCard(card, layout) {
     </div>
   `;
   return cardFrame(card, layout, body);
+}
+
+function renderRemoteAgentCard(card, layout) {
+  const sessionId = card.ref?.sessionId || "";
+  const remoteNodeId = card.ref?.remoteNodeId || "";
+  const action = renderCardAction(card);
+  const body = `
+    <div class="swarmlab-agent-chat-window">
+      <div class="swarmlab-agent-chat-feed" data-swarmlab-agent-chat-feed data-swarmlab-agent-session-id="${escapeHtml(sessionId)}" data-swarmlab-agent-remote-node-id="${escapeHtml(remoteNodeId)}">
+        <div class="swarmlab-agent-message is-agent">
+          <span>${escapeHtml([card.subtitle, card.status].filter(Boolean).join(" / ") || "Remote agent")}</span>
+          ${escapeHtml(card.meta || card.ref?.remoteUrl || "Ready")}
+        </div>
+        ${renderTags(card, { limit: 3 })}
+      </div>
+      <form class="swarmlab-agent-composer" data-swarmlab-agent-composer data-swarmlab-agent-session-id="${escapeHtml(sessionId)}" data-swarmlab-agent-remote-node-id="${escapeHtml(remoteNodeId)}">
+        <textarea rows="1" name="input" placeholder="Message agent, @ for context, / for commands"></textarea>
+        <button class="swarmlab-canvas-button" type="submit" title="Send">${renderIcon(Send)}</button>
+      </form>
+    </div>
+  `;
+  const footer = `<div class="swarmlab-canvas-card-footer"><span>${escapeHtml(card.meta || "")}</span>${action}</div>`;
+  return cardFrame(card, layout, body, footer);
 }
 
 function narrativeEntryText(entry) {
@@ -1442,6 +1469,7 @@ function makeRemoteOfflineCard(record) {
     tags: machineTagsFromRegistryNode(registryNode).length ? machineTagsFromRegistryNode(registryNode) : ["remote", "unreachable"],
     href: absoluteRemoteHref("/?view=canvas", record.baseUrl),
     ref: {
+      remoteNodeId: registryNode.nodeId || registryNode.id || "",
       remoteUrl: record.baseUrl,
       actionLabel: "Open canvas",
     },
@@ -1479,6 +1507,7 @@ function remoteCardsForRecord(record, remoteIndex) {
     return [makeRemoteOfflineCard(record)];
   }
   const baseId = slugPart(record.snapshot.node.id || record.host, `remote-${remoteIndex + 1}`);
+  const remoteNodeId = record.registryNode?.nodeId || record.snapshot.node.id || record.registryNode?.id || "";
   return buildCanvasCards(record.snapshot).map((card) => {
     const sourceId = card.id;
     const isMachine = card.type === "machine";
@@ -1493,6 +1522,7 @@ function remoteCardsForRecord(record, remoteIndex) {
       ref: {
         ...(card.ref || {}),
         sourceCardId: sourceId,
+        remoteNodeId,
         remoteUrl: record.baseUrl,
         actionLabel: remoteCardActionLabel(card),
       },
@@ -1826,6 +1856,7 @@ function autosizeComposerInput(textarea) {
 
 async function sendAgentComposerInput(form, { fetchImpl, abortController }) {
   const sessionId = String(form?.dataset?.swarmlabAgentSessionId || "").trim();
+  const remoteNodeId = String(form?.dataset?.swarmlabAgentRemoteNodeId || "").trim();
   const textarea = form?.querySelector("textarea[name='input']");
   const input = textarea instanceof HTMLTextAreaElement ? textarea.value : "";
   const text = input.trim();
@@ -1837,15 +1868,33 @@ async function sendAgentComposerInput(form, { fetchImpl, abortController }) {
     textarea.disabled = true;
   }
   try {
-    await fetchJson(`/api/sessions/${encodeURIComponent(sessionId)}/input`, {
-      fetchImpl,
-      signal: abortController.signal,
-      method: "POST",
-      body: {
-        input: text,
-        clientMessageId: `canvas-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 8)}`,
-      },
-    });
+    const clientMessageId = `canvas-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 8)}`;
+    if (remoteNodeId) {
+      await fetchJson(`/api/account/nodes/${encodeURIComponent(remoteNodeId)}/commands`, {
+        fetchImpl,
+        signal: abortController.signal,
+        method: "POST",
+        body: {
+          operation: "session.input.write",
+          clientCommandId: clientMessageId,
+          payload: {
+            sessionId,
+            input: text,
+            clientMessageId,
+          },
+        },
+      });
+    } else {
+      await fetchJson(`/api/sessions/${encodeURIComponent(sessionId)}/input`, {
+        fetchImpl,
+        signal: abortController.signal,
+        method: "POST",
+        body: {
+          input: text,
+          clientMessageId,
+        },
+      });
+    }
     if (textarea instanceof HTMLTextAreaElement) {
       textarea.value = "";
       autosizeComposerInput(textarea);
@@ -1854,8 +1903,8 @@ async function sendAgentComposerInput(form, { fetchImpl, abortController }) {
     if (card) {
       updateAgentFeed(card, `
         <div class="swarmlab-agent-message is-loading">
-          <span>Sent</span>
-          Waiting for native chat refresh...
+          <span>${remoteNodeId ? "Queued" : "Sent"}</span>
+          ${remoteNodeId ? "Waiting for remote node." : "Waiting for native chat refresh..."}
         </div>
       `);
     }

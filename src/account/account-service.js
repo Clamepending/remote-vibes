@@ -22,10 +22,11 @@ function normalizeAccount(account = {}) {
   const name = String(account.name || account.displayName || "").trim();
   const profileUrl = normalizeAccountHttpUrl(account.profileUrl || account.url || account.htmlUrl);
   const avatarUrl = normalizeAccountHttpUrl(account.avatarUrl || account.avatar_url);
+  const commandPublicKey = String(account.commandPublicKey || account.accountPublicKey || "").trim().slice(0, 8_000);
   if (!id && !login && !email && !name && !profileUrl) {
     return null;
   }
-  return { id, login, email, name, profileUrl, avatarUrl };
+  return { id, login, email, name, profileUrl, avatarUrl, commandPublicKey };
 }
 
 function normalizeNode(node = {}) {
@@ -385,6 +386,7 @@ export class AccountService {
     const accessToken = String(payload.accessToken || "").trim();
     const account = normalizeAccount(payload.account || payload.user);
     const node = normalizeNode(payload.node || payload.machine);
+    const accountPublicKey = String(payload.commandPublicKey || payload.accountPublicKey || account?.commandPublicKey || "").trim();
     if (!accessToken || !account) {
       throw buildHttpError("Vibe account did not return an account token.", 502);
     }
@@ -392,6 +394,7 @@ export class AccountService {
     return this.tokenStore.setRecord({
       accessToken,
       appBaseUrl,
+      accountPublicKey,
       account,
       node,
     });
@@ -495,6 +498,69 @@ export class AccountService {
       node,
     });
     return { ok: true, node, payload };
+  }
+
+  async listCommands({ settings = {}, limit = 10 } = {}) {
+    const record = this.tokenStore.getRecord();
+    const accessToken = String(record?.accessToken || "").trim();
+    const appBaseUrl = record?.appBaseUrl || this.getAppBaseUrl(settings);
+    const nodeId = encodeURIComponent(String(record?.node?.nodeId || "").trim());
+    if (!accessToken || !appBaseUrl || !nodeId) {
+      return { skipped: true, reason: "account-not-connected", commands: [] };
+    }
+    if (typeof this.fetch !== "function") {
+      throw buildHttpError("fetch is not available for Vibe account commands.", 500);
+    }
+
+    const url = new URL(`/api/account/nodes/${nodeId}/commands/pending`, appBaseUrl);
+    url.searchParams.set("limit", String(Math.max(1, Math.min(25, Number(limit) || 10))));
+    const response = await this.fetch(url.toString(), {
+      method: "GET",
+      headers: {
+        Accept: "application/json",
+        Authorization: `Bearer ${accessToken}`,
+        "User-Agent": "swarmlab",
+      },
+    });
+    const payload = await readJsonResponse(response);
+    if (!response.ok) {
+      throw buildHttpError(payload.error || payload.message || `Vibe account command poll failed (${response.status}).`, response.status || 400);
+    }
+    const commands = Array.isArray(payload.commands) ? payload.commands : [];
+    return {
+      commands,
+      accountPublicKey: String(payload.accountPublicKey || record.accountPublicKey || "").trim(),
+    };
+  }
+
+  async acknowledgeCommand({ settings = {}, commandId = "", ack = {} } = {}) {
+    const record = this.tokenStore.getRecord();
+    const accessToken = String(record?.accessToken || "").trim();
+    const appBaseUrl = record?.appBaseUrl || this.getAppBaseUrl(settings);
+    const nodeId = encodeURIComponent(String(record?.node?.nodeId || ack?.nodeId || "").trim());
+    const normalizedCommandId = encodeURIComponent(String(commandId || ack?.commandId || "").trim());
+    if (!accessToken || !appBaseUrl || !nodeId || !normalizedCommandId) {
+      return { skipped: true, reason: "account-not-connected" };
+    }
+    if (typeof this.fetch !== "function") {
+      throw buildHttpError("fetch is not available for Vibe account command ack.", 500);
+    }
+
+    const response = await this.fetch(new URL(`/api/account/nodes/${nodeId}/commands/${normalizedCommandId}/ack`, appBaseUrl).toString(), {
+      method: "POST",
+      headers: {
+        Accept: "application/json",
+        Authorization: `Bearer ${accessToken}`,
+        "Content-Type": "application/json",
+        "User-Agent": "swarmlab",
+      },
+      body: JSON.stringify(ack),
+    });
+    const payload = await readJsonResponse(response);
+    if (!response.ok) {
+      throw buildHttpError(payload.error || payload.message || `Vibe account command ack failed (${response.status}).`, response.status || 400);
+    }
+    return payload;
   }
 
   async listNodes({ settings = {} } = {}) {

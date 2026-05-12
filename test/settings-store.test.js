@@ -114,3 +114,22 @@ test("SettingsStore redacts OpenSwarm secrets and builds session env", async () 
     assert.equal(env.OPENAI_API_KEY, "openai-secret");
   });
 });
+
+test("SettingsStore exposes Swarmlab account command relay status", async () => {
+  await withWorkspace("vr-settings-account-relay-", async (workspaceDir) => {
+    const stateDir = path.join(workspaceDir, ".vibe-research");
+    await mkdir(stateDir, { recursive: true });
+    const store = new SettingsStore({ cwd: workspaceDir, stateDir, env: {} });
+    await store.initialize();
+
+    const relayStatus = {
+      enabled: true,
+      connected: false,
+      running: false,
+      intervalMs: 5000,
+    };
+    const state = store.getState({ accountCommandRelayStatus: relayStatus });
+
+    assert.deepEqual(state.swarmlabAccountCommandRelayStatus, relayStatus);
+  });
+});

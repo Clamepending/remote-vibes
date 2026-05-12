@@ -128,6 +128,13 @@ function normalizeRecord(record = {}) {
   const account = normalizeAccount(record.account || record.user);
   const node = normalizeNode(record.node || record.machine);
   const heartbeat = normalizeHeartbeat(record.heartbeat || record);
+  const accountPublicKey = String(
+    record.accountPublicKey ||
+      record.commandPublicKey ||
+      record.account?.commandPublicKey ||
+      record.account?.publicKey ||
+      "",
+  ).trim().slice(0, 8_000);
 
   if (!accessToken && !account && !node) {
     return null;
@@ -136,6 +143,7 @@ function normalizeRecord(record = {}) {
   return {
     accessToken,
     appBaseUrl,
+    accountPublicKey,
     account,
     node,
     heartbeat,
@@ -183,6 +191,7 @@ export class AccountTokenStore {
       ? {
           accessToken: this.record.accessToken,
           appBaseUrl: this.record.appBaseUrl,
+          accountPublicKey: this.record.accountPublicKey,
           account: this.record.account ? { ...this.record.account } : null,
           node: this.record.node
             ? { ...this.record.node, connectionHints: [...this.record.node.connectionHints] }

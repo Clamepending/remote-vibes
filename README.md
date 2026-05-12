@@ -53,6 +53,8 @@ The install command now launches Swarmlab as a background server, so it keeps ru
 
 The installer adds a `vibe-research` terminal command, preferring a bin directory already on `PATH` and falling back to `~/.local/bin`. Running `vibe-research` starts the background server when needed and opens the local browser UI; use `vibe-research --no-browser` on headless machines. If your current shell has not picked up the install location, open a new terminal or add the printed directory to `PATH`.
 
+To attach a curl-installed machine to your Vibe account from SSH or a headless box, run `swarmlab pair`. It starts the local daemon if needed, prints the account pairing URL/code, and keeps the paired node online through signed redacted heartbeats plus the scoped command queue.
+
 To remove the terminal command, background service, and app checkout, run `vibe-research uninstall`. It keeps local Swarmlab state by default; use `vibe-research uninstall --purge` only when you also want to remove local settings, logs, and session state.
 
 New release installs start workspace picking from `~/vibe-projects` when the app checkout is under `~/.vibe-research/app`. New agents start in the configured new-agent folder without asking for a folder each time; Settings can change both the Library folder and the new-agent folder. By default, Swarmlab keeps local git backups of the Library every 10 minutes. To back the Library up off-machine, create a private Git repo, paste its SSH or credential-helper remote URL into the sidebar's private remote backup field, enable remote push, and Swarmlab will push Library backup commits there on each backup run.

@@ -401,6 +401,55 @@ test("hosted /api/account node registry routes power machine discovery without l
     assert.equal(listBody.nodes[0].baseUrl, "https://gpu.tailnet.test");
     assert.doesNotMatch(JSON.stringify(listBody), /slnode_|TOKEN=secret|route-secret|\/private|\/canvas|\/private\/path/);
 
+    const enqueueResponse = await fetch(`${started.baseUrl}/api/account/nodes/${encodeURIComponent(identity.nodeId)}/commands`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        operation: "session.input.write",
+        payload: {
+          sessionId: "remote-session-1",
+          input: "continue from account canvas",
+        },
+      }),
+    });
+    assert.equal(enqueueResponse.status, 201);
+    const enqueueBody = await enqueueResponse.json();
+    assert.equal(enqueueBody.command.status, "queued");
+    assert.equal(enqueueBody.command.target.sessionId, "remote-session-1");
+    assert.doesNotMatch(JSON.stringify(enqueueBody), /continue from account canvas|slnode_|grant_/);
+
+    const pendingResponse = await fetch(`${started.baseUrl}/api/account/nodes/${encodeURIComponent(identity.nodeId)}/commands/pending`, {
+      headers: { Authorization: `Bearer ${completeBody.accessToken}` },
+    });
+    assert.equal(pendingResponse.status, 200);
+    const pendingBody = await pendingResponse.json();
+    assert.equal(pendingBody.commands.length, 1);
+    assert.equal(pendingBody.commands[0].payload.input, "continue from account canvas");
+    assert.ok(pendingBody.accountPublicKey);
+
+    const ack = {
+      commandId: pendingBody.commands[0].id,
+      nodeId: identity.nodeId,
+      leaseId: pendingBody.commands[0].leaseId,
+      status: "completed",
+      result: { accepted: true, sessionId: "remote-session-1" },
+      error: "",
+      generatedAt: "2026-05-12T20:31:00.000Z",
+    };
+    const ackResponse = await fetch(`${started.baseUrl}/api/account/nodes/${encodeURIComponent(identity.nodeId)}/commands/${encodeURIComponent(pendingBody.commands[0].id)}/ack`, {
+      method: "POST",
+      headers: {
+        Authorization: `Bearer ${completeBody.accessToken}`,
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify({
+        ack,
+        signature: nodeIdentityStore.signPayload({ type: "node.command.ack", ack }),
+      }),
+    });
+    assert.equal(ackResponse.status, 200);
+    assert.equal((await ackResponse.json()).command.status, "completed");
+
     const pageResponse = await fetch(`${started.baseUrl}/account/machines`);
     assert.equal(pageResponse.status, 200);
     const pageText = await pageResponse.text();

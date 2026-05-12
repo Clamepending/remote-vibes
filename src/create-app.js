@@ -12,6 +12,7 @@ import { WebSocket as NodeWebSocket, WebSocketServer } from "ws";
 import { AccountNodeRegistryService } from "./account/account-node-registry-service.js";
 import { AccountService } from "./account/account-service.js";
 import { AccountTokenStore } from "./account/account-token-store.js";
+import { NodeCommandRelayService } from "./account/node-command-relay-service.js";
 import { NodeHeartbeatService } from "./account/node-heartbeat-service.js";
 import {
   buildPortUrlFromBase,
@@ -1603,6 +1604,7 @@ export async function createVibeResearchApp({
   accountServiceFactory = null,
   accountNodeRegistryServiceFactory = null,
   nodeHeartbeatServiceFactory = null,
+  nodeCommandRelayServiceFactory = null,
   buildingHubFetchImpl = globalThis.fetch,
   buildingHubAccountTokenStoreFactory = null,
   buildingHubAccountServiceFactory = null,
@@ -2186,10 +2188,27 @@ export async function createVibeResearchApp({
           settingsProvider: () => settingsStore.settings,
           connectionHintsProvider: () => buildNodeConnectionHints(),
         });
+  const nodeCommandRelayService =
+    typeof nodeCommandRelayServiceFactory === "function"
+      ? nodeCommandRelayServiceFactory({
+          accountService,
+          tokenStore: accountTokenStore,
+          nodeIdentityStore,
+          sessionManager,
+          settingsStore,
+        })
+      : new NodeCommandRelayService({
+          accountService,
+          tokenStore: accountTokenStore,
+          nodeIdentityStore,
+          sessionManager,
+          settingsProvider: () => settingsStore.settings,
+        });
 
   function getSettingsState() {
     return settingsStore.getState({
       accountStatus: nodeHeartbeatService.getStatus(),
+      accountCommandRelayStatus: nodeCommandRelayService.getStatus(),
       agentMailStatus: agentMailService.getStatus(),
       backupStatus: wikiBackupService.getStatus(),
       buildingHubAccountStatus: buildingHubAccountTokenStore.getStatus(),
@@ -3611,14 +3630,88 @@ export async function createVibeResearchApp({
 
   app.post("/api/account/nodes/:nodeId/heartbeat", async (request, response) => {
     try {
-      const node = await accountNodeRegistryService.recordHeartbeat({
+      const result = await accountNodeRegistryService.recordHeartbeat({
         authorization: request.get("authorization") || "",
         nodeId: request.params.nodeId,
         body: request.body || {},
       });
-      response.json({ status: "ok", node });
+      response.json({ status: "ok", node: result.node || result, pendingCommands: result.pendingCommands || 0 });
     } catch (error) {
       response.status(error.statusCode || 400).json({ error: error.message || "Could not record account node heartbeat." });
+    }
+  });
+
+  app.post("/api/account/nodes/:nodeId/commands", async (request, response) => {
+    try {
+      const owner = accountOwnerIdFromRequest(request);
+      const command = await accountNodeRegistryService.enqueueCommandForOwner({
+        ownerAccountId: owner,
+        nodeId: request.params.nodeId,
+        body: request.body || {},
+      });
+      response.status(201).json({ command });
+    } catch (error) {
+      response.status(error.statusCode || 400).json({ error: error.message || "Could not enqueue account node command." });
+    }
+  });
+
+  app.get("/api/account/nodes/:nodeId/commands", (request, response) => {
+    try {
+      const owner = accountOwnerIdFromRequest(request);
+      response.setHeader("Cache-Control", "no-store");
+      response.json({
+        commands: accountNodeRegistryService.listCommandsForOwner({
+          ownerAccountId: owner,
+          nodeId: request.params.nodeId,
+          limit: request.query?.limit,
+        }),
+      });
+    } catch (error) {
+      response.status(error.statusCode || 400).json({ error: error.message || "Could not list account node commands." });
+    }
+  });
+
+  app.get("/api/account/nodes/:nodeId/commands/pending", async (request, response) => {
+    try {
+      response.setHeader("Cache-Control", "no-store");
+      const commands = await accountNodeRegistryService.leaseCommandsForNode({
+        authorization: request.get("authorization") || "",
+        nodeId: request.params.nodeId,
+        limit: request.query?.limit,
+      });
+      response.json({ commands, accountPublicKey: accountNodeRegistryService.getAccountPublicKey() });
+    } catch (error) {
+      response.status(error.statusCode || 400).json({ error: error.message || "Could not lease account node commands." });
+    }
+  });
+
+  app.get("/api/account/nodes/:nodeId/commands/:commandId", (request, response) => {
+    try {
+      const owner = accountOwnerIdFromRequest(request);
+      response.setHeader("Cache-Control", "no-store");
+      response.json({
+        command: accountNodeRegistryService.getCommandForOwner({
+          ownerAccountId: owner,
+          nodeId: request.params.nodeId,
+          commandId: request.params.commandId,
+        }),
+      });
+    } catch (error) {
+      response.status(error.statusCode || 400).json({ error: error.message || "Could not read account node command." });
+    }
+  });
+
+  app.post("/api/account/nodes/:nodeId/commands/:commandId/ack", async (request, response) => {
+    try {
+      const command = await accountNodeRegistryService.acknowledgeCommandFromNode({
+        authorization: request.get("authorization") || "",
+        nodeId: request.params.nodeId,
+        commandId: request.params.commandId,
+        body: request.body || {},
+      });
+      response.json({ command });
+    } catch (error) {
+      response.status(error.statusCode || 400).json({ error: error.message || "Could not acknowledge account node command." });
     }
   });
 
@@ -4183,7 +4276,7 @@ export async function createVibeResearchApp({
 
   app.get("/api/node/account/status", requireLocalOrNodeToken, (_request, response) => {
     response.setHeader("Cache-Control", "no-store");
-    response.json({ account: nodeHeartbeatService.getStatus() });
+    response.json({ account: nodeHeartbeatService.getStatus(), commandRelay: nodeCommandRelayService.getStatus() });
   });
 
   app.get("/api/node/account/nodes", requireLocalOrNodeToken, async (_request, response) => {
@@ -4223,6 +4316,7 @@ export async function createVibeResearchApp({
         connectionHints: buildNodeConnectionHints(),
       });
       nodeHeartbeatService.start({ immediate: false });
+      nodeCommandRelayService.start({ immediate: false });
       let heartbeat = null;
       let heartbeatError = "";
       try {
@@ -4239,6 +4333,7 @@ export async function createVibeResearchApp({
         heartbeat,
         heartbeatError,
         account: nodeHeartbeatService.getStatus(),
+        commandRelay: nodeCommandRelayService.getStatus(),
       });
     } catch (error) {
       response.status(error.statusCode || 400).json({ error: error.message || "Could not complete Vibe account pairing." });
@@ -4257,11 +4352,23 @@ export async function createVibeResearchApp({
     }
   });
 
+  app.post("/api/node/account/commands/poll", requireLocalOrNodeToken, async (request, response) => {
+    try {
+      const result = await nodeCommandRelayService.tick({
+        reason: request.body?.reason || "manual",
+      });
+      response.json({ result, commandRelay: nodeCommandRelayService.getStatus() });
+    } catch (error) {
+      response.status(error.statusCode || 400).json({ error: error.message || "Could not poll Vibe account commands." });
+    }
+  });
+
   app.post("/api/node/account/disconnect", requireLocalOrNodeToken, async (_request, response) => {
     try {
       nodeHeartbeatService.stop();
+      nodeCommandRelayService.stop();
       await accountService.disconnect({ settings: settingsStore.settings });
-      response.json({ ok: true, account: nodeHeartbeatService.getStatus() });
+      response.json({ ok: true, account: nodeHeartbeatService.getStatus(), commandRelay: nodeCommandRelayService.getStatus() });
     } catch (error) {
       response.status(error.statusCode || 500).json({ error: error.message || "Could not disconnect Vibe account." });
     }
@@ -4289,6 +4396,7 @@ export async function createVibeResearchApp({
         connectionHints: buildNodeConnectionHints(),
       });
       nodeHeartbeatService.start({ immediate: false });
+      nodeCommandRelayService.start({ immediate: false });
       try {
         await nodeHeartbeatService.tick({ reason: "pair-callback", forceRegister: true });
       } catch (error) {
@@ -10610,6 +10718,7 @@ export async function createVibeResearchApp({
     preferredUrl: publicBaseUrl || preferredUrl,
   });
   nodeHeartbeatService.start({ immediate: true });
+  nodeCommandRelayService.start({ immediate: true });
   if (systemMetricsSampleIntervalMs > 0) {
     // Fire one sample immediately so the storage caches are warm before the
     // first user opens the system tab; setInterval otherwise waits the full
@@ -10746,6 +10855,7 @@ export async function createVibeResearchApp({
     closePromise = (async () => {
       stopLibraryActivityWatcher();
       nodeHeartbeatService.stop();
+      nodeCommandRelayService.stop();
       await shutdownResearchAutopilotJobs();
       await flushResearchAutopilotJobs();
       await sessionManager.shutdown({ preserveSessions: persistSessions });
@@ -10858,6 +10968,7 @@ export async function createVibeResearchApp({
     sessionManager,
     websocketServer,  // Exposed for integration tests of the heartbeat.
     nodeHeartbeatService,
+    nodeCommandRelayService,
     ottoAuthService,
     videoMemoryService,
     relaunch: () => requestTerminate({ relaunch: true }),

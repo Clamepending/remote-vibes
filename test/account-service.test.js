@@ -25,7 +25,8 @@ async function withAccountService(fn) {
       if (pathname === "/api/account/nodes/pairing/complete") {
         return response({
           accessToken: "secret-account-token",
-          account: { id: "acct_1", login: "mark" },
+          account: { id: "acct_1", login: "mark", commandPublicKey: "account-public-key" },
+          commandPublicKey: "account-public-key",
           node: { nodeId: body.identity.nodeId, displayName: "Mac", status: "online" },
         });
       }
@@ -57,6 +58,22 @@ async function withAccountService(fn) {
       }
       if (/\/api\/account\/nodes\/[^/]+\/heartbeat/u.test(pathname)) {
         return response({ status: "ok", node: { nodeId: body.heartbeat.nodeId, status: body.heartbeat.status } });
+      }
+      if (/\/api\/account\/nodes\/[^/]+\/commands\/pending/u.test(pathname)) {
+        return response({
+          accountPublicKey: "account-public-key",
+          commands: [{
+            id: "cmd_1",
+            nodeId: "node_local",
+            operation: "session.input.write",
+            payload: { sessionId: "session-1", input: "continue" },
+            signature: "sig",
+            leaseId: "lease_1",
+          }],
+        });
+      }
+      if (/\/api\/account\/nodes\/[^/]+\/commands\/[^/]+\/ack/u.test(pathname)) {
+        return response({ command: { id: "cmd_1", status: "completed" } });
       }
       if (pathname === "/api/account/nodes/disconnect") {
         return response({ ok: true });
@@ -156,6 +173,7 @@ test("AccountService completes pairing, registers, heartbeats, and revokes with 
     const record = await service.completePairing({ grant: "grant_1" });
     assert.equal(record.account.login, "mark");
     assert.equal(tokenStore.getRecord().accessToken, "secret-account-token");
+    assert.equal(tokenStore.getRecord().accountPublicKey, "account-public-key");
     assert.doesNotMatch(JSON.stringify(tokenStore.getStatus()), /secret-account-token/);
 
     const registered = await service.registerNode({
@@ -193,6 +211,22 @@ test("AccountService completes pairing, registers, heartbeats, and revokes with 
       new URL(entry.url).pathname === "/api/account/nodes" && (!entry.init.method || entry.init.method === "GET"));
     assert.equal(listRequest.init.headers.Authorization, "Bearer secret-account-token");
     assert.doesNotMatch(JSON.stringify(listed), /token=secret|\/private|secret-account-token/);
+
+    await tokenStore.updateNode({ nodeId: "node_local", displayName: "Mac", status: "online" });
+    const commands = await service.listCommands();
+    assert.equal(commands.commands.length, 1);
+    assert.equal(commands.accountPublicKey, "account-public-key");
+    const commandRequest = requests.find((entry) =>
+      /\/api\/account\/nodes\/node_local\/commands\/pending$/u.test(new URL(entry.url).pathname));
+    assert.equal(commandRequest.init.headers.Authorization, "Bearer secret-account-token");
+    const acked = await service.acknowledgeCommand({
+      commandId: "cmd_1",
+      ack: {
+        ack: { commandId: "cmd_1", nodeId: "node_local", leaseId: "lease_1", status: "completed" },
+        signature: "node-sig",
+      },
+    });
+    assert.equal(acked.command.status, "completed");
 
     await service.disconnect();
     assert.equal(tokenStore.getStatus().configured, false);
