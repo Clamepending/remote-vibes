@@ -3,6 +3,7 @@ import test from "node:test";
 
 import {
   buildCanvasCards,
+  createFallbackCanvasLayout,
   getCanvasBoardId,
   getCanvasLayoutStorageKey,
   getCanvasViewportStorageKey,
@@ -95,6 +96,55 @@ test("buildCanvasCards promotes previewable app ports and folds the noisy remain
   assert.equal(appCards.at(-1).ref.ports.length, 7);
 });
 
+test("buildCanvasCards keeps active work visible and collapses quiet board noise", () => {
+  const cards = buildCanvasCards({
+    node: { id: "node-1", name: "GPU box", status: "online" },
+    sessions: [
+      { id: "active-agent", name: "Active trainer", providerId: "codex", status: "running" },
+      { id: "quiet-agent", name: "Old idle worker", providerId: "claude", status: "idle" },
+      { id: "done-agent", name: "Finished sweep", providerId: "codex", status: "completed" },
+    ],
+    browserSessions: [
+      { id: "active-browser", name: "Active browser", status: "running", latestSnapshot: { url: "https://example.test" } },
+      { id: "old-browser", name: "Old browser", status: "idle" },
+    ],
+    actionItems: [
+      { id: "deploy-approval", title: "Approve deploy", status: "open" },
+      { id: "setup-done", title: "Connect Telegram", status: "completed" },
+    ],
+    canvases: [
+      { id: "new-chart", title: "Newest chart", createdAt: "2026-05-12T13:00:00.000Z" },
+      { id: "old-chart", title: "Old chart", createdAt: "2026-05-12T12:00:00.000Z" },
+    ],
+  });
+
+  assert.deepEqual(cards.filter((card) => card.type === "agent").map((card) => card.title), ["Active trainer"]);
+  assert.deepEqual(cards.filter((card) => card.type === "browser").map((card) => card.title), ["Active browser"]);
+  assert.deepEqual(cards.filter((card) => card.type === "approval").map((card) => card.title), ["Approve deploy"]);
+  assert.deepEqual(cards.filter((card) => card.type === "artifact").map((card) => card.title), ["Newest chart"]);
+
+  const summaries = cards.filter((card) => card.type === "summary");
+  assert.equal(summaries.length, 4);
+  assert.equal(summaries.find((card) => card.ref.summaryKind === "agent")?.subtitle, "2 hidden");
+  assert.equal(summaries.find((card) => card.ref.summaryKind === "browser")?.subtitle, "1 hidden");
+  assert.equal(summaries.find((card) => card.ref.summaryKind === "approval")?.title, "Resolved requests");
+  assert.equal(summaries.find((card) => card.ref.summaryKind === "artifact")?.detail, "Old chart");
+});
+
+test("buildCanvasCards hides quiet redacted remote agent windows", () => {
+  const cards = buildCanvasCards({
+    mode: "redacted",
+    node: { id: "remote-1", name: "Remote box", status: "online" },
+    sessions: [
+      { id: "idle-1", name: "redacted", providerId: "claude", status: "idle" },
+      { id: "idle-2", name: "redacted", providerId: "codex", status: "completed" },
+    ],
+  });
+
+  assert.equal(cards.filter((card) => card.type === "agent").length, 0);
+  assert.equal(cards.find((card) => card.type === "summary")?.ref.summaryKind, "agent");
+});
+
 test("mergeCanvasLayout preserves saved positions and creates defaults for new cards", () => {
   const cards = buildCanvasCards({
     node: { id: "node-1", name: "Mac" },
@@ -109,6 +159,30 @@ test("mergeCanvasLayout preserves saved positions and creates defaults for new c
   assert.equal(layout["session:s1"].z, 99);
   assert.ok(Number.isFinite(layout["session:s2"].x));
   assert.ok(Number.isFinite(layout["machine:node-1"].y));
+});
+
+test("createFallbackCanvasLayout separates machine and orchestration lanes", () => {
+  const overlaps = (a, b) =>
+    a.x < b.x + b.width
+      && a.x + a.width > b.x
+      && a.y < b.y + b.height
+      && a.y + a.height > b.y;
+  const cards = [
+    ...buildCanvasCards({
+      node: { id: "local", name: "Mac" },
+      handoffJobs: [{ id: "handoff-1", title: "GPU to Pi", target: { label: "Pi" } }],
+    }),
+    ...buildCanvasCards({
+      node: { id: "remote", name: "GPU box" },
+      sessions: [{ id: "remote-agent", name: "Trainer", status: "running" }],
+    }),
+  ];
+  const layout = createFallbackCanvasLayout(cards);
+
+  assert.ok(layout["machine:local"].x < layout["handoff:handoff-1"].x);
+  assert.ok(layout["machine:remote"].x < layout["handoff:handoff-1"].x);
+  assert.ok(layout["session:remote-agent"].x > layout["handoff:handoff-1"].x);
+  assert.equal(overlaps(layout["machine:remote"], layout["handoff:handoff-1"]), false);
 });
 
 test("sanitizeCanvasLayout clamps invalid layout values before persistence", () => {

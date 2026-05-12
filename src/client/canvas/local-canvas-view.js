@@ -1,6 +1,7 @@
 import {
   AlertCircle,
   AppWindow,
+  Archive,
   Bot,
   Box,
   CheckSquare,
@@ -46,6 +47,7 @@ const CARD_TYPE_ICONS = {
   brain: MessageSquare,
   handoff: Send,
   machine: HardDrive,
+  summary: Archive,
 };
 
 let activeController = null;
@@ -525,6 +527,38 @@ function injectCanvasStyles(documentRef = document) {
   white-space: nowrap;
 }
 .swarmlab-port-row small {
+  color: var(--canvas-faint);
+}
+.swarmlab-summary-list {
+  display: flex;
+  flex-direction: column;
+  gap: 7px;
+  margin-top: 10px;
+}
+.swarmlab-summary-row {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  gap: 8px;
+  align-items: center;
+  min-height: 26px;
+  padding: 6px 8px;
+  border: 1px solid rgba(232, 222, 206, 0.1);
+  border-radius: 7px;
+  background: rgba(255, 255, 255, 0.035);
+}
+.swarmlab-summary-row strong,
+.swarmlab-summary-row small {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.swarmlab-summary-row strong {
+  color: #d9d0c4;
+  font-size: 11px;
+  font-weight: 650;
+}
+.swarmlab-summary-row small {
   color: var(--canvas-faint);
 }
 .swarmlab-handoff-steps,
@@ -1257,6 +1291,26 @@ function renderBrainCard(card, layout) {
   return cardFrame(card, layout, body, footer);
 }
 
+function renderSummaryCard(card, layout) {
+  const items = Array.isArray(card.ref?.items) ? card.ref.items : [];
+  const body = `
+    <div class="swarmlab-canvas-card-body">
+      ${card.detail ? `<div>${escapeHtml(card.detail)}</div>` : ""}
+      <div class="swarmlab-summary-list">
+        ${items.slice(0, 4).map((item) => `
+          <div class="swarmlab-summary-row">
+            <strong>${escapeHtml(item.title || "Item")}</strong>
+            <small>${escapeHtml(item.status || item.meta || "")}</small>
+          </div>
+        `).join("")}
+      </div>
+      ${renderTags(card, { limit: 3 })}
+    </div>
+  `;
+  const footer = `<div class="swarmlab-canvas-card-footer"><span>${escapeHtml(card.meta || "collapsed")}</span></div>`;
+  return cardFrame(card, layout, body, footer);
+}
+
 function renderStandardCard(card, layout) {
   const action = renderCardAction(card);
   const body = `
@@ -1275,6 +1329,7 @@ function renderCanvasCard(card, layout) {
   if (card.type === "app") return renderAppCard(card, layout);
   if (card.type === "handoff") return renderHandoffCard(card, layout);
   if (card.type === "brain") return renderBrainCard(card, layout);
+  if (card.type === "summary") return renderSummaryCard(card, layout);
   return renderStandardCard(card, layout);
 }
 

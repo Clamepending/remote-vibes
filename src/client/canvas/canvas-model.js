@@ -15,7 +15,15 @@ const HANDOFF_CARD_WIDTH = 360;
 const HANDOFF_CARD_HEIGHT = 230;
 const BRAIN_CARD_WIDTH = 360;
 const BRAIN_CARD_HEIGHT = 260;
+const SUMMARY_CARD_WIDTH = 320;
+const SUMMARY_CARD_HEIGHT = 170;
+const MAX_CANVAS_AGENT_CARDS = 4;
+const MAX_CANVAS_BROWSER_CARDS = 2;
+const MAX_CANVAS_ARTIFACT_CARDS = 1;
 const MAX_CANVAS_APP_CARDS = 4;
+const ACTIVE_STATUSES = new Set(["active", "busy", "connected", "launching", "open", "pending", "queued", "resuming", "running", "starting", "streaming", "working"]);
+const QUIET_STATUSES = new Set(["archived", "closed", "completed", "dismissed", "done", "exited", "idle", "resolved", "stopped", "succeeded"]);
+const PROBLEM_STATUSES = new Set(["blocked", "error", "failed", "failing", "needs_attention", "warning"]);
 const COMMON_UI_PORTS = new Set([
   3000, 3001, 3100, 4173, 4178, 5000, 5050, 5173, 5178, 6006, 7860, 7861,
   7862, 7863, 8000, 8080, 8501, 8765, 8791,
@@ -134,6 +142,30 @@ function countFromSummary(snapshot, key, fallback) {
   return Number.isFinite(number) && number >= 0 ? number : fallback;
 }
 
+function normalizeStatus(value) {
+  return normalizeText(value).toLowerCase().replace(/\s+/g, "_");
+}
+
+function hasAnyStatus(status, statuses) {
+  const normalized = normalizeStatus(status);
+  if (!normalized) {
+    return false;
+  }
+  return statuses.has(normalized) || [...statuses].some((candidate) => normalized.includes(candidate));
+}
+
+function timestampMs(...values) {
+  for (const value of values) {
+    const text = normalizeText(value);
+    if (!text) continue;
+    const parsed = Date.parse(text);
+    if (Number.isFinite(parsed)) {
+      return parsed;
+    }
+  }
+  return 0;
+}
+
 export function getCanvasBoardId(snapshot) {
   const normalized = normalizeNodeSnapshot(snapshot);
   return `machine:${normalizeId(normalized.node.id, "local")}`;
@@ -170,6 +202,7 @@ export function normalizeNodeSnapshot(payload) {
 
   return {
     schemaVersion: Number(snapshot.schemaVersion || 1),
+    mode: normalizeText(pickFirst(snapshot.mode, input.mode)),
     node: {
       id: nodeId,
       name: normalizeText(
@@ -238,6 +271,40 @@ function makeCard({
   };
 }
 
+function compactSummaryItems(items, mapper) {
+  return items
+    .map(mapper)
+    .filter((item) => item && (item.title || item.status || item.meta))
+    .slice(0, 12);
+}
+
+function summaryCard({
+  id,
+  title,
+  subtitle = "",
+  status = "compact",
+  detail = "",
+  meta = "",
+  tags = [],
+  items = [],
+  machineId,
+  summaryKind,
+}) {
+  return makeCard({
+    id: `summary:${id}`,
+    type: "summary",
+    title,
+    subtitle,
+    status,
+    detail,
+    meta,
+    tags,
+    ref: { machineId, summaryKind, items },
+    width: SUMMARY_CARD_WIDTH,
+    height: SUMMARY_CARD_HEIGHT,
+  });
+}
+
 function sessionCard(session, index, machineId) {
   const id = normalizeText(pickFirst(session.id, session.sessionId, session.name), `session-${index + 1}`);
   const provider = normalizeText(pickFirst(session.providerLabel, session.providerId, session.kind));
@@ -258,6 +325,79 @@ function sessionCard(session, index, machineId) {
   });
 }
 
+function sessionStatus(session) {
+  return pickFirst(session.activityStatus, session.status, session.phase);
+}
+
+function sessionTitle(session, index) {
+  const id = normalizeText(pickFirst(session.id, session.sessionId, session.name), `session-${index + 1}`);
+  return normalizeText(pickFirst(session.name, session.title, id), id);
+}
+
+function sessionSignalScore(session, index, { total = 0, redacted = false } = {}) {
+  if (session?.canvasHidden === true || session?.hidden === true) {
+    return -Infinity;
+  }
+  const status = sessionStatus(session);
+  const title = sessionTitle(session, index).toLowerCase();
+  let score = 0;
+  if (hasAnyStatus(status, ACTIVE_STATUSES)) score += 120;
+  if (hasAnyStatus(status, PROBLEM_STATUSES)) score += 105;
+  if (title.includes("handoff")) score += 90;
+  if (session?.lastMessage || session?.messageCount || session?.narrativeCount) score += 35;
+  if (!normalizeStatus(status) && total <= 2 && !redacted) score += 55;
+  if (!score && total <= 1 && !redacted) score += 45;
+  if (hasAnyStatus(status, QUIET_STATUSES)) score -= redacted ? 70 : 35;
+  score += Math.min(20, Math.max(0, timestampMs(session?.updatedAt, session?.lastActivityAt, session?.createdAt) / 1_000_000_000_000));
+  return score;
+}
+
+function sessionSummaryCard(sessions, machineId) {
+  const items = compactSummaryItems(sessions, (entry) => ({
+    title: sessionTitle(entry.session, entry.index),
+    status: normalizeText(sessionStatus(entry.session), "quiet"),
+    meta: normalizeOptionalDate(pickFirst(entry.session.updatedAt, entry.session.lastActivityAt, entry.session.createdAt)),
+  }));
+  const sample = items.slice(0, 3).map((item) => item.title).join(" · ");
+  return summaryCard({
+    id: "agents-archive",
+    title: "Quiet agents",
+    subtitle: `${sessions.length} hidden`,
+    detail: sample,
+    meta: "Idle and finished agent windows are collapsed.",
+    tags: ["agents", "archive"],
+    items,
+    machineId,
+    summaryKind: "agent",
+  });
+}
+
+function buildSessionCards(sessions, machineId, { redacted = false } = {}) {
+  const entries = sessions.map((session, index) => ({
+    session,
+    index,
+    score: sessionSignalScore(session, index, { total: sessions.length, redacted }),
+  }));
+  const visible = entries
+    .filter((entry) => entry.score >= 50)
+    .sort((left, right) => right.score - left.score || left.index - right.index)
+    .slice(0, MAX_CANVAS_AGENT_CARDS);
+
+  if (!visible.length && entries.length && !redacted) {
+    visible.push([...entries].sort((left, right) => right.score - left.score || left.index - right.index)[0]);
+  }
+
+  const visibleIndexes = new Set(visible.map((entry) => entry.index));
+  const hidden = entries.filter((entry) => !visibleIndexes.has(entry.index));
+  const cards = visible
+    .sort((left, right) => left.index - right.index)
+    .map((entry) => sessionCard(entry.session, entry.index, machineId));
+  if (hidden.length) {
+    cards.push(sessionSummaryCard(hidden, machineId));
+  }
+  return cards;
+}
+
 function browserCard(session, index, machineId) {
   const id = normalizeText(pickFirst(session.id, session.browserUseSessionId, session.taskId), `browser-${index + 1}`);
   const snapshot = asObject(session.latestSnapshot || session.snapshot);
@@ -276,6 +416,65 @@ function browserCard(session, index, machineId) {
   });
 }
 
+function browserSignalScore(session, index, { total = 0, redacted = false } = {}) {
+  if (session?.canvasHidden === true || session?.hidden === true) {
+    return -Infinity;
+  }
+  const status = pickFirst(session.status, session.phase);
+  let score = 0;
+  if (hasAnyStatus(status, ACTIVE_STATUSES)) score += 110;
+  if (hasAnyStatus(status, PROBLEM_STATUSES)) score += 100;
+  if (session?.latestSnapshot || session?.snapshot) score += 25;
+  if (!normalizeStatus(status) && total <= 1 && !redacted) score += 45;
+  if (hasAnyStatus(status, QUIET_STATUSES)) score -= redacted ? 70 : 30;
+  score += Math.min(20, Math.max(0, timestampMs(session?.updatedAt, session?.createdAt) / 1_000_000_000_000));
+  score -= index * 0.01;
+  return score;
+}
+
+function browserSummaryCard(sessions, machineId) {
+  const items = compactSummaryItems(sessions, (entry) => ({
+    title: normalizeText(pickFirst(entry.session.name, entry.session.title, entry.session.id), `Browser ${entry.index + 1}`),
+    status: normalizeText(pickFirst(entry.session.status, entry.session.phase), "quiet"),
+    meta: normalizeOptionalDate(pickFirst(entry.session.updatedAt, entry.session.createdAt)),
+  }));
+  return summaryCard({
+    id: "browsers-archive",
+    title: "Quiet browsers",
+    subtitle: `${sessions.length} hidden`,
+    detail: items.slice(0, 3).map((item) => item.title).join(" · "),
+    meta: "Inactive browser windows are collapsed.",
+    tags: ["browsers", "archive"],
+    items,
+    machineId,
+    summaryKind: "browser",
+  });
+}
+
+function buildBrowserCards(sessions, machineId, { redacted = false } = {}) {
+  const entries = sessions.map((session, index) => ({
+    session,
+    index,
+    score: browserSignalScore(session, index, { total: sessions.length, redacted }),
+  }));
+  const visible = entries
+    .filter((entry) => entry.score >= 60)
+    .sort((left, right) => right.score - left.score || left.index - right.index)
+    .slice(0, MAX_CANVAS_BROWSER_CARDS);
+  if (!visible.length && entries.length && !redacted) {
+    visible.push([...entries].sort((left, right) => right.score - left.score || left.index - right.index)[0]);
+  }
+  const visibleIndexes = new Set(visible.map((entry) => entry.index));
+  const hidden = entries.filter((entry) => !visibleIndexes.has(entry.index));
+  const cards = visible
+    .sort((left, right) => left.index - right.index)
+    .map((entry) => browserCard(entry.session, entry.index, machineId));
+  if (hidden.length) {
+    cards.push(browserSummaryCard(hidden, machineId));
+  }
+  return cards;
+}
+
 function approvalCard(item, index, machineId) {
   const id = normalizeText(pickFirst(item.id, item.actionItemId, item.approvalId, item.title), `approval-${index + 1}`);
   return makeCard({
@@ -292,6 +491,56 @@ function approvalCard(item, index, machineId) {
     width: 300,
     height: 150,
   });
+}
+
+function isOpenActionItem(item) {
+  if (item?.completedAt || item?.resolvedAt || item?.dismissedAt || item?.archivedAt) {
+    return false;
+  }
+  if (item?.open === false || item?.active === false) {
+    return false;
+  }
+  const status = pickFirst(item?.status, item?.state);
+  if (!normalizeStatus(status)) {
+    return true;
+  }
+  return !hasAnyStatus(status, QUIET_STATUSES);
+}
+
+function actionItemSummaryCard(items, machineId) {
+  const summaryItems = compactSummaryItems(items, (entry) => ({
+    title: normalizeText(pickFirst(entry.item.title, entry.item.name, entry.item.id), `Request ${entry.index + 1}`),
+    status: normalizeText(pickFirst(entry.item.status, entry.item.state), "resolved"),
+    meta: normalizeOptionalDate(pickFirst(entry.item.updatedAt, entry.item.completedAt, entry.item.createdAt)),
+  }));
+  return summaryCard({
+    id: "requests-archive",
+    title: "Resolved requests",
+    subtitle: `${items.length} hidden`,
+    detail: summaryItems.slice(0, 3).map((item) => item.title).join(" · "),
+    meta: "Completed setup and approval cards are collapsed.",
+    tags: ["requests", "archive"],
+    items: summaryItems,
+    machineId,
+    summaryKind: "approval",
+  });
+}
+
+function buildApprovalCards(items, machineId) {
+  const open = [];
+  const hidden = [];
+  items.forEach((item, index) => {
+    if (isOpenActionItem(item)) {
+      open.push({ item, index });
+    } else {
+      hidden.push({ item, index });
+    }
+  });
+  const cards = open.map((entry) => approvalCard(entry.item, entry.index, machineId));
+  if (hidden.length) {
+    cards.push(actionItemSummaryCard(hidden, machineId));
+  }
+  return cards;
 }
 
 function portCard(port, index, machineId) {
@@ -392,6 +641,45 @@ function artifactCard(canvas, index, machineId) {
     width: 320,
     height: 210,
   });
+}
+
+function artifactSummaryCard(canvases, machineId) {
+  const items = compactSummaryItems(canvases, (entry) => ({
+    title: normalizeText(pickFirst(entry.canvas.title, entry.canvas.name, entry.canvas.id), `Artifact ${entry.index + 1}`),
+    status: normalizeText(pickFirst(entry.canvas.kind, entry.canvas.type, entry.canvas.status), "artifact"),
+    meta: normalizeOptionalDate(pickFirst(entry.canvas.updatedAt, entry.canvas.createdAt)),
+  }));
+  return summaryCard({
+    id: "artifacts-archive",
+    title: "Artifact archive",
+    subtitle: `${canvases.length} hidden`,
+    detail: items.slice(0, 3).map((item) => item.title).join(" · "),
+    meta: "Older canvas outputs are collapsed.",
+    tags: ["artifacts", "archive"],
+    items,
+    machineId,
+    summaryKind: "artifact",
+  });
+}
+
+function buildArtifactCards(canvases, machineId) {
+  const entries = canvases.map((canvas, index) => ({
+    canvas,
+    index,
+    score: timestampMs(canvas?.updatedAt, canvas?.createdAt) + (canvas?.imagePath ? 1_000 : 0) - index,
+  }));
+  const visible = [...entries]
+    .sort((left, right) => right.score - left.score || left.index - right.index)
+    .slice(0, MAX_CANVAS_ARTIFACT_CARDS);
+  const visibleIndexes = new Set(visible.map((entry) => entry.index));
+  const hidden = entries.filter((entry) => !visibleIndexes.has(entry.index));
+  const cards = visible
+    .sort((left, right) => left.index - right.index)
+    .map((entry) => artifactCard(entry.canvas, entry.index, machineId));
+  if (hidden.length) {
+    cards.push(artifactSummaryCard(hidden, machineId));
+  }
+  return cards;
 }
 
 function handoffCard(job, index, machineId) {
@@ -496,16 +784,21 @@ function machineCard(snapshot) {
 export function buildCanvasCards(payload) {
   const snapshot = normalizeNodeSnapshot(payload);
   const machineId = snapshot.node.id;
+  const isRedacted = snapshot.mode === "redacted";
   const portCards = buildPortCards(snapshot.ports, machineId);
+  const approvalCards = buildApprovalCards(snapshot.actionItems, machineId);
+  const sessionCards = buildSessionCards(snapshot.sessions, machineId, { redacted: isRedacted });
+  const browserCards = buildBrowserCards(snapshot.browserSessions, machineId, { redacted: isRedacted });
+  const artifactCards = buildArtifactCards(snapshot.canvases, machineId);
   const cards = [
     machineCard(snapshot),
     brainCard(snapshot.brain, machineId),
-    ...snapshot.actionItems.map((item, index) => approvalCard(item, index, machineId)),
+    ...approvalCards,
     ...snapshot.handoffJobs.map((job, index) => handoffCard(job, index, machineId)),
-    ...snapshot.sessions.map((session, index) => sessionCard(session, index, machineId)),
-    ...snapshot.browserSessions.map((session, index) => browserCard(session, index, machineId)),
+    ...sessionCards,
+    ...browserCards,
     ...portCards,
-    ...snapshot.canvases.map((canvas, index) => artifactCard(canvas, index, machineId)),
+    ...artifactCards,
   ];
   return cards.filter(Boolean);
 }
@@ -514,10 +807,14 @@ function fallbackPositionForCard(card, index, counters) {
   const type = card.type || "card";
   const next = counters[type] || 0;
   counters[type] = next + 1;
+  const leftLaneX = 120;
+  const orchestrationLaneX = 500;
+  const agentLaneX = 880;
+  const appLaneX = 1320;
 
   if (type === "machine") {
     return {
-      x: 120,
+      x: leftLaneX,
       y: 96 + next * 220,
     };
   }
@@ -525,48 +822,54 @@ function fallbackPositionForCard(card, index, counters) {
     const column = next % 3;
     const row = Math.floor(next / 3);
     return {
-      x: 540 + column * 430 + (row % 2) * 58,
-      y: 190 + row * 500 + (column === 1 ? 58 : 0),
+      x: agentLaneX + column * 430 + (row % 2) * 58,
+      y: 150 + row * 500 + (column === 1 ? 58 : 0),
     };
   }
   if (type === "browser") {
     const column = next % 2;
     const row = Math.floor(next / 2);
     return {
-      x: 980 + column * 470,
-      y: 80 + row * 350,
+      x: appLaneX + column * 470,
+      y: 96 + row * 380,
     };
   }
   if (type === "approval") {
     return {
-      x: 120,
-      y: 330 + next * 172,
+      x: orchestrationLaneX,
+      y: 350 + next * 188,
     };
   }
   if (type === "handoff") {
     return {
-      x: 120,
-      y: 330 + next * 250,
+      x: orchestrationLaneX,
+      y: 96 + next * 260,
     };
   }
   if (type === "brain") {
     return {
-      x: 120,
-      y: 590 + next * 280,
+      x: orchestrationLaneX,
+      y: 610 + next * 280,
     };
   }
   if (type === "app") {
     return {
-      x: 120,
-      y: 900 + next * 260,
+      x: appLaneX,
+      y: 520 + next * 340,
     };
   }
   if (type === "artifact") {
     const column = next % 2;
     const row = Math.floor(next / 2);
     return {
-      x: 1460 + column * 360,
-      y: 210 + row * 260,
+      x: orchestrationLaneX + column * 360,
+      y: 930 + row * 260,
+    };
+  }
+  if (type === "summary") {
+    return {
+      x: orchestrationLaneX,
+      y: 1180 + next * 190,
     };
   }
   return {

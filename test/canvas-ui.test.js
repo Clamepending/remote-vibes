@@ -2,7 +2,7 @@ import assert from "node:assert/strict";
 import os from "node:os";
 import path from "node:path";
 import test from "node:test";
-import { mkdtemp } from "node:fs/promises";
+import { mkdir, mkdtemp } from "node:fs/promises";
 import { chromium } from "playwright-core";
 
 import { resolveBrowserExecutablePath } from "../src/browser-runtime.js";
@@ -118,6 +118,13 @@ test("local canvas view renders node snapshot cards and persists drag layout", a
               status: "running",
               cwd: workspaceDir,
             },
+            {
+              id: "session-2",
+              name: "Old worker",
+              providerId: "claude",
+              status: "idle",
+              cwd: workspaceDir,
+            },
           ],
           browserSessions: [
             {
@@ -134,6 +141,11 @@ test("local canvas view renders node snapshot cards and persists drag layout", a
               detail: "Review production gate",
               priority: "high",
               href: "?view=agent-inbox",
+            },
+            {
+              id: "setup-done",
+              title: "Connect Telegram",
+              status: "completed",
             },
           ],
           ports: Array.from({ length: 6 }, (_, index) => ({
@@ -303,6 +315,11 @@ test("local canvas view renders node snapshot cards and persists drag layout", a
     await page.goto(`${baseUrl}/?view=canvas&node=https%3A%2F%2Fquery-node.example.test%2Fprivate%3Ftoken%3Dsecret`, { waitUntil: "domcontentloaded" });
     await page.waitForSelector(".swarmlab-canvas-card", { timeout: 10_000 });
     await page.waitForSelector(".swarmlab-agent-message.is-agent", { timeout: 10_000 });
+    await mkdir(path.join(process.cwd(), "output/playwright"), { recursive: true });
+    await page.screenshot({
+      path: path.join(process.cwd(), "output/playwright/swarmlab-canvas-curated.png"),
+      fullPage: false,
+    });
 
     const rendered = await page.evaluate(() => document.body.innerText);
     assert.match(rendered, /Swarmlab Canvas/);
@@ -318,6 +335,8 @@ test("local canvas view renders node snapshot cards and persists drag layout", a
     assert.match(rendered, /query-node\.example\.test/);
     assert.doesNotMatch(rendered, /private|token=secret/);
     assert.match(rendered, /Worker B/);
+    assert.match(rendered, /Quiet agents/);
+    assert.match(rendered, /Resolved requests/);
     assert.match(rendered, /Approve deploy/);
     assert.match(rendered, /Train on GPU deploy to Pi/);
     assert.match(rendered, /Train model/);
@@ -330,6 +349,7 @@ test("local canvas view renders node snapshot cards and persists drag layout", a
     assert.match(rendered, /Please inspect the dashboard/);
     assert.match(rendered, /native session feed/);
     assert.equal(await page.locator(".swarmlab-agent-chat-window").count(), 1);
+    assert.equal(await page.locator(".swarmlab-canvas-card.is-summary:not(.is-remote)").count(), 2);
     assert.equal(await page.locator(".swarmlab-canvas-card.is-remote").count(), 9);
     assert.equal(await page.locator(".swarmlab-canvas-floating-controls").count(), 1);
     assert.equal(await page.locator(".swarmlab-canvas-card.is-app").count(), 8);
