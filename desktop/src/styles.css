@@ -5,8 +5,8 @@
   --panel-2: #20282e;
   --text: #f4f1e8;
   --muted: #aeb8ba;
-  --accent: #4fb286;
-  --accent-2: #e2b84b;
+  --accent: #f97316;
+  --accent-2: #74c7b8;
   --danger: #ef6a5b;
   --border: rgba(244, 241, 232, 0.12);
 }
@@ -83,11 +83,9 @@ button#retry {
   place-items: center;
   width: 72px;
   height: 72px;
-  border-radius: 8px;
-  background: linear-gradient(145deg, var(--accent), var(--accent-2));
-  color: #101418;
-  font-weight: 900;
-  letter-spacing: 0;
+  border-radius: 16px;
+  background: var(--accent);
+  box-shadow: 0 0 28px rgba(249, 115, 22, 0.36);
   margin-bottom: 34px;
 }
 

@@ -57,7 +57,7 @@ test("buildCanvasCards renders machine, session, browser, approval, app, and art
   assert.equal(cards.find((card) => card.type === "artifact")?.detail, "Best run so far");
 });
 
-test("buildCanvasCards collapses noisy port lists into one local apps window", () => {
+test("buildCanvasCards promotes previewable app ports and folds the noisy remainder", () => {
   const cards = buildCanvasCards({
     node: { id: "node-1", name: "GPU box", status: "online" },
     ports: Array.from({ length: 7 }, (_, index) => ({
@@ -68,11 +68,12 @@ test("buildCanvasCards collapses noisy port lists into one local apps window", (
   });
 
   const appCards = cards.filter((card) => card.type === "app");
-  assert.equal(appCards.length, 1);
-  assert.equal(appCards[0].id, "app:local-ports");
-  assert.equal(appCards[0].title, "Local apps");
-  assert.equal(appCards[0].subtitle, "7 running ports");
-  assert.equal(appCards[0].ref.ports.length, 7);
+  assert.equal(appCards.length, 5);
+  assert.equal(appCards.filter((card) => card.ref.embedUrl).length, 4);
+  assert.equal(appCards.at(-1).id, "app:local-ports");
+  assert.equal(appCards.at(-1).title, "More local apps");
+  assert.equal(appCards.at(-1).subtitle, "3 more ports");
+  assert.equal(appCards.at(-1).ref.ports.length, 7);
 });
 
 test("mergeCanvasLayout preserves saved positions and creates defaults for new cards", () => {

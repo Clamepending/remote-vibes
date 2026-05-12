@@ -7,9 +7,16 @@ const AGENT_CARD_WIDTH = 380;
 const AGENT_CARD_HEIGHT = 430;
 const BROWSER_CARD_WIDTH = 430;
 const BROWSER_CARD_HEIGHT = 300;
-const APP_CARD_WIDTH = 320;
-const APP_CARD_HEIGHT = 220;
-const MAX_INDIVIDUAL_PORT_CARDS = 4;
+const APP_CARD_WIDTH = 430;
+const APP_CARD_HEIGHT = 310;
+const APP_SUMMARY_CARD_WIDTH = 320;
+const APP_SUMMARY_CARD_HEIGHT = 190;
+const MAX_CANVAS_APP_CARDS = 4;
+const COMMON_UI_PORTS = new Set([
+  3000, 3001, 3100, 4173, 4178, 5000, 5050, 5173, 5178, 6006, 7860, 7861,
+  7862, 7863, 8000, 8080, 8501, 8765, 8791,
+]);
+const DEBUG_OR_INFRA_PORTS = new Set([9229, 9230, 9231]);
 
 function asObject(value) {
   return value && typeof value === "object" && !Array.isArray(value) ? value : {};
@@ -60,6 +67,60 @@ function compactTags(values) {
     .map((value) => normalizeText(value))
     .filter(Boolean)
     .slice(0, 5);
+}
+
+function getPortNumber(port) {
+  const rawPort = Number(port?.port || port?.number || port?.id);
+  return Number.isInteger(rawPort) && rawPort > 0 && rawPort < 65_536 ? rawPort : null;
+}
+
+function portHref(port) {
+  const rawPort = getPortNumber(port);
+  return pickFirst(
+    port?.preferredUrl,
+    port?.directUrl,
+    port?.tailscaleUrl,
+    port?.url,
+    port?.proxyPath,
+    rawPort ? `/proxy/${rawPort}/` : "",
+  );
+}
+
+function portDisplayName(port, fallback) {
+  return normalizeText(pickFirst(port?.name, port?.label, port?.customName, port?.processName, fallback), fallback);
+}
+
+function isLikelyVisibleAppPort(port) {
+  const rawPort = getPortNumber(port);
+  if (!rawPort || DEBUG_OR_INFRA_PORTS.has(rawPort) || !portHref(port)) {
+    return false;
+  }
+  if (port?.hidden === true || port?.canvasHidden === true || port?.canvasVisible === false) {
+    return false;
+  }
+  return Boolean(
+    port?.customName ||
+      port?.canvasVisible === true ||
+      port?.previewKind === "preview" ||
+      port?.preferredAccess ||
+      port?.hasDirectUrl ||
+      port?.hasTailscaleUrl ||
+      COMMON_UI_PORTS.has(rawPort),
+  );
+}
+
+function scoreVisibleAppPort(port) {
+  const rawPort = getPortNumber(port);
+  let score = 0;
+  if (port?.customName) score += 80;
+  if (port?.canvasVisible === true) score += 70;
+  if (COMMON_UI_PORTS.has(rawPort)) score += 45;
+  if (port?.preferredAccess === "direct") score += 12;
+  if (port?.preferredAccess === "proxy") score += 8;
+  if (port?.hasDirectUrl) score += 6;
+  if (rawPort && rawPort >= 49_000) score -= 20;
+  if (rawPort && rawPort >= 9_000 && rawPort < 10_000) score -= 12;
+  return score;
 }
 
 function countFromSummary(snapshot, key, fallback) {
@@ -224,43 +285,44 @@ function approvalCard(item, index, machineId) {
 }
 
 function portCard(port, index, machineId) {
-  const rawPort = Number(port.port || port.number || port.id);
-  const portLabel = Number.isInteger(rawPort) ? String(rawPort) : `port-${index + 1}`;
-  const href = pickFirst(
-    port.preferredUrl,
-    port.directUrl,
-    port.tailscaleUrl,
-    port.url,
-    Number.isInteger(rawPort) ? `/proxy/${rawPort}/` : "",
-  );
+  const rawPort = getPortNumber(port);
+  const portLabel = rawPort ? String(rawPort) : `port-${index + 1}`;
+  const href = portHref(port);
+  const name = portDisplayName(port, portLabel);
   return makeCard({
     id: `port:${portLabel}`,
     type: "app",
-    title: pickFirst(port.name, port.label, port.processName, portLabel),
+    title: name,
     subtitle: Number.isInteger(rawPort) ? `localhost:${rawPort}` : "local app",
     status: pickFirst(port.preferredAccess, port.status, port.protocol),
-    detail: pickFirst(port.command, port.pid ? `pid ${port.pid}` : "", port.host),
+    detail: "Live app preview",
     meta: href,
-    tags: [port.localOnly ? "local only" : "", port.exposedWithTailscale ? "tailscale" : ""],
+    tags: [port.localOnly ? "local only" : "", port.exposedWithTailscale ? "tailscale" : "", port.customName ? "named" : ""],
     href,
-    ref: { machineId, port: Number.isInteger(rawPort) ? rawPort : undefined },
+    ref: {
+      machineId,
+      port: Number.isInteger(rawPort) ? rawPort : undefined,
+      embedUrl: href,
+      actionLabel: "Open app",
+    },
     width: APP_CARD_WIDTH,
     height: APP_CARD_HEIGHT,
   });
 }
 
-function portsSummaryCard(ports, machineId) {
+function portsSummaryCard(ports, machineId, { visibleCount = 0 } = {}) {
   const normalizedPorts = ports
     .map((port, index) => {
-      const rawPort = Number(port.port || port.number || port.id);
-      const label = Number.isInteger(rawPort)
+      const rawPort = getPortNumber(port);
+      const label = rawPort
         ? String(rawPort)
-        : normalizeText(port.name || port.label || port.processName, `app-${index + 1}`);
-      const name = normalizeText(pickFirst(port.name, port.label, port.processName, label), label);
+        : portDisplayName(port, `app-${index + 1}`);
+      const name = portDisplayName(port, label);
       const access = normalizeText(pickFirst(port.preferredAccess, port.status, port.protocol));
       return { label, name, access };
     })
     .filter((port) => port.label || port.name);
+  const hiddenCount = Math.max(0, ports.length - visibleCount);
   const sample = normalizedPorts
     .slice(0, 6)
     .map((port) => [port.label, port.name === port.label ? "" : port.name].filter(Boolean).join(" "))
@@ -268,20 +330,36 @@ function portsSummaryCard(ports, machineId) {
   return makeCard({
     id: "app:local-ports",
     type: "app",
-    title: "Local apps",
-    subtitle: `${ports.length} running ports`,
+    title: visibleCount ? "More local apps" : "Local apps",
+    subtitle: visibleCount ? `${hiddenCount} more ports` : `${ports.length} previewable ports`,
     status: "compact",
     detail: sample,
-    meta: "Open individual ports from the machine sidebar; the canvas keeps apps compact.",
+    meta: "Hidden from the main board until named or opened.",
     tags: normalizedPorts.slice(0, 8).map((port) => port.access || port.label),
     href: "",
     ref: {
       machineId,
       ports: normalizedPorts,
     },
-    width: 340,
-    height: 230,
+    width: APP_SUMMARY_CARD_WIDTH,
+    height: APP_SUMMARY_CARD_HEIGHT,
   });
+}
+
+function buildPortCards(ports, machineId) {
+  const visiblePorts = ports
+    .filter(isLikelyVisibleAppPort)
+    .map((port, index) => ({ port, index, score: scoreVisibleAppPort(port) }))
+    .sort((left, right) => right.score - left.score || left.index - right.index)
+    .slice(0, MAX_CANVAS_APP_CARDS)
+    .sort((left, right) => left.index - right.index)
+    .map((entry) => entry.port);
+
+  const cards = visiblePorts.map((port, index) => portCard(port, index, machineId));
+  if (ports.length > visiblePorts.length) {
+    cards.push(portsSummaryCard(ports, machineId, { visibleCount: visiblePorts.length }));
+  }
+  return cards;
 }
 
 function artifactCard(canvas, index, machineId) {
@@ -317,7 +395,7 @@ function machineCard(snapshot) {
     title: node.name,
     subtitle: compactTags([node.os, node.version]).join(" / "),
     status: node.status,
-    detail: `${snapshot.counts.sessions} sessions, ${snapshot.counts.ports} ports, ${snapshot.counts.approvals} approvals`,
+    detail: `${snapshot.counts.sessions} sessions, ${snapshot.counts.ports} apps, ${snapshot.counts.approvals} approvals`,
     meta: node.lastSeenAt || snapshot.generatedAt,
     tags: [
       Number.isFinite(Number(cpu)) ? `cpu ${Math.round(Number(cpu))}%` : "",
@@ -333,9 +411,7 @@ function machineCard(snapshot) {
 export function buildCanvasCards(payload) {
   const snapshot = normalizeNodeSnapshot(payload);
   const machineId = snapshot.node.id;
-  const portCards = snapshot.ports.length > MAX_INDIVIDUAL_PORT_CARDS
-    ? [portsSummaryCard(snapshot.ports, machineId)]
-    : snapshot.ports.map((port, index) => portCard(port, index, machineId));
+  const portCards = buildPortCards(snapshot.ports, machineId);
   return [
     machineCard(snapshot),
     ...snapshot.actionItems.map((item, index) => approvalCard(item, index, machineId)),

@@ -92,6 +92,17 @@ function awaitSessionSnapshot(websocket, { timeoutMs = 8_000, match } = {}) {
   });
 }
 
+async function postSessionInput(baseUrl, sessionId, input) {
+  const response = await fetch(`${baseUrl}/api/sessions/${sessionId}/input`, {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+    },
+    body: JSON.stringify({ input }),
+  });
+  assert.equal(response.status, 200);
+}
+
 async function startApp(options = {}) {
   const cwd = options.cwd || process.cwd();
   const stateDir = options.stateDir || path.join(cwd, ".vibe-research");
@@ -909,7 +920,9 @@ test("masterplan host serves the short public post", async () => {
   try {
     const defaultResponse = await fetch(baseUrl);
     assert.equal(defaultResponse.status, 200);
-    assert.match(await defaultResponse.text(), /<title>Vibe Research<\/title>/);
+    const defaultText = await defaultResponse.text();
+    assert.match(defaultText, /<title>Swarmlab<\/title>/);
+    assert.match(defaultText, /\/favicon\.svg/);
 
     const masterplanPayload = await new Promise((resolve, reject) => {
       const url = new URL(baseUrl);
@@ -7749,11 +7762,11 @@ test("shell session keeps running while the browser websocket disconnects", asyn
     const websocketUrl = `${baseUrl.replace("http", "ws")}/ws?sessionId=${session.id}`;
     const command =
       "for i in 1 2 3 4 5; do printf 'RV_WS_KEEPALIVE_%s\\n' \"$i\"; sleep 0.2; done\r";
+    await postSessionInput(baseUrl, session.id, command);
 
     firstSocket = new WebSocket(websocketUrl);
     await new Promise((resolve, reject) => {
       let combined = "";
-      let sentCommand = false;
       const timeout = setTimeout(() => {
         reject(new Error("Timed out waiting for first websocket output."));
       }, 8_000);
@@ -7765,11 +7778,6 @@ test("shell session keeps running while the browser websocket disconnects", asyn
       firstSocket.on("message", (chunk) => {
         const payload = JSON.parse(String(chunk));
         combined += payload.data || "";
-
-        if (!sentCommand) {
-          firstSocket.send(JSON.stringify({ type: "input", data: command }));
-          sentCommand = true;
-        }
 
         if (combined.includes("RV_WS_KEEPALIVE_1")) {
           clearTimeout(timeout);
@@ -7842,11 +7850,11 @@ test("mobile terminal stays usable while the keyboard viewport resizes", async (
     const websocketUrl = `${baseUrl.replace("http", "ws")}/ws?sessionId=${session.id}`;
     const command =
       "i=1; while [ \"$i\" -le 180 ]; do printf 'RV_MOBILE_SCROLL_%03d\\n' \"$i\"; i=$((i+1)); done\r";
+    await postSessionInput(baseUrl, session.id, command);
 
     websocket = new WebSocket(websocketUrl);
     await new Promise((resolve, reject) => {
       let combined = "";
-      let sentCommand = false;
       const timeout = setTimeout(() => {
         reject(new Error("Timed out writing terminal history for the mobile scroll smoke."));
       }, 10_000);
@@ -7858,11 +7866,6 @@ test("mobile terminal stays usable while the keyboard viewport resizes", async (
       websocket.on("message", (chunk) => {
         const payload = JSON.parse(String(chunk));
         combined += payload.data || "";
-
-        if (!sentCommand) {
-          websocket.send(JSON.stringify({ type: "input", data: command }));
-          sentCommand = true;
-        }
 
         if (combined.includes("RV_MOBILE_SCROLL_180")) {
           clearTimeout(timeout);
@@ -7969,10 +7972,12 @@ test("terminal wheel opens a scrollable transcript history", async (t) => {
     assert.equal(createResponse.status, 201);
     const { session } = await createResponse.json();
     websocket = new WebSocket(`${baseUrl.replace("http", "ws")}/ws?sessionId=${session.id}`);
+    const command =
+      "i=1; while [ \"$i\" -le 180 ]; do printf 'RV_XTERM_SCROLL_%03d\\n' \"$i\"; i=$((i+1)); done\r";
+    await postSessionInput(baseUrl, session.id, command);
 
     await new Promise((resolve, reject) => {
       let combined = "";
-      let sentCommand = false;
       const timeout = setTimeout(() => {
         reject(new Error("Timed out writing terminal history for the xterm wheel smoke."));
       }, 10_000);
@@ -7984,16 +7989,6 @@ test("terminal wheel opens a scrollable transcript history", async (t) => {
       websocket.on("message", (chunk) => {
         const payload = JSON.parse(String(chunk));
         combined += payload.data || "";
-
-        if (!sentCommand) {
-          websocket.send(
-            JSON.stringify({
-              type: "input",
-              data: "i=1; while [ \"$i\" -le 180 ]; do printf 'RV_XTERM_SCROLL_%03d\\n' \"$i\"; i=$((i+1)); done\r",
-            }),
-          );
-          sentCommand = true;
-        }
 
         if (combined.includes("RV_XTERM_SCROLL_180")) {
           clearTimeout(timeout);
@@ -8109,9 +8104,11 @@ test("terminal keyboard scroll chords move history without stealing plain arrows
     assert.equal(createResponse.status, 201);
     const { session } = await createResponse.json();
     websocket = new WebSocket(`${baseUrl.replace("http", "ws")}/ws?sessionId=${session.id}`);
+    const command =
+      "i=1; while [ \"$i\" -le 120 ]; do printf 'RV_KEY_SCROLL_LINE_%03d\\n' \"$i\"; i=$((i+1)); done; cat -v\r";
+    await postSessionInput(baseUrl, session.id, command);
 
     await new Promise((resolve, reject) => {
-      let sentCommand = false;
       const timeout = setTimeout(() => {
         reject(new Error("Timed out preparing terminal keyboard scroll history."));
       }, 10_000);
@@ -8123,16 +8120,6 @@ test("terminal keyboard scroll chords move history without stealing plain arrows
       websocket.on("message", (chunk) => {
         const payload = JSON.parse(String(chunk));
         websocketOutput += payload.data || "";
-
-        if (!sentCommand) {
-          websocket.send(
-            JSON.stringify({
-              type: "input",
-              data: "i=1; while [ \"$i\" -le 120 ]; do printf 'RV_KEY_SCROLL_LINE_%03d\\n' \"$i\"; i=$((i+1)); done; cat -v\r",
-            }),
-          );
-          sentCommand = true;
-        }
 
         if (websocketOutput.includes("RV_KEY_SCROLL_LINE_120") && websocketOutput.includes("cat -v")) {
           clearTimeout(timeout);
@@ -8237,10 +8224,12 @@ test("terminal wheel without xterm scrollback opens transcript instead of sendin
     assert.equal(createResponse.status, 201);
     const { session } = await createResponse.json();
     websocket = new WebSocket(`${baseUrl.replace("http", "ws")}/ws?sessionId=${session.id}`);
+    const command =
+      "printf '\\033[31mRV_TRANSCRIPT_RED\\033[0m\\n'; i=1; while [ \"$i\" -le 90 ]; do printf 'RV_TRANSCRIPT_LINE_%03d\\n' \"$i\"; i=$((i+1)); done; cat -v\r";
+    await postSessionInput(baseUrl, session.id, command);
 
     await new Promise((resolve, reject) => {
       let combined = "";
-      let sentCommand = false;
       const timeout = setTimeout(() => {
         reject(new Error("Timed out starting cat for the terminal transcript wheel smoke."));
       }, 10_000);
@@ -8252,16 +8241,6 @@ test("terminal wheel without xterm scrollback opens transcript instead of sendin
       websocket.on("message", (chunk) => {
         const payload = JSON.parse(String(chunk));
         combined += payload.data || "";
-
-        if (!sentCommand) {
-          websocket.send(
-            JSON.stringify({
-              type: "input",
-              data: "printf '\\033[31mRV_TRANSCRIPT_RED\\033[0m\\n'; i=1; while [ \"$i\" -le 90 ]; do printf 'RV_TRANSCRIPT_LINE_%03d\\n' \"$i\"; i=$((i+1)); done; cat -v\r",
-            }),
-          );
-          sentCommand = true;
-        }
 
         if (combined.includes("RV_TRANSCRIPT_LINE_090") && combined.includes("cat -v")) {
           clearTimeout(timeout);

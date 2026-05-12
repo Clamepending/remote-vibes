@@ -75,6 +75,10 @@ function renderIcon(icon, attrs = {}) {
   return `<svg ${attrText} aria-hidden="true">${childHtml}</svg>`;
 }
 
+function renderSwarmlabMark() {
+  return `<span class="swarmlab-brand-mark" aria-hidden="true"></span>`;
+}
+
 function clamp(value, min, max) {
   return Math.max(min, Math.min(max, value));
 }
@@ -119,7 +123,7 @@ function injectCanvasStyles(documentRef = document) {
   --canvas-text: #f3eee5;
   --canvas-muted: #aaa297;
   --canvas-faint: #786f65;
-  --canvas-accent: #e07a3f;
+  --canvas-accent: #f97316;
   --canvas-accent-2: #74c7b8;
   --canvas-danger: #e98277;
   background: var(--canvas-bg);
@@ -151,9 +155,16 @@ function injectCanvasStyles(documentRef = document) {
   place-items: center;
   width: 36px;
   height: 36px;
-  border: 1px solid rgba(224, 122, 63, 0.45);
-  background: rgba(224, 122, 63, 0.1);
-  color: var(--canvas-accent);
+  border: 1px solid rgba(249, 115, 22, 0.42);
+  background: rgba(249, 115, 22, 0.1);
+}
+.swarmlab-brand-mark {
+  display: block;
+  width: 18px;
+  height: 18px;
+  border-radius: 5px;
+  background: #f97316;
+  box-shadow: 0 0 18px rgba(249, 115, 22, 0.42);
 }
 .swarmlab-canvas-title strong {
   display: block;
@@ -206,10 +217,8 @@ function injectCanvasStyles(documentRef = document) {
   touch-action: none;
   background-color: #171715;
   background-image:
-    radial-gradient(circle at center, rgba(232, 222, 206, 0.16) 1px, transparent 1.2px),
-    radial-gradient(circle at 60% 20%, rgba(224, 122, 63, 0.08), transparent 28%),
-    radial-gradient(circle at 18% 78%, rgba(116, 199, 184, 0.07), transparent 24%);
-  background-size: 24px 24px, auto, auto;
+    radial-gradient(circle at center, rgba(232, 222, 206, 0.16) 1px, transparent 1.2px);
+  background-size: 24px 24px;
 }
 .swarmlab-canvas-stage.is-panning {
   cursor: grabbing;
@@ -471,6 +480,27 @@ function injectCanvasStyles(documentRef = document) {
   background: rgba(255, 255, 255, 0.035);
   color: var(--canvas-faint);
 }
+.swarmlab-canvas-app-preview {
+  display: grid;
+  grid-template-rows: auto minmax(0, 1fr);
+  gap: 9px;
+  min-height: 0;
+  height: 100%;
+}
+.swarmlab-canvas-app-frame-shell {
+  min-height: 0;
+  overflow: hidden;
+  border: 1px solid rgba(232, 222, 206, 0.14);
+  border-radius: 8px;
+  background: rgba(255, 255, 255, 0.035);
+}
+.swarmlab-canvas-app-frame {
+  display: block;
+  width: 100%;
+  height: 100%;
+  border: 0;
+  background: #0b0d0c;
+}
 .swarmlab-port-list {
   display: flex;
   flex-direction: column;
@@ -609,7 +639,7 @@ export function renderSwarmlabCanvasView() {
     <section class="dashboard-panel main-view swarmlab-canvas-view" data-main-view="canvas" data-main-scroll-key="canvas">
       <div class="swarmlab-canvas-toolbar">
         <div class="swarmlab-canvas-title">
-          <span class="swarmlab-canvas-title-icon" aria-hidden="true">${renderIcon(AppWindow)}</span>
+          <span class="swarmlab-canvas-title-icon" aria-hidden="true">${renderSwarmlabMark()}</span>
           <div>
             <strong>Swarmlab Canvas</strong>
             <span data-swarmlab-canvas-meta>spatial agent board</span>
@@ -1072,6 +1102,7 @@ function renderBrowserCard(card, layout) {
 
 function renderAppCard(card, layout) {
   const ports = Array.isArray(card.ref?.ports) ? card.ref.ports : [];
+  const embedUrl = String(card.ref?.embedUrl || "").trim();
   const portList = ports.length
     ? `
       <div class="swarmlab-port-list">
@@ -1086,6 +1117,30 @@ function renderAppCard(card, layout) {
     `
     : "";
   const action = renderCardAction(card);
+  if (embedUrl) {
+    const body = `
+      <div class="swarmlab-canvas-card-body swarmlab-canvas-app-preview">
+        <div class="swarmlab-canvas-browser-bar">
+          <span class="swarmlab-canvas-browser-dot"></span>
+          <span class="swarmlab-canvas-browser-dot"></span>
+          <span class="swarmlab-canvas-browser-dot"></span>
+          <span class="swarmlab-canvas-browser-url">${escapeHtml(embedUrl)}</span>
+        </div>
+        <div class="swarmlab-canvas-app-frame-shell">
+          <iframe
+            class="swarmlab-canvas-app-frame"
+            title="${escapeHtml(`${card.title} preview`)}"
+            src="${escapeHtml(embedUrl)}"
+            loading="lazy"
+            referrerpolicy="no-referrer"
+            sandbox="allow-forms allow-popups allow-same-origin allow-scripts"
+          ></iframe>
+        </div>
+      </div>
+    `;
+    const footer = `<div class="swarmlab-canvas-card-footer"><span>${escapeHtml(card.subtitle || "local app")}</span>${action}</div>`;
+    return cardFrame(card, layout, body, footer);
+  }
   const body = `
     <div class="swarmlab-canvas-card-body">
       ${card.detail ? `<div>${escapeHtml(card.detail)}</div>` : ""}

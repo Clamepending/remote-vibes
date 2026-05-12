@@ -274,7 +274,7 @@ test("local canvas view renders node snapshot cards and persists drag layout", a
     assert.doesNotMatch(rendered, /private|token=secret/);
     assert.match(rendered, /Worker B/);
     assert.match(rendered, /Approve deploy/);
-    assert.match(rendered, /Local apps/);
+    assert.match(rendered, /More local apps/);
     assert.match(rendered, /Vite app/);
     assert.match(rendered, /Result chart/);
     assert.match(rendered, /Agent Town/);
@@ -283,8 +283,9 @@ test("local canvas view renders node snapshot cards and persists drag layout", a
     assert.equal(await page.locator(".swarmlab-agent-chat-window").count(), 1);
     assert.equal(await page.locator(".swarmlab-canvas-card.is-remote").count(), 9);
     assert.equal(await page.locator(".swarmlab-canvas-floating-controls").count(), 1);
-    assert.equal(await page.locator(".swarmlab-canvas-card.is-app").count(), 4);
-    assert.equal(await page.locator(".swarmlab-canvas-card.is-app:not(.is-remote)").count(), 1);
+    assert.equal(await page.locator(".swarmlab-canvas-card.is-app").count(), 8);
+    assert.equal(await page.locator(".swarmlab-canvas-card.is-app:not(.is-remote)").count(), 5);
+    assert.ok(await page.locator(".swarmlab-canvas-app-frame").count() >= 4);
     assert.equal(
       await page.locator(".swarmlab-canvas-stage").getAttribute("data-swarmlab-canvas-board-id"),
       "fleet:mac-main",
