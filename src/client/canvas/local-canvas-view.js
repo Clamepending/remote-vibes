@@ -9,7 +9,6 @@ import {
   Grip,
   HardDrive,
   Image as ImageIcon,
-  Map as MapIcon,
   Maximize2,
   MessageSquare,
   Minus,
@@ -17,7 +16,6 @@ import {
   RefreshCw,
   RotateCcw,
   Send,
-  Terminal,
 } from "lucide";
 import {
   buildCanvasCards,
@@ -45,6 +43,8 @@ const CARD_TYPE_ICONS = {
   app: AppWindow,
   artifact: ImageIcon,
   browser: Globe2,
+  brain: MessageSquare,
+  handoff: Send,
   machine: HardDrive,
 };
 
@@ -527,6 +527,45 @@ function injectCanvasStyles(documentRef = document) {
 .swarmlab-port-row small {
   color: var(--canvas-faint);
 }
+.swarmlab-handoff-steps,
+.swarmlab-brain-notes {
+  display: flex;
+  flex-direction: column;
+  gap: 7px;
+  margin-top: 10px;
+}
+.swarmlab-handoff-step,
+.swarmlab-brain-note {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  gap: 8px;
+  align-items: center;
+  min-height: 28px;
+  padding: 7px 8px;
+  border: 1px solid rgba(232, 222, 206, 0.1);
+  border-radius: 7px;
+  background: rgba(255, 255, 255, 0.04);
+  color: #d9d0c4;
+}
+.swarmlab-brain-note {
+  grid-template-columns: minmax(0, 1fr);
+  text-decoration: none;
+}
+.swarmlab-brain-note:hover {
+  border-color: rgba(116, 199, 184, 0.4);
+}
+.swarmlab-handoff-step span,
+.swarmlab-brain-note strong,
+.swarmlab-brain-note span {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.swarmlab-handoff-step small,
+.swarmlab-brain-note span {
+  color: var(--canvas-faint);
+}
 .swarmlab-canvas-floating-controls {
   position: absolute;
   left: 50%;
@@ -650,10 +689,10 @@ export function renderSwarmlabCanvasView() {
             ${renderIcon(HardDrive)}
             <span>Add machine</span>
           </button>
-          <a class="swarmlab-canvas-button" href="?view=swarm" data-open-main-view="visual-interface">
-            ${renderIcon(MapIcon)}
-            <span>Agent Town</span>
-          </a>
+          <button class="swarmlab-canvas-button" type="button" data-swarmlab-canvas-new-handoff>
+            ${renderIcon(Send)}
+            <span>Handoff</span>
+          </button>
           <button class="swarmlab-canvas-button" type="button" data-swarmlab-canvas-refresh>
             ${renderIcon(RefreshCw)}
             <span>Refresh</span>
@@ -916,6 +955,22 @@ function shortPath(value) {
 }
 
 function renderCardAction(card) {
+  if (card.type === "handoff" && card.ref?.launchedSessionId && !card.ref?.remoteUrl) {
+    return `
+      <button class="swarmlab-canvas-open swarmlab-canvas-button" type="button" data-swarmlab-canvas-open-session="${escapeHtml(card.ref.launchedSessionId)}">
+        ${renderIcon(Bot)}
+        <span>Open agent</span>
+      </button>
+    `;
+  }
+  if (card.type === "handoff" && card.ref?.jobId && !card.ref?.remoteUrl) {
+    return `
+      <button class="swarmlab-canvas-open swarmlab-canvas-button" type="button" data-swarmlab-canvas-launch-handoff="${escapeHtml(card.ref.jobId)}">
+        ${renderIcon(Send)}
+        <span>Launch</span>
+      </button>
+    `;
+  }
   if (card.type === "agent" && card.ref?.sessionId) {
     return `
       <button class="swarmlab-canvas-open swarmlab-canvas-button" type="button" data-swarmlab-canvas-open-session="${escapeHtml(card.ref.sessionId)}">
@@ -1152,6 +1207,56 @@ function renderAppCard(card, layout) {
   return cardFrame(card, layout, body, footer);
 }
 
+function renderHandoffCard(card, layout) {
+  const steps = Array.isArray(card.ref?.steps) ? card.ref.steps : [];
+  const action = renderCardAction(card);
+  const body = `
+    <div class="swarmlab-canvas-card-body">
+      ${card.detail ? `<div>${escapeHtml(card.detail)}</div>` : ""}
+      <div class="swarmlab-handoff-steps">
+        ${steps.slice(0, 5).map((step) => `
+          <div class="swarmlab-handoff-step">
+            <span>${escapeHtml(step.title || step.id || "step")}</span>
+            <small>${escapeHtml(step.status || "pending")}</small>
+          </div>
+        `).join("")}
+      </div>
+      ${renderTags(card, { limit: 4 })}
+    </div>
+  `;
+  const footer = `<div class="swarmlab-canvas-card-footer"><span>${escapeHtml(card.meta || "machine handoff")}</span>${action}</div>`;
+  return cardFrame(card, layout, body, footer);
+}
+
+function knowledgeBaseHref(notePath = "") {
+  const normalized = String(notePath || "").trim();
+  const params = new URLSearchParams({ view: "library" });
+  if (normalized) {
+    params.set("note", normalized);
+  }
+  return `/?${params.toString()}`;
+}
+
+function renderBrainCard(card, layout) {
+  const notes = Array.isArray(card.ref?.notes) ? card.ref.notes : [];
+  const action = renderCardAction(card);
+  const body = `
+    <div class="swarmlab-canvas-card-body">
+      <div>${escapeHtml(`${card.ref?.noteCount || 0} markdown notes · ${card.ref?.edgeCount || 0} links`)}</div>
+      <div class="swarmlab-brain-notes">
+        ${notes.slice(0, 4).map((note) => `
+          <a class="swarmlab-brain-note" href="${escapeHtml(knowledgeBaseHref(note.path))}">
+            <strong>${escapeHtml(note.title || note.path || "Note")}</strong>
+            <span>${escapeHtml(note.excerpt || note.path || "")}</span>
+          </a>
+        `).join("")}
+      </div>
+    </div>
+  `;
+  const footer = `<div class="swarmlab-canvas-card-footer"><span>${escapeHtml(card.meta || "brain")}</span>${action}</div>`;
+  return cardFrame(card, layout, body, footer);
+}
+
 function renderStandardCard(card, layout) {
   const action = renderCardAction(card);
   const body = `
@@ -1168,6 +1273,8 @@ function renderCanvasCard(card, layout) {
   if (card.type === "agent") return renderAgentCard(card, layout);
   if (card.type === "browser") return renderBrowserCard(card, layout);
   if (card.type === "app") return renderAppCard(card, layout);
+  if (card.type === "handoff") return renderHandoffCard(card, layout);
+  if (card.type === "brain") return renderBrainCard(card, layout);
   return renderStandardCard(card, layout);
 }
 
@@ -1623,7 +1730,7 @@ function bindAgentComposers(root, options) {
 }
 
 function bindCanvasActions(root, options) {
-  const { onOpenSession, storage } = options;
+  const { onOpenSession, storage, fetchImpl, abortController, refresh } = options;
   bindViewportPanAndZoom(root, { storage });
   bindCardDrag(root, { storage });
   bindAgentComposers(root, options);
@@ -1635,6 +1742,32 @@ function bindCanvasActions(root, options) {
       const sessionId = button.getAttribute("data-swarmlab-canvas-open-session") || "";
       if (sessionId && typeof onOpenSession === "function") {
         onOpenSession(sessionId);
+      }
+    });
+  });
+
+  root.querySelectorAll("[data-swarmlab-canvas-launch-handoff]").forEach((button) => {
+    button.addEventListener("click", async (event) => {
+      event.preventDefault();
+      event.stopPropagation();
+      const jobId = button.getAttribute("data-swarmlab-canvas-launch-handoff") || "";
+      if (!jobId) return;
+      button.setAttribute("disabled", "true");
+      try {
+        const payload = await fetchJson(`/api/handoff/jobs/${encodeURIComponent(jobId)}/launch`, {
+          fetchImpl,
+          signal: abortController.signal,
+          method: "POST",
+          body: {},
+        });
+        if (payload?.session?.id && typeof onOpenSession === "function") {
+          onOpenSession(payload.session.id);
+        } else if (typeof refresh === "function") {
+          refresh();
+        }
+      } catch (error) {
+        button.removeAttribute("disabled");
+        button.textContent = error?.message || "Launch failed";
       }
     });
   });
@@ -1752,6 +1885,7 @@ export function mountSwarmlabCanvasView({
       abortController: currentController,
     });
   };
+  options.refresh = refresh;
 
   documentRef.querySelectorAll("[data-swarmlab-canvas-refresh]").forEach((button) => {
     button.addEventListener("click", (event) => {
@@ -1772,6 +1906,33 @@ export function mountSwarmlabCanvasView({
       await registerFleetNodeUrl(url, {
         fetchImpl,
         source: "manual",
+      });
+      refresh();
+    });
+  });
+
+  documentRef.querySelectorAll("[data-swarmlab-canvas-new-handoff]").forEach((button) => {
+    button.addEventListener("click", async (event) => {
+      event.preventDefault();
+      const objective = windowRef?.prompt?.("What should an agent move across machines?") || "";
+      if (!objective.trim()) {
+        return;
+      }
+      const targetText = windowRef?.prompt?.("Target SSH host or Swarmlab URL") || "";
+      if (!targetText.trim()) {
+        return;
+      }
+      const targetUrl = targetText.includes("@") ? "" : normalizeRemoteNodeUrl(targetText);
+      await fetchJson("/api/handoff/jobs", {
+        fetchImpl,
+        method: "POST",
+        body: {
+          objective,
+          title: objective.split(/\s+/u).slice(0, 8).join(" "),
+          target: targetUrl
+            ? { url: targetUrl, label: remoteNodeHost(targetUrl) }
+            : { sshTarget: targetText.trim(), label: targetText.trim() },
+        },
       });
       refresh();
     });

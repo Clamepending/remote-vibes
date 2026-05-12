@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import { mkdtemp, readFile, rm } from "node:fs/promises";
+import { mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import test from "node:test";
@@ -18,6 +18,7 @@ const shellProvider = {
 function createBuildingHubService() {
   return {
     async refresh() {},
+    restart() {},
     listBuildings() { return []; },
     listLayouts() { return []; },
     listRecipes() { return []; },
@@ -34,6 +35,7 @@ function createNoopService(status = {}) {
     async shutdown() {},
     start() {},
     stop() {},
+    restart() {},
     stopLaunchedProcess() {},
     getStatus() { return status; },
     getWebhookUrl() { return ""; },
@@ -94,6 +96,7 @@ async function startNodeRoutesApp(overrides = {}) {
     wikiBackupServiceFactory: () => ({
       start() {},
       stop() {},
+      setConfig() {},
       getStatus() { return { enabled: false }; },
       async runBackup() {},
     }),
@@ -306,6 +309,64 @@ test("/api/fleet/nodes persists normalized machine URLs without exposing query s
     const finalResponse = await fetch(`${started.baseUrl}/api/fleet/nodes`);
     assert.equal(finalResponse.status, 200);
     assert.deepEqual((await finalResponse.json()).nodes, []);
+  } finally {
+    await started.cleanup();
+  }
+});
+
+test("/api/handoff/jobs persists machine handoffs and exposes brain summary in node snapshots", async () => {
+  const started = await startNodeRoutesApp();
+  try {
+    const root = path.dirname(started.stateDir);
+    const brainDir = path.join(root, "brain");
+    await mkdir(brainDir, { recursive: true });
+    await writeFile(
+      path.join(brainDir, "index.md"),
+      "# Machine Brain\n\n**TAKEAWAY**: GPU jobs should publish a manifest before Pi validation.\n\nSee [[pi-deploy]].\n",
+      "utf8",
+    );
+    await writeFile(path.join(brainDir, "pi-deploy.md"), "# Pi Deploy\n\nSmoke test notes.\n", "utf8");
+
+    const settingsResponse = await fetch(`${started.baseUrl}/api/settings`, {
+      method: "PATCH",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ wikiPath: brainDir, wikiPathConfigured: true }),
+    });
+    assert.equal(settingsResponse.status, 200);
+
+    const createResponse = await fetch(`${started.baseUrl}/api/handoff/jobs`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        title: "GPU train to Pi",
+        objective: "Train on the GPU cluster and validate the exported model on the Pi.",
+        target: {
+          label: "Home Pi",
+          sshTarget: "pi@home-raspi",
+          url: "https://pi.example.test/private?token=route-secret",
+        },
+        commands: ["python train.py --epochs 1"],
+      }),
+    });
+    assert.equal(createResponse.status, 201);
+    const createBody = await createResponse.json();
+    assert.equal(createBody.job.target.baseUrl, "https://pi.example.test");
+    assert.doesNotMatch(JSON.stringify(createBody), /route-secret|\/private/);
+
+    const listResponse = await fetch(`${started.baseUrl}/api/handoff/jobs`);
+    assert.equal(listResponse.status, 200);
+    assert.equal((await listResponse.json()).jobs.length, 1);
+
+    const snapshotResponse = await fetch(`${started.baseUrl}/api/node/snapshot?mode=privileged`);
+    assert.equal(snapshotResponse.status, 200);
+    const snapshotBody = await snapshotResponse.json();
+    assert.equal(snapshotBody.snapshot.counts.handoffJobs, 1);
+    assert.equal(snapshotBody.snapshot.handoffJobs[0].target.sshTarget, "pi@home-raspi");
+    assert.equal(snapshotBody.snapshot.capabilities.handoffCount, 1);
+    assert.ok(snapshotBody.snapshot.brain.noteCount >= 2);
+    assert.ok(snapshotBody.snapshot.brain.notes.some((note) => note.title === "Machine Brain"));
+    assert.ok(snapshotBody.snapshot.capabilities.roles.includes("brain-host"));
+    assert.ok(snapshotBody.snapshot.capabilities.roles.includes("handoff-coordinator"));
   } finally {
     await started.cleanup();
   }

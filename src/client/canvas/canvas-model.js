@@ -11,6 +11,10 @@ const APP_CARD_WIDTH = 430;
 const APP_CARD_HEIGHT = 310;
 const APP_SUMMARY_CARD_WIDTH = 320;
 const APP_SUMMARY_CARD_HEIGHT = 190;
+const HANDOFF_CARD_WIDTH = 360;
+const HANDOFF_CARD_HEIGHT = 230;
+const BRAIN_CARD_WIDTH = 360;
+const BRAIN_CARD_HEIGHT = 260;
 const MAX_CANVAS_APP_CARDS = 4;
 const COMMON_UI_PORTS = new Set([
   3000, 3001, 3100, 4173, 4178, 5000, 5050, 5173, 5178, 6006, 7860, 7861,
@@ -158,6 +162,8 @@ export function normalizeNodeSnapshot(payload) {
   const canvases = asArray(snapshot.canvases || snapshot.artifacts || input.canvases || input.artifacts);
   const projects = asArray(snapshot.projects || input.projects);
   const buildings = asArray(snapshot.buildings || input.buildings);
+  const handoffJobs = asArray(snapshot.handoffJobs || snapshot.jobs || input.handoffJobs || input.jobs);
+  const brain = asObject(snapshot.brain || input.brain);
   const system = asObject(snapshot.system || input.system);
   const capabilities = asObject(snapshot.capabilities || input.capabilities);
   const generatedAt = normalizeOptionalDate(snapshot.generatedAt || input.generatedAt) || new Date(0).toISOString();
@@ -185,6 +191,8 @@ export function normalizeNodeSnapshot(payload) {
     projects,
     system,
     buildings,
+    handoffJobs,
+    brain,
     counts: {
       sessions: countFromSummary(snapshot, "sessions", sessions.length),
       browserSessions: countFromSummary(snapshot, "browserSessions", browserSessions.length),
@@ -193,6 +201,8 @@ export function normalizeNodeSnapshot(payload) {
       artifacts: countFromSummary(snapshot, "artifacts", canvases.length),
       projects: countFromSummary(snapshot, "projects", projects.length),
       buildings: countFromSummary(snapshot, "buildings", buildings.length),
+      handoffJobs: countFromSummary(snapshot, "handoffJobs", handoffJobs.length),
+      brainNotes: countFromSummary(snapshot, "brainNotes", Number(brain.noteCount || brain.notes?.length || 0)),
     },
     generatedAt,
   };
@@ -384,23 +394,98 @@ function artifactCard(canvas, index, machineId) {
   });
 }
 
+function handoffCard(job, index, machineId) {
+  const id = normalizeText(pickFirst(job.id, job.title), `handoff-${index + 1}`);
+  const target = asObject(job.target);
+  const steps = asArray(job.steps);
+  const stepSummary = steps.length
+    ? steps
+      .slice(0, 4)
+      .map((step) => `${normalizeText(step.title, "step")}: ${normalizeText(step.status, "pending")}`)
+      .join(" · ")
+    : "";
+  return makeCard({
+    id: `handoff:${id}`,
+    type: "handoff",
+    title: pickFirst(job.title, "Machine handoff"),
+    subtitle: pickFirst(target.label, target.sshTarget, target.url, "target machine"),
+    status: pickFirst(job.status, "planned"),
+    detail: pickFirst(job.objectivePreview, job.objective, stepSummary),
+    meta: normalizeOptionalDate(pickFirst(job.updatedAt, job.createdAt)),
+    tags: [
+      target.sshTarget ? "ssh" : "",
+      target.url ? "canvas" : "",
+      job.providerId || "",
+      `${steps.length || 0} steps`,
+    ],
+    href: job.launchedSessionId ? "" : "",
+    ref: {
+      machineId,
+      jobId: id,
+      target,
+      launchedSessionId: job.launchedSessionId || "",
+      actionLabel: job.launchedSessionId ? "Open agent" : "Launch",
+      steps,
+    },
+    width: HANDOFF_CARD_WIDTH,
+    height: HANDOFF_CARD_HEIGHT,
+  });
+}
+
+function brainCard(brain, machineId) {
+  const notes = asArray(brain.notes);
+  if (!notes.length && !Number(brain.noteCount || 0)) {
+    return null;
+  }
+  const visible = notes.slice(0, 4).map((note) => ({
+    title: normalizeText(note.title || note.relativePath, "Note"),
+    path: normalizeText(note.relativePath),
+    excerpt: normalizeText(note.takeaway || note.excerpt),
+  }));
+  return makeCard({
+    id: "brain:markdown",
+    type: "brain",
+    title: "Markdown brain",
+    subtitle: normalizeText(brain.relativeRoot || "library"),
+    status: `${Number(brain.noteCount || notes.length) || 0} notes`,
+    detail: visible.map((note) => note.title).join(" · "),
+    meta: `${Number(brain.edgeCount || 0) || 0} links`,
+    tags: visible.map((note) => note.path).filter(Boolean).slice(0, 4),
+    href: "/?view=library",
+    ref: {
+      machineId,
+      notes: visible,
+      noteCount: Number(brain.noteCount || notes.length) || 0,
+      edgeCount: Number(brain.edgeCount || 0) || 0,
+      actionLabel: "Open brain",
+    },
+    width: BRAIN_CARD_WIDTH,
+    height: BRAIN_CARD_HEIGHT,
+  });
+}
+
 function machineCard(snapshot) {
   const node = snapshot.node;
   const system = snapshot.system || {};
   const cpu = system.cpu?.usagePercent ?? system.cpuPercent ?? system.cpuUsagePercent;
   const memory = system.memory?.usagePercent ?? system.memoryPercent ?? system.memoryUsagePercent;
+  const roles = compactTags(snapshot.capabilities?.roles || []);
+  const gpuCount = Number(snapshot.capabilities?.gpuCount || snapshot.system?.gpuCount || 0);
+  const providerCount = Number(snapshot.capabilities?.providerCount || 0);
   return makeCard({
     id: `machine:${node.id}`,
     type: "machine",
     title: node.name,
     subtitle: compactTags([node.os, node.version]).join(" / "),
     status: node.status,
-    detail: `${snapshot.counts.sessions} sessions, ${snapshot.counts.ports} apps, ${snapshot.counts.approvals} approvals`,
+    detail: `${snapshot.counts.sessions} sessions, ${snapshot.counts.ports} apps, ${snapshot.counts.handoffJobs} handoffs`,
     meta: node.lastSeenAt || snapshot.generatedAt,
     tags: [
       Number.isFinite(Number(cpu)) ? `cpu ${Math.round(Number(cpu))}%` : "",
       Number.isFinite(Number(memory)) ? `mem ${Math.round(Number(memory))}%` : "",
-      `${snapshot.counts.artifacts} artifacts`,
+      gpuCount ? `${gpuCount} gpu${gpuCount === 1 ? "" : "s"}` : "",
+      providerCount ? `${providerCount} providers` : "",
+      ...roles,
     ],
     ref: { machineId: node.id },
     width: 320,
@@ -412,14 +497,17 @@ export function buildCanvasCards(payload) {
   const snapshot = normalizeNodeSnapshot(payload);
   const machineId = snapshot.node.id;
   const portCards = buildPortCards(snapshot.ports, machineId);
-  return [
+  const cards = [
     machineCard(snapshot),
+    brainCard(snapshot.brain, machineId),
     ...snapshot.actionItems.map((item, index) => approvalCard(item, index, machineId)),
+    ...snapshot.handoffJobs.map((job, index) => handoffCard(job, index, machineId)),
     ...snapshot.sessions.map((session, index) => sessionCard(session, index, machineId)),
     ...snapshot.browserSessions.map((session, index) => browserCard(session, index, machineId)),
     ...portCards,
     ...snapshot.canvases.map((canvas, index) => artifactCard(canvas, index, machineId)),
   ];
+  return cards.filter(Boolean);
 }
 
 function fallbackPositionForCard(card, index, counters) {
@@ -455,10 +543,22 @@ function fallbackPositionForCard(card, index, counters) {
       y: 330 + next * 172,
     };
   }
+  if (type === "handoff") {
+    return {
+      x: 120,
+      y: 330 + next * 250,
+    };
+  }
+  if (type === "brain") {
+    return {
+      x: 120,
+      y: 590 + next * 280,
+    };
+  }
   if (type === "app") {
     return {
       x: 120,
-      y: 850 + next * 260,
+      y: 900 + next * 260,
     };
   }
   if (type === "artifact") {

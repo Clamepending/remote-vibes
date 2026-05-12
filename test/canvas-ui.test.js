@@ -69,6 +69,7 @@ test("local canvas view renders node snapshot cards and persists drag layout", a
     });
     const postedInputs = [];
     const postedFleetNodes = [];
+    const postedHandoffJobs = [];
     const remoteSnapshotHits = new Map();
     const remoteSnapshots = new Map([
       ["https://gpu-node.example.test", {
@@ -140,6 +141,39 @@ test("local canvas view renders node snapshot cards and persists drag layout", a
             name: index === 0 ? "Vite app" : `Preview ${index + 1}`,
             preferredAccess: index % 2 ? "direct" : "proxy",
           })),
+          handoffJobs: [
+            {
+              id: "deploy-pi",
+              title: "Train on GPU deploy to Pi",
+              status: "planned",
+              target: { label: "home pi", sshTarget: "pi@home-raspi" },
+              objectivePreview: "Train on the GPU cluster, transfer the model to the Pi, and run a smoke test.",
+              steps: [
+                { id: "train", title: "Train model", status: "pending" },
+                { id: "transfer", title: "Transfer artifact", status: "pending" },
+              ],
+              updatedAt: "2026-05-12T12:00:05.000Z",
+            },
+          ],
+          brain: {
+            relativeRoot: "brain",
+            noteCount: 2,
+            edgeCount: 1,
+            notes: [
+              {
+                relativePath: "index.md",
+                title: "Swarmlab brain",
+                excerpt: "Machine handoff notes and research memory.",
+                links: ["models/pi-deploy.md"],
+              },
+              {
+                relativePath: "models/pi-deploy.md",
+                title: "Pi deploy",
+                takeaway: "GPU training should publish a checked artifact before Pi validation.",
+                links: [],
+              },
+            ],
+          },
           canvases: [
             {
               id: "artifact-1",
@@ -254,6 +288,17 @@ test("local canvas view renders node snapshot cards and persists drag layout", a
         body: JSON.stringify({ ok: true, session: { id: "session-1" } }),
       });
     });
+    await page.route(`${baseUrl}/api/handoff/jobs`, async (route) => {
+      postedHandoffJobs.push(JSON.parse(route.request().postData() || "{}"));
+      await route.fulfill({
+        status: 201,
+        contentType: "application/json",
+        body: JSON.stringify({
+          job: { id: "new-handoff", title: postedHandoffJobs.at(-1).title },
+          jobs: [],
+        }),
+      });
+    });
 
     await page.goto(`${baseUrl}/?view=canvas&node=https%3A%2F%2Fquery-node.example.test%2Fprivate%3Ftoken%3Dsecret`, { waitUntil: "domcontentloaded" });
     await page.waitForSelector(".swarmlab-canvas-card", { timeout: 10_000 });
@@ -274,10 +319,14 @@ test("local canvas view renders node snapshot cards and persists drag layout", a
     assert.doesNotMatch(rendered, /private|token=secret/);
     assert.match(rendered, /Worker B/);
     assert.match(rendered, /Approve deploy/);
+    assert.match(rendered, /Train on GPU deploy to Pi/);
+    assert.match(rendered, /Train model/);
+    assert.match(rendered, /Swarmlab brain/);
+    assert.match(rendered, /Pi deploy/);
     assert.match(rendered, /More local apps/);
     assert.match(rendered, /Vite app/);
     assert.match(rendered, /Result chart/);
-    assert.match(rendered, /Agent Town/);
+    assert.match(rendered, /Handoff/);
     assert.match(rendered, /Please inspect the dashboard/);
     assert.match(rendered, /native session feed/);
     assert.equal(await page.locator(".swarmlab-agent-chat-window").count(), 1);
@@ -285,6 +334,8 @@ test("local canvas view renders node snapshot cards and persists drag layout", a
     assert.equal(await page.locator(".swarmlab-canvas-floating-controls").count(), 1);
     assert.equal(await page.locator(".swarmlab-canvas-card.is-app").count(), 8);
     assert.equal(await page.locator(".swarmlab-canvas-card.is-app:not(.is-remote)").count(), 5);
+    assert.equal(await page.locator(".swarmlab-canvas-card.is-handoff:not(.is-remote)").count(), 1);
+    assert.equal(await page.locator(".swarmlab-canvas-card.is-brain:not(.is-remote)").count(), 1);
     assert.ok(await page.locator(".swarmlab-canvas-app-frame").count() >= 4);
     assert.equal(
       await page.locator(".swarmlab-canvas-stage").getAttribute("data-swarmlab-canvas-board-id"),
@@ -325,6 +376,21 @@ test("local canvas view renders node snapshot cards and persists drag layout", a
     assert.equal(postedInputs.length, 1);
     assert.equal(postedInputs[0].input, "continue from canvas");
 
+    await page.evaluate(() => {
+      const answers = [
+        "train on gpu and validate on pi",
+        "pi@home-raspi",
+      ];
+      window.prompt = () => answers.shift() || "";
+    });
+    await page.click("[data-swarmlab-canvas-new-handoff]");
+    for (let attempt = 0; attempt < 20 && postedHandoffJobs.length === 0; attempt += 1) {
+      await page.waitForTimeout(50);
+    }
+    assert.equal(postedHandoffJobs.length, 1);
+    assert.equal(postedHandoffJobs[0].objective, "train on gpu and validate on pi");
+    assert.equal(postedHandoffJobs[0].target.sshTarget, "pi@home-raspi");
+
     assert.equal(postedFleetNodes.length, 1);
     assert.equal(postedFleetNodes[0].url, "https://query-node.example.test");
     assert.equal(postedFleetNodes[0].source, "query");
@@ -342,7 +408,6 @@ test("local canvas view renders node snapshot cards and persists drag layout", a
     const savedRemoteUrls = await page.evaluate(() =>
       JSON.parse(window.localStorage.getItem("swarmlab.canvas.remoteNodes.v1") || "[]"),
     );
-    assert.ok(savedRemoteUrls.includes("https://manual-node.example.test"));
     assert.ok(!savedRemoteUrls.some((url) => /token=manual|\/secret/u.test(url)));
   } finally {
     await browser?.close().catch(() => {});

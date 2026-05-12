@@ -81,6 +81,7 @@ import { runVideoMemoryGitPull, startPeriodicVideoMemoryGitPull } from "./videom
 import { WalletService } from "./wallet-service.js";
 import { WikiBackupService } from "./wiki-backup.js";
 import { FleetRegistryStore } from "./node/fleet-registry.js";
+import { HandoffJobStore, buildHandoffLaunchPrompt } from "./node/handoff-job-store.js";
 import { NodeIdentityStore } from "./node/identity-store.js";
 import { buildRouteClass, createLocalOrNodeTokenMiddleware, isLocalRequest } from "./node/security.js";
 import { NodeSnapshotService } from "./node/snapshot-service.js";
@@ -1643,9 +1644,11 @@ export async function createVibeResearchApp({
   const portAliasStore = new PortAliasStore({ stateDir });
   const nodeIdentityStore = new NodeIdentityStore({ stateDir });
   const fleetRegistryStore = new FleetRegistryStore({ stateDir });
+  const handoffJobStore = new HandoffJobStore({ stateDir });
   await settingsStore.initialize();
   await nodeIdentityStore.initialize();
   await fleetRegistryStore.initialize();
+  await handoffJobStore.initialize();
   const accountTokenStore =
     typeof accountTokenStoreFactory === "function"
       ? accountTokenStoreFactory({ stateDir })
@@ -2030,6 +2033,47 @@ export async function createVibeResearchApp({
     return Promise.all(namedPorts.map((entry) => decoratePortForAccess(entry, serveStatus)));
   }
 
+  async function getNodeBrainSnapshot() {
+    const wikiPath = settingsStore.settings.wikiPath;
+    if (!wikiPath) {
+      return {
+        rootPath: "",
+        relativeRoot: settingsStore.getState().wikiRelativeRoot,
+        noteCount: 0,
+        edgeCount: 0,
+        notes: [],
+        edges: [],
+      };
+    }
+
+    const knowledgeBase = await listKnowledgeBase({
+      relativeRoot: settingsStore.getState().wikiRelativeRoot,
+      rootPath: wikiPath,
+    });
+    const notes = Array.isArray(knowledgeBase.notes) ? knowledgeBase.notes : [];
+    const rankedNotes = [...notes]
+      .sort((left, right) => {
+        const leftIndex = /(^|\/)index\.md$/iu.test(left.relativePath || "") ? 0 : 1;
+        const rightIndex = /(^|\/)index\.md$/iu.test(right.relativePath || "") ? 0 : 1;
+        if (leftIndex !== rightIndex) return leftIndex - rightIndex;
+        const leftSignal = (left.takeaway ? 0 : 1) + (left.headlineImageUrl ? 0 : 1);
+        const rightSignal = (right.takeaway ? 0 : 1) + (right.headlineImageUrl ? 0 : 1);
+        if (leftSignal !== rightSignal) return leftSignal - rightSignal;
+        return String(left.relativePath || "").localeCompare(String(right.relativePath || ""));
+      })
+      .slice(0, 12);
+
+    return {
+      rootPath: knowledgeBase.rootPath,
+      relativeRoot: knowledgeBase.relativeRoot,
+      skippedEntries: knowledgeBase.skippedEntries,
+      noteCount: notes.length,
+      edgeCount: Array.isArray(knowledgeBase.edges) ? knowledgeBase.edges.length : 0,
+      notes: rankedNotes,
+      edges: Array.isArray(knowledgeBase.edges) ? knowledgeBase.edges.slice(0, 80) : [],
+    };
+  }
+
   const hardenedRouteClasses = Object.freeze([
     buildRouteClass({
       method: "PATCH",
@@ -2074,6 +2118,12 @@ export async function createVibeResearchApp({
       description: "Controls or forks local sessions.",
     }),
     buildRouteClass({
+      method: "POST/PATCH/DELETE",
+      path: "/api/handoff/jobs*",
+      classification: "local-auth",
+      description: "Creates and launches machine-to-machine agent handoffs.",
+    }),
+    buildRouteClass({
       method: "POST",
       path: "/api/terminate",
       classification: "local-auth",
@@ -2103,6 +2153,8 @@ export async function createVibeResearchApp({
       path: projectPath,
       status: "known",
     })),
+    handoffJobsProvider: () => handoffJobStore.listJobs(),
+    brainProvider: getNodeBrainSnapshot,
   });
   const nodeHeartbeatService =
     typeof nodeHeartbeatServiceFactory === "function"
@@ -3742,6 +3794,86 @@ export async function createVibeResearchApp({
       nodes: fleetRegistryStore.listNodes(),
       ...(removed ? {} : { error: "Fleet node not found." }),
     });
+  });
+
+  function pickHandoffProviderId(requestedProviderId = "") {
+    const requested = String(requestedProviderId || "").trim();
+    const candidates = [
+      requested,
+      defaultProviderId,
+      ...providers.map((provider) => provider.id),
+    ].filter(Boolean);
+    for (const candidate of candidates) {
+      const provider = providers.find((entry) => entry.id === candidate);
+      if (provider?.available && provider.id !== "shell") {
+        return provider.id;
+      }
+    }
+    return "";
+  }
+
+  app.get("/api/handoff/jobs", requireLocalOrNodeToken, (_request, response) => {
+    response.setHeader("Cache-Control", "no-store");
+    response.json({ jobs: handoffJobStore.listJobs() });
+  });
+
+  app.post("/api/handoff/jobs", requireLocalOrNodeToken, async (request, response) => {
+    try {
+      const job = await handoffJobStore.createJob(request.body || {}, {
+        sourceNodeId: nodeIdentityStore.getRecord().nodeId,
+      });
+      response.status(201).json({ job, jobs: handoffJobStore.listJobs() });
+    } catch (error) {
+      response.status(error.statusCode || 400).json({ error: error.message || "Could not create handoff job." });
+    }
+  });
+
+  app.patch("/api/handoff/jobs/:jobId", requireLocalOrNodeToken, async (request, response) => {
+    try {
+      const job = await handoffJobStore.updateJob(request.params.jobId, request.body || {});
+      response.json({ job, jobs: handoffJobStore.listJobs() });
+    } catch (error) {
+      response.status(error.statusCode || 400).json({ error: error.message || "Could not update handoff job." });
+    }
+  });
+
+  app.delete("/api/handoff/jobs/:jobId", requireLocalOrNodeToken, async (request, response) => {
+    try {
+      await handoffJobStore.archiveJob(request.params.jobId);
+      response.json({ archived: true, jobs: handoffJobStore.listJobs() });
+    } catch (error) {
+      response.status(error.statusCode || 400).json({ error: error.message || "Could not archive handoff job." });
+    }
+  });
+
+  app.post("/api/handoff/jobs/:jobId/launch", requireLocalOrNodeToken, async (request, response) => {
+    try {
+      const job = handoffJobStore.getJob(request.params.jobId);
+      if (!job) {
+        response.status(404).json({ error: "Handoff job not found." });
+        return;
+      }
+      const providerId = pickHandoffProviderId(request.body?.providerId || job.providerId);
+      if (!providerId) {
+        response.status(503).json({ error: "No installed coding-agent provider is available for handoff launch." });
+        return;
+      }
+      const identity = nodeIdentityStore.getPublicIdentity({ includeHostname: true });
+      const session = sessionManager.createSession({
+        providerId,
+        name: `Handoff: ${job.title}`,
+        cwd: job.workspacePath || sessionDefaultCwd || cwd,
+        occupationId: agentPromptStore.selectedPromptId,
+        initialPrompt: buildHandoffLaunchPrompt(job, {
+          localNodeName: identity.hostname || "this machine",
+        }),
+        initialPromptDelayMs: request.body?.initialPromptDelayMs,
+      });
+      const updatedJob = await handoffJobStore.markLaunched(job.id, session.id, providerId);
+      response.status(201).json({ job: updatedJob, session });
+    } catch (error) {
+      response.status(error.statusCode || 400).json({ error: error.message || "Could not launch handoff job." });
+    }
   });
 
   app.get("/api/node/account/status", requireLocalOrNodeToken, (_request, response) => {

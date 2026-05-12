@@ -35923,6 +35923,7 @@ function renderShell() {
   ensureVisualGameSimulationLoop();
 
   const activeSession = state.sessions.find((session) => session.id === state.activeSessionId) || null;
+  const showSidebarTools = state.currentView !== "canvas";
   syncWorkspaceTabs({ persist: true });
   syncWorkspaceTabGroups({ persist: true });
 
@@ -35954,7 +35955,7 @@ function renderShell() {
 
           ${renderSidebarDevicesSection()}
 
-          <section class="sidebar-section">
+          ${showSidebarTools ? `<section class="sidebar-section">
             <div class="section-head" data-workspace-files-header>
               <span>files</span>
               <div class="section-actions">
@@ -35980,10 +35981,10 @@ function renderShell() {
               <button class="ghost-button file-root-submit" type="button" data-folder-picker-target="files">choose</button>
             </form>
             <div class="file-tree" id="files-tree" data-files-root="${escapeHtml(state.filesRoot || "")}">${renderFileTree()}</div>
-          </section>
+          </section>` : ""}
 
           ${
-            isLocalhostAppsEnabled()
+            showSidebarTools && isLocalhostAppsEnabled()
               ? `
           <section class="sidebar-section ports-section">
             <div class="section-head">

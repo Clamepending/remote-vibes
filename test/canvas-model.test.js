@@ -25,6 +25,8 @@ test("normalizeNodeSnapshot accepts the privileged node snapshot shape", () => {
     browserSessions: [{ id: "b1", title: "Browser task", status: "running" }],
     actionItems: [{ id: "a1", title: "Approve deploy", priority: "high" }],
     ports: [{ port: 5173, name: "Vite", preferredUrl: "http://127.0.0.1:5173" }],
+    handoffJobs: [{ id: "h1", title: "GPU to Pi", target: { label: "Pi" } }],
+    brain: { noteCount: 1, notes: [{ relativePath: "index.md", title: "Brain index" }] },
     canvases: [{ id: "c1", title: "Result chart", imagePath: "results/chart.png" }],
     generatedAt: "2026-05-12T12:00:00.000Z",
   });
@@ -35,12 +37,27 @@ test("normalizeNodeSnapshot accepts the privileged node snapshot shape", () => {
   assert.equal(snapshot.counts.browserSessions, 1);
   assert.equal(snapshot.counts.approvals, 1);
   assert.equal(snapshot.counts.ports, 1);
+  assert.equal(snapshot.counts.handoffJobs, 1);
+  assert.equal(snapshot.counts.brainNotes, 1);
   assert.equal(snapshot.counts.artifacts, 1);
 });
 
-test("buildCanvasCards renders machine, session, browser, approval, app, and artifact cards", () => {
+test("buildCanvasCards renders machine, brain, handoff, session, browser, approval, app, and artifact cards", () => {
   const cards = buildCanvasCards({
     node: { id: "node-1", name: "GPU box", status: "online" },
+    brain: {
+      noteCount: 2,
+      edgeCount: 1,
+      notes: [{ relativePath: "index.md", title: "Brain index", excerpt: "Durable research state" }],
+    },
+    handoffJobs: [{
+      id: "gpu-pi",
+      title: "GPU to Pi deploy",
+      status: "planned",
+      target: { label: "Pi", sshTarget: "pi@home" },
+      objectivePreview: "Train on GPU, deploy on Pi.",
+      steps: [{ id: "train", title: "Train", status: "pending" }],
+    }],
     sessions: [{ id: "agent-1", name: "Trainer", providerId: "codex", status: "running", cwd: "/models" }],
     browserSessions: [{ id: "browser-1", name: "Eval browser", status: "running", latestSnapshot: { url: "https://example.test" } }],
     actionItems: [{ id: "approval-1", title: "Ship build", detail: "Review production deploy", href: "?view=agent-inbox" }],
@@ -50,8 +67,10 @@ test("buildCanvasCards renders machine, session, browser, approval, app, and art
 
   assert.deepEqual(
     cards.map((card) => card.type),
-    ["machine", "approval", "agent", "browser", "app", "artifact"],
+    ["machine", "brain", "approval", "handoff", "agent", "browser", "app", "artifact"],
   );
+  assert.equal(cards.find((card) => card.type === "brain")?.ref.noteCount, 2);
+  assert.equal(cards.find((card) => card.type === "handoff")?.ref.target.sshTarget, "pi@home");
   assert.equal(cards.find((card) => card.type === "agent")?.ref.sessionId, "agent-1");
   assert.equal(cards.find((card) => card.type === "app")?.href, "/proxy/6006/");
   assert.equal(cards.find((card) => card.type === "artifact")?.detail, "Best run so far");

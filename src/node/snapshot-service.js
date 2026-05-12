@@ -263,6 +263,104 @@ function summarizeBuilding(building, mode) {
   };
 }
 
+function summarizeHandoffJob(job, mode) {
+  const base = {
+    id: String(job?.id || ""),
+    kind: String(job?.kind || "agent-handoff"),
+    status: String(job?.status || "planned"),
+    sourceNodeId: String(job?.sourceNodeId || ""),
+    target: {
+      nodeId: String(job?.target?.nodeId || ""),
+      url: mode === "privileged" ? String(job?.target?.url || job?.target?.baseUrl || "") : "",
+    },
+    stepCounts: countByStatus(arrayOrEmpty(job?.steps).map((step) => ({ status: step?.status || "pending" }))),
+    createdAt: job?.createdAt || null,
+    updatedAt: job?.updatedAt || null,
+  };
+
+  if (mode === "redacted") {
+    return {
+      ...base,
+      title: REDACTED_NAME,
+      objectivePreview: "",
+      target: {
+        ...base.target,
+        label: REDACTED_NAME,
+        sshTarget: "",
+      },
+      commandCount: arrayOrEmpty(job?.commands).length,
+      artifactCount: arrayOrEmpty(job?.artifactPaths).length,
+      steps: arrayOrEmpty(job?.steps).slice(0, 8).map((step) => ({
+        id: String(step?.id || ""),
+        title: REDACTED_NAME,
+        status: String(step?.status || "pending"),
+      })),
+    };
+  }
+
+  return {
+    ...base,
+    title: compactText(job?.title || "Machine handoff", 140),
+    objectivePreview: compactText(job?.objective || "", 360),
+    target: {
+      ...base.target,
+      label: compactText(job?.target?.label || job?.target?.sshTarget || job?.target?.url || "Target machine", 140),
+      sshTarget: compactText(job?.target?.sshTarget || "", 160),
+    },
+    providerId: String(job?.providerId || ""),
+    workspacePath: job?.workspacePath || "",
+    artifactPaths: arrayOrEmpty(job?.artifactPaths).map((entry) => compactText(entry, 500)).slice(0, 20),
+    commands: arrayOrEmpty(job?.commands).map((entry) => compactText(entry, 1_500)).slice(0, 12),
+    launchedSessionId: String(job?.launchedSessionId || ""),
+    steps: arrayOrEmpty(job?.steps).slice(0, 12).map((step) => ({
+      id: String(step?.id || ""),
+      title: compactText(step?.title || "Step", 120),
+      status: String(step?.status || "pending"),
+      command: compactText(step?.command || "", 1_500),
+      artifactPath: compactText(step?.artifactPath || "", 500),
+      note: compactText(step?.note || "", 1_000),
+    })),
+  };
+}
+
+function summarizeBrain(brain, mode) {
+  const notes = arrayOrEmpty(brain?.notes);
+  const edges = arrayOrEmpty(brain?.edges);
+  const base = {
+    relativeRoot: String(brain?.relativeRoot || ""),
+    noteCount: Number(brain?.noteCount ?? notes.length) || 0,
+    edgeCount: Number(brain?.edgeCount ?? edges.length) || 0,
+    skippedEntries: Number(brain?.skippedEntries || 0) || 0,
+  };
+
+  if (mode === "redacted") {
+    return {
+      ...base,
+      rootPath: "",
+      notes: notes.slice(0, 8).map((note) => ({
+        relativePath: "",
+        title: REDACTED_NAME,
+        hasHeadlineImage: Boolean(note?.headlineImageUrl),
+        linkCount: arrayOrEmpty(note?.links).length,
+      })),
+    };
+  }
+
+  return {
+    ...base,
+    rootPath: brain?.rootPath || "",
+    notes: notes.slice(0, 12).map((note) => ({
+      relativePath: String(note?.relativePath || ""),
+      title: compactText(note?.title || note?.relativePath || "Note", 140),
+      excerpt: compactText(note?.excerpt || "", 220),
+      takeaway: compactText(note?.takeaway || "", 280),
+      headlineImageUrl: String(note?.headlineImageUrl || ""),
+      headlineImageAlt: compactText(note?.headlineImageAlt || "", 120),
+      linkCount: arrayOrEmpty(note?.links).length,
+    })),
+  };
+}
+
 function summarizeSystem(system, mode) {
   const gpus = arrayOrEmpty(system?.gpus);
   const cameras = arrayOrEmpty(system?.cameras);
@@ -309,6 +407,8 @@ export class NodeSnapshotService {
     systemProvider,
     buildingsProvider,
     projectsProvider,
+    handoffJobsProvider,
+    brainProvider,
     timeoutMs = DEFAULT_DEPENDENCY_TIMEOUT_MS,
   } = {}) {
     this.nodeIdentityStore = nodeIdentityStore;
@@ -321,6 +421,8 @@ export class NodeSnapshotService {
     this.systemProvider = systemProvider || (() => ({}));
     this.buildingsProvider = buildingsProvider || (() => []);
     this.projectsProvider = projectsProvider || (() => []);
+    this.handoffJobsProvider = handoffJobsProvider || (() => []);
+    this.brainProvider = brainProvider || (() => ({}));
     this.timeoutMs = timeoutMs;
   }
 
@@ -352,6 +454,8 @@ export class NodeSnapshotService {
         events: 1,
         canvas: 1,
         actions: 1,
+        handoffs: 1,
+        brain: 1,
       },
       generatedAt: nowIso(),
     };
@@ -399,6 +503,8 @@ export class NodeSnapshotService {
       buildingsResult,
       projectsResult,
       providersResult,
+      handoffJobsResult,
+      brainResult,
     ] = await Promise.all([
       this.getManifest({ privileged: normalizedMode === "privileged" }),
       withTimeout("sessions", this.sessionsProvider, [], this.timeoutMs),
@@ -409,6 +515,8 @@ export class NodeSnapshotService {
       withTimeout("buildings", this.buildingsProvider, [], this.timeoutMs),
       withTimeout("projects", this.projectsProvider, [], this.timeoutMs),
       withTimeout("providers", this.providersProvider, [], this.timeoutMs),
+      withTimeout("handoffJobs", this.handoffJobsProvider, [], this.timeoutMs),
+      withTimeout("brain", this.brainProvider, {}, this.timeoutMs),
     ]);
 
     const sessions = arrayOrEmpty(sessionsResult.value);
@@ -420,6 +528,8 @@ export class NodeSnapshotService {
     const buildings = arrayOrEmpty(buildingsResult.value);
     const projects = arrayOrEmpty(projectsResult.value);
     const providers = arrayOrEmpty(providersResult.value);
+    const handoffJobs = arrayOrEmpty(handoffJobsResult.value);
+    const brain = brainResult.value || {};
     const degraded = [
       sessionsResult,
       browserResult,
@@ -429,6 +539,8 @@ export class NodeSnapshotService {
       buildingsResult,
       projectsResult,
       providersResult,
+      handoffJobsResult,
+      brainResult,
     ]
       .filter((result) => !result.ok)
       .map((result) => ({
@@ -454,6 +566,27 @@ export class NodeSnapshotService {
         gpuCount: arrayOrEmpty(systemResult.value?.gpus).length,
         cameraCount: arrayOrEmpty(systemResult.value?.cameras).length,
         hasTailscale: ports.some((port) => Boolean(port?.tailscaleUrl)),
+        handoffCount: handoffJobs.length,
+        brainNoteCount: Number(brain?.noteCount ?? brain?.notes?.length ?? 0) || 0,
+        roles: [
+          providers.some((provider) => provider?.available && provider?.id !== "shell") ? "agent-host" : "",
+          arrayOrEmpty(systemResult.value?.gpus).length ? "gpu-worker" : "",
+          ports.some((port) => port?.previewKind === "preview" || port?.preferredAccess) ? "app-host" : "",
+          Number(brain?.noteCount ?? brain?.notes?.length ?? 0) ? "brain-host" : "",
+          handoffJobs.length ? "handoff-coordinator" : "",
+        ].filter(Boolean),
+        hardware: normalizedMode === "privileged"
+          ? {
+              platform: os.platform(),
+              arch: os.arch(),
+              cpuCount: os.cpus()?.length || null,
+              memoryTotalBytes: systemResult.value?.memory?.totalBytes ?? systemResult.value?.memory?.total ?? null,
+              gpus: arrayOrEmpty(systemResult.value?.gpus).slice(0, 12).map((gpu) => ({
+                index: gpu?.index,
+                name: compactText(gpu?.name || "", 100),
+              })),
+            }
+          : null,
       },
       counts: {
         sessions: sessions.length,
@@ -466,12 +599,16 @@ export class NodeSnapshotService {
         ports: ports.length,
         projects: projects.length,
         buildings: buildings.length,
+        handoffJobs: handoffJobs.length,
+        brainNotes: Number(brain?.noteCount ?? brain?.notes?.length ?? 0) || 0,
       },
       sessions: sessions.slice(0, 100).map((session) => summarizeSession(session, normalizedMode)),
       browserSessions: browserSessions.slice(0, 100).map((session) => summarizeBrowserSession(session, normalizedMode)),
       actionItems: actionItems.slice(0, 100).map((item) => summarizeActionItem(item, normalizedMode)),
       canvases: canvases.slice(0, 100).map((canvas) => summarizeCanvas(canvas, normalizedMode)),
       ports: normalizedMode === "redacted" ? [] : ports.slice(0, 120).map((port) => summarizePort(port, normalizedMode)),
+      handoffJobs: handoffJobs.slice(0, 80).map((job) => summarizeHandoffJob(job, normalizedMode)),
+      brain: summarizeBrain(brain, normalizedMode),
       portHints: normalizedMode === "redacted"
         ? {
             count: ports.length,
