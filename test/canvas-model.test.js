@@ -5,6 +5,7 @@ import {
   buildCanvasCards,
   getCanvasBoardId,
   getCanvasLayoutStorageKey,
+  getCanvasViewportStorageKey,
   mergeCanvasLayout,
   normalizeNodeSnapshot,
   sanitizeCanvasLayout,
@@ -56,6 +57,24 @@ test("buildCanvasCards renders machine, session, browser, approval, app, and art
   assert.equal(cards.find((card) => card.type === "artifact")?.detail, "Best run so far");
 });
 
+test("buildCanvasCards collapses noisy port lists into one local apps window", () => {
+  const cards = buildCanvasCards({
+    node: { id: "node-1", name: "GPU box", status: "online" },
+    ports: Array.from({ length: 7 }, (_, index) => ({
+      port: 5000 + index,
+      name: `App ${index + 1}`,
+      preferredAccess: index % 2 ? "direct" : "proxy",
+    })),
+  });
+
+  const appCards = cards.filter((card) => card.type === "app");
+  assert.equal(appCards.length, 1);
+  assert.equal(appCards[0].id, "app:local-ports");
+  assert.equal(appCards[0].title, "Local apps");
+  assert.equal(appCards[0].subtitle, "7 running ports");
+  assert.equal(appCards[0].ref.ports.length, 7);
+});
+
 test("mergeCanvasLayout preserves saved positions and creates defaults for new cards", () => {
   const cards = buildCanvasCards({
     node: { id: "node-1", name: "Mac" },
@@ -89,6 +108,10 @@ test("canvas board id and storage key are stable per node", () => {
   assert.equal(boardId, "machine:mac-main");
   assert.equal(
     getCanvasLayoutStorageKey(boardId),
-    "swarmlab.canvas.layout.v1:machine:mac-main",
+    "swarmlab.canvas.layout.v2:machine:mac-main",
+  );
+  assert.equal(
+    getCanvasViewportStorageKey(boardId),
+    "swarmlab.canvas.viewport.v1:machine:mac-main",
   );
 });

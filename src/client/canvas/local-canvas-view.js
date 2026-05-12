@@ -5,15 +5,25 @@ import {
   Box,
   CheckSquare,
   ExternalLink,
+  Globe2,
+  Grip,
   HardDrive,
   Image as ImageIcon,
   Map as MapIcon,
+  Maximize2,
+  MessageSquare,
+  Minus,
+  Plus,
   RefreshCw,
+  RotateCcw,
+  Send,
+  Terminal,
 } from "lucide";
 import {
   buildCanvasCards,
   getCanvasBoardId,
   getCanvasLayoutStorageKey,
+  getCanvasViewportStorageKey,
   mergeCanvasLayout,
   normalizeNodeSnapshot,
   sanitizeCanvasLayout,
@@ -22,12 +32,15 @@ import {
 const VIEW_ROOT_SELECTOR = "[data-swarmlab-canvas-root]";
 const STYLE_ID = "swarmlab-canvas-styles";
 const SNAPSHOT_URL = "/api/node/snapshot?mode=privileged";
+const BOARD_WIDTH = 4_800;
+const BOARD_HEIGHT = 3_200;
+const DEFAULT_VIEWPORT = { x: 64, y: 48, zoom: 0.92 };
 const CARD_TYPE_ICONS = {
   agent: Bot,
   approval: CheckSquare,
   app: AppWindow,
   artifact: ImageIcon,
-  browser: AppWindow,
+  browser: Globe2,
   machine: HardDrive,
 };
 
@@ -58,6 +71,26 @@ function renderIcon(icon, attrs = {}) {
   return `<svg ${attrText} aria-hidden="true">${childHtml}</svg>`;
 }
 
+function clamp(value, min, max) {
+  return Math.max(min, Math.min(max, value));
+}
+
+function roundViewport(viewport) {
+  return {
+    x: Math.round(Number(viewport?.x) || 0),
+    y: Math.round(Number(viewport?.y) || 0),
+    zoom: Math.round((Number(viewport?.zoom) || DEFAULT_VIEWPORT.zoom) * 100) / 100,
+  };
+}
+
+function sanitizeViewport(value) {
+  return {
+    x: clamp(Math.round(Number(value?.x) || DEFAULT_VIEWPORT.x), -20_000, 20_000),
+    y: clamp(Math.round(Number(value?.y) || DEFAULT_VIEWPORT.y), -20_000, 20_000),
+    zoom: clamp(Number(value?.zoom) || DEFAULT_VIEWPORT.zoom, 0.35, 1.8),
+  };
+}
+
 function injectCanvasStyles(documentRef = document) {
   if (documentRef.getElementById(STYLE_ID)) {
     return;
@@ -66,34 +99,33 @@ function injectCanvasStyles(documentRef = document) {
   style.id = STYLE_ID;
   style.textContent = `
 .swarmlab-canvas-view {
-  --canvas-bg: #0d1017;
-  --canvas-panel: rgba(20, 24, 34, 0.92);
-  --canvas-panel-strong: rgba(27, 32, 45, 0.96);
-  --canvas-line: rgba(226, 232, 240, 0.12);
-  --canvas-text: #f5f7fb;
-  --canvas-muted: #a9b3c5;
-  --canvas-accent: #6ee7d8;
-  --canvas-warn: #f6c85f;
-  background:
-    linear-gradient(rgba(255, 255, 255, 0.035) 1px, transparent 1px),
-    linear-gradient(90deg, rgba(255, 255, 255, 0.035) 1px, transparent 1px),
-    radial-gradient(circle at 30% 20%, rgba(110, 231, 216, 0.08), transparent 32%),
-    var(--canvas-bg);
-  background-size: 32px 32px, 32px 32px, auto, auto;
+  --canvas-bg: #181816;
+  --canvas-panel: rgba(35, 34, 31, 0.94);
+  --canvas-panel-soft: rgba(47, 45, 40, 0.9);
+  --canvas-line: rgba(232, 222, 206, 0.13);
+  --canvas-line-strong: rgba(232, 222, 206, 0.23);
+  --canvas-text: #f3eee5;
+  --canvas-muted: #aaa297;
+  --canvas-faint: #786f65;
+  --canvas-accent: #e07a3f;
+  --canvas-accent-2: #74c7b8;
+  --canvas-danger: #e98277;
+  background: var(--canvas-bg);
   color: var(--canvas-text);
   overflow: hidden;
 }
 .swarmlab-canvas-toolbar {
   position: sticky;
   top: 0;
-  z-index: 20;
+  z-index: 30;
   display: flex;
   align-items: center;
   justify-content: space-between;
   gap: 18px;
-  padding: 14px 18px;
+  min-height: 64px;
+  padding: 10px 18px;
   border-bottom: 1px solid var(--canvas-line);
-  background: rgba(12, 15, 22, 0.9);
+  background: rgba(26, 25, 23, 0.95);
   backdrop-filter: blur(14px);
 }
 .swarmlab-canvas-title {
@@ -105,15 +137,16 @@ function injectCanvasStyles(documentRef = document) {
 .swarmlab-canvas-title-icon {
   display: grid;
   place-items: center;
-  width: 38px;
-  height: 38px;
-  border: 1px solid rgba(110, 231, 216, 0.34);
-  background: rgba(110, 231, 216, 0.1);
+  width: 36px;
+  height: 36px;
+  border: 1px solid rgba(224, 122, 63, 0.45);
+  background: rgba(224, 122, 63, 0.1);
+  color: var(--canvas-accent);
 }
 .swarmlab-canvas-title strong {
   display: block;
   font-size: 15px;
-  font-weight: 720;
+  font-weight: 760;
 }
 .swarmlab-canvas-title span {
   display: block;
@@ -131,72 +164,95 @@ function injectCanvasStyles(documentRef = document) {
 .swarmlab-canvas-button {
   display: inline-flex;
   align-items: center;
+  justify-content: center;
   gap: 7px;
-  min-height: 34px;
-  border: 1px solid var(--canvas-line);
+  min-height: 36px;
+  border: 1px solid var(--canvas-line-strong);
+  border-radius: 8px;
   background: rgba(255, 255, 255, 0.06);
   color: var(--canvas-text);
-  padding: 0 11px;
+  padding: 0 12px;
   font: inherit;
   font-size: 12px;
   text-decoration: none;
   cursor: pointer;
 }
 .swarmlab-canvas-button:hover {
-  border-color: rgba(110, 231, 216, 0.46);
-  background: rgba(110, 231, 216, 0.1);
+  border-color: rgba(224, 122, 63, 0.55);
+  background: rgba(224, 122, 63, 0.1);
 }
 .swarmlab-canvas-stage {
   position: relative;
-  min-height: calc(100vh - 92px);
-  overflow: auto;
+  height: calc(100vh - 65px);
+  min-height: 560px;
+  overflow: hidden;
+  cursor: grab;
+  touch-action: none;
+  background-color: #171715;
+  background-image:
+    radial-gradient(circle at center, rgba(232, 222, 206, 0.16) 1px, transparent 1.2px),
+    radial-gradient(circle at 60% 20%, rgba(224, 122, 63, 0.08), transparent 28%),
+    radial-gradient(circle at 18% 78%, rgba(116, 199, 184, 0.07), transparent 24%);
+  background-size: 24px 24px, auto, auto;
+}
+.swarmlab-canvas-stage.is-panning {
+  cursor: grabbing;
 }
 .swarmlab-canvas-plane {
-  position: relative;
-  width: max(1320px, 100%);
-  min-height: 860px;
+  position: absolute;
+  inset: 0 auto auto 0;
+  width: ${BOARD_WIDTH}px;
+  height: ${BOARD_HEIGHT}px;
+  transform: translate3d(var(--canvas-pan-x), var(--canvas-pan-y), 0) scale(var(--canvas-zoom));
+  transform-origin: 0 0;
+  will-change: transform;
 }
 .swarmlab-canvas-card {
   position: absolute;
-  display: flex;
-  flex-direction: column;
-  gap: 11px;
+  display: grid;
+  grid-template-rows: auto minmax(0, 1fr) auto;
   border: 1px solid var(--canvas-line);
+  border-radius: 8px;
   background: var(--canvas-panel);
-  box-shadow: 0 22px 55px rgba(0, 0, 0, 0.26);
+  box-shadow: 0 22px 70px rgba(0, 0, 0, 0.32);
   color: var(--canvas-text);
-  padding: 14px;
   transform: translate3d(var(--card-x), var(--card-y), 0);
   touch-action: none;
   user-select: text;
+  overflow: hidden;
 }
 .swarmlab-canvas-card.is-dragging {
-  border-color: rgba(110, 231, 216, 0.72);
-  box-shadow: 0 30px 70px rgba(0, 0, 0, 0.34);
+  border-color: rgba(224, 122, 63, 0.72);
+  box-shadow: 0 34px 90px rgba(0, 0, 0, 0.46);
   user-select: none;
 }
 .swarmlab-canvas-card-head {
   display: grid;
-  grid-template-columns: 34px minmax(0, 1fr);
-  gap: 11px;
+  grid-template-columns: 22px minmax(0, 1fr) auto;
+  gap: 9px;
   align-items: start;
+  padding: 14px 14px 11px;
+  border-bottom: 1px solid rgba(232, 222, 206, 0.08);
+  cursor: grab;
+}
+.swarmlab-canvas-card.is-dragging .swarmlab-canvas-card-head {
+  cursor: grabbing;
 }
 .swarmlab-canvas-card-icon {
   display: grid;
   place-items: center;
-  width: 34px;
-  height: 34px;
-  border: 1px solid var(--canvas-line);
-  background: rgba(255, 255, 255, 0.06);
-  color: var(--canvas-accent);
+  width: 22px;
+  height: 22px;
+  color: var(--canvas-accent-2);
+  opacity: 0.95;
 }
 .swarmlab-canvas-card-title {
   min-width: 0;
 }
 .swarmlab-canvas-card-title strong {
   display: block;
-  font-size: 14px;
-  font-weight: 720;
+  font-size: 13px;
+  font-weight: 760;
   line-height: 1.25;
   overflow-wrap: anywhere;
 }
@@ -204,52 +260,221 @@ function injectCanvasStyles(documentRef = document) {
   display: block;
   margin-top: 3px;
   color: var(--canvas-muted);
-  font-size: 12px;
+  font-size: 11px;
   line-height: 1.35;
   overflow-wrap: anywhere;
 }
-.swarmlab-canvas-card-detail,
-.swarmlab-canvas-card-meta {
+.swarmlab-canvas-drag-grip {
+  color: var(--canvas-faint);
+}
+.swarmlab-canvas-card-body {
+  min-height: 0;
+  padding: 13px 14px;
   color: var(--canvas-muted);
   font-size: 12px;
-  line-height: 1.4;
-  overflow-wrap: anywhere;
+  line-height: 1.45;
+  overflow: hidden;
 }
-.swarmlab-canvas-card-meta {
-  margin-top: auto;
-  color: #c8d0df;
+.swarmlab-canvas-card-footer {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  padding: 11px 14px 13px;
+  border-top: 1px solid rgba(232, 222, 206, 0.08);
+  color: var(--canvas-faint);
+  font-size: 11px;
 }
 .swarmlab-canvas-tag-row {
   display: flex;
   flex-wrap: wrap;
   gap: 6px;
+  margin-top: 10px;
 }
 .swarmlab-canvas-tag {
   display: inline-flex;
   align-items: center;
-  min-height: 21px;
-  padding: 0 7px;
-  border: 1px solid var(--canvas-line);
-  background: rgba(255, 255, 255, 0.05);
-  color: #d8e1ee;
-  font-size: 11px;
+  min-height: 20px;
   max-width: 100%;
-}
-.swarmlab-canvas-card-actions {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 8px;
+  padding: 0 7px;
+  border: 1px solid rgba(232, 222, 206, 0.12);
+  border-radius: 5px;
+  background: rgba(255, 255, 255, 0.045);
+  color: #d9d0c4;
+  font-size: 11px;
 }
 .swarmlab-canvas-open {
   display: inline-flex;
   align-items: center;
   gap: 6px;
-  color: var(--canvas-accent);
+  color: var(--canvas-accent-2);
   text-decoration: none;
   font-size: 12px;
+  white-space: nowrap;
 }
 .swarmlab-canvas-open:hover {
   text-decoration: underline;
+}
+.swarmlab-agent-chat-window {
+  display: grid;
+  grid-template-rows: minmax(0, 1fr) auto;
+  min-height: 0;
+}
+.swarmlab-agent-chat-feed {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  min-height: 0;
+  padding: 14px;
+  overflow: hidden;
+}
+.swarmlab-agent-message {
+  max-width: 92%;
+  border: 1px solid rgba(232, 222, 206, 0.09);
+  border-radius: 8px;
+  padding: 10px 12px;
+  background: rgba(255, 255, 255, 0.06);
+  color: #ddd5cb;
+  font-size: 12px;
+  line-height: 1.45;
+  overflow-wrap: anywhere;
+}
+.swarmlab-agent-message span {
+  display: block;
+  margin-bottom: 4px;
+  color: var(--canvas-faint);
+  font-size: 10px;
+  text-transform: uppercase;
+}
+.swarmlab-agent-message.is-user {
+  align-self: flex-end;
+  background: rgba(255, 255, 255, 0.09);
+  color: var(--canvas-text);
+}
+.swarmlab-agent-message.is-agent {
+  align-self: flex-start;
+}
+.swarmlab-agent-composer {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  gap: 8px;
+  align-items: center;
+  margin: 0 12px 12px;
+  padding: 9px 10px;
+  border: 1px solid rgba(232, 222, 206, 0.12);
+  border-radius: 8px;
+  background: rgba(18, 18, 16, 0.8);
+  color: var(--canvas-muted);
+  font-size: 12px;
+}
+.swarmlab-agent-composer button {
+  min-width: 34px;
+  height: 30px;
+  padding: 0;
+}
+.swarmlab-canvas-browser-body {
+  display: grid;
+  grid-template-rows: auto minmax(0, 1fr);
+  gap: 12px;
+  min-height: 0;
+}
+.swarmlab-canvas-browser-bar {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  min-width: 0;
+  border: 1px solid rgba(232, 222, 206, 0.1);
+  border-radius: 7px;
+  background: rgba(18, 18, 16, 0.75);
+  padding: 7px 9px;
+  color: #d9d0c4;
+  overflow: hidden;
+}
+.swarmlab-canvas-browser-dot {
+  width: 7px;
+  height: 7px;
+  flex: 0 0 auto;
+  border-radius: 50%;
+  background: var(--canvas-accent);
+  opacity: 0.78;
+}
+.swarmlab-canvas-browser-url {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.swarmlab-canvas-browser-preview {
+  display: grid;
+  place-items: center;
+  min-height: 130px;
+  border: 1px dashed rgba(232, 222, 206, 0.16);
+  border-radius: 8px;
+  background: rgba(255, 255, 255, 0.035);
+  color: var(--canvas-faint);
+}
+.swarmlab-port-list {
+  display: flex;
+  flex-direction: column;
+  gap: 7px;
+  margin-top: 10px;
+}
+.swarmlab-port-row {
+  display: grid;
+  grid-template-columns: 58px minmax(0, 1fr) auto;
+  gap: 8px;
+  align-items: center;
+  color: #d9d0c4;
+}
+.swarmlab-port-row code {
+  color: var(--canvas-accent-2);
+  font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
+}
+.swarmlab-port-row span {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.swarmlab-port-row small {
+  color: var(--canvas-faint);
+}
+.swarmlab-canvas-floating-controls {
+  position: absolute;
+  left: 50%;
+  bottom: 18px;
+  z-index: 25;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  transform: translateX(-50%);
+  padding: 8px;
+  border: 1px solid var(--canvas-line);
+  border-radius: 8px;
+  background: rgba(37, 35, 32, 0.92);
+  box-shadow: 0 18px 46px rgba(0, 0, 0, 0.35);
+  backdrop-filter: blur(14px);
+}
+.swarmlab-canvas-control-button {
+  width: 38px;
+  height: 36px;
+  min-height: 36px;
+  padding: 0;
+}
+.swarmlab-canvas-zoom-readout {
+  min-width: 48px;
+  color: var(--canvas-muted);
+  font-size: 12px;
+  text-align: center;
+}
+.swarmlab-canvas-hint {
+  position: absolute;
+  left: 18px;
+  bottom: 20px;
+  z-index: 24;
+  color: var(--canvas-faint);
+  font-size: 11px;
+  pointer-events: none;
 }
 .swarmlab-canvas-loading,
 .swarmlab-canvas-empty,
@@ -259,7 +484,8 @@ function injectCanvasStyles(documentRef = document) {
   min-height: 360px;
   margin: 24px;
   border: 1px solid var(--canvas-line);
-  background: rgba(12, 15, 22, 0.76);
+  border-radius: 8px;
+  background: rgba(28, 27, 25, 0.78);
   text-align: center;
   color: var(--canvas-muted);
 }
@@ -279,8 +505,8 @@ function injectCanvasStyles(documentRef = document) {
   .swarmlab-canvas-actions {
     justify-content: flex-start;
   }
-  .swarmlab-canvas-plane {
-    min-width: 980px;
+  .swarmlab-canvas-hint {
+    display: none;
   }
 }
 `;
@@ -305,7 +531,7 @@ function renderCanvasShell({ status = "loading", message = "loading local machin
         <div>
           ${renderIcon(Box, { width: 24, height: 24 })}
           <strong>No canvas cards yet</strong>
-          <p>Start an agent, open a port, or publish an artifact and refresh this view.</p>
+          <p>Start an agent, open a browser task, or publish an artifact and refresh this view.</p>
         </div>
       </div>
     `;
@@ -328,7 +554,7 @@ export function renderSwarmlabCanvasView() {
           <span class="swarmlab-canvas-title-icon" aria-hidden="true">${renderIcon(AppWindow)}</span>
           <div>
             <strong>Swarmlab Canvas</strong>
-            <span data-swarmlab-canvas-meta>local machine dashboard</span>
+            <span data-swarmlab-canvas-meta>spatial agent board</span>
           </div>
         </div>
         <div class="swarmlab-canvas-actions">
@@ -383,15 +609,40 @@ function writeLayout(storage, key, layout) {
   }
 }
 
-function renderTags(card) {
+function readViewport(storage, key) {
+  try {
+    const raw = JSON.parse(storage.getItem(key) || "null");
+    return raw ? sanitizeViewport(raw) : { ...DEFAULT_VIEWPORT };
+  } catch {
+    return { ...DEFAULT_VIEWPORT };
+  }
+}
+
+function writeViewport(storage, key, viewport) {
+  try {
+    storage.setItem(key, JSON.stringify(roundViewport(sanitizeViewport(viewport))));
+  } catch {
+    // Viewport persistence is best effort.
+  }
+}
+
+function renderTags(card, { limit = 5 } = {}) {
   if (!card.tags?.length) {
     return "";
   }
   return `
     <div class="swarmlab-canvas-tag-row">
-      ${card.tags.map((tag) => `<span class="swarmlab-canvas-tag">${escapeHtml(tag)}</span>`).join("")}
+      ${card.tags.slice(0, limit).map((tag) => `<span class="swarmlab-canvas-tag">${escapeHtml(tag)}</span>`).join("")}
     </div>
   `;
+}
+
+function shortPath(value) {
+  const text = String(value || "").trim();
+  if (!text) return "";
+  const parts = text.split("/").filter(Boolean);
+  if (parts.length <= 3) return text;
+  return `.../${parts.slice(-3).join("/")}`;
 }
 
 function renderCardAction(card) {
@@ -399,7 +650,7 @@ function renderCardAction(card) {
     return `
       <button class="swarmlab-canvas-open swarmlab-canvas-button" type="button" data-swarmlab-canvas-open-session="${escapeHtml(card.ref.sessionId)}">
         ${renderIcon(Bot)}
-        <span>Open session</span>
+        <span>Open</span>
       </button>
     `;
   }
@@ -414,29 +665,184 @@ function renderCardAction(card) {
   return "";
 }
 
-function renderCanvasCard(card, layout) {
+function cardFrame(card, layout, body, footer = "") {
   const icon = CARD_TYPE_ICONS[card.type] || Box;
-  const action = renderCardAction(card);
   return `
     <article
       class="swarmlab-canvas-card is-${escapeHtml(card.type)}"
       data-swarmlab-canvas-card-id="${escapeHtml(card.id)}"
       data-swarmlab-canvas-card-type="${escapeHtml(card.type)}"
-      style="--card-x: ${layout.x}px; --card-y: ${layout.y}px; width: ${layout.width}px; min-height: ${layout.height}px; z-index: ${layout.z};"
+      style="--card-x: ${layout.x}px; --card-y: ${layout.y}px; width: ${layout.width}px; height: ${layout.height}px; z-index: ${layout.z};"
     >
-      <div class="swarmlab-canvas-card-head">
+      <div class="swarmlab-canvas-card-head" data-swarmlab-card-drag-handle>
         <span class="swarmlab-canvas-card-icon" aria-hidden="true">${renderIcon(icon)}</span>
         <div class="swarmlab-canvas-card-title">
           <strong>${escapeHtml(card.title)}</strong>
           <span>${escapeHtml([card.subtitle, card.status].filter(Boolean).join(" / "))}</span>
         </div>
+        <span class="swarmlab-canvas-drag-grip" aria-hidden="true">${renderIcon(Grip, { width: 16, height: 16 })}</span>
       </div>
-      ${card.detail ? `<div class="swarmlab-canvas-card-detail">${escapeHtml(card.detail)}</div>` : ""}
-      ${renderTags(card)}
-      ${card.meta ? `<div class="swarmlab-canvas-card-meta">${escapeHtml(card.meta)}</div>` : ""}
-      ${action ? `<div class="swarmlab-canvas-card-actions">${action}</div>` : ""}
+      ${body}
+      ${footer}
     </article>
   `;
+}
+
+function renderAgentCard(card, layout) {
+  const action = renderCardAction(card);
+  const cwd = shortPath(card.detail);
+  const status = [card.subtitle, card.status].filter(Boolean).join(" / ") || "agent session";
+  const body = `
+    <div class="swarmlab-agent-chat-window">
+      <div class="swarmlab-agent-chat-feed">
+        <div class="swarmlab-agent-message is-user">
+          <span>Workspace</span>
+          ${escapeHtml(cwd || "default project")}
+        </div>
+        <div class="swarmlab-agent-message is-agent">
+          <span>${escapeHtml(status)}</span>
+          ${escapeHtml(card.meta ? `Last activity ${card.meta}` : "Ready on this machine.")}
+        </div>
+        ${renderTags(card, { limit: 3 })}
+      </div>
+      <div class="swarmlab-agent-composer">
+        <span>Agent, @ for context, / for commands</span>
+        ${action || `<button class="swarmlab-canvas-button" type="button" disabled>${renderIcon(Send)}</button>`}
+      </div>
+    </div>
+  `;
+  return cardFrame(card, layout, body);
+}
+
+function renderBrowserCard(card, layout) {
+  const action = renderCardAction(card);
+  const body = `
+    <div class="swarmlab-canvas-card-body swarmlab-canvas-browser-body">
+      <div class="swarmlab-canvas-browser-bar">
+        <span class="swarmlab-canvas-browser-dot"></span>
+        <span class="swarmlab-canvas-browser-dot"></span>
+        <span class="swarmlab-canvas-browser-dot"></span>
+        <span class="swarmlab-canvas-browser-url">${escapeHtml(card.detail || card.title)}</span>
+      </div>
+      <div class="swarmlab-canvas-browser-preview">
+        ${renderIcon(Globe2, { width: 28, height: 28 })}
+      </div>
+    </div>
+  `;
+  const footer = `<div class="swarmlab-canvas-card-footer"><span>${escapeHtml(card.meta || "browser window")}</span>${action}</div>`;
+  return cardFrame(card, layout, body, footer);
+}
+
+function renderAppCard(card, layout) {
+  const ports = Array.isArray(card.ref?.ports) ? card.ref.ports : [];
+  const portList = ports.length
+    ? `
+      <div class="swarmlab-port-list">
+        ${ports.slice(0, 6).map((port) => `
+          <div class="swarmlab-port-row">
+            <code>${escapeHtml(port.label)}</code>
+            <span>${escapeHtml(port.name)}</span>
+            <small>${escapeHtml(port.access || "")}</small>
+          </div>
+        `).join("")}
+      </div>
+    `
+    : "";
+  const action = renderCardAction(card);
+  const body = `
+    <div class="swarmlab-canvas-card-body">
+      ${card.detail ? `<div>${escapeHtml(card.detail)}</div>` : ""}
+      ${portList}
+      ${renderTags(card, { limit: 6 })}
+    </div>
+  `;
+  const footer = `<div class="swarmlab-canvas-card-footer"><span>${escapeHtml(card.meta || "local app")}</span>${action}</div>`;
+  return cardFrame(card, layout, body, footer);
+}
+
+function renderStandardCard(card, layout) {
+  const action = renderCardAction(card);
+  const body = `
+    <div class="swarmlab-canvas-card-body">
+      ${card.detail ? `<div>${escapeHtml(card.detail)}</div>` : ""}
+      ${renderTags(card)}
+    </div>
+  `;
+  const footer = `<div class="swarmlab-canvas-card-footer"><span>${escapeHtml(card.meta || "")}</span>${action}</div>`;
+  return cardFrame(card, layout, body, footer);
+}
+
+function renderCanvasCard(card, layout) {
+  if (card.type === "agent") return renderAgentCard(card, layout);
+  if (card.type === "browser") return renderBrowserCard(card, layout);
+  if (card.type === "app") return renderAppCard(card, layout);
+  return renderStandardCard(card, layout);
+}
+
+function renderFloatingControls(viewport) {
+  const zoom = Math.round((Number(viewport.zoom) || 1) * 100);
+  return `
+    <div class="swarmlab-canvas-floating-controls" data-swarmlab-canvas-controls>
+      <button class="swarmlab-canvas-button swarmlab-canvas-control-button" type="button" data-swarmlab-canvas-zoom-out title="Zoom out">${renderIcon(Minus)}</button>
+      <span class="swarmlab-canvas-zoom-readout" data-swarmlab-canvas-zoom-readout>${zoom}%</span>
+      <button class="swarmlab-canvas-button swarmlab-canvas-control-button" type="button" data-swarmlab-canvas-zoom-in title="Zoom in">${renderIcon(Plus)}</button>
+      <button class="swarmlab-canvas-button swarmlab-canvas-control-button" type="button" data-swarmlab-canvas-fit title="Fit cards">${renderIcon(Maximize2)}</button>
+      <button class="swarmlab-canvas-button swarmlab-canvas-control-button" type="button" data-swarmlab-canvas-reset title="Reset view">${renderIcon(RotateCcw)}</button>
+    </div>
+    <div class="swarmlab-canvas-hint">drag empty board to pan · drag card headers to move · trackpad scroll pans · pinch zooms</div>
+  `;
+}
+
+function applyViewport(root, viewport) {
+  const next = sanitizeViewport(viewport);
+  root.__swarmlabCanvasViewport = next;
+  const plane = root.querySelector("[data-swarmlab-canvas-plane]");
+  if (plane instanceof HTMLElement) {
+    plane.style.setProperty("--canvas-pan-x", `${next.x}px`);
+    plane.style.setProperty("--canvas-pan-y", `${next.y}px`);
+    plane.style.setProperty("--canvas-zoom", String(next.zoom));
+  }
+  const readout = root.querySelector("[data-swarmlab-canvas-zoom-readout]");
+  if (readout) {
+    readout.textContent = `${Math.round(next.zoom * 100)}%`;
+  }
+}
+
+function getCardsBounds(root) {
+  const layout = root.__swarmlabCanvasLayout || {};
+  const entries = Object.values(layout);
+  if (!entries.length) {
+    return null;
+  }
+  let minX = Infinity;
+  let minY = Infinity;
+  let maxX = -Infinity;
+  let maxY = -Infinity;
+  for (const item of entries) {
+    const x = Number(item.x) || 0;
+    const y = Number(item.y) || 0;
+    const width = Number(item.width) || 260;
+    const height = Number(item.height) || 180;
+    minX = Math.min(minX, x);
+    minY = Math.min(minY, y);
+    maxX = Math.max(maxX, x + width);
+    maxY = Math.max(maxY, y + height);
+  }
+  return { minX, minY, maxX, maxY, width: maxX - minX, height: maxY - minY };
+}
+
+function fitViewportToCards(root) {
+  const bounds = getCardsBounds(root);
+  const rect = root.getBoundingClientRect();
+  if (!bounds || rect.width <= 0 || rect.height <= 0) {
+    return { ...DEFAULT_VIEWPORT };
+  }
+  const zoom = clamp(Math.min((rect.width - 180) / Math.max(1, bounds.width), (rect.height - 160) / Math.max(1, bounds.height)), 0.42, 1.12);
+  return sanitizeViewport({
+    x: (rect.width - bounds.width * zoom) / 2 - bounds.minX * zoom,
+    y: (rect.height - bounds.height * zoom) / 2 - bounds.minY * zoom,
+    zoom,
+  });
 }
 
 function renderSnapshot(root, payload, { storage }) {
@@ -444,16 +850,20 @@ function renderSnapshot(root, payload, { storage }) {
   const cards = buildCanvasCards(snapshot);
   const boardId = getCanvasBoardId(snapshot);
   const storageKey = getCanvasLayoutStorageKey(boardId);
+  const viewportKey = getCanvasViewportStorageKey(boardId);
   const savedLayout = readLayout(storage, storageKey);
+  const viewport = readViewport(storage, viewportKey);
   const layout = mergeCanvasLayout(cards, savedLayout);
   const meta = root.closest(".swarmlab-canvas-view")?.querySelector("[data-swarmlab-canvas-meta]");
   if (meta) {
-    meta.textContent = `${snapshot.node.name} / ${cards.length} cards / ${snapshot.generatedAt}`;
+    meta.textContent = `${snapshot.node.name} / ${cards.length} windows / ${snapshot.generatedAt}`;
   }
 
   root.dataset.swarmlabCanvasBoardId = boardId;
   root.dataset.swarmlabCanvasStorageKey = storageKey;
+  root.dataset.swarmlabCanvasViewportStorageKey = viewportKey;
   root.__swarmlabCanvasLayout = layout;
+  root.__swarmlabCanvasViewport = viewport;
 
   if (!cards.length) {
     root.innerHTML = renderCanvasShell({ status: "empty" });
@@ -461,9 +871,14 @@ function renderSnapshot(root, payload, { storage }) {
   }
 
   root.innerHTML = `
-    <div class="swarmlab-canvas-plane" data-swarmlab-canvas-plane>
+    <div
+      class="swarmlab-canvas-plane"
+      data-swarmlab-canvas-plane
+      style="--canvas-pan-x: ${viewport.x}px; --canvas-pan-y: ${viewport.y}px; --canvas-zoom: ${viewport.zoom};"
+    >
       ${cards.map((card) => renderCanvasCard(card, layout[card.id])).join("")}
     </div>
+    ${renderFloatingControls(viewport)}
   `;
 }
 
@@ -477,15 +892,22 @@ function isInteractiveDragTarget(target, card) {
   return Boolean(target.closest("a, button, input, textarea, select, summary"));
 }
 
+function bringCardToFront(root, id, card) {
+  const layout = root.__swarmlabCanvasLayout?.[id];
+  if (!layout) return;
+  layout.z = Math.max(...Object.values(root.__swarmlabCanvasLayout || {}).map((item) => Number(item.z) || 0), 0) + 1;
+  card.style.zIndex = String(layout.z);
+}
+
 function bindCardDrag(root, { storage }) {
   const active = {
     card: null,
     id: "",
+    pointerId: null,
     startClientX: 0,
     startClientY: 0,
     startX: 0,
     startY: 0,
-    moved: false,
   };
 
   root.querySelectorAll("[data-swarmlab-canvas-card-id]").forEach((card) => {
@@ -498,13 +920,16 @@ function bindCardDrag(root, { storage }) {
       if (!id || !layout) {
         return;
       }
+      event.preventDefault();
+      event.stopPropagation();
       active.card = card;
       active.id = id;
+      active.pointerId = event.pointerId;
       active.startClientX = event.clientX;
       active.startClientY = event.clientY;
       active.startX = Number(layout.x) || 0;
       active.startY = Number(layout.y) || 0;
-      active.moved = false;
+      bringCardToFront(root, id, card);
       card.classList.add("is-dragging");
       card.setPointerCapture?.(event.pointerId);
     });
@@ -513,50 +938,144 @@ function bindCardDrag(root, { storage }) {
       if (active.card !== card || !active.id) {
         return;
       }
-      const dx = event.clientX - active.startClientX;
-      const dy = event.clientY - active.startClientY;
-      if (Math.abs(dx) + Math.abs(dy) > 3) {
-        active.moved = true;
-      }
+      const viewport = sanitizeViewport(root.__swarmlabCanvasViewport || DEFAULT_VIEWPORT);
+      const dx = (event.clientX - active.startClientX) / viewport.zoom;
+      const dy = (event.clientY - active.startClientY) / viewport.zoom;
       const x = Math.round(active.startX + dx);
       const y = Math.round(active.startY + dy);
       const layout = root.__swarmlabCanvasLayout?.[active.id];
       if (layout) {
         layout.x = x;
         layout.y = y;
-        layout.z = Math.max(...Object.values(root.__swarmlabCanvasLayout || {}).map((item) => Number(item.z) || 0), 0) + 1;
       }
       card.style.setProperty("--card-x", `${x}px`);
       card.style.setProperty("--card-y", `${y}px`);
-      card.style.zIndex = String(layout?.z || 1);
     });
 
-    card.addEventListener("pointerup", (event) => {
+    const finish = (event) => {
       if (active.card !== card) {
         return;
       }
       card.classList.remove("is-dragging");
-      card.releasePointerCapture?.(event.pointerId);
+      if (active.pointerId != null) {
+        card.releasePointerCapture?.(active.pointerId);
+      } else if (event?.pointerId != null) {
+        card.releasePointerCapture?.(event.pointerId);
+      }
       const storageKey = root.dataset.swarmlabCanvasStorageKey || "";
       if (storageKey) {
         writeLayout(storage, storageKey, root.__swarmlabCanvasLayout || {});
       }
       active.card = null;
       active.id = "";
-    });
+      active.pointerId = null;
+    };
 
-    card.addEventListener("pointercancel", () => {
-      if (active.card === card) {
-        card.classList.remove("is-dragging");
-        active.card = null;
-        active.id = "";
-      }
-    });
+    card.addEventListener("pointerup", finish);
+    card.addEventListener("pointercancel", finish);
   });
 }
 
+function setViewport(root, storage, viewport) {
+  const next = sanitizeViewport(viewport);
+  applyViewport(root, next);
+  const viewportKey = root.dataset.swarmlabCanvasViewportStorageKey || "";
+  if (viewportKey) {
+    writeViewport(storage, viewportKey, next);
+  }
+}
+
+function zoomAtPoint(root, storage, clientX, clientY, nextZoom) {
+  const rect = root.getBoundingClientRect();
+  const viewport = sanitizeViewport(root.__swarmlabCanvasViewport || DEFAULT_VIEWPORT);
+  const zoom = clamp(nextZoom, 0.35, 1.8);
+  const localX = clientX - rect.left;
+  const localY = clientY - rect.top;
+  const boardX = (localX - viewport.x) / viewport.zoom;
+  const boardY = (localY - viewport.y) / viewport.zoom;
+  setViewport(root, storage, {
+    x: localX - boardX * zoom,
+    y: localY - boardY * zoom,
+    zoom,
+  });
+}
+
+function bindViewportPanAndZoom(root, { storage }) {
+  const active = {
+    panning: false,
+    pointerId: null,
+    startClientX: 0,
+    startClientY: 0,
+    startX: 0,
+    startY: 0,
+  };
+
+  root.addEventListener("pointerdown", (event) => {
+    if (!(event.target instanceof Element)) {
+      return;
+    }
+    if (event.target.closest("[data-swarmlab-canvas-card-id], [data-swarmlab-canvas-controls], a, button, input, textarea, select")) {
+      return;
+    }
+    const viewport = sanitizeViewport(root.__swarmlabCanvasViewport || DEFAULT_VIEWPORT);
+    active.panning = true;
+    active.pointerId = event.pointerId;
+    active.startClientX = event.clientX;
+    active.startClientY = event.clientY;
+    active.startX = viewport.x;
+    active.startY = viewport.y;
+    root.classList.add("is-panning");
+    root.setPointerCapture?.(event.pointerId);
+  });
+
+  root.addEventListener("pointermove", (event) => {
+    if (!active.panning) {
+      return;
+    }
+    setViewport(root, storage, {
+      ...sanitizeViewport(root.__swarmlabCanvasViewport || DEFAULT_VIEWPORT),
+      x: active.startX + event.clientX - active.startClientX,
+      y: active.startY + event.clientY - active.startClientY,
+    });
+  });
+
+  const finishPan = (event) => {
+    if (!active.panning) {
+      return;
+    }
+    active.panning = false;
+    root.classList.remove("is-panning");
+    if (active.pointerId != null) {
+      root.releasePointerCapture?.(active.pointerId);
+    } else if (event?.pointerId != null) {
+      root.releasePointerCapture?.(event.pointerId);
+    }
+    active.pointerId = null;
+  };
+
+  root.addEventListener("pointerup", finishPan);
+  root.addEventListener("pointercancel", finishPan);
+
+  root.addEventListener("wheel", (event) => {
+    const viewport = sanitizeViewport(root.__swarmlabCanvasViewport || DEFAULT_VIEWPORT);
+    event.preventDefault();
+    if (event.ctrlKey || event.metaKey) {
+      const factor = Math.exp(-event.deltaY * 0.002);
+      zoomAtPoint(root, storage, event.clientX, event.clientY, viewport.zoom * factor);
+      return;
+    }
+    setViewport(root, storage, {
+      ...viewport,
+      x: viewport.x - event.deltaX,
+      y: viewport.y - event.deltaY,
+    });
+  }, { passive: false });
+}
+
 function bindCanvasActions(root, { onOpenSession, storage }) {
+  bindViewportPanAndZoom(root, { storage });
   bindCardDrag(root, { storage });
+
   root.querySelectorAll("[data-swarmlab-canvas-open-session]").forEach((button) => {
     button.addEventListener("click", (event) => {
       event.preventDefault();
@@ -566,6 +1085,30 @@ function bindCanvasActions(root, { onOpenSession, storage }) {
         onOpenSession(sessionId);
       }
     });
+  });
+
+  root.querySelector("[data-swarmlab-canvas-zoom-in]")?.addEventListener("click", (event) => {
+    event.preventDefault();
+    const rect = root.getBoundingClientRect();
+    const viewport = sanitizeViewport(root.__swarmlabCanvasViewport || DEFAULT_VIEWPORT);
+    zoomAtPoint(root, storage, rect.left + rect.width / 2, rect.top + rect.height / 2, viewport.zoom * 1.15);
+  });
+
+  root.querySelector("[data-swarmlab-canvas-zoom-out]")?.addEventListener("click", (event) => {
+    event.preventDefault();
+    const rect = root.getBoundingClientRect();
+    const viewport = sanitizeViewport(root.__swarmlabCanvasViewport || DEFAULT_VIEWPORT);
+    zoomAtPoint(root, storage, rect.left + rect.width / 2, rect.top + rect.height / 2, viewport.zoom / 1.15);
+  });
+
+  root.querySelector("[data-swarmlab-canvas-fit]")?.addEventListener("click", (event) => {
+    event.preventDefault();
+    setViewport(root, storage, fitViewportToCards(root));
+  });
+
+  root.querySelector("[data-swarmlab-canvas-reset]")?.addEventListener("click", (event) => {
+    event.preventDefault();
+    setViewport(root, storage, DEFAULT_VIEWPORT);
   });
 }
 

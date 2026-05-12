@@ -1,7 +1,15 @@
-export const CANVAS_LAYOUT_STORAGE_PREFIX = "swarmlab.canvas.layout.v1";
+export const CANVAS_LAYOUT_STORAGE_PREFIX = "swarmlab.canvas.layout.v2";
+export const CANVAS_VIEWPORT_STORAGE_PREFIX = "swarmlab.canvas.viewport.v1";
 
 const DEFAULT_CARD_WIDTH = 270;
 const DEFAULT_CARD_HEIGHT = 170;
+const AGENT_CARD_WIDTH = 380;
+const AGENT_CARD_HEIGHT = 430;
+const BROWSER_CARD_WIDTH = 430;
+const BROWSER_CARD_HEIGHT = 300;
+const APP_CARD_WIDTH = 320;
+const APP_CARD_HEIGHT = 220;
+const MAX_INDIVIDUAL_PORT_CARDS = 4;
 
 function asObject(value) {
   return value && typeof value === "object" && !Array.isArray(value) ? value : {};
@@ -68,6 +76,10 @@ export function getCanvasBoardId(snapshot) {
 
 export function getCanvasLayoutStorageKey(boardId) {
   return `${CANVAS_LAYOUT_STORAGE_PREFIX}:${normalizeId(boardId, "machine:local")}`;
+}
+
+export function getCanvasViewportStorageKey(boardId) {
+  return `${CANVAS_VIEWPORT_STORAGE_PREFIX}:${normalizeId(boardId, "machine:local")}`;
 }
 
 export function normalizeNodeSnapshot(payload) {
@@ -170,6 +182,8 @@ function sessionCard(session, index, machineId) {
     meta: normalizeOptionalDate(pickFirst(session.updatedAt, session.lastActivityAt, session.createdAt)),
     tags: [session.model, session.branch, session.providerId],
     ref: { machineId, sessionId: id },
+    width: AGENT_CARD_WIDTH,
+    height: AGENT_CARD_HEIGHT,
   });
 }
 
@@ -186,6 +200,8 @@ function browserCard(session, index, machineId) {
     meta: normalizeOptionalDate(pickFirst(session.updatedAt, session.createdAt)),
     tags: [session.provider, session.model],
     ref: { machineId, browserSessionId: id, sessionId: session.sessionId || "" },
+    width: BROWSER_CARD_WIDTH,
+    height: BROWSER_CARD_HEIGHT,
   });
 }
 
@@ -202,7 +218,8 @@ function approvalCard(item, index, machineId) {
     tags: [item.cta, item.source],
     href: item.href || "",
     ref: { machineId, actionItemId: id, sessionId: item.sessionId || "" },
-    height: 188,
+    width: 300,
+    height: 150,
   });
 }
 
@@ -227,6 +244,43 @@ function portCard(port, index, machineId) {
     tags: [port.localOnly ? "local only" : "", port.exposedWithTailscale ? "tailscale" : ""],
     href,
     ref: { machineId, port: Number.isInteger(rawPort) ? rawPort : undefined },
+    width: APP_CARD_WIDTH,
+    height: APP_CARD_HEIGHT,
+  });
+}
+
+function portsSummaryCard(ports, machineId) {
+  const normalizedPorts = ports
+    .map((port, index) => {
+      const rawPort = Number(port.port || port.number || port.id);
+      const label = Number.isInteger(rawPort)
+        ? String(rawPort)
+        : normalizeText(port.name || port.label || port.processName, `app-${index + 1}`);
+      const name = normalizeText(pickFirst(port.name, port.label, port.processName, label), label);
+      const access = normalizeText(pickFirst(port.preferredAccess, port.status, port.protocol));
+      return { label, name, access };
+    })
+    .filter((port) => port.label || port.name);
+  const sample = normalizedPorts
+    .slice(0, 6)
+    .map((port) => [port.label, port.name === port.label ? "" : port.name].filter(Boolean).join(" "))
+    .join(" · ");
+  return makeCard({
+    id: "app:local-ports",
+    type: "app",
+    title: "Local apps",
+    subtitle: `${ports.length} running ports`,
+    status: "compact",
+    detail: sample,
+    meta: "Open individual ports from the machine sidebar; the canvas keeps apps compact.",
+    tags: normalizedPorts.slice(0, 8).map((port) => port.access || port.label),
+    href: "",
+    ref: {
+      machineId,
+      ports: normalizedPorts,
+    },
+    width: 340,
+    height: 230,
   });
 }
 
@@ -247,7 +301,8 @@ function artifactCard(canvas, index, machineId) {
       artifactPath: canvas.imagePath || canvas.path || "",
       sessionId: canvas.sourceSessionId || "",
     },
-    height: 182,
+    width: 320,
+    height: 210,
   });
 }
 
@@ -270,30 +325,81 @@ function machineCard(snapshot) {
       `${snapshot.counts.artifacts} artifacts`,
     ],
     ref: { machineId: node.id },
-    width: 310,
-    height: 188,
+    width: 320,
+    height: 180,
   });
 }
 
 export function buildCanvasCards(payload) {
   const snapshot = normalizeNodeSnapshot(payload);
   const machineId = snapshot.node.id;
+  const portCards = snapshot.ports.length > MAX_INDIVIDUAL_PORT_CARDS
+    ? [portsSummaryCard(snapshot.ports, machineId)]
+    : snapshot.ports.map((port, index) => portCard(port, index, machineId));
   return [
     machineCard(snapshot),
     ...snapshot.actionItems.map((item, index) => approvalCard(item, index, machineId)),
     ...snapshot.sessions.map((session, index) => sessionCard(session, index, machineId)),
     ...snapshot.browserSessions.map((session, index) => browserCard(session, index, machineId)),
-    ...snapshot.ports.map((port, index) => portCard(port, index, machineId)),
+    ...portCards,
     ...snapshot.canvases.map((canvas, index) => artifactCard(canvas, index, machineId)),
   ];
 }
 
-export function createFallbackCanvasLayout(cards, { columns = 3, gap = 28 } = {}) {
+function fallbackPositionForCard(card, index, counters) {
+  const type = card.type || "card";
+  const next = counters[type] || 0;
+  counters[type] = next + 1;
+
+  if (type === "machine") {
+    return { x: 120, y: 96 };
+  }
+  if (type === "agent") {
+    const column = next % 3;
+    const row = Math.floor(next / 3);
+    return {
+      x: 540 + column * 430 + (row % 2) * 58,
+      y: 190 + row * 500 + (column === 1 ? 58 : 0),
+    };
+  }
+  if (type === "browser") {
+    const column = next % 2;
+    const row = Math.floor(next / 2);
+    return {
+      x: 980 + column * 470,
+      y: 80 + row * 350,
+    };
+  }
+  if (type === "approval") {
+    return {
+      x: 120,
+      y: 330 + next * 172,
+    };
+  }
+  if (type === "app") {
+    return {
+      x: 120,
+      y: 850 + next * 260,
+    };
+  }
+  if (type === "artifact") {
+    const column = next % 2;
+    const row = Math.floor(next / 2);
+    return {
+      x: 1460 + column * 360,
+      y: 210 + row * 260,
+    };
+  }
+  return {
+    x: 200 + (index % 4) * 360,
+    y: 200 + Math.floor(index / 4) * 280,
+  };
+}
+
+export function createFallbackCanvasLayout(cards) {
+  const counters = {};
   return Object.fromEntries(cards.map((card, index) => {
-    const column = index % columns;
-    const row = Math.floor(index / columns);
-    const x = 32 + column * (DEFAULT_CARD_WIDTH + gap);
-    const y = 32 + row * (DEFAULT_CARD_HEIGHT + gap);
+    const { x, y } = fallbackPositionForCard(card, index, counters);
     return [
       card.id,
       {

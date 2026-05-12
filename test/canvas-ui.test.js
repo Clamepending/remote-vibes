@@ -102,13 +102,11 @@ test("local canvas view renders node snapshot cards and persists drag layout", a
               href: "?view=agent-inbox",
             },
           ],
-          ports: [
-            {
-              port: 5173,
-              name: "Vite app",
-              preferredAccess: "proxy",
-            },
-          ],
+          ports: Array.from({ length: 6 }, (_, index) => ({
+            port: 5173 + index,
+            name: index === 0 ? "Vite app" : `Preview ${index + 1}`,
+            preferredAccess: index % 2 ? "direct" : "proxy",
+          })),
           canvases: [
             {
               id: "artifact-1",
@@ -129,9 +127,17 @@ test("local canvas view renders node snapshot cards and persists drag layout", a
     assert.match(rendered, /Mac Main/);
     assert.match(rendered, /Worker B/);
     assert.match(rendered, /Approve deploy/);
+    assert.match(rendered, /Local apps/);
     assert.match(rendered, /Vite app/);
     assert.match(rendered, /Result chart/);
     assert.match(rendered, /Agent Town/);
+    assert.equal(await page.locator(".swarmlab-agent-chat-window").count(), 1);
+    assert.equal(await page.locator(".swarmlab-canvas-floating-controls").count(), 1);
+    assert.equal(await page.locator(".swarmlab-canvas-card.is-app").count(), 1);
+    assert.equal(
+      await page.locator(".swarmlab-canvas-stage").evaluate((element) => getComputedStyle(element).overflow),
+      "hidden",
+    );
 
     const sessionCard = page.locator('[data-swarmlab-canvas-card-id="session:session-1"]');
     const before = await sessionCard.boundingBox();
@@ -142,11 +148,17 @@ test("local canvas view renders node snapshot cards and persists drag layout", a
     await page.mouse.up();
 
     const saved = await page.evaluate(() =>
-      JSON.parse(window.localStorage.getItem("swarmlab.canvas.layout.v1:machine:mac-main") || "{}"),
+      JSON.parse(window.localStorage.getItem("swarmlab.canvas.layout.v2:machine:mac-main") || "{}"),
     );
     assert.ok(saved["session:session-1"], "drag should persist session layout");
     assert.ok(saved["session:session-1"].x > 0);
     assert.ok(saved["session:session-1"].y > 0);
+
+    await page.click("[data-swarmlab-canvas-zoom-in]");
+    const viewport = await page.evaluate(() =>
+      JSON.parse(window.localStorage.getItem("swarmlab.canvas.viewport.v1:machine:mac-main") || "{}"),
+    );
+    assert.ok(viewport.zoom > 0.92, "zoom controls should persist a zoomed viewport");
   } finally {
     await browser?.close().catch(() => {});
     await app.close();
