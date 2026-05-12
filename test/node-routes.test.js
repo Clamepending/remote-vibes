@@ -130,6 +130,7 @@ test("/api/node manifest, status, and snapshot routes expose the local node foun
 
     const redactedResponse = await fetch(`${started.baseUrl}/api/node/snapshot?mode=redacted`);
     assert.equal(redactedResponse.status, 200);
+    assert.equal(redactedResponse.headers.get("access-control-allow-origin"), "*");
     const redactedBody = await redactedResponse.json();
     assert.equal(redactedBody.snapshot.mode, "redacted");
     const redactedText = JSON.stringify(redactedBody);
@@ -143,6 +144,13 @@ test("/api/node manifest, status, and snapshot routes expose the local node foun
     const privilegedText = JSON.stringify(privilegedBody);
     assert.doesNotMatch(privilegedText, /route-secret|token=route-secret/);
     assert.match(privilegedText, /example\.test/);
+
+    const preflightResponse = await fetch(`${started.baseUrl}/api/node/snapshot?mode=redacted`, {
+      method: "OPTIONS",
+      headers: { Origin: "https://swarmlab.vibe-research.net" },
+    });
+    assert.equal(preflightResponse.status, 204);
+    assert.equal(preflightResponse.headers.get("access-control-allow-origin"), "*");
 
     const securityResponse = await fetch(`${started.baseUrl}/api/node/security/routes`);
     assert.equal(securityResponse.status, 200);

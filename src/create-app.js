@@ -3579,6 +3579,19 @@ export async function createVibeResearchApp({
     response.sendFile(masterplanIndexPath);
   });
 
+  app.use("/api/node", (request, response, next) => {
+    if (request.method === "GET" || request.method === "HEAD" || request.method === "OPTIONS") {
+      response.setHeader("Access-Control-Allow-Origin", "*");
+      response.setHeader("Access-Control-Allow-Methods", "GET, HEAD, OPTIONS");
+      response.setHeader("Access-Control-Allow-Headers", "Content-Type, X-Vibe-Research-API, X-Swarmlab-Node-Token, Authorization");
+    }
+    if (request.method === "OPTIONS") {
+      response.status(204).end();
+      return;
+    }
+    next();
+  });
+
   app.get("/api/node/manifest", async (request, response) => {
     try {
       response.setHeader("Cache-Control", "no-store");
@@ -7123,6 +7136,40 @@ export async function createVibeResearchApp({
     } catch (error) {
       response.status(400).json({ error: error.message || "Could not read session narrative." });
     }
+  });
+
+  app.post("/api/sessions/:sessionId/input", requireLocalOrNodeToken, (request, response) => {
+    const input = typeof request.body?.input === "string"
+      ? request.body.input
+      : typeof request.body?.data === "string"
+        ? request.body.data
+        : "";
+    const text = input.trim();
+
+    if (!text) {
+      response.status(400).json({ ok: false, reason: "empty-input" });
+      return;
+    }
+
+    const session = sessionManager.getSession(request.params.sessionId);
+    if (!session) {
+      response.status(404).json({ ok: false, reason: "session-not-found" });
+      return;
+    }
+
+    const submitted = input.endsWith("\n") || input.endsWith("\r") ? input : `${input}\n`;
+    const ok = sessionManager.write(request.params.sessionId, submitted, {
+      clientMessageId: typeof request.body?.clientMessageId === "string" ? request.body.clientMessageId : null,
+    });
+    if (!ok) {
+      response.status(400).json({ ok: false, reason: "input-not-accepted" });
+      return;
+    }
+
+    response.json({
+      ok: true,
+      session: sessionManager.serializeSession(session),
+    });
   });
 
   app.get("/api/sessions/:sessionId/callback", (request, response) => {

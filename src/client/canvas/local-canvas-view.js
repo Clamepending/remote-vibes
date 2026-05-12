@@ -32,6 +32,9 @@ import {
 const VIEW_ROOT_SELECTOR = "[data-swarmlab-canvas-root]";
 const STYLE_ID = "swarmlab-canvas-styles";
 const SNAPSHOT_URL = "/api/node/snapshot?mode=privileged";
+const NARRATIVE_POLL_MS = 4_000;
+const REMOTE_NODES_STORAGE_KEY = "swarmlab.canvas.remoteNodes.v1";
+const REMOTE_NODE_FETCH_TIMEOUT_MS = 4_500;
 const BOARD_WIDTH = 4_800;
 const BOARD_HEIGHT = 3_200;
 const DEFAULT_VIEWPORT = { x: 64, y: 48, zoom: 0.92 };
@@ -73,6 +76,14 @@ function renderIcon(icon, attrs = {}) {
 
 function clamp(value, min, max) {
   return Math.max(min, Math.min(max, value));
+}
+
+function slugPart(value, fallback = "remote-node") {
+  return String(value || fallback)
+    .trim()
+    .replace(/\s+/g, "-")
+    .replace(/[^a-zA-Z0-9:._-]/g, "")
+    .slice(0, 120) || fallback;
 }
 
 function roundViewport(viewport) {
@@ -181,6 +192,10 @@ function injectCanvasStyles(documentRef = document) {
   border-color: rgba(224, 122, 63, 0.55);
   background: rgba(224, 122, 63, 0.1);
 }
+.swarmlab-canvas-button.is-primary {
+  border-color: rgba(224, 122, 63, 0.55);
+  background: rgba(224, 122, 63, 0.16);
+}
 .swarmlab-canvas-stage {
   position: relative;
   height: calc(100vh - 65px);
@@ -264,6 +279,12 @@ function injectCanvasStyles(documentRef = document) {
   line-height: 1.35;
   overflow-wrap: anywhere;
 }
+.swarmlab-canvas-card.is-agent {
+  background: rgba(31, 30, 27, 0.96);
+}
+.swarmlab-canvas-card.is-remote {
+  border-color: rgba(116, 199, 184, 0.24);
+}
 .swarmlab-canvas-drag-grip {
   color: var(--canvas-faint);
 }
@@ -323,10 +344,11 @@ function injectCanvasStyles(documentRef = document) {
 .swarmlab-agent-chat-feed {
   display: flex;
   flex-direction: column;
-  gap: 12px;
+  gap: 10px;
   min-height: 0;
   padding: 14px;
-  overflow: hidden;
+  overflow-y: auto;
+  overscroll-behavior: contain;
 }
 .swarmlab-agent-message {
   max-width: 92%;
@@ -354,6 +376,22 @@ function injectCanvasStyles(documentRef = document) {
 .swarmlab-agent-message.is-agent {
   align-self: flex-start;
 }
+.swarmlab-agent-message.is-system {
+  align-self: flex-start;
+  max-width: 100%;
+  border-style: dashed;
+  color: #c8beb1;
+}
+.swarmlab-agent-message.is-loading,
+.swarmlab-agent-message.is-error {
+  align-self: center;
+  max-width: 100%;
+  color: var(--canvas-faint);
+  text-align: center;
+}
+.swarmlab-agent-message.is-error {
+  color: var(--canvas-danger);
+}
 .swarmlab-agent-composer {
   display: grid;
   grid-template-columns: minmax(0, 1fr) auto;
@@ -367,10 +405,29 @@ function injectCanvasStyles(documentRef = document) {
   color: var(--canvas-muted);
   font-size: 12px;
 }
+.swarmlab-agent-composer textarea {
+  width: 100%;
+  min-width: 0;
+  max-height: 86px;
+  border: 0;
+  outline: 0;
+  resize: none;
+  background: transparent;
+  color: var(--canvas-text);
+  font: inherit;
+  line-height: 1.35;
+}
+.swarmlab-agent-composer textarea::placeholder {
+  color: var(--canvas-muted);
+}
 .swarmlab-agent-composer button {
   min-width: 34px;
   height: 30px;
   padding: 0;
+}
+.swarmlab-agent-composer.is-sending button {
+  opacity: 0.6;
+  pointer-events: none;
 }
 .swarmlab-canvas-browser-body {
   display: grid;
@@ -558,6 +615,10 @@ export function renderSwarmlabCanvasView() {
           </div>
         </div>
         <div class="swarmlab-canvas-actions">
+          <button class="swarmlab-canvas-button is-primary" type="button" data-swarmlab-canvas-add-node>
+            ${renderIcon(HardDrive)}
+            <span>Add machine</span>
+          </button>
           <a class="swarmlab-canvas-button" href="?view=swarm" data-open-main-view="visual-interface">
             ${renderIcon(MapIcon)}
             <span>Agent Town</span>
@@ -575,13 +636,15 @@ export function renderSwarmlabCanvasView() {
   `;
 }
 
-async function fetchJson(url, { fetchImpl = fetch, signal } = {}) {
+async function fetchJson(url, { fetchImpl = fetch, signal, method = "GET", body = null } = {}) {
   const response = await fetchImpl(url, {
     cache: "no-store",
+    method,
     headers: {
       "Content-Type": "application/json",
       "X-Vibe-Research-API": "1",
     },
+    body: body == null ? undefined : JSON.stringify(body),
     referrerPolicy: "no-referrer",
     signal,
   });
@@ -591,6 +654,74 @@ async function fetchJson(url, { fetchImpl = fetch, signal } = {}) {
     throw new Error(payload?.error || `Request failed with status ${response.status}`);
   }
   return payload;
+}
+
+function timeoutSignal(parentSignal, timeoutMs) {
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), timeoutMs);
+  const abort = () => controller.abort();
+  if (parentSignal?.aborted) {
+    abort();
+  } else {
+    parentSignal?.addEventListener?.("abort", abort, { once: true });
+  }
+  return {
+    signal: controller.signal,
+    clear: () => {
+      clearTimeout(timer);
+      parentSignal?.removeEventListener?.("abort", abort);
+    },
+  };
+}
+
+function remoteNodeHost(url) {
+  try {
+    return new URL(url).host;
+  } catch {
+    return url;
+  }
+}
+
+function absoluteRemoteHref(href, baseUrl) {
+  const text = String(href || "").trim();
+  if (!text) return "";
+  try {
+    return new URL(text, baseUrl).href;
+  } catch {
+    return "";
+  }
+}
+
+async function fetchRemoteNodeRecord(baseUrl, { fetchImpl, signal }) {
+  const timeout = timeoutSignal(signal, REMOTE_NODE_FETCH_TIMEOUT_MS);
+  try {
+    const payload = await fetchJson(`${baseUrl}/api/node/snapshot?mode=redacted`, {
+      fetchImpl,
+      signal: timeout.signal,
+    });
+    return {
+      baseUrl,
+      host: remoteNodeHost(baseUrl),
+      snapshot: normalizeNodeSnapshot(payload),
+      error: null,
+    };
+  } catch (error) {
+    return {
+      baseUrl,
+      host: remoteNodeHost(baseUrl),
+      snapshot: null,
+      error: error?.name === "AbortError" ? "timed out fetching redacted snapshot" : (error?.message || "unreachable"),
+    };
+  } finally {
+    timeout.clear();
+  }
+}
+
+async function fetchRemoteNodeRecords({ fetchImpl, signal, storage, currentOrigin }) {
+  const urls = readRemoteNodeUrls(storage)
+    .filter((url) => url && url !== currentOrigin);
+  if (!urls.length) return [];
+  return Promise.all(urls.map((url) => fetchRemoteNodeRecord(url, { fetchImpl, signal })));
 }
 
 function readLayout(storage, key) {
@@ -626,6 +757,61 @@ function writeViewport(storage, key, viewport) {
   }
 }
 
+function normalizeRemoteNodeUrl(value) {
+  const raw = String(value || "").trim();
+  if (!raw) return "";
+  const withScheme = /^https?:\/\//i.test(raw) ? raw : `https://${raw}`;
+  try {
+    const url = new URL(withScheme);
+    if (!/^https?:$/i.test(url.protocol) || !url.hostname) return "";
+    return url.origin;
+  } catch {
+    return "";
+  }
+}
+
+function readRemoteNodeUrls(storage) {
+  try {
+    const raw = JSON.parse(storage.getItem(REMOTE_NODES_STORAGE_KEY) || "[]");
+    const values = Array.isArray(raw) ? raw : [];
+    return [...new Set(values.map(normalizeRemoteNodeUrl).filter(Boolean))];
+  } catch {
+    return [];
+  }
+}
+
+function writeRemoteNodeUrls(storage, urls) {
+  try {
+    storage.setItem(
+      REMOTE_NODES_STORAGE_KEY,
+      JSON.stringify([...new Set((urls || []).map(normalizeRemoteNodeUrl).filter(Boolean))]),
+    );
+  } catch {
+    // Remote node watchlist is optional state; ignore storage failures.
+  }
+}
+
+function applyRemoteNodeUrlParams(storage, locationRef) {
+  if (!locationRef?.search) return [];
+  const params = new URLSearchParams(locationRef.search);
+  const requested = [
+    ...params.getAll("node"),
+    ...params.getAll("nodes").flatMap((value) => String(value || "").split(",")),
+  ]
+    .map(normalizeRemoteNodeUrl)
+    .filter(Boolean);
+  if (!requested.length) return readRemoteNodeUrls(storage);
+  const merged = [...readRemoteNodeUrls(storage), ...requested];
+  writeRemoteNodeUrls(storage, merged);
+  return readRemoteNodeUrls(storage);
+}
+
+function compactText(value, max = 520) {
+  const text = String(value || "").replace(/\s+/g, " ").trim();
+  if (text.length <= max) return text;
+  return `${text.slice(0, Math.max(1, max - 3)).trimEnd()}...`;
+}
+
 function renderTags(card, { limit = 5 } = {}) {
   if (!card.tags?.length) {
     return "";
@@ -658,7 +844,7 @@ function renderCardAction(card) {
     return `
       <a class="swarmlab-canvas-open" href="${escapeHtml(card.href)}" target="_blank" rel="noreferrer">
         ${renderIcon(ExternalLink)}
-        <span>Open</span>
+        <span>${escapeHtml(card.ref?.actionLabel || "Open")}</span>
       </a>
     `;
   }
@@ -667,11 +853,14 @@ function renderCardAction(card) {
 
 function cardFrame(card, layout, body, footer = "") {
   const icon = CARD_TYPE_ICONS[card.type] || Box;
+  const sessionId = card.ref?.sessionId ? ` data-swarmlab-canvas-session-id="${escapeHtml(card.ref.sessionId)}"` : "";
+  const remoteClass = card.ref?.remoteUrl ? " is-remote" : "";
   return `
     <article
-      class="swarmlab-canvas-card is-${escapeHtml(card.type)}"
+      class="swarmlab-canvas-card is-${escapeHtml(card.type)}${remoteClass}"
       data-swarmlab-canvas-card-id="${escapeHtml(card.id)}"
       data-swarmlab-canvas-card-type="${escapeHtml(card.type)}"
+      ${sessionId}
       style="--card-x: ${layout.x}px; --card-y: ${layout.y}px; width: ${layout.width}px; height: ${layout.height}px; z-index: ${layout.z};"
     >
       <div class="swarmlab-canvas-card-head" data-swarmlab-card-drag-handle>
@@ -689,12 +878,14 @@ function cardFrame(card, layout, body, footer = "") {
 }
 
 function renderAgentCard(card, layout) {
-  const action = renderCardAction(card);
+  if (card.ref?.remoteUrl) {
+    return renderStandardCard(card, layout);
+  }
   const cwd = shortPath(card.detail);
   const status = [card.subtitle, card.status].filter(Boolean).join(" / ") || "agent session";
   const body = `
     <div class="swarmlab-agent-chat-window">
-      <div class="swarmlab-agent-chat-feed">
+      <div class="swarmlab-agent-chat-feed" data-swarmlab-agent-chat-feed data-swarmlab-agent-session-id="${escapeHtml(card.ref?.sessionId || "")}">
         <div class="swarmlab-agent-message is-user">
           <span>Workspace</span>
           ${escapeHtml(cwd || "default project")}
@@ -705,13 +896,105 @@ function renderAgentCard(card, layout) {
         </div>
         ${renderTags(card, { limit: 3 })}
       </div>
-      <div class="swarmlab-agent-composer">
-        <span>Agent, @ for context, / for commands</span>
-        ${action || `<button class="swarmlab-canvas-button" type="button" disabled>${renderIcon(Send)}</button>`}
-      </div>
+      <form class="swarmlab-agent-composer" data-swarmlab-agent-composer data-swarmlab-agent-session-id="${escapeHtml(card.ref?.sessionId || "")}">
+        <textarea rows="1" name="input" placeholder="Message agent, @ for context, / for commands"></textarea>
+        <button class="swarmlab-canvas-button" type="submit" title="Send">${renderIcon(Send)}</button>
+      </form>
     </div>
   `;
   return cardFrame(card, layout, body);
+}
+
+function narrativeEntryText(entry) {
+  return compactText(
+    [
+      entry?.text,
+      entry?.summary,
+      entry?.outputPreview,
+      entry?.statusText,
+    ].filter(Boolean).join(" "),
+  );
+}
+
+function narrativeEntryClass(entry) {
+  const kind = String(entry?.kind || entry?.role || "").toLowerCase();
+  if (kind === "user" || kind === "human") return "is-user";
+  if (kind === "assistant") return "is-agent";
+  return "is-system";
+}
+
+function narrativeEntryLabel(entry) {
+  const kind = String(entry?.kind || entry?.role || "").toLowerCase();
+  if (entry?.label) return entry.label;
+  if (kind === "user" || kind === "human") return "You";
+  if (kind === "assistant") return "Agent";
+  if (kind === "tool") return "Tool";
+  return kind || "Status";
+}
+
+function renderNarrativeEntries(narrative) {
+  const entries = Array.isArray(narrative?.entries) ? narrative.entries : [];
+  const visible = entries
+    .filter((entry) => narrativeEntryText(entry))
+    .slice(-6);
+  if (!visible.length) {
+    return `
+      <div class="swarmlab-agent-message is-loading">
+        <span>Native chat</span>
+        No messages yet.
+      </div>
+    `;
+  }
+  return visible.map((entry) => `
+    <div class="swarmlab-agent-message ${narrativeEntryClass(entry)}" data-swarmlab-agent-entry-id="${escapeHtml(entry?.id || "")}">
+      <span>${escapeHtml(narrativeEntryLabel(entry))}</span>
+      ${escapeHtml(narrativeEntryText(entry))}
+    </div>
+  `).join("");
+}
+
+function updateAgentFeed(card, html) {
+  const feed = card.querySelector("[data-swarmlab-agent-chat-feed]");
+  if (!(feed instanceof HTMLElement)) return;
+  feed.innerHTML = html;
+  feed.scrollTop = feed.scrollHeight;
+}
+
+async function loadAgentNarrative(root, card, { fetchImpl, abortController }) {
+  const sessionId = String(card?.dataset?.swarmlabCanvasSessionId || "").trim();
+  if (!sessionId || !(card instanceof HTMLElement)) {
+    return;
+  }
+  try {
+    const payload = await fetchJson(`/api/sessions/${encodeURIComponent(sessionId)}/narrative`, {
+      fetchImpl,
+      signal: abortController.signal,
+    });
+    if (abortController.signal.aborted) return;
+    updateAgentFeed(card, renderNarrativeEntries(payload.narrative));
+  } catch (error) {
+    if (abortController.signal.aborted) return;
+    updateAgentFeed(card, `
+      <div class="swarmlab-agent-message is-error">
+        <span>Native chat unavailable</span>
+        ${escapeHtml(error?.message || "Could not load session narrative.")}
+      </div>
+    `);
+  }
+}
+
+function clearAgentNarrativePoll(root) {
+  const windowRef = root.ownerDocument?.defaultView || globalThis.window;
+  if (root.__swarmlabCanvasNarrativePoll) {
+    windowRef.clearInterval(root.__swarmlabCanvasNarrativePoll);
+    root.__swarmlabCanvasNarrativePoll = null;
+  }
+}
+
+function refreshAgentNarratives(root, options) {
+  root.querySelectorAll(".swarmlab-canvas-card.is-agent:not(.is-remote)[data-swarmlab-canvas-session-id]").forEach((card) => {
+    void loadAgentNarrative(root, card, options);
+  });
 }
 
 function renderBrowserCard(card, layout) {
@@ -777,6 +1060,66 @@ function renderCanvasCard(card, layout) {
   if (card.type === "browser") return renderBrowserCard(card, layout);
   if (card.type === "app") return renderAppCard(card, layout);
   return renderStandardCard(card, layout);
+}
+
+function makeRemoteOfflineCard(record) {
+  const host = record.host || remoteNodeHost(record.baseUrl);
+  return {
+    id: `remote:${slugPart(host)}`,
+    type: "machine",
+    title: host,
+    subtitle: "remote node",
+    status: "offline",
+    detail: record.error || "Could not fetch redacted node snapshot.",
+    meta: record.baseUrl,
+    tags: ["remote", "unreachable"],
+    href: absoluteRemoteHref("/?view=canvas", record.baseUrl),
+    ref: {
+      remoteUrl: record.baseUrl,
+      actionLabel: "Open canvas",
+    },
+    width: 320,
+    height: 170,
+  };
+}
+
+function remoteCardsForRecord(record, remoteIndex) {
+  if (!record.snapshot) {
+    return [makeRemoteOfflineCard(record)];
+  }
+  const baseId = slugPart(record.snapshot.node.id || record.host, `remote-${remoteIndex + 1}`);
+  return buildCanvasCards(record.snapshot).map((card) => {
+    const sourceId = card.id;
+    const isMachine = card.type === "machine";
+    const href = isMachine
+      ? absoluteRemoteHref("/?view=canvas", record.baseUrl)
+      : absoluteRemoteHref(card.href, record.baseUrl);
+    return {
+      ...card,
+      id: `remote:${baseId}:${sourceId}`,
+      title: isMachine ? `${card.title} (${record.host})` : card.title,
+      subtitle: [card.subtitle, isMachine ? "remote canvas" : "remote"].filter(Boolean).join(" / "),
+      tags: ["remote", ...card.tags],
+      href,
+      ref: {
+        ...(card.ref || {}),
+        sourceCardId: sourceId,
+        remoteUrl: record.baseUrl,
+        actionLabel: isMachine ? "Open canvas" : "Open",
+      },
+    };
+  });
+}
+
+function combineCanvasCards(localPayload, remoteRecords) {
+  const snapshot = normalizeNodeSnapshot(localPayload);
+  const cards = buildCanvasCards(snapshot);
+  const remoteCards = remoteRecords.flatMap((record, index) => remoteCardsForRecord(record, index));
+  return {
+    snapshot,
+    cards: [...cards, ...remoteCards],
+    remoteRecords,
+  };
 }
 
 function renderFloatingControls(viewport) {
@@ -845,10 +1188,11 @@ function fitViewportToCards(root) {
   });
 }
 
-function renderSnapshot(root, payload, { storage }) {
-  const snapshot = normalizeNodeSnapshot(payload);
-  const cards = buildCanvasCards(snapshot);
-  const boardId = getCanvasBoardId(snapshot);
+function renderSnapshot(root, payload, { storage, remoteRecords = [] } = {}) {
+  const { snapshot, cards } = combineCanvasCards(payload, remoteRecords);
+  const boardId = remoteRecords.length
+    ? `fleet:${slugPart(snapshot.node.id, "local")}`
+    : getCanvasBoardId(snapshot);
   const storageKey = getCanvasLayoutStorageKey(boardId);
   const viewportKey = getCanvasViewportStorageKey(boardId);
   const savedLayout = readLayout(storage, storageKey);
@@ -856,7 +1200,12 @@ function renderSnapshot(root, payload, { storage }) {
   const layout = mergeCanvasLayout(cards, savedLayout);
   const meta = root.closest(".swarmlab-canvas-view")?.querySelector("[data-swarmlab-canvas-meta]");
   if (meta) {
-    meta.textContent = `${snapshot.node.name} / ${cards.length} windows / ${snapshot.generatedAt}`;
+    const onlineRemotes = remoteRecords.filter((record) => record.snapshot).length;
+    const offlineRemotes = remoteRecords.length - onlineRemotes;
+    const remoteText = remoteRecords.length
+      ? ` / ${onlineRemotes} remote online${offlineRemotes ? `, ${offlineRemotes} unreachable` : ""}`
+      : "";
+    meta.textContent = `${snapshot.node.name}${remoteText} / ${cards.length} windows / ${snapshot.generatedAt}`;
   }
 
   root.dataset.swarmlabCanvasBoardId = boardId;
@@ -912,7 +1261,12 @@ function bindCardDrag(root, { storage }) {
 
   root.querySelectorAll("[data-swarmlab-canvas-card-id]").forEach((card) => {
     card.addEventListener("pointerdown", (event) => {
-      if (!(card instanceof HTMLElement) || isInteractiveDragTarget(event.target, card)) {
+      if (
+        !(card instanceof HTMLElement)
+        || isInteractiveDragTarget(event.target, card)
+        || !(event.target instanceof Element)
+        || !event.target.closest("[data-swarmlab-card-drag-handle]")
+      ) {
         return;
       }
       const id = card.dataset.swarmlabCanvasCardId || "";
@@ -1057,6 +1411,9 @@ function bindViewportPanAndZoom(root, { storage }) {
   root.addEventListener("pointercancel", finishPan);
 
   root.addEventListener("wheel", (event) => {
+    if (event.target instanceof Element && event.target.closest("[data-swarmlab-agent-chat-feed], textarea, input, select")) {
+      return;
+    }
     const viewport = sanitizeViewport(root.__swarmlabCanvasViewport || DEFAULT_VIEWPORT);
     event.preventDefault();
     if (event.ctrlKey || event.metaKey) {
@@ -1072,9 +1429,95 @@ function bindViewportPanAndZoom(root, { storage }) {
   }, { passive: false });
 }
 
-function bindCanvasActions(root, { onOpenSession, storage }) {
+function autosizeComposerInput(textarea) {
+  if (!(textarea instanceof HTMLElement)) return;
+  textarea.style.height = "auto";
+  textarea.style.height = `${Math.min(86, Math.max(24, textarea.scrollHeight))}px`;
+}
+
+async function sendAgentComposerInput(form, { fetchImpl, abortController }) {
+  const sessionId = String(form?.dataset?.swarmlabAgentSessionId || "").trim();
+  const textarea = form?.querySelector("textarea[name='input']");
+  const input = textarea instanceof HTMLTextAreaElement ? textarea.value : "";
+  const text = input.trim();
+  if (!sessionId || !text) {
+    return;
+  }
+  form.classList.add("is-sending");
+  if (textarea instanceof HTMLTextAreaElement) {
+    textarea.disabled = true;
+  }
+  try {
+    await fetchJson(`/api/sessions/${encodeURIComponent(sessionId)}/input`, {
+      fetchImpl,
+      signal: abortController.signal,
+      method: "POST",
+      body: {
+        input: text,
+        clientMessageId: `canvas-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 8)}`,
+      },
+    });
+    if (textarea instanceof HTMLTextAreaElement) {
+      textarea.value = "";
+      autosizeComposerInput(textarea);
+    }
+    const card = form.closest(".swarmlab-canvas-card.is-agent");
+    if (card) {
+      updateAgentFeed(card, `
+        <div class="swarmlab-agent-message is-loading">
+          <span>Sent</span>
+          Waiting for native chat refresh...
+        </div>
+      `);
+    }
+  } catch (error) {
+    const card = form.closest(".swarmlab-canvas-card.is-agent");
+    if (card) {
+      updateAgentFeed(card, `
+        <div class="swarmlab-agent-message is-error">
+          <span>Send failed</span>
+          ${escapeHtml(error?.message || "Could not send message.")}
+        </div>
+      `);
+    }
+  } finally {
+    form.classList.remove("is-sending");
+    if (textarea instanceof HTMLTextAreaElement) {
+      textarea.disabled = false;
+      textarea.focus();
+    }
+  }
+}
+
+function bindAgentComposers(root, options) {
+  root.querySelectorAll("[data-swarmlab-agent-composer]").forEach((form) => {
+    if (!(form instanceof HTMLFormElement)) return;
+    const textarea = form.querySelector("textarea[name='input']");
+    if (textarea instanceof HTMLTextAreaElement) {
+      textarea.addEventListener("input", () => autosizeComposerInput(textarea));
+      textarea.addEventListener("keydown", (event) => {
+        if (event.key === "Enter" && !event.shiftKey) {
+          event.preventDefault();
+          form.requestSubmit();
+        }
+      });
+      autosizeComposerInput(textarea);
+    }
+    form.addEventListener("submit", (event) => {
+      event.preventDefault();
+      event.stopPropagation();
+      void sendAgentComposerInput(form, options).then(() => {
+        refreshAgentNarratives(root, options);
+      });
+    });
+  });
+}
+
+function bindCanvasActions(root, options) {
+  const { onOpenSession, storage } = options;
   bindViewportPanAndZoom(root, { storage });
   bindCardDrag(root, { storage });
+  bindAgentComposers(root, options);
 
   root.querySelectorAll("[data-swarmlab-canvas-open-session]").forEach((button) => {
     button.addEventListener("click", (event) => {
@@ -1113,18 +1556,34 @@ function bindCanvasActions(root, { onOpenSession, storage }) {
 }
 
 async function loadCanvas(root, options) {
-  const { abortController, fetchImpl, storage } = options;
+  const { abortController, fetchImpl, storage, currentOrigin } = options;
+  clearAgentNarrativePoll(root);
   root.innerHTML = renderCanvasShell();
   try {
-    const payload = await fetchJson(SNAPSHOT_URL, {
-      fetchImpl,
-      signal: abortController.signal,
-    });
+    const [payload, remoteRecords] = await Promise.all([
+      fetchJson(SNAPSHOT_URL, {
+        fetchImpl,
+        signal: abortController.signal,
+      }),
+      fetchRemoteNodeRecords({
+        fetchImpl,
+        signal: abortController.signal,
+        storage,
+        currentOrigin,
+      }),
+    ]);
     if (abortController.signal.aborted) {
       return;
     }
-    renderSnapshot(root, payload, { storage });
+    renderSnapshot(root, payload, { storage, remoteRecords });
     bindCanvasActions(root, options);
+    refreshAgentNarratives(root, options);
+    const windowRef = root.ownerDocument?.defaultView || globalThis.window;
+    root.__swarmlabCanvasNarrativePoll = windowRef.setInterval(() => {
+      if (!abortController.signal.aborted) {
+        refreshAgentNarratives(root, options);
+      }
+    }, NARRATIVE_POLL_MS);
   } catch (error) {
     if (abortController.signal.aborted) {
       return;
@@ -1148,6 +1607,9 @@ export function mountSwarmlabCanvasView({
   }
 
   injectCanvasStyles(documentRef);
+  const windowRef = documentRef.defaultView || globalThis.window;
+  const locationRef = windowRef?.location || globalThis.location;
+  applyRemoteNodeUrlParams(storage, locationRef);
   activeController?.abort();
   let currentController = new AbortController();
   activeController = currentController;
@@ -1157,9 +1619,11 @@ export function mountSwarmlabCanvasView({
     fetchImpl,
     storage,
     onOpenSession,
+    currentOrigin: locationRef?.origin || "",
   };
 
   const refresh = () => {
+    clearAgentNarrativePoll(root);
     currentController.abort();
     currentController = new AbortController();
     activeController = currentController;
@@ -1176,9 +1640,25 @@ export function mountSwarmlabCanvasView({
     });
   });
 
+  documentRef.querySelectorAll("[data-swarmlab-canvas-add-node]").forEach((button) => {
+    button.addEventListener("click", (event) => {
+      event.preventDefault();
+      const entered = windowRef?.prompt?.("Paste a Swarmlab machine URL, for example https://cthulhu1.tailnet.ts.net") || "";
+      const url = normalizeRemoteNodeUrl(entered);
+      if (!url) {
+        return;
+      }
+      writeRemoteNodeUrls(storage, [...readRemoteNodeUrls(storage), url]);
+      refresh();
+    });
+  });
+
   void loadCanvas(root, options);
   return {
-    abort: () => currentController.abort(),
+    abort: () => {
+      clearAgentNarrativePoll(root);
+      currentController.abort();
+    },
     refresh,
   };
 }

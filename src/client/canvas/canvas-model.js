@@ -352,7 +352,10 @@ function fallbackPositionForCard(card, index, counters) {
   counters[type] = next + 1;
 
   if (type === "machine") {
-    return { x: 120, y: 96 };
+    return {
+      x: 120,
+      y: 96 + next * 220,
+    };
   }
   if (type === "agent") {
     const column = next % 3;
