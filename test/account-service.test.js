@@ -87,13 +87,18 @@ function sampleRedactedSnapshot(nodeId = "node_1") {
       ports: 3,
       canvases: 1,
       projects: 4,
+      handoffJobs: 1,
+      brainNotes: 12,
     },
     capabilities: {
       providerCount: 2,
       buildingCount: 5,
       gpuCount: 1,
       cameraCount: 0,
+      handoffCount: 1,
+      brainNoteCount: 12,
       hasTailscale: true,
+      roles: ["agent-host", "brain-host", "handoff-coordinator"],
     },
     system: {
       platform: "darwin",
@@ -112,8 +117,11 @@ function sampleRedactedSnapshot(nodeId = "node_1") {
 test("buildNodeSummaryFromSnapshot keeps only redacted summary fields", () => {
   const summary = buildNodeSummaryFromSnapshot(sampleRedactedSnapshot());
   assert.equal(summary.counts.sessions, 2);
+  assert.equal(summary.counts.handoffJobs, 1);
+  assert.equal(summary.counts.brainNotes, 12);
   assert.equal(summary.status, "busy");
   assert.equal(summary.capabilities.hasTailscale, true);
+  assert.deepEqual(summary.capabilities.roles, ["agent-host", "brain-host", "handoff-coordinator"]);
   assert.doesNotMatch(JSON.stringify(summary), /npm run deploy|token=secret|cwd/);
 });
 

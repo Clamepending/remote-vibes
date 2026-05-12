@@ -101,6 +101,12 @@ export function buildNodeSummaryFromSnapshot(snapshot = {}) {
   const counts = snapshot.counts || {};
   const capabilities = snapshot.capabilities || {};
   const system = snapshot.system || {};
+  const roles = Array.isArray(capabilities.roles)
+    ? capabilities.roles
+      .map((role) => String(role || "").replace(/\s+/g, "-").trim().toLowerCase())
+      .filter(Boolean)
+      .slice(0, 20)
+    : [];
   return {
     schemaVersion: 1,
     generatedAt: snapshot.generatedAt || new Date().toISOString(),
@@ -125,13 +131,18 @@ export function buildNodeSummaryFromSnapshot(snapshot = {}) {
       ports: Number(counts.ports || 0),
       canvases: Number(counts.canvases || 0),
       projects: Number(counts.projects || 0),
+      handoffJobs: Number(counts.handoffJobs || capabilities.handoffCount || 0),
+      brainNotes: Number(counts.brainNotes || capabilities.brainNoteCount || 0),
     },
     capabilities: {
       providerCount: Number(capabilities.providerCount || 0),
       buildingCount: Number(capabilities.buildingCount || 0),
       gpuCount: Number(capabilities.gpuCount || system.gpuCount || 0),
       cameraCount: Number(capabilities.cameraCount || system.cameraCount || 0),
+      handoffCount: Number(capabilities.handoffCount || counts.handoffJobs || 0),
+      brainNoteCount: Number(capabilities.brainNoteCount || counts.brainNotes || 0),
       hasTailscale: Boolean(capabilities.hasTailscale),
+      roles,
     },
     system: {
       platform: String(system.platform || snapshot.node?.os || "").trim(),

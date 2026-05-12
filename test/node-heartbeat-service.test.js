@@ -30,13 +30,18 @@ function redactedSnapshot(nodeId) {
       ports: 1,
       canvases: 0,
       projects: 1,
+      handoffJobs: 2,
+      brainNotes: 327,
     },
     capabilities: {
       providerCount: 1,
       buildingCount: 2,
       gpuCount: 4,
       cameraCount: 0,
+      handoffCount: 2,
+      brainNoteCount: 327,
       hasTailscale: true,
+      roles: ["agent-host", "gpu-worker", "brain-host", "handoff-coordinator"],
     },
     system: {
       platform: "linux",
@@ -66,7 +71,11 @@ test("buildNodeHeartbeatPayload contains fleet summary, not privileged local dat
   });
   assert.equal(heartbeat.nodeId, "node_heartbeat");
   assert.equal(heartbeat.counts.sessions, 1);
+  assert.equal(heartbeat.counts.handoffJobs, 2);
+  assert.equal(heartbeat.counts.brainNotes, 327);
   assert.equal(heartbeat.capabilities.gpuCount, 4);
+  assert.equal(heartbeat.capabilities.handoffCount, 2);
+  assert.deepEqual(heartbeat.capabilities.roles, ["agent-host", "gpu-worker", "brain-host", "handoff-coordinator"]);
   assert.equal(heartbeat.connectionHints[0].url, "https://gpu.tailnet.test");
   assert.doesNotMatch(JSON.stringify(heartbeat), /sk-secret|OPENAI_API_KEY|\/Users\/mark|private|token=secret|localApiToken/);
 });
