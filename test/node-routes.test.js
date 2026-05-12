@@ -3,7 +3,10 @@ import { mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import test from "node:test";
+import { buildNodeRegistrationPayload } from "../src/account/account-service.js";
+import { buildNodeHeartbeatPayload } from "../src/account/node-heartbeat-service.js";
 import { createVibeResearchApp } from "../src/create-app.js";
+import { NodeIdentityStore } from "../src/node/identity-store.js";
 import { SleepPreventionService } from "../src/sleep-prevention.js";
 
 const shellProvider = {
@@ -276,6 +279,133 @@ test("/api/node/account routes pair, register, heartbeat, and never echo account
     const disconnectResponse = await fetch(`${started.baseUrl}/api/node/account/disconnect`, { method: "POST" });
     assert.equal(disconnectResponse.status, 200);
     assert.equal((await disconnectResponse.json()).account.configured, false);
+  } finally {
+    await started.cleanup();
+  }
+});
+
+test("hosted /api/account node registry routes power machine discovery without leaking secrets", async () => {
+  const started = await startNodeRoutesApp();
+  const nodeIdentityStore = new NodeIdentityStore({ stateDir: path.join(started.stateDir, "route-hosted-node") });
+  await nodeIdentityStore.initialize();
+  const identity = nodeIdentityStore.getPublicIdentity({ includeHostname: false });
+  const snapshot = {
+    schemaVersion: 1,
+    mode: "redacted",
+    node: {
+      nodeId: identity.nodeId,
+      installId: identity.installId,
+      displayName: "Hosted GPU",
+      swarmlabVersion: "1.0.19",
+      commit: "de29c11",
+      branch: "main",
+      os: "linux",
+      arch: "x64",
+      hostnameHash: "hashed-host",
+    },
+    counts: { sessions: 3, runningSessions: 1, ports: 2, handoffJobs: 1, brainNotes: 9 },
+    capabilities: { gpuCount: 4, providerCount: 2, roles: ["agent-host", "gpu-worker"], brainNoteCount: 9 },
+    system: { platform: "linux", arch: "x64", gpuCount: 4 },
+    sessions: [{ cwd: "/private/path", command: "TOKEN=secret npm test" }],
+    generatedAt: "2026-05-12T20:30:00.000Z",
+  };
+  try {
+    const pairResponse = await fetch(`${started.baseUrl}/api/account/nodes/pairing`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        label: "Hosted GPU",
+        redirectUri: `${started.baseUrl}/account/auth/complete`,
+        identity,
+        connectionHints: [{ kind: "tailscale", url: "https://gpu.tailnet.test/private?token=route-secret" }],
+      }),
+    });
+    assert.equal(pairResponse.status, 201);
+    const pairBody = await pairResponse.json();
+    assert.match(pairBody.pairingUrl, /\/account\/pair/);
+
+    const approveResponse = await fetch(`${started.baseUrl}/api/account/nodes/pairing/approve`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ pairingId: pairBody.pairingId, pairingCode: pairBody.pairingCode }),
+    });
+    assert.equal(approveResponse.status, 200);
+    const approveBody = await approveResponse.json();
+    assert.match(approveBody.redirectUri, /vibe_grant=/);
+
+    const grant = new URL(approveBody.redirectUri).searchParams.get("grant");
+    const completeResponse = await fetch(`${started.baseUrl}/api/account/nodes/pairing/complete`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        grant,
+        identity,
+        connectionHints: [{ kind: "tailscale", url: "https://gpu.tailnet.test/canvas?token=route-secret" }],
+      }),
+    });
+    assert.equal(completeResponse.status, 200);
+    const completeBody = await completeResponse.json();
+    assert.ok(completeBody.accessToken.startsWith("slnode_"));
+    assert.doesNotMatch(JSON.stringify(completeBody.node), /route-secret|\/private|\/canvas/);
+
+    const registration = buildNodeRegistrationPayload({
+      identity,
+      snapshot,
+      connectionHints: [{ kind: "tailscale", url: "https://gpu.tailnet.test/private?token=route-secret" }],
+    });
+    const registrationUnsigned = { type: "node.registration", registration };
+    const registerResponse = await fetch(`${started.baseUrl}/api/account/nodes`, {
+      method: "POST",
+      headers: {
+        Authorization: `Bearer ${completeBody.accessToken}`,
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify({
+        ...registrationUnsigned,
+        signature: nodeIdentityStore.signPayload(registrationUnsigned),
+      }),
+    });
+    assert.equal(registerResponse.status, 201);
+    const registerBody = await registerResponse.json();
+    assert.equal(registerBody.node.displayName, "Hosted GPU");
+    assert.equal(registerBody.node.baseUrl, "https://gpu.tailnet.test");
+
+    const heartbeatUnsigned = buildNodeHeartbeatPayload({
+      identity,
+      snapshot,
+      connectionHints: [{ kind: "tailscale", url: "https://gpu.tailnet.test/heartbeat?token=route-secret" }],
+    });
+    const heartbeatResponse = await fetch(`${started.baseUrl}/api/account/nodes/${encodeURIComponent(identity.nodeId)}/heartbeat`, {
+      method: "POST",
+      headers: {
+        Authorization: `Bearer ${completeBody.accessToken}`,
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify({
+        heartbeat: {
+          ...heartbeatUnsigned,
+          signature: nodeIdentityStore.signPayload({ type: "node.heartbeat", heartbeat: heartbeatUnsigned }),
+        },
+      }),
+    });
+    assert.equal(heartbeatResponse.status, 200);
+    assert.equal((await heartbeatResponse.json()).node.capabilities.gpuCount, 4);
+
+    const listResponse = await fetch(`${started.baseUrl}/api/account/nodes`, {
+      headers: { Authorization: `Bearer ${completeBody.accessToken}` },
+    });
+    assert.equal(listResponse.status, 200);
+    const listBody = await listResponse.json();
+    assert.equal(listBody.nodes.length, 1);
+    assert.equal(listBody.nodes[0].counts.sessions, 3);
+    assert.equal(listBody.nodes[0].baseUrl, "https://gpu.tailnet.test");
+    assert.doesNotMatch(JSON.stringify(listBody), /slnode_|TOKEN=secret|route-secret|\/private|\/canvas|\/private\/path/);
+
+    const pageResponse = await fetch(`${started.baseUrl}/account/machines`);
+    assert.equal(pageResponse.status, 200);
+    const pageText = await pageResponse.text();
+    assert.match(pageText, /Hosted GPU/);
+    assert.doesNotMatch(pageText, /slnode_|TOKEN=secret|route-secret|\/private|\/canvas|\/private\/path/);
   } finally {
     await started.cleanup();
   }

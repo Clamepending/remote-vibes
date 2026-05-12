@@ -32,7 +32,8 @@ const VIEW_ROOT_SELECTOR = "[data-swarmlab-canvas-root]";
 const STYLE_ID = "swarmlab-canvas-styles";
 const SNAPSHOT_URL = "/api/node/snapshot?mode=privileged";
 const FLEET_NODES_URL = "/api/fleet/nodes";
-const ACCOUNT_NODES_URL = "/api/node/account/nodes";
+const NODE_ACCOUNT_NODES_URL = "/api/node/account/nodes";
+const ACCOUNT_NODES_URL = "/api/account/nodes";
 const NARRATIVE_POLL_MS = 4_000;
 const REMOTE_NODES_STORAGE_KEY = "swarmlab.canvas.remoteNodes.v1";
 const REMOTE_NODE_FETCH_TIMEOUT_MS = 4_500;
@@ -859,6 +860,7 @@ function normalizeFleetNodes(payload) {
 async function fetchRegistryNodes({ fetchImpl, signal }) {
   const payloads = await Promise.all([
     fetchJson(FLEET_NODES_URL, { fetchImpl, signal }).catch(() => null),
+    fetchJson(NODE_ACCOUNT_NODES_URL, { fetchImpl, signal }).catch(() => null),
     fetchJson(ACCOUNT_NODES_URL, { fetchImpl, signal }).catch(() => null),
   ]);
   return payloads.flatMap((payload) => normalizeFleetNodes(payload));
@@ -1071,7 +1073,7 @@ function renderCardAction(card) {
       </button>
     `;
   }
-  if (card.type === "agent" && card.ref?.sessionId) {
+  if (card.type === "agent" && card.ref?.sessionId && !card.ref?.remoteUrl) {
     return `
       <button class="swarmlab-canvas-open swarmlab-canvas-button" type="button" data-swarmlab-canvas-open-session="${escapeHtml(card.ref.sessionId)}">
         ${renderIcon(Bot)}
@@ -1448,6 +1450,30 @@ function makeRemoteOfflineCard(record) {
   };
 }
 
+function remoteCardHref(card, baseUrl) {
+  if (card.type === "machine") {
+    return absoluteRemoteHref("/?view=canvas", baseUrl);
+  }
+  if (card.type === "agent" && card.ref?.sessionId) {
+    return absoluteRemoteHref(`/?view=shell&sessionId=${encodeURIComponent(card.ref.sessionId)}`, baseUrl);
+  }
+  if (card.type === "handoff" && card.ref?.launchedSessionId) {
+    return absoluteRemoteHref(`/?view=shell&sessionId=${encodeURIComponent(card.ref.launchedSessionId)}`, baseUrl);
+  }
+  if (card.type === "handoff") {
+    return absoluteRemoteHref("/?view=canvas", baseUrl);
+  }
+  return absoluteRemoteHref(card.href, baseUrl);
+}
+
+function remoteCardActionLabel(card) {
+  if (card.type === "machine") return "Open canvas";
+  if (card.type === "agent") return "Open agent";
+  if (card.type === "handoff" && card.ref?.launchedSessionId) return "Open agent";
+  if (card.type === "handoff") return "Open canvas";
+  return card.ref?.actionLabel || "Open";
+}
+
 function remoteCardsForRecord(record, remoteIndex) {
   if (!record.snapshot) {
     return [makeRemoteOfflineCard(record)];
@@ -1456,9 +1482,7 @@ function remoteCardsForRecord(record, remoteIndex) {
   return buildCanvasCards(record.snapshot).map((card) => {
     const sourceId = card.id;
     const isMachine = card.type === "machine";
-    const href = isMachine
-      ? absoluteRemoteHref("/?view=canvas", record.baseUrl)
-      : absoluteRemoteHref(card.href, record.baseUrl);
+    const href = remoteCardHref(card, record.baseUrl);
     return {
       ...card,
       id: `remote:${baseId}:${sourceId}`,
@@ -1470,7 +1494,7 @@ function remoteCardsForRecord(record, remoteIndex) {
         ...(card.ref || {}),
         sourceCardId: sourceId,
         remoteUrl: record.baseUrl,
-        actionLabel: isMachine ? "Open canvas" : "Open",
+        actionLabel: remoteCardActionLabel(card),
       },
     };
   });

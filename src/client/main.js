@@ -2853,6 +2853,7 @@ let knowledgeBaseSearchResultsCache = {
 function getRouteState() {
   const url = new URL(window.location.href);
   const explicitView = url.searchParams.get("view");
+  const sessionId = String(url.searchParams.get("sessionId") || url.searchParams.get("session") || "").trim();
   const root = normalizeWorkspaceRoot(url.searchParams.get("root") || "");
   const path = normalizeFileTreePath(url.searchParams.get("path") || "");
   const buildingId = normalizeBuildingId(url.searchParams.get("building") || "");
@@ -2900,6 +2901,7 @@ function getRouteState() {
   if (ROUTED_MAIN_VIEWS.has(explicitView)) {
     return {
       view: explicitView,
+      sessionId,
       root,
       path: "",
       notePath: "",
@@ -2919,6 +2921,7 @@ function getRouteState() {
 
   return {
     view: "shell",
+    sessionId,
     root,
     path,
     notePath: "",
@@ -12637,9 +12640,11 @@ function updateRoute({
   root = state.filesRoot,
   buildingId = state.pluginDetailId,
   buildingHubTab = state.buildingHubTab,
+  sessionId = "",
 } = {}) {
   const url = new URL(window.location.href);
   const normalizedRoot = normalizeWorkspaceRoot(root);
+  const normalizedSessionId = String(sessionId || "").trim();
 
   if (normalizedRoot) {
     url.searchParams.set("root", normalizedRoot);
@@ -12712,6 +12717,13 @@ function updateRoute({
     url.searchParams.delete("buildinghubTab");
     url.hash = "";
   }
+
+  if (view === "shell" && normalizedSessionId) {
+    url.searchParams.set("sessionId", normalizedSessionId);
+  } else {
+    url.searchParams.delete("sessionId");
+  }
+  url.searchParams.delete("session");
 
   history.replaceState(null, "", `${url.pathname}${url.search}${url.hash}`);
 }
@@ -16674,6 +16686,7 @@ function openAgentProfileForSession(sessionId, { subagentId = "", browserUseSess
   markSessionRead(sessionId, { refresh: false });
   state.activeSessionId = sessionId;
   setAgentProfileSelection({ sessionId, subagentId, browserUseSessionId });
+  updateRoute({ view: "shell", sessionId });
 
   const nextSession = state.sessions.find((session) => session.id === sessionId);
   if (nextSession) {
@@ -45302,7 +45315,7 @@ function setCurrentView(nextView, {
   state.currentView = "shell";
   state.pluginDetailId = "";
   state.buildingHubTab = BUILDINGHUB_DEFAULT_TAB;
-  updateRoute({ view: state.currentView });
+  updateRoute({ view: state.currentView, sessionId: state.activeSessionId || "" });
 }
 
 async function openMainView(nextView, { buildingId = "", buildingHubTab = state.buildingHubTab, buildingWorkspaceId = "" } = {}) {
@@ -49781,7 +49794,10 @@ async function bootstrapApp() {
 
   const route = getRouteState();
   state.filesRootOverride = route.root || null;
-  state.activeSessionId = payload.sessions[0]?.id ?? null;
+  const routedSession = route.sessionId
+    ? payload.sessions.find((session) => session.id === route.sessionId)
+    : null;
+  state.activeSessionId = routedSession?.id ?? payload.sessions[0]?.id ?? null;
   syncFilesRoot({ force: true });
   await loadAgentTownState({ refreshUi: false });
 

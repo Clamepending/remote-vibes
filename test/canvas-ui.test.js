@@ -90,6 +90,12 @@ test("local canvas view renders node snapshot cards and persists drag layout", a
         sessionName: "Query worker",
         port: 8008,
       }],
+      ["https://account-node.example.test", {
+        id: "account-box",
+        name: "Account Workstation",
+        sessionName: "Account worker",
+        port: 8108,
+      }],
       ["https://manual-node.example.test", {
         id: "manual-box",
         name: "Manual Box",
@@ -197,6 +203,23 @@ test("local canvas view renders node snapshot cards and persists drag layout", a
         }),
       });
     });
+    await page.route(`${baseUrl}/api/account/nodes`, async (route) => {
+      await route.fulfill({
+        status: 200,
+        contentType: "application/json",
+        body: JSON.stringify({
+          nodes: [
+            {
+              id: "account-node",
+              nodeId: "account-node",
+              displayName: "Account Workstation",
+              status: "online",
+              connectionHints: [{ kind: "public", url: "https://account-node.example.test" }],
+            },
+          ],
+        }),
+      });
+    });
     await page.route(`${baseUrl}/api/fleet/nodes`, async (route) => {
       if (route.request().method() === "POST") {
         postedFleetNodes.push(JSON.parse(route.request().postData() || "{}"));
@@ -252,7 +275,7 @@ test("local canvas view renders node snapshot cards and persists drag layout", a
         body: JSON.stringify({ error: "offline in test" }),
       });
     });
-    await page.route(/https:\/\/(?:gpu-node|registry-node|query-node|manual-node)\.example\.test\/api\/node\/snapshot\?mode=redacted/u, async (route) => {
+    await page.route(/https:\/\/(?:gpu-node|registry-node|query-node|account-node|manual-node)\.example\.test\/api\/node\/snapshot\?mode=redacted/u, async (route) => {
       const origin = new URL(route.request().url()).origin;
       const remote = remoteSnapshots.get(origin);
       remoteSnapshotHits.set(origin, (remoteSnapshotHits.get(origin) || 0) + 1);
@@ -352,13 +375,16 @@ test("local canvas view renders node snapshot cards and persists drag layout", a
     assert.match(rendered, /GPU Cluster/);
     assert.match(rendered, /Registry Box/);
     assert.match(rendered, /Query Box/);
+    assert.match(rendered, /Account Workstation/);
     assert.match(rendered, /Known Offline GPU/);
     assert.match(rendered, /Remote trainer/);
     assert.match(rendered, /Registry worker/);
     assert.match(rendered, /Query worker/);
+    assert.match(rendered, /Account worker/);
     assert.match(rendered, /gpu-node\.example\.test/);
     assert.match(rendered, /registry-node\.example\.test/);
     assert.match(rendered, /query-node\.example\.test/);
+    assert.match(rendered, /account-node\.example\.test/);
     assert.match(rendered, /2 sessions, 1 apps, 1 handoffs/);
     assert.match(rendered, /6 gpus/);
     assert.doesNotMatch(rendered, /private|token=secret|token=registry/);
@@ -378,9 +404,9 @@ test("local canvas view renders node snapshot cards and persists drag layout", a
     assert.match(rendered, /native session feed/);
     assert.equal(await page.locator(".swarmlab-agent-chat-window").count(), 1);
     assert.equal(await page.locator(".swarmlab-canvas-card.is-summary:not(.is-remote)").count(), 2);
-    assert.equal(await page.locator(".swarmlab-canvas-card.is-remote").count(), 10);
+    assert.equal(await page.locator(".swarmlab-canvas-card.is-remote").count(), 13);
     assert.equal(await page.locator(".swarmlab-canvas-floating-controls").count(), 1);
-    assert.equal(await page.locator(".swarmlab-canvas-card.is-app").count(), 8);
+    assert.equal(await page.locator(".swarmlab-canvas-card.is-app").count(), 9);
     assert.equal(await page.locator(".swarmlab-canvas-card.is-app:not(.is-remote)").count(), 5);
     assert.equal(await page.locator(".swarmlab-canvas-card.is-handoff:not(.is-remote)").count(), 1);
     assert.equal(await page.locator(".swarmlab-canvas-card.is-brain:not(.is-remote)").count(), 1);
@@ -390,7 +416,16 @@ test("local canvas view renders node snapshot cards and persists drag layout", a
       "fleet:mac-main",
     );
     assert.equal(remoteSnapshotHits.get("https://registry-node.example.test"), 1);
+    assert.equal(remoteSnapshotHits.get("https://account-node.example.test"), 1);
     assert.equal(remoteSnapshotHits.get("https://offline-node.example.test"), 1);
+    assert.equal(
+      await page.locator('[data-swarmlab-canvas-card-id="remote:gpu-cluster:session:gpu-cluster-agent-1"] a.swarmlab-canvas-open').getAttribute("href"),
+      "https://gpu-node.example.test/?view=shell&sessionId=gpu-cluster-agent-1",
+    );
+    assert.equal(
+      await page.locator('[data-swarmlab-canvas-card-id="remote:account-box:session:account-box-agent-1"] a.swarmlab-canvas-open').getAttribute("href"),
+      "https://account-node.example.test/?view=shell&sessionId=account-box-agent-1",
+    );
     assert.equal(
       await page.locator(".swarmlab-canvas-stage").evaluate((element) => getComputedStyle(element).overflow),
       "hidden",

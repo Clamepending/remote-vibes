@@ -9,6 +9,7 @@ import { promisify } from "node:util";
 import express from "express";
 import { rateLimit } from "express-rate-limit";
 import { WebSocket as NodeWebSocket, WebSocketServer } from "ws";
+import { AccountNodeRegistryService } from "./account/account-node-registry-service.js";
 import { AccountService } from "./account/account-service.js";
 import { AccountTokenStore } from "./account/account-token-store.js";
 import { NodeHeartbeatService } from "./account/node-heartbeat-service.js";
@@ -1600,6 +1601,7 @@ export async function createVibeResearchApp({
   accountFetchImpl = globalThis.fetch,
   accountTokenStoreFactory = null,
   accountServiceFactory = null,
+  accountNodeRegistryServiceFactory = null,
   nodeHeartbeatServiceFactory = null,
   buildingHubFetchImpl = globalThis.fetch,
   buildingHubAccountTokenStoreFactory = null,
@@ -1663,6 +1665,17 @@ export async function createVibeResearchApp({
           fetchImpl: accountFetchImpl,
           env: serverEnv,
         });
+  const accountNodeRegistryService =
+    typeof accountNodeRegistryServiceFactory === "function"
+      ? accountNodeRegistryServiceFactory({ stateDir, settingsStore })
+      : new AccountNodeRegistryService({
+          stateDir,
+          defaultOwnerAccountId:
+            serverEnv.SWARMLAB_ACCOUNT_OWNER_ID ||
+            serverEnv.VIBE_RESEARCH_ACCOUNT_OWNER_ID ||
+            "local",
+        });
+  await accountNodeRegistryService.initialize();
   const buildingHubAccountTokenStore =
     typeof buildingHubAccountTokenStoreFactory === "function"
       ? buildingHubAccountTokenStoreFactory({ stateDir })
@@ -3314,6 +3327,7 @@ export async function createVibeResearchApp({
   });
 
   app.use(express.json({ limit: JSON_BODY_LIMIT }));
+  app.use(express.urlencoded({ extended: false, limit: JSON_BODY_LIMIT }));
 
   app.use((request, response, next) => {
     if (request.path.startsWith("/api/") && request.get("X-Vibe-Research-API") === "1") {
@@ -3329,6 +3343,292 @@ export async function createVibeResearchApp({
     }
 
     proxyHttpRequest(request, response, proxyServer, proxiedPort, false);
+  });
+
+  function accountOwnerIdFromRequest(request) {
+    const configuredToken = String(
+      serverEnv.SWARMLAB_ACCOUNT_OWNER_TOKEN ||
+        serverEnv.VIBE_RESEARCH_ACCOUNT_OWNER_TOKEN ||
+        serverEnv.SWARMLAB_ACCOUNT_ADMIN_TOKEN ||
+        serverEnv.VIBE_RESEARCH_ACCOUNT_ADMIN_TOKEN ||
+        "",
+    ).trim();
+    const defaultOwner = String(
+      serverEnv.SWARMLAB_ACCOUNT_OWNER_ID ||
+        serverEnv.VIBE_RESEARCH_ACCOUNT_OWNER_ID ||
+        "local",
+    ).trim() || "local";
+    const bearer = String(request.get("authorization") || "").match(/^Bearer\s+(.+)$/iu)?.[1]?.trim() || "";
+    if (configuredToken) {
+      if (bearer === configuredToken) {
+        return defaultOwner;
+      }
+      throw buildHttpError("Account owner authorization is required.", 401);
+    }
+    if (String(serverEnv.SWARMLAB_TRUST_ACCOUNT_HEADER || serverEnv.VIBE_RESEARCH_TRUST_ACCOUNT_HEADER || "").trim() === "1") {
+      const headerOwner = String(request.get("x-vibe-account-id") || request.get("x-swarmlab-account-id") || "").trim();
+      if (headerOwner) {
+        return headerOwner;
+      }
+    }
+    if (isLocalRequest(request)) {
+      return defaultOwner;
+    }
+    throw buildHttpError("Account owner authorization is not configured.", 401);
+  }
+
+  function accountPairingUrlForRequest(request, pairing) {
+    const origin = getRequestOrigin(request) || publicBaseUrl || helperBaseUrl || "";
+    if (!origin || !pairing?.id) return "";
+    const url = new URL("/account/pair", origin);
+    url.searchParams.set("pairingId", pairing.id);
+    if (pairing.pairingCode) {
+      url.searchParams.set("code", pairing.pairingCode);
+    }
+    return url.toString();
+  }
+
+  function withAccountGrant(redirectUri, { grant = "", pairingId = "" } = {}) {
+    const normalized = String(redirectUri || "").trim();
+    if (!normalized) return "";
+    try {
+      const url = new URL(normalized);
+      if (grant) url.searchParams.set("grant", grant);
+      if (grant) url.searchParams.set("vibe_grant", grant);
+      if (pairingId) url.searchParams.set("pairingId", pairingId);
+      if (pairingId) url.searchParams.set("pairing_id", pairingId);
+      return url.toString();
+    } catch {
+      return "";
+    }
+  }
+
+  function renderAccountMachinesPage({ nodes = [], owner = "local" } = {}) {
+    const cards = nodes.length
+      ? nodes.map((node) => {
+          const tags = [
+            node.status,
+            node.capabilities?.gpuCount ? `${node.capabilities.gpuCount} GPUs` : "",
+            node.capabilities?.providerCount ? `${node.capabilities.providerCount} providers` : "",
+            ...(Array.isArray(node.capabilities?.roles) ? node.capabilities.roles.slice(0, 4) : []),
+          ].filter(Boolean);
+          const href = node.baseUrl ? `${node.baseUrl}/?view=canvas` : "";
+          return `
+            <article class="machine-card">
+              <header>
+                <strong>${escapeHtml(node.displayName || node.nodeId || "Swarmlab node")}</strong>
+                <span>${escapeHtml([node.os, node.arch, node.status].filter(Boolean).join(" / "))}</span>
+              </header>
+              <p>${escapeHtml(`${node.counts?.sessions || 0} sessions, ${node.counts?.ports || 0} apps, ${node.counts?.handoffJobs || 0} handoffs`)}</p>
+              <div class="tags">${tags.map((tag) => `<span>${escapeHtml(tag)}</span>`).join("")}</div>
+              <footer>
+                <span>${escapeHtml(node.lastSeenAt || "never seen")}</span>
+                ${href ? `<a href="${escapeHtml(href)}" target="_blank" rel="noreferrer">Open canvas</a>` : ""}
+              </footer>
+            </article>
+          `;
+        }).join("")
+      : `<div class="empty">No paired machines yet.</div>`;
+    return `<!doctype html>
+      <html>
+        <head>
+          <meta charset="utf-8">
+          <meta name="viewport" content="width=device-width, initial-scale=1">
+          <title>Swarmlab Machines</title>
+          <style>
+            :root { color-scheme: dark; font-family: Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif; background: #15140f; color: #f3eee5; }
+            body { margin: 0; min-height: 100vh; background: radial-gradient(circle at top left, rgba(244, 126, 43, 0.12), transparent 32rem), #15140f; }
+            main { max-width: 980px; margin: 0 auto; padding: 48px 20px; }
+            h1 { margin: 0 0 8px; font-size: 28px; letter-spacing: 0; }
+            .sub { color: #b7aca0; margin-bottom: 28px; }
+            .grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(260px, 1fr)); gap: 14px; }
+            .machine-card, .empty { border: 1px solid rgba(255,255,255,.12); background: rgba(255,255,255,.045); border-radius: 8px; padding: 16px; box-shadow: 0 18px 50px rgba(0,0,0,.22); }
+            header { display: grid; gap: 4px; margin-bottom: 18px; }
+            header strong { font-size: 16px; }
+            header span, p, footer span, .sub { font-size: 13px; }
+            p { color: #d5cbc0; margin: 0 0 12px; }
+            .tags { display: flex; flex-wrap: wrap; gap: 6px; min-height: 24px; }
+            .tags span { font-size: 12px; color: #fee3cf; border: 1px solid rgba(244,126,43,.28); background: rgba(244,126,43,.13); border-radius: 6px; padding: 3px 7px; }
+            footer { display: flex; justify-content: space-between; align-items: center; gap: 10px; margin-top: 18px; }
+            a { color: #ff9b55; text-decoration: none; font-weight: 650; }
+          </style>
+        </head>
+        <body>
+          <main>
+            <h1>Swarmlab Machines</h1>
+            <div class="sub">${escapeHtml(owner)} / ${nodes.length} machine${nodes.length === 1 ? "" : "s"}</div>
+            <section class="grid">${cards}</section>
+          </main>
+        </body>
+      </html>`;
+  }
+
+  function renderAccountPairPage(pairing = {}, { error = "" } = {}) {
+    const redirectLabel = pairing.redirectUri ? "Approve and return to Swarmlab" : "Approve";
+    return `<!doctype html>
+      <html>
+        <head>
+          <meta charset="utf-8">
+          <meta name="viewport" content="width=device-width, initial-scale=1">
+          <title>Pair Swarmlab Machine</title>
+          <style>
+            :root { color-scheme: dark; font-family: Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif; background: #15140f; color: #f3eee5; }
+            body { margin: 0; min-height: 100vh; display: grid; place-items: center; background: radial-gradient(circle at top, rgba(244,126,43,.16), transparent 30rem), #15140f; }
+            main { width: min(440px, calc(100vw - 32px)); border: 1px solid rgba(255,255,255,.12); background: rgba(255,255,255,.05); border-radius: 8px; padding: 22px; box-shadow: 0 24px 80px rgba(0,0,0,.28); }
+            h1 { font-size: 22px; margin: 0 0 6px; letter-spacing: 0; }
+            p { color: #cfc4b9; line-height: 1.45; }
+            code { display: inline-block; margin: 10px 0; padding: 7px 10px; border: 1px solid rgba(255,255,255,.14); border-radius: 6px; background: rgba(0,0,0,.26); }
+            button { width: 100%; border: 1px solid rgba(244,126,43,.45); background: #f47e2b; color: #1b120a; border-radius: 8px; padding: 11px 12px; font-weight: 750; cursor: pointer; }
+            .error { color: #ffb2a2; }
+          </style>
+        </head>
+        <body>
+          <main>
+            <h1>Pair Swarmlab Machine</h1>
+            ${error ? `<p class="error">${escapeHtml(error)}</p>` : ""}
+            <p>${escapeHtml(pairing.label || "Swarmlab")} is asking to connect this machine to your Vibe account.</p>
+            <code>${escapeHtml(pairing.pairingCode || "")}</code>
+            <button type="button" id="approve">${escapeHtml(redirectLabel)}</button>
+          </main>
+          <script>
+            document.getElementById("approve").addEventListener("click", async () => {
+              const res = await fetch("/api/account/nodes/pairing/approve", {
+                method: "POST",
+                headers: { "Content-Type": "application/json" },
+                body: JSON.stringify({ pairingId: ${JSON.stringify(pairing.id || "")}, pairingCode: ${JSON.stringify(pairing.pairingCode || "")} })
+              });
+              const payload = await res.json();
+              if (!res.ok) throw new Error(payload.error || "Pairing failed");
+              if (payload.redirectUri) window.location.href = payload.redirectUri;
+              else window.location.href = "/account/machines";
+            });
+          </script>
+        </body>
+      </html>`;
+  }
+
+  app.get("/account/machines", (request, response) => {
+    try {
+      const owner = accountOwnerIdFromRequest(request);
+      response.setHeader("Cache-Control", "no-store");
+      response.send(renderAccountMachinesPage({ owner, nodes: accountNodeRegistryService.listNodesForOwner(owner) }));
+    } catch (error) {
+      response.status(error.statusCode || 401).json({ error: error.message || "Could not list account machines." });
+    }
+  });
+
+  app.get("/account/pair", (request, response) => {
+    const pairing = accountNodeRegistryService.getPairing(request.query?.pairingId || request.query?.pairing_id || "");
+    if (!pairing) {
+      response.status(404).send(renderAccountPairPage({}, { error: "Pairing request not found." }));
+      return;
+    }
+    response.setHeader("Cache-Control", "no-store");
+    response.send(renderAccountPairPage(pairing));
+  });
+
+  app.post("/api/account/nodes/pairing", async (request, response) => {
+    try {
+      const pairing = await accountNodeRegistryService.createPairing({
+        label: request.body?.label || "Swarmlab",
+        redirectUri: request.body?.redirectUri,
+        identity: request.body?.identity,
+        connectionHints: request.body?.connectionHints,
+      });
+      response.status(201).json({
+        pairingId: pairing.id,
+        pairingCode: pairing.pairingCode,
+        pairingUrl: accountPairingUrlForRequest(request, pairing),
+        expiresAt: pairing.expiresAt,
+      });
+    } catch (error) {
+      response.status(error.statusCode || 400).json({ error: error.message || "Could not start account node pairing." });
+    }
+  });
+
+  app.post("/api/account/nodes/pairing/approve", async (request, response) => {
+    try {
+      const owner = accountOwnerIdFromRequest(request);
+      const result = await accountNodeRegistryService.approvePairing({
+        pairingId: request.body?.pairingId || request.body?.pairing_id,
+        pairingCode: request.body?.pairingCode || request.body?.code,
+        ownerAccountId: owner,
+      });
+      response.json({
+        ok: true,
+        pairingId: result.pairing.id,
+        redirectUri: withAccountGrant(result.pairing.redirectUri, {
+          grant: result.grant,
+          pairingId: result.pairing.id,
+        }),
+      });
+    } catch (error) {
+      response.status(error.statusCode || 400).json({ error: error.message || "Could not approve account node pairing." });
+    }
+  });
+
+  app.post("/api/account/nodes/pairing/complete", async (request, response) => {
+    try {
+      const payload = await accountNodeRegistryService.completePairing({
+        grant: request.body?.grant || request.body?.vibe_grant,
+        pairingId: request.body?.pairingId || request.body?.pairing_id,
+        identity: request.body?.identity,
+        connectionHints: request.body?.connectionHints,
+        label: request.body?.label || "Swarmlab",
+      });
+      response.json(payload);
+    } catch (error) {
+      response.status(error.statusCode || 400).json({ error: error.message || "Could not complete account node pairing." });
+    }
+  });
+
+  app.get("/api/account/nodes", (request, response) => {
+    try {
+      response.setHeader("Cache-Control", "no-store");
+      const authorization = String(request.get("authorization") || "");
+      if (/^Bearer\s+/iu.test(authorization)) {
+        response.json({ nodes: accountNodeRegistryService.listNodesForToken(authorization) });
+        return;
+      }
+      const owner = accountOwnerIdFromRequest(request);
+      response.json({ nodes: accountNodeRegistryService.listNodesForOwner(owner) });
+    } catch (error) {
+      response.status(error.statusCode || 401).json({ error: error.message || "Could not list account nodes." });
+    }
+  });
+
+  app.post("/api/account/nodes", async (request, response) => {
+    try {
+      const node = await accountNodeRegistryService.registerNode({
+        authorization: request.get("authorization") || "",
+        body: request.body || {},
+      });
+      response.status(201).json({ node });
+    } catch (error) {
+      response.status(error.statusCode || 400).json({ error: error.message || "Could not register account node." });
+    }
+  });
+
+  app.post("/api/account/nodes/:nodeId/heartbeat", async (request, response) => {
+    try {
+      const node = await accountNodeRegistryService.recordHeartbeat({
+        authorization: request.get("authorization") || "",
+        nodeId: request.params.nodeId,
+        body: request.body || {},
+      });
+      response.json({ status: "ok", node });
+    } catch (error) {
+      response.status(error.statusCode || 400).json({ error: error.message || "Could not record account node heartbeat." });
+    }
+  });
+
+  app.post("/api/account/nodes/disconnect", async (request, response) => {
+    try {
+      await accountNodeRegistryService.disconnectToken(request.get("authorization") || "");
+      response.json({ ok: true });
+    } catch (error) {
+      response.status(error.statusCode || 400).json({ error: error.message || "Could not disconnect account node." });
+    }
   });
 
   app.post("/api/providers/refresh", async (_request, response) => {
