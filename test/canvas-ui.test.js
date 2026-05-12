@@ -376,7 +376,7 @@ test("local canvas view renders node snapshot cards and persists drag layout", a
     await page.mouse.up();
 
     const saved = await page.evaluate(() =>
-      JSON.parse(window.localStorage.getItem("swarmlab.canvas.layout.v2:fleet:mac-main") || "{}"),
+      JSON.parse(window.localStorage.getItem("swarmlab.canvas.layout.v3:fleet:mac-main") || "{}"),
     );
     assert.ok(saved["session:session-1"], "drag should persist session layout");
     assert.ok(saved["session:session-1"].x > 0);

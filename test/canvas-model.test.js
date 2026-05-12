@@ -202,7 +202,7 @@ test("canvas board id and storage key are stable per node", () => {
   assert.equal(boardId, "machine:mac-main");
   assert.equal(
     getCanvasLayoutStorageKey(boardId),
-    "swarmlab.canvas.layout.v2:machine:mac-main",
+    "swarmlab.canvas.layout.v3:machine:mac-main",
   );
   assert.equal(
     getCanvasViewportStorageKey(boardId),
