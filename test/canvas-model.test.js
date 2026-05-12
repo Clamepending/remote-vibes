@@ -171,18 +171,42 @@ test("createFallbackCanvasLayout separates machine and orchestration lanes", () 
     ...buildCanvasCards({
       node: { id: "local", name: "Mac" },
       handoffJobs: [{ id: "handoff-1", title: "GPU to Pi", target: { label: "Pi" } }],
+      brain: { noteCount: 2, notes: [{ relativePath: "index.md", title: "Index" }] },
+      actionItems: [
+        { id: "done-1", title: "Done setup", status: "completed" },
+        { id: "open-1", title: "Open approval", status: "open" },
+      ],
     }),
     ...buildCanvasCards({
       node: { id: "remote", name: "GPU box" },
-      sessions: [{ id: "remote-agent", name: "Trainer", status: "running" }],
+      mode: "redacted",
+      brain: { noteCount: 3, notes: [{ relativePath: "README.md", title: "Remote brain" }] },
+      sessions: [
+        { id: "remote-agent", name: "Trainer", status: "running" },
+        { id: "remote-idle", name: "redacted", status: "idle" },
+      ],
+      actionItems: [
+        { id: "remote-open-1", title: "Remote open", status: "open" },
+        { id: "remote-done-1", title: "Remote done", status: "completed" },
+      ],
     }),
   ];
   const layout = createFallbackCanvasLayout(cards);
+  const entries = Object.entries(layout);
 
   assert.ok(layout["machine:local"].x < layout["handoff:handoff-1"].x);
   assert.ok(layout["machine:remote"].x < layout["handoff:handoff-1"].x);
   assert.ok(layout["session:remote-agent"].x > layout["handoff:handoff-1"].x);
   assert.equal(overlaps(layout["machine:remote"], layout["handoff:handoff-1"]), false);
+  for (let outer = 0; outer < entries.length; outer += 1) {
+    for (let inner = outer + 1; inner < entries.length; inner += 1) {
+      assert.equal(
+        overlaps(entries[outer][1], entries[inner][1]),
+        false,
+        `${entries[outer][0]} overlaps ${entries[inner][0]}`,
+      );
+    }
+  }
 });
 
 test("sanitizeCanvasLayout clamps invalid layout values before persistence", () => {
@@ -202,7 +226,7 @@ test("canvas board id and storage key are stable per node", () => {
   assert.equal(boardId, "machine:mac-main");
   assert.equal(
     getCanvasLayoutStorageKey(boardId),
-    "swarmlab.canvas.layout.v3:machine:mac-main",
+    "swarmlab.canvas.layout.v4:machine:mac-main",
   );
   assert.equal(
     getCanvasViewportStorageKey(boardId),

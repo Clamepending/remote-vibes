@@ -1,4 +1,4 @@
-export const CANVAS_LAYOUT_STORAGE_PREFIX = "swarmlab.canvas.layout.v3";
+export const CANVAS_LAYOUT_STORAGE_PREFIX = "swarmlab.canvas.layout.v4";
 export const CANVAS_VIEWPORT_STORAGE_PREFIX = "swarmlab.canvas.viewport.v1";
 
 const DEFAULT_CARD_WIDTH = 270;
@@ -803,96 +803,107 @@ export function buildCanvasCards(payload) {
   return cards.filter(Boolean);
 }
 
-function fallbackPositionForCard(card, index, counters) {
-  const type = card.type || "card";
-  const next = counters[type] || 0;
-  counters[type] = next + 1;
+export function createFallbackCanvasLayout(cards) {
+  const machineGroups = new Map();
+  const machineOrder = [];
+  cards.forEach((card, index) => {
+    const machineId = normalizeId(card.ref?.machineId || card.ref?.remoteUrl || card.id || `machine-${index + 1}`, "local");
+    if (!machineGroups.has(machineId)) {
+      machineGroups.set(machineId, []);
+      machineOrder.push(machineId);
+    }
+    machineGroups.get(machineId).push({ card, index });
+  });
+
   const leftLaneX = 120;
   const orchestrationLaneX = 500;
-  const agentLaneX = 880;
-  const appLaneX = 1320;
+  const agentLaneX = 900;
+  const appLaneX = 1780;
+  const laneGap = 34;
+  const groupGap = 140;
+  const minGroupHeight = 360;
+  const layout = {};
+  let groupY = 96;
+  let appY = 96;
 
-  if (type === "machine") {
-    return {
-      x: leftLaneX,
-      y: 96 + next * 220,
-    };
-  }
-  if (type === "agent") {
-    const column = next % 3;
-    const row = Math.floor(next / 3);
-    return {
-      x: agentLaneX + column * 430 + (row % 2) * 58,
-      y: 150 + row * 500 + (column === 1 ? 58 : 0),
-    };
-  }
-  if (type === "browser") {
-    const column = next % 2;
-    const row = Math.floor(next / 2);
-    return {
-      x: appLaneX + column * 470,
-      y: 96 + row * 380,
-    };
-  }
-  if (type === "approval") {
-    return {
-      x: orchestrationLaneX,
-      y: 350 + next * 188,
-    };
-  }
-  if (type === "handoff") {
-    return {
-      x: orchestrationLaneX,
-      y: 96 + next * 260,
-    };
-  }
-  if (type === "brain") {
-    return {
-      x: orchestrationLaneX,
-      y: 610 + next * 280,
-    };
-  }
-  if (type === "app") {
-    return {
-      x: appLaneX,
-      y: 520 + next * 340,
-    };
-  }
-  if (type === "artifact") {
-    const column = next % 2;
-    const row = Math.floor(next / 2);
-    return {
-      x: orchestrationLaneX + column * 360,
-      y: 930 + row * 260,
-    };
-  }
-  if (type === "summary") {
-    return {
-      x: orchestrationLaneX,
-      y: 1180 + next * 190,
-    };
-  }
-  return {
-    x: 200 + (index % 4) * 360,
-    y: 200 + Math.floor(index / 4) * 280,
+  const laneForCard = (card) => {
+    if (card.type === "machine") return "machine";
+    if (card.type === "agent") return "agent";
+    if (card.type === "app" || card.type === "browser") return "app";
+    return "orchestration";
   };
-}
+  const lanePriority = (card) => {
+    if (card.type === "handoff") return 0;
+    if (card.type === "approval") return 1;
+    if (card.type === "brain") return 2;
+    if (card.type === "artifact") return 3;
+    if (card.type === "summary") return 4;
+    return 5;
+  };
+  const placeStack = (entries, x, y, laneWidth) => {
+    let cursor = y;
+    entries
+      .sort((left, right) => lanePriority(left.card) - lanePriority(right.card) || left.index - right.index)
+      .forEach(({ card, index }) => {
+        layout[card.id] = {
+          x,
+          y: cursor,
+          width: card.width || laneWidth,
+          height: card.height || DEFAULT_CARD_HEIGHT,
+          z: index + 1,
+        };
+        cursor += (card.height || DEFAULT_CARD_HEIGHT) + laneGap;
+      });
+    return cursor - y;
+  };
+  const placeGrid = (entries, x, y, { columns = 1, columnGap = 36, rowGap = 40 } = {}) => {
+    let maxBottom = y;
+    entries
+      .sort((left, right) => left.index - right.index)
+      .forEach(({ card, index }, laneIndex) => {
+        const column = laneIndex % columns;
+        const row = Math.floor(laneIndex / columns);
+        const width = card.width || DEFAULT_CARD_WIDTH;
+        const height = card.height || DEFAULT_CARD_HEIGHT;
+        const cellHeight = Math.max(height, card.type === "agent" ? AGENT_CARD_HEIGHT : APP_CARD_HEIGHT);
+        const px = x + column * (width + columnGap);
+        const py = y + row * (cellHeight + rowGap) + (card.type === "browser" ? 28 : 0);
+        layout[card.id] = {
+          x: px,
+          y: py,
+          width,
+          height,
+          z: index + 1,
+        };
+        maxBottom = Math.max(maxBottom, py + height);
+      });
+    return maxBottom - y;
+  };
 
-export function createFallbackCanvasLayout(cards) {
-  const counters = {};
-  return Object.fromEntries(cards.map((card, index) => {
-    const { x, y } = fallbackPositionForCard(card, index, counters);
-    return [
-      card.id,
-      {
-        x,
-        y,
-        width: card.width,
-        height: card.height,
-        z: index + 1,
-      },
-    ];
-  }));
+  machineOrder.forEach((machineId) => {
+    const entries = machineGroups.get(machineId) || [];
+    const lanes = {
+      machine: [],
+      orchestration: [],
+      agent: [],
+      app: [],
+    };
+    entries.forEach((entry) => {
+      lanes[laneForCard(entry.card)].push(entry);
+    });
+
+    const machineHeight = placeStack(lanes.machine, leftLaneX, groupY, 320);
+    const orchestrationHeight = placeStack(lanes.orchestration, orchestrationLaneX, groupY, 360);
+    const agentHeight = placeGrid(lanes.agent, agentLaneX, groupY, { columns: 2, columnGap: 46, rowGap: 46 });
+    const appHeight = placeGrid(lanes.app, appLaneX, appY, { columns: 1, rowGap: 36 });
+    if (appHeight) {
+      appY += appHeight + groupGap;
+    }
+    const groupHeight = Math.max(minGroupHeight, machineHeight, orchestrationHeight, agentHeight);
+    groupY += groupHeight + groupGap;
+  });
+
+  return layout;
 }
 
 export function sanitizeCanvasLayout(value) {
