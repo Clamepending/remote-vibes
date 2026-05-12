@@ -120,6 +120,7 @@ test("provider definitions include one-command installer hints for onboarding", 
   assert.match(installers["claude-ollama"], /claude --version/);
   assert.match(installers["claude-ollama"], /ollama --version/);
   assert.equal(installers.codex, "npm install -g @openai/codex");
+  assert.equal(installers.openswarm, "npm install -g @vrsen/openswarm");
 });
 
 test("default provider prefers Claude, then any installed coding agent, before shell", () => {
@@ -149,12 +150,13 @@ test("provider definitions include real auth entrypoints for onboarding", () => 
 
   assert.equal(authCommands.claude, "claude auth login");
   assert.equal(authCommands.codex, "codex login --device-auth");
+  assert.equal(authCommands.openswarm, "openswarm");
 });
 
 test("providerDefinitions expose cloud, local, and shell agent choices", () => {
   assert.deepEqual(
     providerDefinitions.map((provider) => provider.id),
-    ["claude", "claude-ollama", "codex", "shell"],
+    ["claude", "claude-ollama", "codex", "openswarm", "shell"],
   );
 });
 
@@ -320,6 +322,21 @@ test("providerDefinitions includes Claude npm package fallback metadata", () => 
     name: "@anthropic-ai/claude-code",
     bin: "claude",
   });
+});
+
+test("providerDefinitions includes OpenSwarm npm package fallback metadata", () => {
+  const provider = providerDefinitions.find((entry) => entry.id === "openswarm");
+
+  assert.ok(provider);
+  assert.deepEqual(provider.npmPackage, {
+    name: "@vrsen/openswarm",
+    bin: "openswarm",
+  });
+  assert.deepEqual(provider.pathHints, [
+    "~/.local/bin/openswarm",
+    "/opt/homebrew/bin/openswarm",
+    "/usr/local/bin/openswarm",
+  ]);
 });
 
 test("resolveProviderCommand rejects a discovered command that fails provider verification", async () => {

@@ -650,6 +650,66 @@ test("extractImageRefsFromText respects markdown image syntax when includeMarkdo
   assert.ok(refs.some((r) => r.endsWith("figures/run.jpg")), "relative path should appear");
 });
 
+test("extractImageRefsFromText pulls paths out of inline-code spans (Claude's most common formatting)", () => {
+  // Real-world output from Claude: paths almost always come back wrapped in
+  // backticks. Before the fix the extractor stripped backticked content
+  // before path extraction and the chat showed plain text where inline
+  // image thumbnails should have rendered.
+  const text = `**TIG project:**
+- \`/Users/mark/mac-brain/projects/TIG/figures/recon-and-baselines-fig1.png\`
+- \`/Users/mark/mac-brain/projects/TIG/figures/cross-challenge-recon-sweep-fig1.png\`
+
+**Flow Thickets:**
+- \`/Users/mark/mac-brain/projects/flow-thickets/figures/baseline-flow-cifar-fig1.png\``;
+  const refs = extractImageRefsFromText(text);
+  assert.equal(refs.length, 3, `expected 3 backticked paths, got ${refs.length}: ${JSON.stringify(refs)}`);
+  assert.ok(refs[0].endsWith("recon-and-baselines-fig1.png"));
+  assert.ok(refs[1].endsWith("cross-challenge-recon-sweep-fig1.png"));
+  assert.ok(refs[2].endsWith("baseline-flow-cifar-fig1.png"));
+});
+
+test("Claude native narrative captures input.file_path on Read/Write/Edit so image paths surface as imageRefs", () => {
+  // Real-world bug: when the agent calls Read on a PNG, the input field
+  // is `file_path`, not `path`. summarizeClaudeToolInput used to only
+  // check `input.path`, so the entry text fell back to the generic
+  // "Read called" placeholder, the imageRef extractor had no path to
+  // match on, and the inline thumbnail never rendered. Pin both that
+  // the path appears in the entry text AND that it propagates to
+  // imageRefs.
+  const text = JSON.stringify({
+    type: "assistant",
+    timestamp: "2026-05-09T01:00:00.000Z",
+    message: {
+      role: "assistant",
+      content: [
+        {
+          type: "tool_use",
+          id: "toolu_read_png",
+          name: "Read",
+          input: { file_path: "/Users/me/projects/foo/figures/panel-fig1.png" },
+        },
+      ],
+    },
+  });
+  const narrative = buildClaudeNarrativeFromText(text, { providerId: "claude", providerLabel: "Claude Code" });
+  const tool = narrative.entries.find((entry) => entry.kind === "tool");
+  assert.ok(tool, "tool entry produced");
+  assert.match(tool.text, /panel-fig1\.png$/, "file_path appears in entry text");
+  assert.ok(Array.isArray(tool.imageRefs) && tool.imageRefs.length, "imageRefs populated");
+  assert.ok(
+    tool.imageRefs.some((r) => r.endsWith("panel-fig1.png")),
+    `imageRefs include the file_path: ${JSON.stringify(tool.imageRefs)}`,
+  );
+});
+
+test("extractImageRefsFromText: maxRefs defaults to 12 so multi-figure assistant lists fit", () => {
+  // Old default was 4, which truncated 6+ figure paths Claude commonly
+  // emits when listing per-project figures. 12 is a comfortable cap.
+  const lines = Array.from({ length: 8 }, (_, i) => `- \`/abs/figures/fig-${i}.png\``);
+  const refs = extractImageRefsFromText(lines.join("\n"));
+  assert.equal(refs.length, 8, "all 8 backticked paths returned at default cap");
+});
+
 test("parseMcpToolName splits mcp__server__tool names while ignoring native tool names", () => {
   assert.deepEqual(parseMcpToolName("mcp__filesystem__read_file"), { server: "filesystem", tool: "read_file" });
   assert.deepEqual(parseMcpToolName("mcp__github__create_pull_request"), { server: "github", tool: "create_pull_request" });

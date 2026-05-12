@@ -38,7 +38,9 @@ import {
   normaliseNarrativeEntry,
 } from "./narrative-schema.js";
 import { ClaudeStreamSession } from "./claude-stream-session.js";
+import { envWithClaudeTokenSync } from "./claude-oauth-flow.js";
 import { CodexStreamSession } from "./codex-stream-session.js";
+import { OpenSwarmApiSession } from "./openswarm-api-session.js";
 import { SessionStore } from "./session-store.js";
 import { getLegacyWorkspaceStateDir, getVibeResearchStateDir, getVibeResearchSystemDir } from "./state-paths.js";
 import { WorkspaceStore } from "./workspace-store.js";
@@ -92,6 +94,17 @@ const PROVIDER_SESSION_CAPTURE_RETRY_WINDOW_MS = 90_000;
 const CODEX_SESSION_INDEX_LIMIT = 100;
 const CODEX_SESSION_META_READ_LIMIT = 512 * 1024;
 const NATIVE_NARRATIVE_EVENT_LIMIT = 128;
+// Auto-reply throttle: when the user sets a sticky auto-reply, we fire
+// it on every streamWorking → false transition. A misbehaving agent
+// that ends turns immediately could otherwise loop at full network
+// speed; this floor ensures at least N seconds elapse between fires,
+// so a runaway loop is bounded rather than instantaneous.
+const AUTO_REPLY_MIN_INTERVAL_MS = 2_000;
+// Brief delay between observing idle and firing the auto-reply so a
+// human sitting at the keyboard has a chance to type something else
+// first or clear the field. Two seconds is short enough not to waste
+// time when the user IS asleep; long enough for a human to react.
+const AUTO_REPLY_FIRE_DELAY_MS = 2_000;
 const NATIVE_NARRATIVE_TEXT_LIMIT = 4_000;
 const CLAUDE_SUBAGENT_TRANSCRIPT_READ_LIMIT = 1_000_000;
 const CLAUDE_BACKGROUND_TASK_TAIL_BYTES = 900_000;
@@ -108,11 +121,25 @@ const PERSISTENT_TERMINAL_PROVIDER_IDS = new Set([
   "gemini",
   "ml-intern",
   "openclaw",
+  "openswarm",
   "opencode",
   "shell",
 ]);
 const IDLE_TERMINAL_COMMANDS = new Set(["bash", "csh", "dash", "fish", "ksh", "login", "sh", "tcsh", "zsh"]);
-const PROVIDER_CREDENTIAL_ENV_KEYS = ["ANTHROPIC_API_KEY", "CLAUDE_API_KEY", "OPENAI_API_KEY", "HF_TOKEN"];
+const PROVIDER_CREDENTIAL_ENV_KEYS = [
+  "ANTHROPIC_API_KEY",
+  "CLAUDE_API_KEY",
+  "COMPOSIO_API_KEY",
+  "COMPOSIO_USER_ID",
+  "FAL_KEY",
+  "GOOGLE_API_KEY",
+  "HF_TOKEN",
+  "OPENAI_API_KEY",
+  "PEXELS_API_KEY",
+  "PIXABAY_API_KEY",
+  "SEARCH_API_KEY",
+  "UNSPLASH_ACCESS_KEY",
+];
 const TMUX_SESSION_ENV_KEYS = new Set([
   "CLICOLOR",
   "CODEX_HOME",
@@ -223,6 +250,20 @@ function isCodexStreamModeEnabled(env = process.env) {
     return true;
   }
   return !/^(?:0|false|off|no)$/i.test(value);
+}
+
+function isOpenSwarmStreamModeEnabled(env = process.env) {
+  // OpenSwarm's native API path depends on its FastAPI server, so keep it
+  // explicit. The PTY/TUI path remains the zero-config default.
+  const value = String(
+    env?.VIBE_RESEARCH_OPENSWARM_STREAM_MODE
+      ?? env?.REMOTE_VIBES_OPENSWARM_STREAM_MODE
+      ?? "",
+  ).trim();
+  if (!value) {
+    return false;
+  }
+  return /^(?:1|true|on|yes)$/i.test(value);
 }
 
 function isCodexBypassPermissionsEnabled(env = process.env) {
@@ -684,36 +725,17 @@ function mergeNarrativeEntries(localEntries = [], providerEntries = [], maxEntri
     ...providerEntries.map((entry, index) => ({ ...entry, __origin: "provider", __index: index })),
   ]
     .sort((left, right) => {
-      // Sort by wall-clock timestamp first. ClaudeStreamSession caches
-      // first-observation time per entry id (see _entryStamps), and the
-      // JSONL transcript that drives rehydration is itself ordered by
-      // Claude's emit time — both produce monotonic timestamps in
-      // practice. Persisted nativeNarrativeEntries also carry the original
-      // wall-clock from when they were pushed.
+      // Seq-primary ordering. allocateSeq() is the single ordering
+      // authority and is now persisted across restarts (entrySeqCounter
+      // serializes with the session record), and JSONL rehydration
+      // re-stamps entries via the same counter — so we no longer have the
+      // "synthetic-zero from rehydration" problem that pushed the old
+      // comparator to timestamp-primary. Insertion-order owned by seq is
+      // the same rule the client renderer uses (selectNarrativeEntries).
       //
-      // Why not seq-first: across a server restart we mix three buckets:
-      //   - persisted status pills (seq stripped on restore)
-      //   - JSONL-rehydrated entries (synthetic seq=0 from
-      //     normaliseNarrativeEntry's default, real seq is unknown)
-      //   - fresh post-restart pills + new live stream entries (real seq)
-      // A seq-first comparator puts every "fresh" or "synthetic-zero"
-      // entry before everything that has lost its seq, and the chat
-      // history scrambles into a non-chronological order. Timestamps
-      // survive the restart cleanly, so they're the safe primary key.
-      //
-      // Seq still acts as the tiebreaker for entries that share a
-      // timestamp (the common within-turn case where text + tool_use
-      // blocks all carry the same Claude payload timestamp).
-      const leftTime = parseSessionTimestamp(left.timestamp, 0);
-      const rightTime = parseSessionTimestamp(right.timestamp, 0);
-      if (leftTime !== rightTime) {
-        return leftTime - rightTime;
-      }
-
-      // Real seq numbers from allocateSeq() start at 1; seq=0 is the
-      // sentinel that normaliseNarrativeEntry stamps when no seq was
-      // supplied. Treat the sentinel as "no seq" so a synthetic-zero
-      // never outranks a real entry that genuinely has seq>=1.
+      // Timestamp acts only as a defensive tiebreaker for genuine seq=0
+      // entries (legacy data on disk, third-party producers); within a
+      // single producer's stream of fresh entries seq is total.
       const isRealSeq = (value) => Number.isFinite(Number(value)) && Number(value) > 0;
       const leftSeq = isRealSeq(left.seq) ? Number(left.seq) : null;
       const rightSeq = isRealSeq(right.seq) ? Number(right.seq) : null;
@@ -725,6 +747,12 @@ function mergeNarrativeEntries(localEntries = [], providerEntries = [], maxEntri
       }
       if (leftSeq == null && rightSeq != null) {
         return 1;
+      }
+
+      const leftTime = parseSessionTimestamp(left.timestamp, 0);
+      const rightTime = parseSessionTimestamp(right.timestamp, 0);
+      if (leftTime !== rightTime) {
+        return leftTime - rightTime;
       }
 
       if (left.__origin !== right.__origin) {
@@ -1097,6 +1125,13 @@ function providerHasReadyHint(providerId, buffer) {
 
   if (providerId === "openclaw") {
     return /OpenClaw|Molty|lobster|tui|>\s*$/i.test(text);
+  }
+
+  if (providerId === "openswarm") {
+    if (/setup\s*wizard|onboarding|choose\s+(?:one\s+)?provider|(?:openai|anthropic|google|composio|fal|search)[_\s-]*api[_\s-]*key|default_model/i.test(text)) {
+      return false;
+    }
+    return /OpenSwarm|AgentSwarm/i.test(text) && /Type\s+your\s+message|[❯>]\s*$/i.test(text);
   }
 
   return true;
@@ -3821,6 +3856,8 @@ export class SessionManager {
       session.streamMode = isClaudeStreamModeEnabled(this.env);
     } else if (provider.id === "codex") {
       session.streamMode = isCodexStreamModeEnabled(this.env);
+    } else if (provider.id === "openswarm") {
+      session.streamMode = isOpenSwarmStreamModeEnabled(this.env);
     } else {
       session.streamMode = false;
     }
@@ -4060,7 +4097,7 @@ export class SessionManager {
       try {
         session.streamSession.close();
       } catch (error) {
-        console.warn("[vibe-research] error closing claude stream session", error);
+        console.warn("[vibe-research] error closing stream session", error);
       }
       session.streamSession = null;
     }
@@ -4196,20 +4233,20 @@ export class SessionManager {
     return this.performSessionWrite(session, input);
   }
 
-  writeToClaudeStreamSession(session, input, { attachments = [] } = {}) {
+  writeToClaudeStreamSession(session, input, { attachments = [], clientMessageId = null } = {}) {
     if (!session?.streamSession) {
       return false;
     }
     session.streamInputBuffer = `${session.streamInputBuffer || ""}${String(input ?? "")}`;
     const lines = session.streamInputBuffer.split(/\r\n?|\n/);
     session.streamInputBuffer = lines.pop() ?? "";
+    const turnBasedStream = session.providerId === "openswarm" || session.providerId === "codex";
+    const prompts = turnBasedStream
+      ? [lines.join("\n").trim()].filter(Boolean)
+      : lines.map((rawLine) => rawLine.trim()).filter(Boolean);
     let sentAny = false;
-    let firstLine = true;
-    for (const rawLine of lines) {
-      const line = rawLine.trim();
-      if (!line) {
-        continue;
-      }
+    let firstPrompt = true;
+    for (const line of prompts) {
       // Stamp + push the user entry BEFORE handing the prompt to Claude so the
       // user message timestamp is unambiguously earlier than any partial /
       // final assistant entry the stream emits afterwards.
@@ -4219,12 +4256,18 @@ export class SessionManager {
       // shaper can't recover the original file paths from the transcript.
       // Stash them on the user entry directly so the chat history shows the
       // image tile strip alongside the prompt the user sent.
-      const userImageRefs = firstLine && Array.isArray(attachments) && attachments.length
+      const userImageRefs = firstPrompt && Array.isArray(attachments) && attachments.length
         ? attachments
             .map((att) => String(att?.absolutePath || att?.path || "").trim())
             .filter(Boolean)
         : [];
+      // Honor the client-allocated id only on the FIRST physical line of a
+      // multi-line paste. Subsequent lines synthesize their own ids — the
+      // client only allocates one per send action, and we must not collide
+      // them across pushes inside the same loop iteration.
+      const userEntryId = firstPrompt && clientMessageId ? clientMessageId : undefined;
       this.pushNativeNarrativeEntry(session, {
+        id: userEntryId,
         kind: "user",
         label: "You",
         text: line,
@@ -4240,13 +4283,18 @@ export class SessionManager {
       // mutates into the streaming reply, so there is no race to clear.
 
       try {
-        // Attachments ride on the FIRST line only — they're tied to the
+        // Attachments ride on the first submitted prompt only — they're tied to the
         // user's "what should we do with these images?" prompt. Subsequent
-        // lines (rare; happens when a user pastes multi-line text) go as
+        // prompts in the same write (rare; happens with pasted terminal text) go as
         // plain text. sendWithImages is async because it reads file bytes;
         // we fire-and-forget — errors land via the stderr/error events on
         // the stream session and end up in the chat as status entries.
-        if (firstLine && Array.isArray(attachments) && attachments.length) {
+        if (
+          firstPrompt
+          && Array.isArray(attachments)
+          && attachments.length
+          && typeof session.streamSession.sendWithImages === "function"
+        ) {
           session.streamSession.sendWithImages(line, attachments).catch((error) => {
             console.warn(`[vibe-research] sendWithImages failed: ${error.message}`);
             this.pushNativeNarrativeEntry(session, {
@@ -4262,7 +4310,7 @@ export class SessionManager {
         }
         session.streamWorking = true;
         sentAny = true;
-        firstLine = false;
+        firstPrompt = false;
       } catch (error) {
         this.pushNativeNarrativeEntry(session, {
           kind: "status",
@@ -4814,6 +4862,11 @@ export class SessionManager {
       // shape is [{command, label, hint?, aliases?}]; the renderer
       // already reads it via resolveRichSessionSlashCommands.
       availableSlashCommands: Array.isArray(session.availableSlashCommands) ? session.availableSlashCommands : [],
+      // Sticky auto-reply text. Sent as a fresh user input every time
+      // the agent goes idle while this is non-empty. Edit via
+      // PUT /api/sessions/:id/auto-reply or the composer's auto-reply
+      // banner; see setAutoReplyText below.
+      autoReplyText: typeof session.autoReplyText === "string" ? session.autoReplyText : "",
     };
   }
 
@@ -4849,7 +4902,66 @@ export class SessionManager {
     autoRenameEnabled = false,
     occupationId = this.occupationId,
     streamMode = false,
+    entrySeqCounter = 0,
+    broadcastSeq = 0,
+    autoReplyText = "",
   }) {
+    // Restore persisted entries while preserving each entry's seq. Without
+    // this round-trip every restored entry was stamped seq=0, which used to
+    // be tolerable when the server merge sorted by timestamp; under the
+    // seq-primary ordering rule we now use, losing seq scrambles the chat
+    // history on the next restart. Re-establish entrySeqCounter as max+1
+    // of the restored entries so any new pushNativeNarrativeEntry never
+    // collides with a restored seq.
+    const restoredEntries = Array.isArray(nativeNarrativeEntries)
+      ? nativeNarrativeEntries
+        .map((entry) => (
+          entry && typeof entry === "object"
+            ? {
+                id: String(entry.id || randomUUID()),
+                kind: String(entry.kind || "status"),
+                label: String(entry.label || "Activity"),
+                text: normalizeNarrativeEventText(entry.text || ""),
+                timestamp: entry.timestamp || null,
+                status: entry.status || null,
+                meta: entry.meta || null,
+                outputPreview: entry.outputPreview || "",
+                seq: Number.isFinite(Number(entry.seq)) && Number(entry.seq) > 0
+                  ? Number(entry.seq)
+                  : 0,
+                ...(Array.isArray(entry.imageRefs) && entry.imageRefs.length
+                  ? { imageRefs: entry.imageRefs.map((ref) => String(ref || "")).filter(Boolean) }
+                  : {}),
+              }
+            : null
+        ))
+        .filter((entry) => entry?.text)
+        .slice(-NATIVE_NARRATIVE_EVENT_LIMIT)
+      : [];
+    let restoredMaxSeq = 0;
+    for (const entry of restoredEntries) {
+      if (entry.seq > restoredMaxSeq) restoredMaxSeq = entry.seq;
+    }
+    let resumedEntrySeqCounter = Number.isFinite(Number(entrySeqCounter))
+      ? Math.max(0, Number(entrySeqCounter))
+      : 0;
+    if (restoredMaxSeq > resumedEntrySeqCounter) {
+      resumedEntrySeqCounter = restoredMaxSeq;
+    }
+    // Backfill seq for any restored entry that lost it (legacy data on
+    // disk from before seq was persisted). Stamp them in restored order
+    // so client renderer's insertion-order draws them as they were last
+    // seen. New seqs go above the highest persisted seq so live entries
+    // stay above legacy ones in any subsequent merge.
+    for (const entry of restoredEntries) {
+      if (!entry.seq || entry.seq <= 0) {
+        resumedEntrySeqCounter += 1;
+        entry.seq = resumedEntrySeqCounter;
+      }
+    }
+    const resumedBroadcastSeq = Number.isFinite(Number(broadcastSeq))
+      ? Math.max(0, Number(broadcastSeq))
+      : 0;
     return {
       id,
       providerId,
@@ -4872,25 +4984,7 @@ export class SessionManager {
       rows,
       pty: null,
       buffer: trimBuffer(buffer || ""),
-      nativeNarrativeEntries: Array.isArray(nativeNarrativeEntries)
-        ? nativeNarrativeEntries
-          .map((entry) => (
-            entry && typeof entry === "object"
-              ? {
-                  id: String(entry.id || randomUUID()),
-                  kind: String(entry.kind || "status"),
-                  label: String(entry.label || "Activity"),
-                  text: normalizeNarrativeEventText(entry.text || ""),
-                  timestamp: entry.timestamp || null,
-                  status: entry.status || null,
-                  meta: entry.meta || null,
-                  outputPreview: entry.outputPreview || "",
-                }
-              : null
-          ))
-          .filter((entry) => entry?.text)
-          .slice(-NATIVE_NARRATIVE_EVENT_LIMIT)
-        : [],
+      nativeNarrativeEntries: restoredEntries,
       nativeNarrativeInputBuffer: String(nativeNarrativeInputBuffer || ""),
       clients: new Set(),
       metaBroadcastTimer: null,
@@ -4924,13 +5018,26 @@ export class SessionManager {
       // turns (a tool_use_result event's timestamp infects every subsequent
       // assistant entry's `updatedAt`). Sequence numbers don't have that
       // problem — first observation wins and they're stable across re-parses.
-      entrySeqCounter: 0,
+      // Counter is now persisted across restarts; restoredMaxSeq above
+      // ensures we never re-use a number a still-live frame already used.
+      entrySeqCounter: resumedEntrySeqCounter,
+      broadcastSeq: resumedBroadcastSeq,
       // True between when the user sends a prompt and the underlying stream
       // session emits turn-complete. Lets the client render a persistent
       // "agent is working" indicator that survives across the pending /
       // streaming / tool-use phases — a single source of truth for "is the
       // agent done yet?".
       streamWorking: false,
+      // Sticky auto-reply: when set to a non-empty string, the manager
+      // sends this text as a fresh user input every time the agent goes
+      // idle (streamWorking flips true → false). Replaces the old
+      // "supervisor" feature — one textbox, fires forever until cleared.
+      // Use case: keep the agent moving overnight on a pre-typed prompt.
+      autoReplyText: typeof autoReplyText === "string" ? autoReplyText.slice(0, 4096) : "",
+      // Wall-clock timestamp of the last auto-reply firing, used to
+      // throttle the loop to AUTO_REPLY_MIN_INTERVAL_MS so a misbehaving
+      // agent that ends turns immediately can't burn through the API.
+      lastAutoReplyAt: 0,
     };
   }
 
@@ -5778,6 +5885,10 @@ export class SessionManager {
         this.startCodexStreamSession(session, provider, { restored });
         return;
       }
+      if (provider.id === "openswarm") {
+        this.startOpenSwarmApiSession(session, provider, { restored });
+        return;
+      }
       // Unknown stream-mode provider — fall back to PTY.
       session.streamMode = false;
     }
@@ -5973,10 +6084,123 @@ export class SessionManager {
     }
   }
 
+  // Set or clear the sticky auto-reply text for a session. Called by
+  // PUT /api/sessions/:id/auto-reply. An empty string disarms the
+  // auto-reply; the next streamWorking → false transition stops firing.
+  setAutoReplyText(sessionId, text) {
+    const session = this.sessions.get(sessionId);
+    if (!session) return { ok: false, reason: "session-not-found" };
+    const sanitized = typeof text === "string" ? text.slice(0, 4096) : "";
+    session.autoReplyText = sanitized;
+    this.scheduleSessionMetaBroadcast(session, { immediate: true });
+    this.schedulePersist({ immediate: true });
+    return { ok: true, autoReplyText: sanitized };
+  }
+
+  // Called from the turn-complete event handler. If the session has a
+  // non-empty autoReplyText, schedules a single fire after a small
+  // delay; the throttle and busy-check ensure the loop is bounded if
+  // the agent ends turns too fast or starts working again before the
+  // delay elapses (e.g. a manual user message between idle and fire).
+  maybeFireAutoReply(session) {
+    if (!session) return;
+    const text = String(session.autoReplyText || "").trim();
+    if (!text) return;
+    if (!session.streamSession) return;
+    if (session.status === "exited") return;
+    const now = Date.now();
+    if (now - (session.lastAutoReplyAt || 0) < AUTO_REPLY_MIN_INTERVAL_MS) return;
+    setTimeout(() => {
+      // Re-validate at fire time — the text may have been cleared, the
+      // user may have just sent a message themselves (streamWorking
+      // would be true again), the session may have exited, or the user
+      // may have edited the auto-reply to something else.
+      const live = this.sessions.get(session.id);
+      if (!live) return;
+      if (live.status === "exited") return;
+      if (live.streamWorking) return;
+      const liveText = String(live.autoReplyText || "").trim();
+      if (!liveText) return;
+      if (now - (live.lastAutoReplyAt || 0) < AUTO_REPLY_MIN_INTERVAL_MS) return;
+      live.lastAutoReplyAt = Date.now();
+      try {
+        this.write(live.id, `${liveText}\r`, {});
+      } catch (error) {
+        console.warn(`[vibe-research] auto-reply send failed for ${live.id}:`, error.message);
+      }
+    }, AUTO_REPLY_FIRE_DELAY_MS);
+  }
+
+  // Stop the current claude subprocess (if any) and re-spawn it via
+  // startSession({ restored: true }). Used after the user signs in via
+  // the OAuth flow — the env var CLAUDE_CODE_OAUTH_TOKEN was injected
+  // when the prior subprocess was launched, so we have to relaunch for
+  // the new token to take effect. `restored: true` makes claude-cli
+  // use `--resume <session-id>`, so the user's conversation transcript
+  // is preserved across the restart.
+  //
+  // Race protection: the old child's `on("exit")` handler fires
+  // asynchronously after we kill it; without the `_restarting` flag and
+  // the streamSession === ownStreamSession check inside the handler, the
+  // old exit could land *after* startSession has wired up the new child
+  // and stomp `session.status` -> "exited". The flag is cleared by the
+  // replacement-guard check in the handler itself (it just no-ops once
+  // session.streamSession points at the new instance), so we don't need
+  // to clean it up here.
+  async restartStreamSession(sessionId) {
+    const session = this.sessions.get(sessionId);
+    if (!session) {
+      return { ok: false, reason: "session-not-found" };
+    }
+    if (!session.streamMode) {
+      return { ok: false, reason: "not-stream-mode" };
+    }
+    const provider = this.getProvider(session.providerId);
+    if (!provider) {
+      return { ok: false, reason: "provider-not-found" };
+    }
+    const oldStreamSession = session.streamSession;
+    if (oldStreamSession) {
+      // Mark the old instance as mid-restart BEFORE close() so its
+      // async exit event no-ops on (a) the _restarting flag.
+      oldStreamSession._restarting = true;
+      // Clear the pointer too so guard (b) catches any handler that
+      // somehow misses the flag (defense in depth — the JS event loop
+      // is async; close() may even fire `exit` synchronously in some
+      // edge paths and we want the handler to bail either way).
+      session.streamSession = null;
+      if (typeof oldStreamSession.close === "function") {
+        try { oldStreamSession.close(); } catch { /* best effort */ }
+      }
+    }
+    // Clear status so the freshly-spawned child starts cleanly. Without
+    // this, a previously-marked "exited" session would stay visually
+    // dead even after the new child reports "running".
+    session.status = "running";
+    session.exitCode = null;
+    session.exitSignal = null;
+    session.streamInputBuffer = "";
+    session.streamWorking = false;
+    try {
+      this.startSession(session, provider, { restored: true });
+      return { ok: true };
+    } catch (error) {
+      return { ok: false, reason: "start-failed", message: String(error.message || error) };
+    }
+  }
+
   startClaudeStreamSession(session, provider, { restored = false } = {}) {
     const sessionCwd = resolveCwd(session.cwd, this.cwd);
     session.cwd = sessionCwd;
-    const sessionEnv = this.buildSessionEnvironment(session, provider.id);
+    // Inject the vibe-research-stored OAuth token if present. Fixes the
+    // user-reported "authentication_failed" symptom: the spawned claude
+    // subprocess otherwise inherits whatever auth state HOME/keychain
+    // happen to expose, which can drift from the user's terminal claude.
+    // CLAUDE_CODE_OAUTH_TOKEN is the documented env override.
+    const sessionEnv = envWithClaudeTokenSync(
+      this.buildSessionEnvironment(session, provider.id),
+      this.stateDir,
+    );
     writeProviderCredentialEnvFile(sessionEnv);
 
     // When `restored` is true, the session predates this server process —
@@ -6094,6 +6318,7 @@ export class SessionManager {
       this.broadcastNarrativeDiff(session);
       this.scheduleSessionMetaBroadcast(session, { immediate: true });
       this.schedulePersist();
+      this.maybeFireAutoReply(session);
     });
 
     streamSession.on("stderr", (chunk) => {
@@ -6115,7 +6340,23 @@ export class SessionManager {
       this.scheduleSessionMetaBroadcast(session, { immediate: true });
     });
 
+    // Capture this exact streamSession instance so the handler can tell
+    // "I'm the live child" from "I'm the just-killed predecessor". When
+    // restartStreamSession() kills the previous child to pick up a new
+    // CLAUDE_CODE_OAUTH_TOKEN env, the old child's exit event fires
+    // asynchronously *after* startSession() has already wired up the
+    // replacement. Without these guards the old handler stomps
+    // session.status -> "exited" and the user sees their freshly-spawned
+    // child get marked dead.
+    const ownStreamSession = streamSession;
     streamSession.on("exit", ({ code, signal }) => {
+      // (a) mid-flight restart marker: set true by restartStreamSession
+      //     before calling close(); cleared once the new spawn is wired.
+      if (ownStreamSession._restarting) return;
+      // (b) replacement guard: by the time we got here, session may
+      //     already be pointing at a fresh streamSession.
+      if (session.streamSession && session.streamSession !== ownStreamSession) return;
+
       session.status = "exited";
       session.exitCode = code;
       session.exitSignal = signal;
@@ -6285,6 +6526,7 @@ export class SessionManager {
       this.broadcastNarrativeDiff(session);
       this.scheduleSessionMetaBroadcast(session, { immediate: true });
       this.schedulePersist();
+      this.maybeFireAutoReply(session);
     });
 
     streamSession.on("stderr", (chunk) => {
@@ -6306,7 +6548,23 @@ export class SessionManager {
       this.scheduleSessionMetaBroadcast(session, { immediate: true });
     });
 
+    // Capture this exact streamSession instance so the handler can tell
+    // "I'm the live child" from "I'm the just-killed predecessor". When
+    // restartStreamSession() kills the previous child to pick up a new
+    // CLAUDE_CODE_OAUTH_TOKEN env, the old child's exit event fires
+    // asynchronously *after* startSession() has already wired up the
+    // replacement. Without these guards the old handler stomps
+    // session.status -> "exited" and the user sees their freshly-spawned
+    // child get marked dead.
+    const ownStreamSession = streamSession;
     streamSession.on("exit", ({ code, signal }) => {
+      // (a) mid-flight restart marker: set true by restartStreamSession
+      //     before calling close(); cleared once the new spawn is wired.
+      if (ownStreamSession._restarting) return;
+      // (b) replacement guard: by the time we got here, session may
+      //     already be pointing at a fresh streamSession.
+      if (session.streamSession && session.streamSession !== ownStreamSession) return;
+
       session.status = "exited";
       session.exitCode = code;
       session.exitSignal = signal;
@@ -6316,6 +6574,110 @@ export class SessionManager {
         kind: "status",
         label: "Exited",
         text: `Stream session exited (code=${code ?? "n/a"}, signal=${signal || "n/a"}).`,
+        timestamp: new Date().toISOString(),
+        meta: "stream-mode",
+      });
+      this.broadcastNarrativeDiff(session);
+      this.scheduleSessionMetaBroadcast(session, { immediate: true });
+      this.schedulePersist({ immediate: true });
+    });
+
+    streamSession.start();
+  }
+
+  startOpenSwarmApiSession(session, provider, { restored = false } = {}) {
+    const sessionCwd = resolveCwd(session.cwd, this.cwd);
+    session.cwd = sessionCwd;
+    const sessionEnv = this.buildSessionEnvironment(session, provider.id);
+    writeProviderCredentialEnvFile(sessionEnv);
+
+    const streamSession = new OpenSwarmApiSession({
+      sessionId: session.id,
+      cwd: sessionCwd,
+      env: sessionEnv,
+      provider: {
+        ...provider,
+        launchCommand: getManagedProviderLaunchCommand(provider) || provider.launchCommand,
+      },
+      allocateSeq: () => {
+        if (typeof session.entrySeqCounter !== "number") {
+          session.entrySeqCounter = 0;
+        }
+        session.entrySeqCounter += 1;
+        return session.entrySeqCounter;
+      },
+    });
+
+    session.streamSession = streamSession;
+    session.streamInputBuffer = "";
+    session.streamEntries = [];
+    session.status = "running";
+    session.exitCode = null;
+    session.exitSignal = null;
+    session.restoreOnStartup = true;
+    session.activityInputBuffer = "";
+    session.nativeNarrativeInputBuffer = "";
+    session.providerReadyNotified = true;
+    session.updatedAt = new Date().toISOString();
+    session.lastOutputAt = session.updatedAt;
+
+    this.pushNativeNarrativeEntry(session, {
+      kind: "status",
+      label: "OpenSwarm native",
+      text: restored
+        ? `Native OpenSwarm JSON mode is active again for ${provider.label}.`
+        : `Native OpenSwarm JSON mode is active. Model: ${sessionEnv.DEFAULT_MODEL || "OpenSwarm default"}.`,
+      timestamp: session.updatedAt,
+      meta: "stream-mode",
+    });
+
+    streamSession.on("event", () => {
+      session.lastOutputAt = new Date().toISOString();
+      session.updatedAt = session.lastOutputAt;
+    });
+
+    streamSession.on("entries", (entries) => {
+      session.streamEntries = Array.isArray(entries) ? entries : [];
+      this.broadcastNarrativeDiff(session);
+      this.scheduleSessionMetaBroadcast(session, { immediate: true });
+    });
+
+    streamSession.on("turn-complete", () => {
+      session.streamWorking = false;
+      this.broadcastNarrativeDiff(session);
+      this.scheduleSessionMetaBroadcast(session, { immediate: true });
+      this.schedulePersist();
+    });
+
+    streamSession.on("stderr", (chunk) => {
+      const text = String(chunk || "").trim();
+      if (text) {
+        console.warn(`[vibe-research] openswarm native stderr (${session.id}):`, text);
+      }
+    });
+
+    streamSession.on("error", (error) => {
+      this.pushNativeNarrativeEntry(session, {
+        kind: "status",
+        label: "Error",
+        text: `OpenSwarm native error: ${error.message}`,
+        timestamp: new Date().toISOString(),
+        meta: "stream-mode",
+      });
+      this.broadcastNarrativeDiff(session);
+      this.scheduleSessionMetaBroadcast(session, { immediate: true });
+    });
+
+    streamSession.on("exit", ({ code, signal }) => {
+      session.status = "exited";
+      session.exitCode = code;
+      session.exitSignal = signal;
+      session.streamSession = null;
+      session.streamWorking = false;
+      this.pushNativeNarrativeEntry(session, {
+        kind: "status",
+        label: "Exited",
+        text: `OpenSwarm native session exited (code=${code ?? "n/a"}, signal=${signal || "n/a"}).`,
         timestamp: new Date().toISOString(),
         meta: "stream-mode",
       });
@@ -6339,6 +6701,8 @@ export class SessionManager {
       resolvedStreamMode = isClaudeStreamModeEnabled(this.env);
     } else if (snapshot.providerId === "codex") {
       resolvedStreamMode = isCodexStreamModeEnabled(this.env);
+    } else if (snapshot.providerId === "openswarm") {
+      resolvedStreamMode = isOpenSwarmStreamModeEnabled(this.env);
     } else {
       resolvedStreamMode = false;
     }
@@ -6374,6 +6738,9 @@ export class SessionManager {
       workspaceRepair: snapshot.workspaceRepair || null,
       occupationId: snapshot.occupationId || snapshot.promptId || this.occupationId,
       streamMode: resolvedStreamMode,
+      entrySeqCounter: snapshot.entrySeqCounter || 0,
+      broadcastSeq: snapshot.broadcastSeq || 0,
+      autoReplyText: snapshot.autoReplyText || "",
     });
 
     this.sessions.set(session.id, session);
@@ -6456,10 +6823,36 @@ export class SessionManager {
     return {
       ...this.serializeSession(session),
       buffer: session.buffer,
-      nativeNarrativeEntries: session.nativeNarrativeEntries,
+      // Persist seq alongside each entry so chat order survives restarts.
+      // Pre-existing on-disk records that were saved before this change
+      // come back without seq; buildSessionRecord backfills monotonically.
+      nativeNarrativeEntries: Array.isArray(session.nativeNarrativeEntries)
+        ? session.nativeNarrativeEntries.map((entry) => (
+            entry && typeof entry === "object"
+              ? {
+                  ...entry,
+                  seq: Number.isFinite(Number(entry.seq)) && Number(entry.seq) > 0
+                    ? Number(entry.seq)
+                    : 0,
+                }
+              : entry
+          ))
+        : [],
       nativeNarrativeInputBuffer: session.nativeNarrativeInputBuffer,
       providerState: session.providerState,
       restoreOnStartup: session.restoreOnStartup,
+      // Persistent seq counters — buildSessionRecord on restore will
+      // reconcile these with restoredMaxSeq so ordering survives.
+      entrySeqCounter: Number.isFinite(Number(session.entrySeqCounter))
+        ? Number(session.entrySeqCounter)
+        : 0,
+      broadcastSeq: Number.isFinite(Number(session.broadcastSeq))
+        ? Number(session.broadcastSeq)
+        : 0,
+      // Auto-reply text survives restart so the user can set it before
+      // sleep and have it still firing the next morning even if the
+      // server (or laptop) reboots overnight.
+      autoReplyText: typeof session.autoReplyText === "string" ? session.autoReplyText : "",
     };
   }
 

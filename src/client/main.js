@@ -897,39 +897,6 @@ const GUIDED_QUEST_TUTORIALS = Object.freeze({
       },
     ]),
   }),
-  "quest-publish-agent-canvas": Object.freeze({
-    title: "Publish an agent canvas",
-    steps: Object.freeze([
-      {
-        id: "quest-canvas-welcome",
-        title: "Publish an agent canvas",
-        body: "This quest points you at an agent and then at the canvas button.",
-        manualAdvance: true,
-        manualLabel: "Start quest",
-      },
-      {
-        id: "quest-canvas-open-agent",
-        title: "Step 1",
-        body: "Open an agent from Agent Town.",
-        note: "If no agent is visible yet, use the New Agent button first.",
-        ensureView: "visual-interface",
-      },
-      {
-        id: "quest-canvas-button",
-        title: "Step 2",
-        body: "Click the canvas button in the chat toolbar.",
-        note: "Agents publish images there when they have something visual to show.",
-        ensureView: "visual-interface",
-      },
-      {
-        id: "quest-canvas-done",
-        title: "Done",
-        body: "Once an agent publishes a canvas, this quest completes automatically.",
-        manualAdvance: true,
-        manualLabel: "Finish quest",
-      },
-    ]),
-  }),
   "quest-save-library-note": Object.freeze({
     title: "Save one Library note",
     steps: Object.freeze([
@@ -1552,104 +1519,11 @@ function saveComposerQueue() {
   }
 }
 
-function normalizeChatAutopilotSupervisorWatchlist(value) {
-  return String(value || "")
-    .replace(/\r\n?/g, "\n")
-    .split("\n")
-    .map((line) => line.trim())
-    .join("\n")
-    .replace(/\n{3,}/g, "\n\n")
-    .trim()
-    .slice(0, 4_000);
-}
+function normalizeChatAutopilotSupervisorWatchlist() { return ""; }
 
-function sanitizeChatAutopilotSupervisor(value) {
-  const input = value && typeof value === "object" && !Array.isArray(value) ? value : {};
-  const rawCard = input.lastDirectiveCard && typeof input.lastDirectiveCard === "object" && !Array.isArray(input.lastDirectiveCard)
-    ? input.lastDirectiveCard
-    : {};
-  const lastDirectiveCard = {
-    label: String(rawCard.label || "").trim().slice(0, 80),
-    mode: String(rawCard.mode || "").trim().slice(0, 40),
-    action: String(rawCard.action || "").trim().slice(0, 80),
-    reason: String(rawCard.reason || "").trim().slice(0, 240),
-    evidence: String(rawCard.evidence || "").trim().slice(0, 180),
-    integrity: String(rawCard.integrity || "").trim().slice(0, 180),
-    compute: String(rawCard.compute || "").trim().slice(0, 180),
-    continuity: String(rawCard.continuity || "").trim().slice(0, 220),
-    stop: String(rawCard.stop || "").trim().slice(0, 180),
-    preview: String(rawCard.preview || "").trim().slice(0, 240),
-  };
-  const audit = Array.isArray(input.audit)
-    ? input.audit
-      .map((entry) => {
-        if (!entry || typeof entry !== "object" || Array.isArray(entry)) return null;
-        return {
-          at: typeof entry.at === "string" ? entry.at : "",
-          event: String(entry.event || "").trim().slice(0, 80),
-          action: String(entry.action || "").trim().slice(0, 80),
-          reason: String(entry.reason || "").trim().slice(0, 500),
-          signature: String(entry.signature || "").trim().slice(0, 300),
-        };
-      })
-      .filter(Boolean)
-      .slice(-80)
-    : [];
-  const thread = Array.isArray(input.thread)
-    ? input.thread
-      .map((entry) => {
-        if (!entry || typeof entry !== "object" || Array.isArray(entry)) return null;
-        const title = String(entry.title || "").trim().slice(0, 120);
-        const text = String(entry.text || "").trim().slice(0, 2_000);
-        if (!title && !text) return null;
-        return {
-          id: String(entry.id || "").trim().slice(0, 100),
-          at: typeof entry.at === "string" ? entry.at : "",
-          role: String(entry.role || "state").trim().slice(0, 40),
-          kind: String(entry.kind || "event").trim().slice(0, 60),
-          title,
-          text,
-          source: String(entry.source || "").trim().slice(0, 80),
-        };
-      })
-      .filter(Boolean)
-      .slice(-160)
-    : [];
-  return {
-    version: 1,
-    enabledAt: typeof input.enabledAt === "string" ? input.enabledAt : "",
-    updatedAt: typeof input.updatedAt === "string" ? input.updatedAt : "",
-    lastObservedAt: typeof input.lastObservedAt === "string" ? input.lastObservedAt : "",
-    lastObservedEvent: String(input.lastObservedEvent || "").trim().slice(0, 80),
-    lastDirectiveAt: typeof input.lastDirectiveAt === "string" ? input.lastDirectiveAt : "",
-    lastDirectiveSignature: String(input.lastDirectiveSignature || "").trim().slice(0, 300),
-    lastDirectiveReason: String(input.lastDirectiveReason || "").trim().slice(0, 500),
-    lastDirectivePreview: String(input.lastDirectivePreview || "").trim().slice(0, 240),
-    lastDirectiveCard,
-    interventionCount: Math.max(0, Math.floor(Number(input.interventionCount) || 0)),
-    audit,
-    thread,
-  };
-}
+function sanitizeChatAutopilotSupervisor() { return { audit: [], thread: [], lastDirectiveCard: null, watchlist: "", enabled: false }; }
 
-function sanitizeChatAutopilotProjectSupervisor(value) {
-  const input = value && typeof value === "object" && !Array.isArray(value) ? value : {};
-  const sessionIds = Array.isArray(input.sessionIds)
-    ? [...new Set(input.sessionIds.map((id) => String(id || "").trim()).filter(Boolean))].slice(-20)
-    : [];
-  const supervisor = sanitizeChatAutopilotSupervisor(input.supervisor || input.state);
-  return {
-    projectName: String(input.projectName || "").trim(),
-    enabled: Boolean(input.enabled),
-    objective: String(input.objective || "").trim().slice(0, 4_000),
-    watchlist: normalizeChatAutopilotSupervisorWatchlist(input.watchlist),
-    primarySessionId: String(input.primarySessionId || "").trim(),
-    sessionIds,
-    createdAt: typeof input.createdAt === "string" ? input.createdAt : "",
-    updatedAt: typeof input.updatedAt === "string" ? input.updatedAt : "",
-    supervisor,
-  };
-}
+function sanitizeChatAutopilotProjectSupervisor() { return { thread: [], audit: [], watchlist: "", enabled: false }; }
 
 function sanitizeChatAutopilotSession(value) {
   if (!value || typeof value !== "object" || Array.isArray(value)) {
@@ -2594,13 +2468,25 @@ const state = {
     githubOAuthClientSecretConfigured: false,
     githubOAuthStatus: null,
     googleOAuthClientId: "",
-    ottoAuthBaseUrl: "https://ottoauth.vercel.app",
+    ottoAuthBaseUrl: "https://ottoauth.vibe-research.net",
     ottoAuthCallbackUrl: "",
     ottoAuthDefaultMaxChargeCents: "",
     ottoAuthEnabled: false,
     ottoAuthPrivateKeyConfigured: false,
     ottoAuthStatus: null,
     ottoAuthUsername: "",
+    openSwarmApiBaseUrl: "http://127.0.0.1:8080",
+    openSwarmApiMode: false,
+    openSwarmComposioApiKeyConfigured: false,
+    openSwarmComposioUserIdConfigured: false,
+    openSwarmDefaultModel: "gpt-5.2",
+    openSwarmFalKeyConfigured: false,
+    openSwarmGoogleApiKeyConfigured: false,
+    openSwarmPexelsApiKeyConfigured: false,
+    openSwarmPixabayApiKeyConfigured: false,
+    openSwarmSearchApiKeyConfigured: false,
+    openSwarmServerCommand: "",
+    openSwarmUnsplashAccessKeyConfigured: false,
     telegramAllowedChatIds: "",
     telegramBotTokenConfigured: false,
     telegramEnabled: false,
@@ -5767,26 +5653,9 @@ function removeRichSessionComposerQueueItem(sessionId, itemId) {
   return removed || null;
 }
 
-function getQueuedChatAutopilotSupervisorMessage(sessionId) {
-  return getRichSessionComposerQueue(sessionId)
-    .find((entry) => String(entry?.id || "").startsWith("autopilot-")) || null;
-}
+function getQueuedChatAutopilotSupervisorMessage() { return null; }
 
-function removeQueuedChatAutopilotSupervisorMessages(sessionId) {
-  const sid = String(sessionId || "").trim();
-  const list = state.richSessionComposerQueue[sid];
-  if (!sid || !Array.isArray(list) || !list.length) return 0;
-  const next = list.filter((entry) => !String(entry?.id || "").startsWith("autopilot-"));
-  const removed = list.length - next.length;
-  if (!removed) return 0;
-  if (next.length) {
-    state.richSessionComposerQueue[sid] = next;
-  } else {
-    delete state.richSessionComposerQueue[sid];
-  }
-  saveComposerQueue();
-  return removed;
-}
+function removeQueuedChatAutopilotSupervisorMessages() { return 0; }
 
 function isSessionInputConnected(sessionId) {
   const sid = String(sessionId || "").trim();
@@ -5817,9 +5686,16 @@ function flushNextRichSessionComposerQueueItem(sessionId) {
   if (!text && !(attachments && attachments.length)) return;
   const isStreamMode = Boolean(session.streamMode);
   const outgoing = text || (attachments && attachments.length ? "Take a look at this image." : "");
+  // Reuse the queue item's id when it carries one (autopilot supervisor
+  // entries pre-allocate ids); otherwise allocate fresh. Either way the
+  // id is what the server will stamp on the user-echo entry.
+  const messageId = String(next.id || "").trim() && /^c-/.test(String(next.id))
+    ? String(next.id)
+    : allocateClientMessageId();
   const sent = sendTerminalInput(`${outgoing}\r`, {
     queueIfDisconnected: false,
     attachments: isStreamMode && attachments && attachments.length ? attachments : null,
+    clientMessageId: messageId,
   });
   if (!sent) {
     // WebSocket isn't ready — keep the message at the front of the queue
@@ -5827,6 +5703,42 @@ function flushNextRichSessionComposerQueueItem(sessionId) {
     // brief disconnect.
     unshiftRichSessionComposerQueueItem(sid, next);
     return;
+  }
+  // Optimistically insert the user entry into the reducer state so the
+  // chat shows the message immediately instead of waiting for the
+  // server's user-echo round-trip. Same id as the server will stamp
+  // (clientMessageId is threaded through), so the eventual server upsert
+  // mutates this entry in place — no flicker, no duplicate, no reorder.
+  // Seq=0 means "no real seq yet"; the server's upsert will replace it
+  // with the authoritative monotonic seq.
+  if (isStreamMode) {
+    const optimisticImageRefs = isStreamMode && attachments && attachments.length
+      ? attachments
+          .map((att) => String(att?.absolutePath || att?.path || "").trim())
+          .filter(Boolean)
+      : [];
+    const optimisticEntry = {
+      id: messageId,
+      kind: "user",
+      label: "You",
+      text: outgoing,
+      timestamp: new Date().toISOString(),
+      seq: 0,
+    };
+    if (optimisticImageRefs.length) {
+      optimisticEntry.imageRefs = optimisticImageRefs;
+    }
+    try {
+      applyNarrativeFrameToState(sid, {
+        type: NARRATIVE_FRAME_TYPES.EVENT,
+        sessionId: sid,
+        op: "upsert",
+        seq: 0,
+        entry: optimisticEntry,
+      });
+    } catch (error) {
+      console.warn("[vibe-research] optimistic user insert failed", error);
+    }
   }
   scheduleRichSessionNarrativeRefresh(sid, { immediate: true });
   refreshRichSessionSurfaceUi({ scrollToBottom: true });
@@ -6289,7 +6201,7 @@ function renderRichSessionPathLinks(text) {
       truncatedFull = truncatedFull.slice(0, -1);
     }
 
-    if (!truncatedPath) {
+    if (!truncatedPath || isLikelyModelSpecifierPath(truncatedPath)) {
       result += escapeHtml(full);
     } else {
       const escapedPath = escapeHtml(truncatedPath);
@@ -6305,6 +6217,18 @@ function renderRichSessionPathLinks(text) {
   }
 
   return result;
+}
+
+function isLikelyModelSpecifierPath(rawPath) {
+  const value = String(rawPath || "").trim();
+  if (!value || value.startsWith("/") || !value.includes("/")) {
+    return false;
+  }
+  const [provider] = value.split("/");
+  if (!/^(?:anthropic|google|groq|huggingface|hf|ollama|openai|openrouter)$/iu.test(provider)) {
+    return false;
+  }
+  return /^[A-Za-z0-9_.-]+(?:\/[A-Za-z0-9_.-]+){1,3}$/u.test(value);
 }
 
 function getRichSessionImageUrl(rawPath) {
@@ -6380,7 +6304,12 @@ function renderRichSessionImageStrip(refs, { caption = "" } = {}) {
     return "";
   }
 
-  const tiles = refs
+  // Card layout: image is the primary content (large, max-width 100% of
+  // the strip column), with the full path shown as a tiny monospace
+  // caption underneath. Clicking opens the image fullscreen via the
+  // lightbox overlay below — what the user wants is to focus on the
+  // image content, not the path string.
+  const rows = refs
     .map((rawPath) => {
       const url = getRichSessionImageUrl(rawPath);
       if (!url) {
@@ -6388,30 +6317,100 @@ function renderRichSessionImageStrip(refs, { caption = "" } = {}) {
       }
       const altText = rawPath.split("/").filter(Boolean).pop() || rawPath;
       return `
-        <a class="rich-session-image-tile" href="#" data-rich-path="${escapeHtml(rawPath)}">
+        <a class="rich-session-image-row rich-session-image-tile" href="${escapeHtml(url)}" target="_blank" rel="noreferrer noopener" data-rich-image-zoom data-rich-image-url="${escapeHtml(url)}" data-rich-image-alt="${escapeHtml(altText)}" data-rich-path="${escapeHtml(rawPath)}" title="${escapeHtml(rawPath)}">
           <img
+            class="rich-session-image-thumb"
             src="${escapeHtml(url)}"
             alt="${escapeHtml(altText)}"
             loading="lazy"
             decoding="async"
           />
-          <span class="rich-session-image-caption">${escapeHtml(altText)}</span>
+          <code class="rich-session-image-path">${escapeHtml(rawPath)}</code>
         </a>
       `;
     })
     .filter(Boolean)
     .join("");
 
-  if (!tiles) {
+  if (!rows) {
     return "";
   }
 
   return `
     <div class="rich-session-image-strip" data-rich-image-strip>
       ${caption ? `<div class="rich-session-image-strip-caption">${escapeHtml(caption)}</div>` : ""}
-      <div class="rich-session-image-strip-tiles">${tiles}</div>
+      <div class="rich-session-image-strip-rows">${rows}</div>
     </div>
   `;
+}
+
+function extractRichSessionArtifactRefs(entry, { maxRefs = 4 } = {}) {
+  const source = [
+    entry?.text || "",
+    entry?.outputPreview || "",
+  ].join("\n");
+  const imageRefs = new Set(resolveRichSessionImageRefs(entry || {}, { includeMarkdown: true }));
+  const seen = new Set();
+  const refs = [];
+  const push = (rawPath) => {
+    let value = String(rawPath || "").trim();
+    while (value.length && /[.,;:!?)\]]/u.test(value[value.length - 1])) {
+      value = value.slice(0, -1);
+    }
+    if (!value || imageRefs.has(value) || seen.has(value)) return;
+    if (!/\.(?:pptx?|pdf|html?)$/iu.test(value)) return;
+    seen.add(value);
+    refs.push(value);
+  };
+
+  for (const match of source.matchAll(/\[[^\]]+\]\(<([^>]+)>(?:\s+"[^"]*")?\)/gu)) {
+    push(match[1]);
+    if (refs.length >= maxRefs) return refs;
+  }
+  for (const match of source.matchAll(/\[[^\]]+\]\(([^)<>\s]+)(?:\s+"[^"]*")?\)/gu)) {
+    push(match[1]);
+    if (refs.length >= maxRefs) return refs;
+  }
+  for (const match of source.matchAll(/<([^<>\n]+\.(?:pptx?|pdf|html?))>/giu)) {
+    push(match[1]);
+    if (refs.length >= maxRefs) return refs;
+  }
+  const pathChar = "[\\p{L}\\p{N}_.@~+-]";
+  const re = new RegExp(
+    `(\\/(?:${pathChar}+\\/)+${pathChar}+\\.(?:pptx?|pdf|html?)|(?:${pathChar}+\\/)+${pathChar}+\\.(?:pptx?|pdf|html?))`,
+    "giu",
+  );
+  for (const match of source.matchAll(re)) {
+    push(match[1]);
+    if (refs.length >= maxRefs) break;
+  }
+  return refs;
+}
+
+function getRichSessionArtifactType(rawPath) {
+  const value = String(rawPath || "").toLowerCase();
+  if (/\.pptx?$/u.test(value)) return "Presentation";
+  if (/\.pdf$/u.test(value)) return "PDF";
+  if (/\.html?$/u.test(value)) return "HTML slide";
+  return "Artifact";
+}
+
+function renderRichSessionArtifactStrip(refs) {
+  if (!Array.isArray(refs) || !refs.length) return "";
+  const cards = refs.map((rawPath) => {
+    const filename = rawPath.split("/").filter(Boolean).pop() || rawPath;
+    const type = getRichSessionArtifactType(rawPath);
+    return `
+      <a class="rich-session-artifact-card" href="#" data-rich-path="${escapeHtml(rawPath)}">
+        <span class="rich-session-artifact-icon">${renderIcon(FileText, { className: "rich-session-artifact-svg" })}</span>
+        <span class="rich-session-artifact-body">
+          <span class="rich-session-artifact-kind">${escapeHtml(type)}</span>
+          <span class="rich-session-artifact-name">${escapeHtml(filename)}</span>
+        </span>
+      </a>
+    `;
+  }).join("");
+  return `<div class="rich-session-artifact-strip" data-rich-artifact-strip>${cards}</div>`;
 }
 
 function renderRichSessionAssistantBody(text, entry = null) {
@@ -6421,11 +6420,13 @@ function renderRichSessionAssistantBody(text, entry = null) {
   // legacy entries that pre-date the field.
   const imageRefs = resolveRichSessionImageRefs(entry || { text: normalized });
   const imageStripHtml = renderRichSessionImageStrip(imageRefs);
+  const artifactStripHtml = renderRichSessionArtifactStrip(extractRichSessionArtifactRefs(entry || { text: normalized }));
 
   if (!isRichSessionMarkdownContent(normalized)) {
     return `
       <div class="rich-session-entry-copy">${escapeHtml(normalized)}</div>
       ${imageStripHtml}
+      ${artifactStripHtml}
     `;
   }
 
@@ -6434,6 +6435,7 @@ function renderRichSessionAssistantBody(text, entry = null) {
       ${renderKnowledgeBaseMarkdown(normalized, "")}
     </div>
     ${imageStripHtml}
+    ${artifactStripHtml}
   `;
 }
 
@@ -6601,7 +6603,7 @@ function renderRichSessionEntry(entry, index) {
   const toolImageRefs = kind === "tool" && !browserWidget
     ? (() => {
         if (Array.isArray(entry?.imageRefs) && entry.imageRefs.length) {
-          return entry.imageRefs.slice(0, 4);
+          return entry.imageRefs.slice(0, 12);
         }
         const labelStr = String(entry?.label || "");
         const looksImageProducing = /^(?:Write|Edit|MultiEdit|Read|NotebookEdit|Open|View)$/i.test(labelStr)
@@ -6620,7 +6622,7 @@ function renderRichSessionEntry(entry, index) {
   // composer's explicit attachment markdown ("![dropped image: foo.png]
   // (/abs/path)"). Plain prose mentions of an image stay as text.
   const userImageRefs = kind === "user" && Array.isArray(entry?.imageRefs)
-    ? entry.imageRefs.slice(0, 4)
+    ? entry.imageRefs.slice(0, 12)
     : [];
   const userImageStripHtml = renderRichSessionImageStrip(userImageRefs);
 
@@ -6873,6 +6875,20 @@ function sendRichSessionSlashCommand(command, { trigger = null, switchToTerminal
     return false;
   }
 
+  // Special-case /login on Claude sessions: stream-mode claude rejects
+  // /login as "isn't available in this environment", so forwarding it
+  // would just produce a confusing error. Open the OAuth modal instead.
+  // See src/claude-oauth-flow.js — we hit Anthropic's OAuth endpoints
+  // directly and persist the token to vibe-research's state dir, then
+  // inject CLAUDE_CODE_OAUTH_TOKEN into the next stream-session spawn.
+  if (value === "/login" && isStreamSessionUiSession(getActiveSession())) {
+    if (switchToTerminal) {
+      setShellSurfaceMode("terminal");
+    }
+    openClaudeOAuthSignInModal({ trigger });
+    return true;
+  }
+
   if (switchToTerminal) {
     setShellSurfaceMode("terminal");
   }
@@ -6894,6 +6910,223 @@ function sendRichSessionSlashCommand(command, { trigger = null, switchToTerminal
   }
 
   return true;
+}
+
+// Claude OAuth sign-in modal — paste-back flow.
+//
+// We POST /api/auth/claude-oauth/start to generate a PKCE pair on the
+// server, get back the authorize URL + an opaque flow id. The user opens
+// the URL (we open it in a new tab for them and also display it as a
+// fallback link). They sign in, the redirect lands on Anthropic's
+// platform.claude.com page which displays the OAuth code (with #state
+// suffix). They paste it back into our input field, we POST to
+// /submit. On success the token is persisted server-side and
+// CLAUDE_CODE_OAUTH_TOKEN gets injected into the next claude subprocess
+// spawn. We offer to relaunch the active session in-place.
+let __claudeOAuthModal = null;
+function openClaudeOAuthSignInModal({ trigger = null } = {}) {
+  if (__claudeOAuthModal && document.body.contains(__claudeOAuthModal.root)) {
+    __claudeOAuthModal.input?.focus();
+    return;
+  }
+  closeClaudeOAuthSignInModal();
+  if (trigger instanceof HTMLButtonElement) {
+    trigger.setAttribute("disabled", "disabled");
+    trigger.classList.add("is-sending");
+  }
+
+  const root = document.createElement("div");
+  root.className = "claude-oauth-modal-backdrop";
+  root.innerHTML = `
+    <div class="claude-oauth-modal" role="dialog" aria-labelledby="claude-oauth-modal-title">
+      <button type="button" class="claude-oauth-modal-close" aria-label="Close">×</button>
+      <h2 id="claude-oauth-modal-title">Sign in to Claude</h2>
+      <p class="claude-oauth-modal-step">
+        <span class="claude-oauth-step-num">1</span>
+        Open the Anthropic OAuth page in your browser and finish signing in.
+      </p>
+      <div class="claude-oauth-modal-url-row">
+        <a class="claude-oauth-modal-url" target="_blank" rel="noreferrer noopener">Loading…</a>
+        <button type="button" class="claude-oauth-modal-copy" disabled>Copy</button>
+      </div>
+      <p class="claude-oauth-modal-step">
+        <span class="claude-oauth-step-num">2</span>
+        After signing in, the page will display a code. Copy and paste it here.
+      </p>
+      <textarea class="claude-oauth-modal-input" rows="3" placeholder="paste the code here (it may include &amp;state= or #state — that's fine)"></textarea>
+      <div class="claude-oauth-modal-status" aria-live="polite"></div>
+      <div class="claude-oauth-modal-actions">
+        <button type="button" class="claude-oauth-modal-cancel">Cancel</button>
+        <button type="button" class="claude-oauth-modal-submit primary-button" disabled>Sign in</button>
+      </div>
+    </div>
+  `;
+  document.body.appendChild(root);
+
+  const urlAnchor = root.querySelector(".claude-oauth-modal-url");
+  const copyButton = root.querySelector(".claude-oauth-modal-copy");
+  const input = root.querySelector(".claude-oauth-modal-input");
+  const submit = root.querySelector(".claude-oauth-modal-submit");
+  const cancel = root.querySelector(".claude-oauth-modal-cancel");
+  const closeBtn = root.querySelector(".claude-oauth-modal-close");
+  const statusEl = root.querySelector(".claude-oauth-modal-status");
+
+  let flowId = null;
+  let flowUrl = null;
+  let busy = false;
+
+  const setStatus = (message, kind = "") => {
+    statusEl.textContent = message || "";
+    statusEl.dataset.kind = kind;
+  };
+
+  const enableSubmit = () => {
+    submit.disabled = busy || !flowId || !input.value.trim();
+  };
+
+  __claudeOAuthModal = { root, input };
+
+  // Step 1: kick off the flow on the server.
+  (async () => {
+    setStatus("Starting OAuth flow…");
+    try {
+      const response = await fetch("/api/auth/claude-oauth/start", { method: "POST" });
+      if (!response.ok) throw new Error(`server returned ${response.status}`);
+      const data = await response.json();
+      flowId = data.id;
+      flowUrl = data.url;
+      urlAnchor.textContent = flowUrl;
+      urlAnchor.href = flowUrl;
+      copyButton.disabled = false;
+      setStatus("");
+      enableSubmit();
+      // Auto-open the URL so the user doesn't have to click. Pop-ups
+      // may be blocked on the first user-facing modal trigger; that's
+      // why the link is also clickable.
+      try {
+        window.open(flowUrl, "_blank", "noreferrer,noopener");
+      } catch {
+        /* pop-up blocked is fine */
+      }
+      input.focus();
+    } catch (error) {
+      setStatus(`Could not start OAuth flow: ${error.message}`, "error");
+    }
+  })();
+
+  copyButton.addEventListener("click", async () => {
+    if (!flowUrl) return;
+    try {
+      await navigator.clipboard.writeText(flowUrl);
+      copyButton.textContent = "Copied";
+      setTimeout(() => { copyButton.textContent = "Copy"; }, 1200);
+    } catch {
+      copyButton.textContent = "Copy failed";
+      setTimeout(() => { copyButton.textContent = "Copy"; }, 1200);
+    }
+  });
+
+  input.addEventListener("input", enableSubmit);
+
+  const closeModal = () => {
+    closeClaudeOAuthSignInModal();
+    if (trigger instanceof HTMLButtonElement) {
+      trigger.removeAttribute("disabled");
+      trigger.classList.remove("is-sending");
+    }
+  };
+
+  cancel.addEventListener("click", closeModal);
+  closeBtn.addEventListener("click", closeModal);
+  root.addEventListener("click", (event) => {
+    if (event.target === root) closeModal();
+  });
+
+  submit.addEventListener("click", async () => {
+    const code = input.value.trim();
+    if (!flowId || !code || busy) return;
+    busy = true;
+    submit.disabled = true;
+    setStatus("Exchanging code for token…");
+    try {
+      const response = await fetch("/api/auth/claude-oauth/submit", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ id: flowId, code }),
+      });
+      const data = await response.json().catch(() => ({}));
+      if (!response.ok) {
+        const detail = data?.error || `server returned ${response.status}`;
+        setStatus(`Sign in failed: ${detail}`, "error");
+        busy = false;
+        enableSubmit();
+        return;
+      }
+      // Auto-restart the active stream session in-place so the new
+      // CLAUDE_CODE_OAUTH_TOKEN is picked up by a fresh claude
+      // subprocess. The conversation transcript is preserved server-side
+      // via `--resume <session-id>` — the user just has their next
+      // message succeed instead of bouncing on auth_failed again.
+      setStatus("Signed in. Restarting Claude…", "success");
+      submit.textContent = "Done";
+      submit.classList.add("is-success");
+      const activeSession = getActiveSession();
+      if (activeSession?.id) {
+        try {
+          await restartRichSessionAfterSignIn(activeSession.id);
+          setStatus("Signed in. Send your message again to continue.", "success");
+        } catch (error) {
+          setStatus(
+            `Signed in, but auto-restart failed (${error.message || "unknown error"}). ` +
+              `Manually restart the session or refresh the page.`,
+            "error",
+          );
+        }
+      } else {
+        setStatus("Signed in. Open a session to start chatting.", "success");
+      }
+      // Auto-close after a brief moment so the user reads the status.
+      setTimeout(() => closeModal(), 1500);
+    } catch (error) {
+      setStatus(`Sign in failed: ${error.message}`, "error");
+      busy = false;
+      enableSubmit();
+    }
+  });
+
+  // Esc closes
+  const escHandler = (event) => {
+    if (event.key === "Escape") {
+      closeModal();
+      window.removeEventListener("keydown", escHandler);
+    }
+  };
+  window.addEventListener("keydown", escHandler);
+}
+
+function closeClaudeOAuthSignInModal() {
+  if (__claudeOAuthModal?.root && __claudeOAuthModal.root.parentNode) {
+    __claudeOAuthModal.root.parentNode.removeChild(__claudeOAuthModal.root);
+  }
+  __claudeOAuthModal = null;
+}
+
+// Best-effort session restart after sign-in. The session record itself
+// stays — we just need claude to be re-spawned so the new env var
+// (CLAUDE_CODE_OAUTH_TOKEN) flows through. The server uses claude's
+// `--resume <session-id>` so the conversation transcript is preserved.
+async function restartRichSessionAfterSignIn(sessionId) {
+  if (!sessionId) return;
+  try {
+    const response = await fetch(`/api/sessions/${encodeURIComponent(sessionId)}/restart-stream`, {
+      method: "POST",
+    });
+    if (!response.ok) {
+      console.warn("[vibe-research] could not auto-restart session after sign-in", response.status);
+    }
+  } catch (error) {
+    console.warn("[vibe-research] session restart errored", error);
+  }
 }
 
 // Pick the latest TodoWrite/TaskUpdate entry — the one whose todos[] is
@@ -7529,6 +7762,239 @@ function renderRichSessionQueueStrip(activeSession) {
   return `<div class="rich-session-queue ${items.length ? "" : "is-empty"}" id="rich-session-queue" data-rich-session-queue-mount aria-label="Queued messages">${renderRichSessionQueueStripHtml(activeSession)}</div>`;
 }
 
+// Auto-reply: minimal UI.
+//   - Not set → render nothing. Zero space.
+//   - Set    → a one-line pill above the composer showing the text + Stop.
+//                The whole pill is clickable to re-edit via the modal.
+// Setting / editing happens in openAutoReplyModal — a small dialog like
+// the OAuth sign-in modal, never inline. This keeps the composer at full
+// width and never blocks typing.
+function renderAutoReplyBanner(activeSession) {
+  if (!activeSession?.id) return "";
+  const armedText = String(activeSession.autoReplyText || "").trim();
+  if (!armedText) return "";
+  // Truncate the displayed text to keep the pill on one line; full text
+  // is in the title attribute and visible when the modal opens to edit.
+  const shortText = armedText.length > 80 ? `${armedText.slice(0, 80)}…` : armedText;
+  return `
+    <button
+      class="auto-reply-pill is-armed"
+      type="button"
+      data-auto-reply-pill
+      data-session-id="${escapeHtml(activeSession.id)}"
+      title="${escapeHtml(armedText)}"
+      aria-label="Auto-reply armed: ${escapeHtml(armedText)}. Click to edit."
+    >
+      <span class="auto-reply-pill-kicker">Auto-reply</span>
+      <span class="auto-reply-pill-text">${escapeHtml(shortText)}</span>
+      <span class="auto-reply-pill-stop" data-auto-reply-stop title="Stop auto-reply">Stop</span>
+    </button>
+  `;
+}
+
+// "Set auto-reply" small link inside the composer footer — only place
+// the user can OPEN the modal when nothing is armed yet. Returns "" if
+// the session can't take input. This is what makes the empty state
+// take zero space above the composer.
+function renderAutoReplyComposerLink(activeSession) {
+  if (!activeSession?.id) return "";
+  const armed = Boolean(String(activeSession.autoReplyText || "").trim());
+  if (armed) return "";
+  return `
+    <button
+      class="auto-reply-link"
+      type="button"
+      data-auto-reply-open
+      data-session-id="${escapeHtml(activeSession.id)}"
+      title="Send a pre-typed message every time the agent finishes a turn. Useful for keeping work moving while you sleep."
+    >Auto-reply…</button>
+  `;
+}
+
+let __autoReplyModal = null;
+function openAutoReplyModal(sessionId) {
+  if (__autoReplyModal) return; // already open
+  const session = state.sessions.find((s) => s.id === sessionId);
+  if (!session) return;
+  const initial = String(session.autoReplyText || "");
+
+  const root = document.createElement("div");
+  root.className = "auto-reply-modal-backdrop";
+  root.innerHTML = `
+    <div class="auto-reply-modal" role="dialog" aria-labelledby="auto-reply-modal-title">
+      <button type="button" class="auto-reply-modal-close" aria-label="Close">×</button>
+      <h2 id="auto-reply-modal-title">Auto-reply when agent goes idle</h2>
+      <p class="auto-reply-modal-hint">
+        This text gets sent as a fresh message every time the agent finishes a turn. Use it to keep work moving overnight on a pre-typed prompt. Leave empty to disarm.
+      </p>
+      <textarea
+        class="auto-reply-modal-input"
+        rows="4"
+        placeholder="e.g. continue working on the test suite; ping me only if you're truly stuck"
+        spellcheck="true"
+        autocomplete="off"
+      >${escapeHtml(initial)}</textarea>
+      <div class="auto-reply-modal-actions">
+        <button type="button" class="auto-reply-modal-cancel">Cancel</button>
+        <button type="button" class="auto-reply-modal-save primary-button">Save</button>
+      </div>
+    </div>
+  `;
+  document.body.appendChild(root);
+  __autoReplyModal = { root };
+  const input = root.querySelector(".auto-reply-modal-input");
+  const cancel = root.querySelector(".auto-reply-modal-cancel");
+  const save = root.querySelector(".auto-reply-modal-save");
+  const closeBtn = root.querySelector(".auto-reply-modal-close");
+  setTimeout(() => input?.focus(), 0);
+
+  const close = () => {
+    if (__autoReplyModal?.root && __autoReplyModal.root.parentNode) {
+      __autoReplyModal.root.parentNode.removeChild(__autoReplyModal.root);
+    }
+    __autoReplyModal = null;
+  };
+
+  cancel.addEventListener("click", close);
+  closeBtn.addEventListener("click", close);
+  root.addEventListener("click", (event) => {
+    if (event.target === root) close();
+  });
+  save.addEventListener("click", async () => {
+    const text = input?.value || "";
+    save.disabled = true;
+    save.textContent = "Saving…";
+    await saveAutoReplyText(sessionId, text);
+    refreshRichSessionSurfaceUi();
+    close();
+  });
+  // Cmd/Ctrl+Enter to save, Esc to cancel.
+  input?.addEventListener("keydown", (event) => {
+    if ((event.metaKey || event.ctrlKey) && event.key === "Enter") {
+      event.preventDefault();
+      save.click();
+    } else if (event.key === "Escape") {
+      event.preventDefault();
+      close();
+    }
+  });
+}
+
+// Save the auto-reply text for a session (or clear it if text is empty).
+// Returns the server-confirmed value so the caller can update local state.
+async function saveAutoReplyText(sessionId, text) {
+  const sid = String(sessionId || "").trim();
+  if (!sid) return null;
+  try {
+    const response = await fetch(`/api/sessions/${encodeURIComponent(sid)}/auto-reply`, {
+      method: "PUT",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ text: String(text || "") }),
+    });
+    if (!response.ok) {
+      console.warn(`[vibe-research] auto-reply save failed: ${response.status}`);
+      return null;
+    }
+    const data = await response.json();
+    // Update the in-memory session record so the next render sees the
+    // server-confirmed value without waiting for a meta broadcast.
+    const session = state.sessions.find((s) => s.id === sid);
+    if (session) session.autoReplyText = String(data.autoReplyText || "");
+    return data.autoReplyText || "";
+  } catch (error) {
+    console.warn("[vibe-research] auto-reply save errored", error);
+    return null;
+  }
+}
+
+// Bind clicks on the auto-reply pill (when armed), the "Auto-reply…"
+// link in the composer footer (when not armed), and the image-zoom
+// click handler. Idempotent — uses a single delegated document-level
+// click listener installed once per page load.
+let __autoReplyClickInstalled = false;
+function bindAutoReplyEvents() {
+  if (__autoReplyClickInstalled) return;
+  __autoReplyClickInstalled = true;
+  document.addEventListener("click", async (event) => {
+    const target = event.target instanceof Element ? event.target : null;
+    if (!target) return;
+    const stop = target.closest("[data-auto-reply-stop]");
+    if (stop instanceof HTMLElement) {
+      event.preventDefault();
+      event.stopPropagation();
+      const pill = stop.closest("[data-auto-reply-pill]");
+      const sessionId = pill instanceof HTMLElement ? pill.dataset.sessionId || "" : "";
+      if (!sessionId) return;
+      await saveAutoReplyText(sessionId, "");
+      refreshRichSessionSurfaceUi();
+      return;
+    }
+    const pill = target.closest("[data-auto-reply-pill]");
+    if (pill instanceof HTMLElement) {
+      event.preventDefault();
+      openAutoReplyModal(pill.dataset.sessionId || "");
+      return;
+    }
+    const link = target.closest("[data-auto-reply-open]");
+    if (link instanceof HTMLElement) {
+      event.preventDefault();
+      openAutoReplyModal(link.dataset.sessionId || "");
+      return;
+    }
+    // Image lightbox: click an inline image to focus on it fullscreen.
+    // Modifier-clicks (cmd/ctrl/middle/shift) keep the native open-in-
+    // new-tab/window behavior — only plain left-click triggers the
+    // lightbox so power users can still open the file directly.
+    const img = target.closest("[data-rich-image-zoom]");
+    if (img instanceof HTMLElement
+      && !event.metaKey && !event.ctrlKey && !event.shiftKey && event.button === 0) {
+      event.preventDefault();
+      const url = img.dataset.richImageUrl || "";
+      const alt = img.dataset.richImageAlt || "";
+      const path = img.dataset.richPath || "";
+      if (url) openImageLightbox({ url, alt, path });
+    }
+  });
+}
+
+let __imageLightbox = null;
+function openImageLightbox({ url, alt = "", path = "" }) {
+  if (__imageLightbox) return;
+  const root = document.createElement("div");
+  root.className = "image-lightbox-backdrop";
+  root.innerHTML = `
+    <button type="button" class="image-lightbox-close" aria-label="Close">×</button>
+    <figure class="image-lightbox-figure">
+      <img class="image-lightbox-img" src="${escapeHtml(url)}" alt="${escapeHtml(alt)}" />
+      ${path ? `<figcaption class="image-lightbox-caption">${escapeHtml(path)}</figcaption>` : ""}
+    </figure>
+  `;
+  document.body.appendChild(root);
+  __imageLightbox = { root };
+  const close = () => {
+    if (__imageLightbox?.root && __imageLightbox.root.parentNode) {
+      __imageLightbox.root.parentNode.removeChild(__imageLightbox.root);
+    }
+    __imageLightbox = null;
+    document.removeEventListener("keydown", escHandler);
+  };
+  const escHandler = (event) => {
+    if (event.key === "Escape") {
+      event.preventDefault();
+      close();
+    }
+  };
+  document.addEventListener("keydown", escHandler);
+  root.querySelector(".image-lightbox-close")?.addEventListener("click", close);
+  root.addEventListener("click", (event) => {
+    // Click backdrop OR the image to dismiss; click the caption stays
+    // open so the path can be selected/copied.
+    const inCaption = (event.target instanceof Element)
+      && event.target.closest(".image-lightbox-caption");
+    if (!inCaption) close();
+  });
+}
+
 function getChatAutopilotSessionConfig(sessionId) {
   const sid = String(sessionId || "").trim();
   if (!sid) {
@@ -7851,268 +8317,26 @@ function summarizeChatAutopilotProjectName(value, limit = 34) {
   return text.length > limit ? `${text.slice(0, Math.max(0, limit - 3))}...` : text;
 }
 
-function getChatAutopilotSupervisorDisplayState(config = {}) {
-  const projectSupervisor = sanitizeChatAutopilotProjectSupervisor(config.projectSupervisor);
-  const sessionSupervisor = sanitizeChatAutopilotSupervisor(config.supervisor);
-  const projectState = projectSupervisor.supervisor;
-  const useProjectState = Boolean(
-    projectState.lastObservedAt
-    || projectState.lastDirectiveAt
-    || projectState.interventionCount
-    || projectState.audit.length,
-  );
-  return {
-    projectSupervisor,
-    supervisor: useProjectState ? projectState : sessionSupervisor,
-    scope: useProjectState ? "project" : "chat",
-  };
-}
 
-function chatAutopilotSupervisorRoleLabel(role = "", kind = "") {
-  const cleanRole = String(role || "").toLowerCase();
-  if (cleanRole === "human") return "You";
-  if (cleanRole === "worker") return "Worker observed";
-  if (cleanRole === "directive") return "Sent to session agent";
-  if (cleanRole === "supervisor") return "Supervisor";
-  if (cleanRole === "state") return kind ? `State · ${kind}` : "State";
-  return cleanRole || "Event";
-}
 
-function renderChatAutopilotSupervisorSignal(label, tone = "") {
-  const toneClass = tone ? ` is-${tone}` : "";
-  return `<span class="rich-session-supervisor-signal${toneClass}">${escapeHtml(label)}</span>`;
-}
 
-function getChatAutopilotSupervisorSignals(activeSession = {}, card = {}) {
-  const subagents = Array.isArray(activeSession?.subagents) ? activeSession.subagents : [];
-  const workingSubagents = subagents.filter((subagent) => subagent?.status === "working").length;
-  const failedSubagents = subagents.filter((subagent) => subagent?.status === "failed").length;
-  const backgroundCount = Math.max(0, Math.floor(Number(activeSession?.backgroundActivity?.activeCount) || 0));
-  const workerRunning = activeSession?.streamMode
-    ? Boolean(activeSession?.streamWorking)
-    : activeSession?.activityStatus === "working";
-  const workerExited = activeSession?.status === "exited";
-  const workerLabel = workerRunning
-    ? "worker running"
-    : workerExited
-      ? "worker exited"
-      : "worker idle";
-  const subagentLabel = workingSubagents
-    ? `${workingSubagents} subagent${workingSubagents === 1 ? "" : "s"} working`
-    : subagents.length
-      ? failedSubagents === subagents.length
-        ? `${subagents.length} subagent${subagents.length === 1 ? "" : "s"} failed`
-        : `${subagents.length} previous subagent${subagents.length === 1 ? "" : "s"}`
-      : "no active subagents";
-  const backgroundLabel = backgroundCount
-    ? `${backgroundCount} background task${backgroundCount === 1 ? "" : "s"}`
-    : "no background tasks";
-  const continuityText = String(card?.continuity || "").trim();
-  let continuityLabel = "continuity unknown";
-  let continuityTone = "";
-  if (/(?:monitor\/wakeup visible|monitor visible|wakeup visible|recent trace has monitor|recent trace has wakeup)/iu.test(continuityText)) {
-    continuityLabel = "continuity armed";
-    continuityTone = "live";
-  } else if (/(?:no active monitor|do not see a monitor|no monitor\/wakeup|set one before)/iu.test(continuityText)) {
-    continuityLabel = "monitor missing";
-    continuityTone = "warning";
-  } else if (continuityText) {
-    continuityLabel = summarizeChatAutopilotObjective(continuityText, 42);
-  }
 
-  return {
-    workerRunning,
-    workerExited,
-    workingSubagents,
-    backgroundCount,
-    continuityArmed: continuityTone === "live",
-    continuityWarning: continuityTone === "warning",
-    labels: [
-      { text: workerLabel, tone: workerRunning ? "live" : workerExited ? "warning" : "" },
-      { text: subagentLabel, tone: workingSubagents ? "live" : failedSubagents === subagents.length && subagents.length ? "warning" : "" },
-      { text: backgroundLabel, tone: backgroundCount ? "live" : "" },
-      { text: continuityLabel, tone: continuityTone },
-    ],
-  };
-}
 
-function renderChatAutopilotSupervisorSignals(activeSession = {}, card = {}) {
-  const signalState = getChatAutopilotSupervisorSignals(activeSession, card);
-  return `
-    <div class="rich-session-supervisor-signals" aria-label="Supervisor observed signals">
-      ${signalState.labels.map((signal) => renderChatAutopilotSupervisorSignal(signal.text, signal.tone)).join("")}
-    </div>
-  `;
-}
 
-function getChatAutopilotSupervisorDrawerStatus({ activeSession = {}, card = {}, enabled = false, ticking = false, sendingMode = "", pending = "" } = {}) {
-  if (ticking) return { text: "reviewing", live: true };
-  if (sendingMode) {
-    return {
-      text: sendingMode === "directive" ? "preparing directive" : "answering",
-      live: true,
-    };
-  }
-  if (pending) return { text: pending, live: true };
-  if (!enabled) return { text: "manual", live: false };
 
-  const signals = getChatAutopilotSupervisorSignals(activeSession, card);
-  if (signals.workerRunning) return { text: "worker running", live: true };
-  if (signals.workingSubagents) return { text: "subagent active", live: true };
-  if (signals.backgroundCount) return { text: "monitoring", live: true };
-  if (signals.continuityArmed) return { text: "armed", live: false };
-  return { text: "armed", live: false };
-}
+function isChatAutopilotSupervisorDrawerOpen() { return false; }
 
-function isSupervisorSideChatDesktopViewport() {
-  return typeof window !== "undefined"
-    && typeof window.matchMedia === "function"
-    && window.matchMedia("(min-width: 1080px)").matches;
-}
+function getChatAutopilotSupervisorWatchlist() { return ""; }
 
-function isChatAutopilotSupervisorDrawerOpen(activeSession) {
-  const sessionId = activeSession?.id || "";
-  if (!sessionId) return false;
-  if (Object.prototype.hasOwnProperty.call(state.chatAutopilotSupervisorDrawerOpen, sessionId)) {
-    return Boolean(state.chatAutopilotSupervisorDrawerOpen[sessionId]);
-  }
-  return getShellSurfaceMode(activeSession) === "native" && isSupervisorSideChatDesktopViewport();
-}
+// Supervisor drawer: feature deleted, replaced by the auto-reply textbox.
+// Stub returns "" so the supervisor mount point in the surface render
+// is empty. The 230 internal supervisor helper references (state writes,
+// signal computations, watchlist management, scroll capture) remain as
+// dead code in this file; they're unreachable from the UI but kept in
+// place so a follow-up cleanup can chase them without coupling to this
+// commit. The on-the-wire surface (routes, supervisor.js) is gone.
+function renderChatAutopilotSupervisorDrawer() { return ""; }
 
-function getChatAutopilotSupervisorWatchlist(sessionId, config = getChatAutopilotSessionConfig(sessionId)) {
-  const sid = String(sessionId || "").trim();
-  if (sid && Object.prototype.hasOwnProperty.call(state.chatAutopilotSupervisorWatchlistDrafts, sid)) {
-    return normalizeChatAutopilotSupervisorWatchlist(state.chatAutopilotSupervisorWatchlistDrafts[sid]);
-  }
-  return normalizeChatAutopilotSupervisorWatchlist(config.watchlist || config.projectSupervisor?.watchlist || "");
-}
-
-function renderChatAutopilotSupervisorDrawer(activeSession) {
-  const sessionId = activeSession?.id || "";
-  if (!sessionId) return "";
-  const open = isChatAutopilotSupervisorDrawerOpen(activeSession);
-  const config = getChatAutopilotSessionConfig(sessionId);
-  const { projectSupervisor, supervisor, scope } = getChatAutopilotSupervisorDisplayState(config);
-  const card = supervisor.lastDirectiveCard || {};
-  const auditRows = supervisor.audit.slice(-12).reverse();
-  const threadRows = supervisor.thread.slice(-80);
-  const ticking = Boolean(state.chatAutopilotSupervisorTicking[sessionId]);
-  const sendingMode = String(state.chatAutopilotSupervisorSending[sessionId] || "");
-  const pending = getChatAutopilotPending(sessionId);
-  const enabled = Boolean(config.enabled && isChatAutopilotSessionDriver(config));
-  const drawerStatus = getChatAutopilotSupervisorDrawerStatus({
-    activeSession,
-    card,
-    enabled,
-    ticking,
-    sendingMode,
-    pending,
-  });
-  const status = drawerStatus.text;
-  const projectName = getChatAutopilotSelectedProjectName(config, activeSession) || projectSupervisor.projectName || "this chat";
-  const lastAt = supervisor.lastDirectiveAt || supervisor.lastObservedAt || "";
-  const lastTime = lastAt ? relativeTimeAgo(lastAt) || formatRichSessionTimestamp(lastAt) : "";
-  const lastPreview = supervisor.lastDirectivePreview
-    || (enabled ? "Waiting for the next worker pause before sending a directive." : "Supervisor is paused for this chat.");
-  const decisionTitle = card.action || card.mode || (supervisor.lastDirectiveAt ? "last directive" : "ready");
-  const draft = String(state.chatAutopilotSupervisorDrafts[sessionId] || "");
-  const watchlist = getChatAutopilotSupervisorWatchlist(sessionId, config);
-  const watchlistSaving = Boolean(state.chatAutopilotSupervisorWatchlistSaving[sessionId]);
-  const chatHistory = threadRows.length
-    ? threadRows.map((entry) => {
-      const role = String(entry.role || "state").toLowerCase();
-      const label = chatAutopilotSupervisorRoleLabel(role, entry.kind);
-      const title = role === "directive" ? label : (entry.title || label);
-      const timeLabel = relativeTimeAgo(entry.at) || formatRichSessionTimestamp(entry.at);
-      return `
-        <article class="rich-session-supervisor-message is-${escapeHtml(role)}">
-          <div class="rich-session-supervisor-message-top">
-            <span>${escapeHtml(title)}</span>
-            ${timeLabel ? `<time>${escapeHtml(timeLabel)}</time>` : ""}
-          </div>
-          ${entry.text ? `<p>${escapeHtml(entry.text)}</p>` : ""}
-        </article>
-      `;
-    }).join("")
-    : `<div class="rich-session-supervisor-empty">No side-chat yet. Ask the supervisor here without interrupting the worker.</div>`;
-  const history = auditRows.length
-    ? auditRows.map((entry) => {
-      const eventLabel = [entry.event, entry.action].filter(Boolean).join(" · ") || "tick";
-      const timeLabel = relativeTimeAgo(entry.at) || formatRichSessionTimestamp(entry.at);
-      return `
-        <li class="rich-session-supervisor-event">
-          <div class="rich-session-supervisor-event-top">
-            <span>${escapeHtml(eventLabel)}</span>
-            ${timeLabel ? `<time>${escapeHtml(timeLabel)}</time>` : ""}
-          </div>
-          ${entry.reason ? `<p>${escapeHtml(entry.reason)}</p>` : ""}
-        </li>
-      `;
-    }).join("")
-    : `<li class="rich-session-supervisor-event is-empty">No supervisor decisions yet.</li>`;
-
-  return `
-    <aside class="rich-session-supervisor-drawer ${open ? "is-open" : ""}" data-chat-autopilot-supervisor-drawer data-session-id="${escapeHtml(sessionId)}" aria-hidden="${open ? "false" : "true"}">
-      <div class="rich-session-supervisor-drawer-head">
-        <div>
-          <span class="rich-session-supervisor-kicker">${escapeHtml(scope)} supervisor</span>
-          <strong>Side chat</strong>
-        </div>
-        <div class="rich-session-supervisor-head-actions">
-          <span class="rich-session-supervisor-state ${drawerStatus.live ? "is-live" : ""}">${escapeHtml(status)}</span>
-          <button class="rich-session-supervisor-close" type="button" data-chat-autopilot-supervisor-close aria-label="Close side chat">x</button>
-        </div>
-      </div>
-      <div class="rich-session-supervisor-drawer-body" tabindex="0" aria-label="Supervisor side chat and trace">
-        <section class="rich-session-supervisor-summary">
-          <span class="rich-session-supervisor-kicker">${escapeHtml(projectName)}${lastTime ? ` · ${escapeHtml(lastTime)}` : ""}</span>
-          <div class="rich-session-supervisor-summary-title">${escapeHtml(decisionTitle)}</div>
-          <p>${escapeHtml(lastPreview)}</p>
-          ${renderChatAutopilotSupervisorSignals(activeSession, card)}
-        </section>
-        ${ticking ? `
-          <section class="rich-session-supervisor-processing">
-            <span class="rich-session-supervisor-dot" aria-hidden="true"></span>
-            Reviewing durable state, recent trace, artifacts, and continuity.
-          </section>
-        ` : ""}
-        <section class="rich-session-supervisor-watchlist">
-          <div class="rich-session-supervisor-watchlist-head">
-            <label class="rich-session-supervisor-section-title" for="chat-autopilot-supervisor-watchlist">Look for</label>
-            <span>${watchlistSaving ? "saving" : "saved"}</span>
-          </div>
-          <textarea
-            id="chat-autopilot-supervisor-watchlist"
-            data-chat-autopilot-supervisor-watchlist
-            rows="5"
-            placeholder="- make sure worker is fully parallelizing and using safe idle GPUs&#10;- assess qualitative results of recent models&#10;- run latest models on qualitative test set and inspect misses&#10;- check cheating / reward hacking&#10;- if results plateau, step back: literature, code audit, experiment review"
-          >${escapeHtml(watchlist)}</textarea>
-        </section>
-        <section class="rich-session-supervisor-history" aria-label="Supervisor side chat">
-          <div class="rich-session-supervisor-chat-log">${chatHistory}</div>
-        </section>
-        <details class="rich-session-supervisor-history is-audit">
-          <summary class="rich-session-supervisor-section-title">Trace</summary>
-          <ol>${history}</ol>
-        </details>
-      </div>
-      <form class="rich-session-supervisor-composer" data-chat-autopilot-supervisor-form>
-        <label class="sr-only" for="chat-autopilot-supervisor-input">Ask supervisor</label>
-        <textarea
-          id="chat-autopilot-supervisor-input"
-          data-chat-autopilot-supervisor-input
-          rows="2"
-          placeholder="Ask supervisor without interrupting the worker..."
-          ${sendingMode ? "disabled" : ""}
-        >${escapeHtml(draft)}</textarea>
-        <div class="rich-session-supervisor-composer-actions">
-          <button type="submit" data-chat-autopilot-supervisor-submit="ask" ${sendingMode ? "disabled" : ""}>Ask</button>
-          <button type="submit" data-chat-autopilot-supervisor-submit="directive" ${sendingMode ? "disabled" : ""}>Tell worker</button>
-        </div>
-      </form>
-    </aside>
-  `;
-}
 
 function renderChatAutopilotProjectOptions(config = {}, activeSession = getActiveSession()) {
   const selected = getChatAutopilotSelectedProjectName(config, activeSession);
@@ -8133,130 +8357,16 @@ function renderChatAutopilotProjectOptions(config = {}, activeSession = getActiv
     .join("");
 }
 
-function renderRichSessionAutopilotPanel(activeSession) {
-  if (!activeSession?.id) return "";
-  const config = getChatAutopilotSessionConfig(activeSession.id);
-  const job = getChatAutopilotJob(config);
-  const enabled = Boolean(config.enabled);
-  const pending = getChatAutopilotPending(activeSession.id);
-  const sessionDriver = isChatAutopilotSessionDriver(config);
-  const sessionExited = activeSession.status === "exited";
-  const running = isResearchAutopilotRunning(job) || (enabled && sessionDriver && Boolean(activeSession.streamWorking));
-  const projectName = getChatAutopilotSelectedProjectName(config, activeSession);
-  const objective = getChatAutopilotDefaultObjective(config, activeSession);
-  const objectiveSource = getChatAutopilotObjectiveSource(config, activeSession);
-  const objectivePreview = summarizeChatAutopilotObjective(objective);
-  const queuedSupervisorMessage = getQueuedChatAutopilotSupervisorMessage(activeSession.id);
-  const noProjects = state.researchAutopilot.projectsLoaded
-    && !state.researchAutopilot.projects.length
-    && !state.researchAutopilot.projectsLoading;
-  const projectCreating = Boolean(state.researchAutopilot.projectCreating);
-  const pickerOpen = Boolean(state.chatAutopilotProjectPickerOpen[activeSession.id]) || !projectName;
-  const title = enabled
-    ? sessionDriver ? "Supervisor on" : "Runner on"
-    : "Human driving";
-  const status = pending
-    || (enabled && sessionDriver
-      ? sessionExited
-        ? queuedSupervisorMessage
-          ? "supervisor handoff ready to resume"
-          : "agent stopped; ready to resume"
-        : activeSession.streamWorking
-        ? queuedSupervisorMessage
-          ? "supervisor next step queued"
-          : "watching current turn"
-        : objectivePreview
-          ? `using ${objectiveSource === "wiki" ? "wiki goal" : "goal"}: ${objectivePreview}`
-          : "needs project goal"
-      : job
-      ? `${job.status || "running"} · step ${job.stepCount || 0}/${job.maxSteps || "?"}${job.stopReason ? ` · ${job.stopReason}` : ""}`
-      : enabled
-        ? objectivePreview
-          ? `${objectiveSource === "wiki" ? "wiki" : "saved"} objective: ${objectivePreview}`
-          : "needs research objective"
-        : projectCreating
-          ? "preparing supervisor"
-        : noProjects
-          ? "ready to supervise this chat"
-        : projectName
-          ? "ready to hand off"
-          : "choose a project");
-  const historyOpen = isChatAutopilotSupervisorDrawerOpen(activeSession);
-  const historyTitle = historyOpen
-    ? "Close the side-by-side supervisor chat and history."
-    : "Open the side-by-side supervisor chat and history.";
-  const historyButton = `<button class="rich-session-autopilot-action" type="button" data-chat-autopilot-supervisor-history aria-expanded="${historyOpen ? "true" : "false"}" aria-label="${escapeHtml(historyTitle)}" title="${escapeHtml(historyTitle)}">Side chat</button>`;
-  const toggleTitle = enabled
-    ? "Turn off the supervisor for this chat."
-    : noProjects
-      ? "Create durable research memory for this chat and arm the supervisor without messaging the worker."
-      : "Turn on the supervisor for this chat without messaging the worker.";
-  if (enabled) {
-    return `
-      <section class="rich-session-autopilot is-enabled ${running ? "is-running" : ""}" id="rich-session-autopilot" data-rich-session-autopilot-mount>
-        <div class="rich-session-autopilot-main">
-          <button
-            class="rich-session-autopilot-toggle rich-session-autopilot-indicator"
-            type="button"
-            data-chat-autopilot-toggle
-            data-chat-autopilot-indicator
-            aria-pressed="true"
-            aria-label="${escapeHtml(`${toggleTitle} Current status: ${status}`)}"
-            title="${escapeHtml(status)}"
-          >
-            <span class="rich-session-autopilot-dot" aria-hidden="true"></span>
-            <span>${escapeHtml(title)}</span>
-          </button>
-        </div>
-        <div class="rich-session-autopilot-actions">
-          ${historyButton}
-        </div>
-      </section>
-    `;
-  }
-
-  const showProjectPicker = !noProjects && !running && pickerOpen;
-  const projectSource = getChatAutopilotProjectSource(activeSession, config);
-  const projectLabel = projectName ? summarizeChatAutopilotProjectName(projectName) : "No project";
-  const projectTitle = projectName
-    ? `The supervisor will use ${projectName}${projectSource ? ` (${projectSource})` : ""}.${objectivePreview ? ` Objective: ${objectivePreview}` : ""} Click to change.`
-    : "Choose the research project for this chat.";
-  const actionDisabled = pending || projectCreating ? "disabled" : "";
-  return `
-    <section class="rich-session-autopilot ${running ? "is-running" : ""}" id="rich-session-autopilot" data-rich-session-autopilot-mount>
-      <div class="rich-session-autopilot-main">
-        <button
-          class="rich-session-autopilot-toggle"
-          type="button"
-          data-chat-autopilot-toggle
-          aria-pressed="${enabled ? "true" : "false"}"
-          title="${escapeHtml(toggleTitle)}"
-        >
-          <span class="rich-session-autopilot-dot" aria-hidden="true"></span>
-          <span>${escapeHtml(title)}</span>
-        </button>
-        <span class="rich-session-autopilot-status" title="${escapeHtml(status)}">${escapeHtml(status)}</span>
-      </div>
-      <div class="rich-session-autopilot-actions">
-        ${noProjects ? `
-          <button class="rich-session-autopilot-action is-primary" type="button" data-chat-autopilot-start-project title="Create durable research memory for this chat and arm the supervisor." ${actionDisabled}>
-            ${projectCreating ? "Starting..." : "Start"}
-          </button>
-        ` : showProjectPicker ? `
-          <label class="sr-only" for="chat-autopilot-project">Research project</label>
-          <select class="rich-session-autopilot-project" id="chat-autopilot-project" data-chat-autopilot-project title="Change the research project for this chat." ${state.researchAutopilot.projectsLoading ? "disabled" : ""}>
-            ${renderChatAutopilotProjectOptions(config, activeSession)}
-          </select>
-        ` : `
-          <button class="rich-session-autopilot-project-pill" type="button" data-chat-autopilot-change-project title="${escapeHtml(projectTitle)}">
-            ${escapeHtml(projectLabel)}
-          </button>
-        `}
-        ${historyButton}
-      </div>
-    </section>
-  `;
+function renderRichSessionAutopilotPanel() {
+  // Autopilot panel removed: the "Human driving / Side chat / choose
+  // project" bar above the composer was the supervisor's UI surface.
+  // Supervisor is gone (replaced by the auto-reply textbox); this
+  // panel had nothing useful left to show, so it returns "" and the
+  // mount node renders empty. The research autopilot job feature
+  // still exists at the API + CLI level for users who want it.
+  return "";
 }
+
 
 function renderRichSessionComposerAttachmentTilesHtml(attachments) {
   if (!Array.isArray(attachments) || !attachments.length) return "";
@@ -8312,6 +8422,7 @@ function renderRichSessionSurface(activeSession) {
       <div class="rich-session-autopilot-mount" id="rich-session-autopilot-mount" data-rich-session-autopilot-mount>${renderRichSessionAutopilotPanel(activeSession)}</div>
       <div class="rich-session-supervisor-drawer-mount" data-rich-session-supervisor-drawer-mount>${renderChatAutopilotSupervisorDrawer(activeSession)}</div>
       ${renderRichSessionQueueStrip(activeSession)}
+      ${renderAutoReplyBanner(activeSession)}
       ${canSend ? `
         <form class="rich-session-composer" id="rich-session-form">
           <label class="sr-only" for="rich-session-input">Send input</label>
@@ -8326,6 +8437,9 @@ function renderRichSessionSurface(activeSession) {
             autocomplete="off"
           >${escapeHtml(draft)}</textarea>
           <div class="rich-session-composer-foot">
+            <div class="rich-session-composer-foot-meta">
+              ${renderAutoReplyComposerLink(activeSession)}
+            </div>
             <div class="rich-session-composer-actions">
               <button
                 class="primary-button toolbar-control rich-session-send ${isWorking ? "is-working" : ""}"
@@ -8437,31 +8551,9 @@ function restoreRichSessionScrollAnchor(feed, anchor) {
   feed.scrollTop = feed.scrollTop + (currentOffset - anchor.offsetFromViewportTop);
 }
 
-function captureChatAutopilotSupervisorScroll() {
-  const drawer = document.querySelector("[data-chat-autopilot-supervisor-drawer]");
-  const body = drawer?.querySelector(".rich-session-supervisor-drawer-body");
-  if (!(drawer instanceof HTMLElement) || !(body instanceof HTMLElement)) return null;
-  if (!drawer.classList.contains("is-open")) return null;
-  const maxScrollTop = Math.max(0, body.scrollHeight - body.clientHeight);
-  return {
-    sessionId: drawer.getAttribute("data-session-id") || "",
-    scrollTop: body.scrollTop,
-    atBottom: maxScrollTop - body.scrollTop <= 4,
-  };
-}
+function captureChatAutopilotSupervisorScroll() { return null; }
 
-function restoreChatAutopilotSupervisorScroll(snapshot, activeSession) {
-  if (!snapshot) return;
-  const sessionId = activeSession?.id || "";
-  if (snapshot.sessionId && sessionId && snapshot.sessionId !== sessionId) return;
-  const drawer = document.querySelector("[data-chat-autopilot-supervisor-drawer]");
-  const body = drawer?.querySelector(".rich-session-supervisor-drawer-body");
-  if (!(body instanceof HTMLElement)) return;
-  const maxScrollTop = Math.max(0, body.scrollHeight - body.clientHeight);
-  body.scrollTop = snapshot.atBottom
-    ? maxScrollTop
-    : Math.min(maxScrollTop, Math.max(0, Number(snapshot.scrollTop) || 0));
-}
+function restoreChatAutopilotSupervisorScroll() { /* no-op */ }
 
 function refreshRichSessionSurfaceUi({ scrollToBottom = false } = {}) {
   const activeSession = getActiveSession();
@@ -8619,6 +8711,12 @@ function refreshRichSessionSurfaceUi({ scrollToBottom = false } = {}) {
     queueMount.classList.toggle("is-empty", !items.length);
     queueMount.innerHTML = renderRichSessionQueueStripHtml(activeSession);
   }
+
+  // Auto-reply banner: bind input/blur/Stop handlers AFTER the surface
+  // re-renders. The render itself is part of the feed-area HTML; we
+  // just attach event listeners. dataset.autoReplyBound prevents
+  // double-binding across refreshes.
+  bindAutoReplyEvents();
 
   // Working→idle transition detector. When a session was working on the
   // previous refresh and is no longer working, flush the next queued
@@ -10434,6 +10532,20 @@ function getAgentCredentialsStatusText() {
   return configuredProviders.length ? `configured: ${configuredProviders.join(", ")}` : "not configured";
 }
 
+function getOpenSwarmStatusText() {
+  const configured = [
+    state.settings.openSwarmGoogleApiKeyConfigured ? "Google" : "",
+    state.settings.openSwarmSearchApiKeyConfigured ? "Search" : "",
+    state.settings.openSwarmFalKeyConfigured ? "Fal" : "",
+    state.settings.openSwarmComposioApiKeyConfigured ? "Composio" : "",
+  ].filter(Boolean);
+  const apiMode = state.settings.openSwarmApiMode ? "native JSON mode on" : "terminal mode";
+  const model = state.settings.openSwarmDefaultModel || "OpenSwarm default";
+  return configured.length
+    ? `${apiMode}; ${model}; keys: ${configured.join(", ")}`
+    : `${apiMode}; ${model}; optional tool keys not configured`;
+}
+
 function getSecretPlaceholder(configured, fallback) {
   return configured ? "saved; leave blank to keep" : fallback;
 }
@@ -11176,7 +11288,7 @@ function getParentPathForDisplay(value) {
   return normalizedPath.slice(0, separatorIndex);
 }
 
-function sendTerminalInput(data, { queueIfDisconnected = false, attachments = null } = {}) {
+function sendTerminalInput(data, { queueIfDisconnected = false, attachments = null, clientMessageId = null } = {}) {
   const text = String(data || "");
   if (!text) {
     return false;
@@ -11211,9 +11323,33 @@ function sendTerminalInput(data, { queueIfDisconnected = false, attachments = nu
       mimeType: String(att.mimeType || ""),
     })).filter((att) => att.absolutePath);
   }
+  // Pass through the client-allocated stable id when present. The server
+  // uses it as the user-echo entry id, so optimistic UI, the persisted
+  // record, and any rehydrated entry on reconnect all share one id.
+  if (clientMessageId && typeof clientMessageId === "string") {
+    message.clientMessageId = clientMessageId;
+  }
   state.websocket.send(JSON.stringify(message));
   scheduleTerminalTextareaReset();
   return true;
+}
+
+// Stable id allocator for outbound chat messages. Each composer-flushed
+// queue item gets a UUID before it leaves the client; the server treats
+// it as the canonical id for the user-echo entry. Falls back to a
+// timestamp-counter id in environments without crypto.randomUUID
+// (very old browsers; unit tests using jsdom).
+let __nextLocalMessageIdCounter = 0;
+function allocateClientMessageId() {
+  try {
+    if (typeof crypto !== "undefined" && typeof crypto.randomUUID === "function") {
+      return `c-${crypto.randomUUID()}`;
+    }
+  } catch {
+    // crypto blocked on insecure contexts; fall through.
+  }
+  __nextLocalMessageIdCounter += 1;
+  return `c-${Date.now().toString(36)}-${__nextLocalMessageIdCounter.toString(36)}`;
 }
 
 function isImageFileLike(file) {
@@ -16412,7 +16548,6 @@ function getVisualGameAgentHoverProfileSignature(hit) {
     subagent?.name,
     subagent?.status,
     subagent?.updatedAt,
-    getAgentCanvasSignature(session, selection),
   ].map((entry) => String(entry || "")).join("\u001f");
 }
 
@@ -19268,7 +19403,7 @@ function renderOttoAuthInstallForm() {
           <h3 class="plugin-install-step-title">Sign up at OttoAuth</h3>
           <p class="plugin-install-step-hint">OttoAuth lets agents pay for metered services with a spending cap. Create a username and copy a private key — we'll paste it next.</p>
           <div class="plugin-onboarding-actions">
-            <a class="primary-button plugin-install-step-link" href="https://ottoauth.vercel.app" target="_blank" rel="noreferrer" data-plugin-install-advance="ottoauth" data-plugin-install-next-step="1">
+            <a class="primary-button plugin-install-step-link" href="https://ottoauth.vibe-research.net" target="_blank" rel="noreferrer" data-plugin-install-advance="ottoauth" data-plugin-install-next-step="1">
               <span>Open OttoAuth</span>
             </a>
             <button class="ghost-button plugin-install-step-skip" type="button" data-plugin-install-advance="ottoauth" data-plugin-install-next-step="1">I have credentials</button>
@@ -19287,14 +19422,14 @@ function renderOttoAuthInstallForm() {
   const privateKeyValue = typeof draft.ottoAuthPrivateKey === "string" ? draft.ottoAuthPrivateKey : "";
   const baseUrlValue = typeof draft.ottoAuthBaseUrl === "string"
     ? draft.ottoAuthBaseUrl
-    : (state.settings.ottoAuthBaseUrl || status.baseUrl || "https://ottoauth.vercel.app");
+    : (state.settings.ottoAuthBaseUrl || status.baseUrl || "https://ottoauth.vibe-research.net");
   const spendCapValue = typeof draft.ottoAuthDefaultMaxChargeCents === "string"
     ? draft.ottoAuthDefaultMaxChargeCents
     : String(state.settings.ottoAuthDefaultMaxChargeCents || status.defaultMaxChargeCents || "");
   const callbackValue = typeof draft.ottoAuthCallbackUrl === "string"
     ? draft.ottoAuthCallbackUrl
     : (state.settings.ottoAuthCallbackUrl || status.callbackUrl || "");
-  const advancedOpen = Boolean(spendCapValue || callbackValue || baseUrlValue !== "https://ottoauth.vercel.app");
+  const advancedOpen = Boolean(spendCapValue || callbackValue || baseUrlValue !== "https://ottoauth.vibe-research.net");
 
   return `
     <form class="settings-form plugin-install-form ottoauth-form plugin-install-progressive" data-plugin-install-step-root="ottoauth">
@@ -20009,6 +20144,94 @@ function renderAgentCredentialsSettingsPanel() {
         </div>
       </form>
       <p class="mcp-import-paths"><code>ANTHROPIC_API_KEY</code> · <code>OPENAI_API_KEY</code> · <code>HF_TOKEN</code></p>
+    </aside>
+  `;
+}
+
+function renderOpenSwarmSettingsPanel() {
+  return `
+    <aside class="mcp-import-card openswarm-settings-card">
+      <span class="main-search-kind">OpenSwarm</span>
+      <strong>Native OpenSwarm setup</strong>
+      <p>Use the terminal wizard for first login, then save model and tool keys here so new OpenSwarm sessions inherit them.</p>
+      <form class="settings-form openswarm-settings-form" id="openswarm-settings-form" method="post" action="javascript:void(0)">
+        <label class="field-label" for="openswarm-default-model">Default model</label>
+        <input
+          class="file-root-input"
+          id="openswarm-default-model"
+          name="openSwarmDefaultModel"
+          type="text"
+          value="${escapeHtml(state.settings.openSwarmDefaultModel || "gpt-5.2")}"
+          list="openswarm-model-options"
+          placeholder="gpt-5.2"
+          autocomplete="off"
+          autocorrect="off"
+          autocapitalize="none"
+          spellcheck="false"
+        />
+        <datalist id="openswarm-model-options">
+          <option value="gpt-5.2"></option>
+          <option value="gpt-5.5"></option>
+          <option value="gpt-5.4-mini"></option>
+          <option value="anthropic/claude-sonnet-4-6"></option>
+          <option value="gemini/gemini-3-pro"></option>
+          <option value="huggingface/zai-org/GLM-4.7-Flash"></option>
+          <option value="groq/llama-3.1-8b-instant"></option>
+        </datalist>
+        <label class="checkbox-row compact-toggle">
+          <input type="checkbox" name="openSwarmApiMode" ${state.settings.openSwarmApiMode ? "checked" : ""}>
+          <span>Use native JSON chat mode when starting OpenSwarm sessions</span>
+        </label>
+        <label class="field-label" for="openswarm-api-url">Legacy API server URL</label>
+        <input
+          class="file-root-input"
+          id="openswarm-api-url"
+          name="openSwarmApiBaseUrl"
+          type="url"
+          value="${escapeHtml(state.settings.openSwarmApiBaseUrl || "http://127.0.0.1:8080")}"
+          placeholder="http://127.0.0.1:8080"
+          autocomplete="off"
+          autocorrect="off"
+          autocapitalize="none"
+          spellcheck="false"
+        />
+        <label class="field-label" for="openswarm-server-command">Legacy server command (optional)</label>
+        <input
+          class="file-root-input"
+          id="openswarm-server-command"
+          name="openSwarmServerCommand"
+          type="text"
+          value="${escapeHtml(state.settings.openSwarmServerCommand || "")}"
+          placeholder="python server.py"
+          autocomplete="off"
+          autocorrect="off"
+          autocapitalize="none"
+          spellcheck="false"
+        />
+        <div class="settings-inline-grid">
+          <label class="field-label" for="openswarm-google-api-key">Google API key</label>
+          <input class="file-root-input" id="openswarm-google-api-key" name="openSwarmGoogleApiKey" type="password" placeholder="${escapeHtml(getSecretPlaceholder(state.settings.openSwarmGoogleApiKeyConfigured, "AIza..."))}" autocomplete="off">
+          <label class="field-label" for="openswarm-search-api-key">Search API key</label>
+          <input class="file-root-input" id="openswarm-search-api-key" name="openSwarmSearchApiKey" type="password" placeholder="${escapeHtml(getSecretPlaceholder(state.settings.openSwarmSearchApiKeyConfigured, "search key"))}" autocomplete="off">
+          <label class="field-label" for="openswarm-fal-key">Fal key</label>
+          <input class="file-root-input" id="openswarm-fal-key" name="openSwarmFalKey" type="password" placeholder="${escapeHtml(getSecretPlaceholder(state.settings.openSwarmFalKeyConfigured, "fal-..."))}" autocomplete="off">
+          <label class="field-label" for="openswarm-composio-api-key">Composio API key</label>
+          <input class="file-root-input" id="openswarm-composio-api-key" name="openSwarmComposioApiKey" type="password" placeholder="${escapeHtml(getSecretPlaceholder(state.settings.openSwarmComposioApiKeyConfigured, "composio key"))}" autocomplete="off">
+          <label class="field-label" for="openswarm-composio-user-id">Composio user ID</label>
+          <input class="file-root-input" id="openswarm-composio-user-id" name="openSwarmComposioUserId" type="password" placeholder="${escapeHtml(getSecretPlaceholder(state.settings.openSwarmComposioUserIdConfigured, "user id"))}" autocomplete="off">
+          <label class="field-label" for="openswarm-pexels-api-key">Pexels API key</label>
+          <input class="file-root-input" id="openswarm-pexels-api-key" name="openSwarmPexelsApiKey" type="password" placeholder="${escapeHtml(getSecretPlaceholder(state.settings.openSwarmPexelsApiKeyConfigured, "pexels key"))}" autocomplete="off">
+          <label class="field-label" for="openswarm-pixabay-api-key">Pixabay API key</label>
+          <input class="file-root-input" id="openswarm-pixabay-api-key" name="openSwarmPixabayApiKey" type="password" placeholder="${escapeHtml(getSecretPlaceholder(state.settings.openSwarmPixabayApiKeyConfigured, "pixabay key"))}" autocomplete="off">
+          <label class="field-label" for="openswarm-unsplash-access-key">Unsplash access key</label>
+          <input class="file-root-input" id="openswarm-unsplash-access-key" name="openSwarmUnsplashAccessKey" type="password" placeholder="${escapeHtml(getSecretPlaceholder(state.settings.openSwarmUnsplashAccessKeyConfigured, "unsplash key"))}" autocomplete="off">
+        </div>
+        <div class="knowledge-settings-actions">
+          <button class="primary-button settings-save-button" type="submit" data-openswarm-settings-action>save OpenSwarm</button>
+          <div class="settings-status" id="openswarm-settings-status">${escapeHtml(getOpenSwarmStatusText())}</div>
+        </div>
+      </form>
+      <p class="mcp-import-paths"><code>DEFAULT_MODEL</code> · <code>GOOGLE_API_KEY</code> · <code>COMPOSIO_API_KEY</code> · <code>FAL_KEY</code></p>
     </aside>
   `;
 }
@@ -20818,7 +21041,7 @@ function renderBrowserUsePluginPanel() {
 
 function renderOttoAuthPluginPanel() {
   const status = state.settings.ottoAuthStatus || {};
-  const skillUrl = status.skillUrl || "https://ottoauth.vercel.app/skill.md";
+  const skillUrl = status.skillUrl || "https://ottoauth.vibe-research.net/skill.md";
 
   return `
     <aside class="mcp-import-card ottoauth-plugin-card">
@@ -20864,7 +21087,7 @@ function renderOttoAuthPluginPanel() {
           id="ottoauth-base-url"
           name="ottoAuthBaseUrl"
           type="url"
-          value="${escapeHtml(state.settings.ottoAuthBaseUrl || status.baseUrl || "https://ottoauth.vercel.app")}"
+          value="${escapeHtml(state.settings.ottoAuthBaseUrl || status.baseUrl || "https://ottoauth.vibe-research.net")}"
           autocomplete="off"
           autocorrect="off"
           autocapitalize="none"
@@ -21443,6 +21666,7 @@ function renderSettingsView() {
       <div class="settings-layout">
         <div class="settings-common-grid">
           ${renderAgentCredentialsSettingsPanel()}
+          ${renderOpenSwarmSettingsPanel()}
           ${renderKnowledgeSettingsForm({ remoteControls: false })}
         </div>
         <details class="settings-advanced-panel">
@@ -21893,7 +22117,6 @@ const QUEST_ALERT_HINTS = new Map([
   ["quest-place-functional-building", { anchor: "builder-fab", label: "Open the builder to place a functional building" }],
   ["quest-save-library-note", { anchor: "knowledge-base", label: "Open or create a note, then save it to finish this quest" }],
   ["quest-create-automation", { anchor: "automation-create", label: "Fill in the form, then create your first automation" }],
-  ["quest-publish-agent-canvas", { anchor: "sidebar-session", label: "Open an agent (or start one) — they publish canvases from inside their chat" }],
 ]);
 const ACTION_PREDICATE_GUIDED_TUTORIALS = new Map([
   ["first_building_placed", "quest-place-first-building"],
@@ -25154,7 +25377,6 @@ function renderVisualGameSessionDrawer(graph) {
     : "session unavailable";
   const browserUseSessionId = state.visualGame.selectedBrowserUseSessionId || "";
   const agentProfileTopBar = renderAgentProfileTopBar(selectedSession);
-  const hasAgentCanvas = Boolean(getAgentCanvasSignature(selectedSession));
 
   return `
     <aside class="visual-game-session-panel visual-game-side-panel" aria-label="Agent terminal">
@@ -25180,7 +25402,7 @@ function renderVisualGameSessionDrawer(graph) {
             : ""
         }
       </div>
-      <div class="visual-game-terminal-body ${hasAgentCanvas ? "has-agent-canvas" : ""}">
+      <div class="visual-game-terminal-body ${getAgentCanvasSignature(selectedSession) || (state.canvasPanelOpen && selectedSession) ? "has-agent-canvas" : ""}">
         <div class="terminal-stack visual-game-terminal-stack ${isRichSessionSurfaceActive(selectedSession) ? "is-rich-surface" : ""}">
           <div class="terminal-mount" id="terminal-mount"></div>
           <div class="terminal-transcript-scroll" id="terminal-transcript-scroll" tabindex="0" aria-label="Terminal transcript history">
@@ -34763,13 +34985,11 @@ function renderTerminalPanel(activeSession) {
   }
 
   const agentProfileTopBar = renderAgentProfileTopBar(activeSession);
-  const hasAgentCanvas = Boolean(getAgentCanvasSignature(activeSession));
-  const isMobileCanvasView = state.mobileWorkspaceView === "canvas" && Boolean(activeSession);
+  const hasAgentCanvas = Boolean(getAgentCanvasSignature(activeSession)) || Boolean(state.canvasPanelOpen && activeSession);
   const workspaceSplitClass = [
     "workspace-split",
     hasAgentCanvas ? "has-agent-canvas" : "",
     state.openFileTabs.length ? "has-file-preview" : "",
-    isMobileCanvasView ? "is-mobile-canvas-view" : "",
   ].filter(Boolean).join(" ");
   const terminalStackClass = [
     "terminal-stack",
@@ -34796,10 +35016,6 @@ function renderTerminalPanel(activeSession) {
           }
           <div class="toolbar-actions">
             ${renderShellSurfaceToggle(activeSession)}
-            <div class="toolbar-canvas-action">
-              ${activeSession ? renderQuestHintBubble("chat-canvas-button", { className: "is-trailing" }) : ""}
-              <button class="icon-button ${getQuestHintForAnchor("chat-canvas-button") ? "is-quest-hint" : ""} ${isMobileCanvasView ? "is-active" : ""}" type="button" id="view-agent-canvas" aria-label="${escapeHtml(isMobileCanvasView ? "Show CLI" : (getAgentCanvasForSession(activeSession) ? "View agent canvas" : "How to publish a canvas"))}" aria-pressed="${isMobileCanvasView ? "true" : "false"}" ${tooltipAttributes(isMobileCanvasView ? "Show CLI" : (getAgentCanvasForSession(activeSession) ? "View canvas" : "Publish a canvas"))} ${activeSession ? "" : "disabled"}>${renderIcon(ImageIcon)}</button>
-            </div>
             <button class="icon-button" type="button" id="refresh-sessions" aria-label="Refresh sessions" ${tooltipAttributes("Refresh sessions")}>${renderIcon(RefreshCw)}</button>
           </div>
         </div>
@@ -36711,10 +36927,6 @@ function isGuidedTutorialStepComplete(step) {
       );
     case "quest-place-functional-building":
       return Boolean(state.agentTown?.layoutSummary?.functionalCount >= 1);
-    case "quest-canvas-open-agent":
-      return Boolean(state.activeSessionId || state.visualGame.selectedSessionId);
-    case "quest-canvas-button":
-      return Boolean(state.agentCanvas.open || state.agentCanvas.helpOpen || (state.agentTown?.canvases || []).length > 0);
     case "quest-open-library":
       return state.currentView === "knowledge-base";
     case "quest-library-save-note":
@@ -36766,10 +36978,6 @@ function getGuidedTutorialPointerTarget(step) {
       return "selector:[data-agent-town-builder-install-functional]";
     case "quest-place-functional-building":
       return state.visualGame.builderPlacement?.cursorRect ? "placement-preview" : "selector:#visual-game-canvas";
-    case "quest-canvas-open-agent":
-      return getGuidedOnboardingSessionPointerTarget();
-    case "quest-canvas-button":
-      return "selector-fallback:#view-agent-canvas||[data-start-new-agent=\"town\"]||[data-start-new-agent]";
     case "quest-open-library":
       return "selector:[data-open-main-view=\"knowledge-base\"]";
     case "quest-library-save-note":
@@ -40082,16 +40290,7 @@ async function saveChatAutopilotSupervisorWatchlist(activeSession, value, { rend
   }
 }
 
-function scheduleChatAutopilotSupervisorWatchlistSave(activeSession, value) {
-  const sessionId = activeSession?.id || "";
-  if (!sessionId) return;
-  state.chatAutopilotSupervisorWatchlistDrafts[sessionId] = value;
-  window.clearTimeout(state.chatAutopilotSupervisorWatchlistTimers[sessionId]);
-  state.chatAutopilotSupervisorWatchlistTimers[sessionId] = window.setTimeout(() => {
-    delete state.chatAutopilotSupervisorWatchlistTimers[sessionId];
-    void saveChatAutopilotSupervisorWatchlist(activeSession, value, { render: false });
-  }, 650);
-}
+function scheduleChatAutopilotSupervisorWatchlistSave() { /* no-op */ }
 
 function buildChatAutopilotStartBody(config, objective, options = {}) {
   const autopilot = state.researchAutopilot;
@@ -40113,50 +40312,10 @@ function buildChatAutopilotStartBody(config, objective, options = {}) {
   };
 }
 
-function queueChatAutopilotSupervisorMessage(sessionId, message, pendingText) {
-  const sid = String(sessionId || "").trim();
-  const text = formatChatAutopilotSupervisorDirective(message);
-  if (!sid || !text) {
-    return false;
-  }
 
-  pushRichSessionComposerQueueItem(sid, {
-    id: `autopilot-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
-    text,
-    attachments: null,
-    queuedAt: new Date().toISOString(),
-  });
-  setChatAutopilotPending(sid, pendingText || "queued supervisor message");
-  refreshRichSessionSurfaceUi();
-  return true;
-}
+function formatChatAutopilotSupervisorDirective() { return ""; }
 
-function formatChatAutopilotSupervisorDirective(message) {
-  const text = String(message || "").replace(/\s+/g, " ").trim();
-  return text.length > 1_200 ? `${text.slice(0, 1_197).trimEnd()}...` : text;
-}
-
-function sendChatAutopilotSupervisorMessage(activeSession, message, { pendingText = "queued supervisor message" } = {}) {
-  const sessionId = activeSession?.id || "";
-  const text = formatChatAutopilotSupervisorDirective(message);
-  if (!sessionId || !text) return { accepted: false, queued: false };
-  if (activeSession.streamWorking || activeSession.status === "exited" || !isSessionInputConnected(sessionId)) {
-    return {
-      accepted: queueChatAutopilotSupervisorMessage(sessionId, text, pendingText),
-      queued: true,
-    };
-  }
-  const sent = sendTerminalInput(`${text}\r`, { queueIfDisconnected: false });
-  if (sent) {
-    scheduleRichSessionNarrativeRefresh(sessionId, { immediate: true });
-    refreshRichSessionSurfaceUi({ scrollToBottom: true });
-    return { accepted: true, queued: false };
-  }
-  return {
-    accepted: queueChatAutopilotSupervisorMessage(sessionId, text, pendingText),
-    queued: true,
-  };
-}
+function sendChatAutopilotSupervisorMessage() { /* no-op */ }
 
 async function sendChatAutopilotSupervisorChat(activeSession, mode = "ask") {
   const sessionId = activeSession?.id || "";
@@ -41641,6 +41800,34 @@ function bindAgentCredentialsForm() {
       if (button instanceof HTMLButtonElement) {
         button.disabled = false;
         button.textContent = "save credentials";
+      }
+    }
+  });
+}
+
+function bindOpenSwarmForm() {
+  document.querySelector("#openswarm-settings-form")?.addEventListener("submit", async (event) => {
+    event.preventDefault();
+    const form = event.currentTarget;
+
+    if (!(form instanceof HTMLFormElement)) {
+      return;
+    }
+
+    const button = form.querySelector("[data-openswarm-settings-action]");
+    if (button instanceof HTMLButtonElement) {
+      button.disabled = true;
+      button.textContent = "saving...";
+    }
+
+    try {
+      await saveOpenSwarmSettingsFromForm(form);
+      renderShell();
+    } catch (error) {
+      window.alert(error.message);
+      if (button instanceof HTMLButtonElement) {
+        button.disabled = false;
+        button.textContent = "save OpenSwarm";
       }
     }
   });
@@ -44852,7 +45039,7 @@ function applySettingsState(payload) {
         : String(settings.googleOAuthClientId || ""),
     ottoAuthBaseUrl:
       settings.ottoAuthBaseUrl === undefined
-        ? state.settings.ottoAuthBaseUrl || "https://ottoauth.vercel.app"
+        ? state.settings.ottoAuthBaseUrl || "https://ottoauth.vibe-research.net"
         : String(settings.ottoAuthBaseUrl || ""),
     ottoAuthCallbackUrl:
       settings.ottoAuthCallbackUrl === undefined
@@ -44873,6 +45060,54 @@ function applySettingsState(payload) {
     ottoAuthStatus: ottoAuthStatus || null,
     ottoAuthUsername:
       settings.ottoAuthUsername === undefined ? state.settings.ottoAuthUsername || "" : String(settings.ottoAuthUsername || ""),
+    openSwarmApiBaseUrl:
+      settings.openSwarmApiBaseUrl === undefined
+        ? state.settings.openSwarmApiBaseUrl || "http://127.0.0.1:8080"
+        : String(settings.openSwarmApiBaseUrl || "http://127.0.0.1:8080"),
+    openSwarmApiMode:
+      settings.openSwarmApiMode === undefined
+        ? state.settings.openSwarmApiMode
+        : Boolean(settings.openSwarmApiMode),
+    openSwarmComposioApiKeyConfigured:
+      settings.openSwarmComposioApiKeyConfigured === undefined
+        ? state.settings.openSwarmComposioApiKeyConfigured
+        : Boolean(settings.openSwarmComposioApiKeyConfigured),
+    openSwarmComposioUserIdConfigured:
+      settings.openSwarmComposioUserIdConfigured === undefined
+        ? state.settings.openSwarmComposioUserIdConfigured
+        : Boolean(settings.openSwarmComposioUserIdConfigured),
+    openSwarmDefaultModel:
+      settings.openSwarmDefaultModel === undefined
+        ? state.settings.openSwarmDefaultModel || "gpt-5.2"
+        : String(settings.openSwarmDefaultModel || "gpt-5.2"),
+    openSwarmFalKeyConfigured:
+      settings.openSwarmFalKeyConfigured === undefined
+        ? state.settings.openSwarmFalKeyConfigured
+        : Boolean(settings.openSwarmFalKeyConfigured),
+    openSwarmGoogleApiKeyConfigured:
+      settings.openSwarmGoogleApiKeyConfigured === undefined
+        ? state.settings.openSwarmGoogleApiKeyConfigured
+        : Boolean(settings.openSwarmGoogleApiKeyConfigured),
+    openSwarmPexelsApiKeyConfigured:
+      settings.openSwarmPexelsApiKeyConfigured === undefined
+        ? state.settings.openSwarmPexelsApiKeyConfigured
+        : Boolean(settings.openSwarmPexelsApiKeyConfigured),
+    openSwarmPixabayApiKeyConfigured:
+      settings.openSwarmPixabayApiKeyConfigured === undefined
+        ? state.settings.openSwarmPixabayApiKeyConfigured
+        : Boolean(settings.openSwarmPixabayApiKeyConfigured),
+    openSwarmSearchApiKeyConfigured:
+      settings.openSwarmSearchApiKeyConfigured === undefined
+        ? state.settings.openSwarmSearchApiKeyConfigured
+        : Boolean(settings.openSwarmSearchApiKeyConfigured),
+    openSwarmServerCommand:
+      settings.openSwarmServerCommand === undefined
+        ? state.settings.openSwarmServerCommand || ""
+        : String(settings.openSwarmServerCommand || ""),
+    openSwarmUnsplashAccessKeyConfigured:
+      settings.openSwarmUnsplashAccessKeyConfigured === undefined
+        ? state.settings.openSwarmUnsplashAccessKeyConfigured
+        : Boolean(settings.openSwarmUnsplashAccessKeyConfigured),
     telegramAllowedChatIds:
       settings.telegramAllowedChatIds === undefined
         ? state.settings.telegramAllowedChatIds || ""
@@ -46813,7 +47048,7 @@ function bindShellEvents() {
   document.querySelector("#rich-session-feed")?.addEventListener("click", (event) => {
     const target = event.target instanceof Element ? event.target : null;
 
-    const pathLink = target?.closest("a.rich-session-path-link, a.rich-session-image-tile");
+    const pathLink = target?.closest("a.rich-session-path-link, a.rich-session-image-tile, a.rich-session-artifact-card");
     if (pathLink instanceof HTMLAnchorElement) {
       event.preventDefault();
       const rawPath = pathLink.getAttribute("data-rich-path") || "";
@@ -47390,10 +47625,7 @@ function bindShellEvents() {
 
   document.querySelector("#refresh-sessions")?.addEventListener("click", () => loadSessions());
 
-  document.querySelector("#view-agent-canvas")?.addEventListener("click", (event) => {
-    event.preventDefault();
-    handleViewAgentCanvasClick();
-  });
+  // #view-agent-canvas listener removed: button no longer rendered.
   document.querySelector("#refresh-agent-prompt")?.addEventListener("click", async () => {
     const textarea = document.querySelector("#agent-prompt-textarea");
     const hasUnsavedChanges =
@@ -47509,6 +47741,7 @@ function bindShellEvents() {
     }
   });
   bindAgentCredentialsForm();
+  bindOpenSwarmForm();
   bindBrowserUseForm();
   bindOttoAuthForm();
   bindCommunicationsForm();
@@ -48274,9 +48507,6 @@ function mountTerminal() {
     const handleResize = () => {
       const mount = document.querySelector("#terminal-mount");
       syncViewportMetrics();
-      if (!isMobileViewport() && state.mobileWorkspaceView === "canvas") {
-        state.mobileWorkspaceView = "cli";
-      }
       refreshLayoutUi();
       applyTerminalDisplayProfile(mount);
       fitTerminalSoon();
@@ -49202,6 +49432,30 @@ async function saveAgentCredentialsFromForm(form) {
       agentAnthropicApiKey: agentAnthropicApiKey || undefined,
       agentOpenAiApiKey: agentOpenAiApiKey || undefined,
       agentHfToken: agentHfToken || undefined,
+    }),
+  });
+
+  applySettingsState(payload.settings);
+}
+
+async function saveOpenSwarmSettingsFromForm(form) {
+  const formData = new FormData(form);
+  const secretValue = (name) => String(formData.get(name) || "").trim() || undefined;
+  const payload = await fetchJson("/api/settings", {
+    method: "PATCH",
+    body: JSON.stringify({
+      openSwarmApiBaseUrl: String(formData.get("openSwarmApiBaseUrl") || "").trim(),
+      openSwarmApiMode: formData.get("openSwarmApiMode") === "on",
+      openSwarmComposioApiKey: secretValue("openSwarmComposioApiKey"),
+      openSwarmComposioUserId: secretValue("openSwarmComposioUserId"),
+      openSwarmDefaultModel: String(formData.get("openSwarmDefaultModel") || "").trim(),
+      openSwarmFalKey: secretValue("openSwarmFalKey"),
+      openSwarmGoogleApiKey: secretValue("openSwarmGoogleApiKey"),
+      openSwarmPexelsApiKey: secretValue("openSwarmPexelsApiKey"),
+      openSwarmPixabayApiKey: secretValue("openSwarmPixabayApiKey"),
+      openSwarmSearchApiKey: secretValue("openSwarmSearchApiKey"),
+      openSwarmServerCommand: String(formData.get("openSwarmServerCommand") || "").trim(),
+      openSwarmUnsplashAccessKey: secretValue("openSwarmUnsplashAccessKey"),
     }),
   });
 

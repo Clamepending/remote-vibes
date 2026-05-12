@@ -72,6 +72,24 @@ export const providerDefinitions = [
     pathHints: ["/Applications/Codex.app/Contents/Resources/codex"],
   },
   {
+    id: "openswarm",
+    label: "OpenSwarm",
+    command: "openswarm",
+    launchCommand: "openswarm",
+    defaultName: "OpenSwarm",
+    npmPackage: {
+      name: "@vrsen/openswarm",
+      bin: "openswarm",
+    },
+    installCommand: "npm install -g @vrsen/openswarm",
+    authCommand: "openswarm",
+    pathHints: [
+      "~/.local/bin/openswarm",
+      "/opt/homebrew/bin/openswarm",
+      "/usr/local/bin/openswarm",
+    ],
+  },
+  {
     id: "shell",
     label: "Vanilla Shell",
     command: null,

@@ -45,6 +45,7 @@ import { GitHubService } from "./github-service.js";
 import { GoogleOAuthTokenStore } from "./google-oauth-token-store.js";
 import { GoogleService } from "./google-service.js";
 import { OttoAuthService } from "./ottoauth-service.js";
+import { ClaudeOAuthFlow } from "./claude-oauth-flow.js";
 import { PortAliasStore } from "./port-alias-store.js";
 import { listListeningPorts } from "./ports.js";
 import {
@@ -54,7 +55,7 @@ import {
   ScaffoldRecipeService,
 } from "./scaffold-recipe-service.js";
 import { TutorialRegistry } from "./tutorial-registry.js";
-import { buildAgentCredentialEnv, SettingsStore } from "./settings-store.js";
+import { buildAgentCredentialEnv, buildOpenSwarmSessionEnv, SettingsStore } from "./settings-store.js";
 import { SessionManager } from "./session-manager.js";
 import { startLibraryActivityWatcher } from "./library-activity-watcher.js";
 import { SleepPreventionService } from "./sleep-prevention.js";
@@ -88,12 +89,21 @@ import { compileBriefToQueue, updateResearchState } from "./research/brief.js";
 import { formatOrgBenchReport, runOrgBench } from "./research/org-bench.js";
 import { tickResearchOrchestrator } from "./research/orchestrator.js";
 import { parseProjectReadme } from "./research/project-readme.js";
-import {
-  appendResearchSupervisorThread,
-  decideResearchSupervisorIntervention,
-  normalizeResearchSupervisorState,
-  updateResearchSupervisorState,
-} from "./research/supervisor.js";
+// Supervisor module removed: replaced by the simpler auto-reply textbox.
+// Stub the four import names so any leftover call site degrades to a
+// safe no-op until someone chases the references in a follow-up.
+const normalizeResearchSupervisorState = () => ({
+  enabled: false,
+  objective: "",
+  watchlist: "",
+  thread: [],
+  primarySessionId: "",
+  sessionIds: [],
+  lastObservedAt: 0,
+});
+const updateResearchSupervisorState = (current) => current || normalizeResearchSupervisorState();
+const appendResearchSupervisorThread = (current) => current || normalizeResearchSupervisorState();
+const decideResearchSupervisorIntervention = () => ({ shouldIntervene: false });
 import {
   createEmptyWorkspaceFile,
   ensureWorkspaceDirectory,
@@ -768,6 +778,9 @@ async function saveImageAttachment({ stateDir, session, dataUrl, originalName, s
   };
 }
 
+// Shared image-mime-type lookup. Originally part of the (now-deleted)
+// agent-canvas image route; kept because the town-share image route
+// also calls it. Renamed if you need a friendlier export name later.
 function getAgentCanvasImageMimeType(filePath) {
   return AGENT_CANVAS_IMAGE_MIME_TYPES_BY_EXTENSION.get(path.extname(filePath).toLowerCase()) || "";
 }
@@ -1774,6 +1787,8 @@ export async function createVibeResearchApp({
       ...ottoAuthService.listSubagentsForSession(session.id),
       ...(videoMemoryService ? videoMemoryService.listSubagentsForSession(session.id) : []),
     ],
+    sessionEnvironmentProvider: (_session, providerId, env) =>
+      providerId === "openswarm" ? buildOpenSwarmSessionEnv(settingsStore.settings, env) : null,
   });
   const agentPromptStore = new AgentPromptStore({
     cwd,
@@ -1834,9 +1849,15 @@ export async function createVibeResearchApp({
     sessionManager,
     stateDir,
   });
-  sessionManager.setSessionEnvironmentProvider((session) => {
+  sessionManager.setSessionEnvironmentProvider((session, providerId, env) => {
     const callback = agentCallbackService.getCallback(session.id);
+    const normalizedProviderId = String(providerId || session?.providerId || "").trim();
+    const providerEnv =
+      normalizedProviderId === "openswarm"
+        ? buildOpenSwarmSessionEnv(settingsStore.settings, env)
+        : {};
     return {
+      ...providerEnv,
       REMOTE_VIBES_AGENT_CALLBACK_HELP:
         "Pass this URL to buildings or services that need to notify this exact agent later. POST JSON with buildingId, serviceId, event, message, and payload.",
       REMOTE_VIBES_AGENT_CALLBACK_URL: callback.url,
@@ -2598,6 +2619,9 @@ export async function createVibeResearchApp({
       VIBE_RESEARCH_URL: publicBaseUrl || serverBaseUrl,
       VIBE_RESEARCH_AGENT_CALLBACK_BASE_URL: agentCallbackService.getCallbackBaseUrl(),
       VIBE_RESEARCH_AGENT_TOWN_API: `${serverBaseUrl}/api/agent-town`,
+      VIBE_RESEARCH_OPENSWARM_API_URL: settingsStore.settings.openSwarmApiBaseUrl || "http://127.0.0.1:8080",
+      VIBE_RESEARCH_OPENSWARM_SERVER_COMMAND: settingsStore.settings.openSwarmServerCommand || "",
+      VIBE_RESEARCH_OPENSWARM_STREAM_MODE: settingsStore.settings.openSwarmApiMode ? "1" : "0",
       VIBE_RESEARCH_SCAFFOLD_RECIPES_API: `${serverBaseUrl}/api/scaffold-recipes`,
       VIBE_RESEARCH_WALLET_API: `${serverBaseUrl}/api/wallet`,
     };
@@ -4916,6 +4940,18 @@ export async function createVibeResearchApp({
         ottoAuthEnabled: request.body?.ottoAuthEnabled,
         ottoAuthPrivateKey: request.body?.ottoAuthPrivateKey,
         ottoAuthUsername: request.body?.ottoAuthUsername,
+        openSwarmApiBaseUrl: request.body?.openSwarmApiBaseUrl,
+        openSwarmApiMode: request.body?.openSwarmApiMode,
+        openSwarmComposioApiKey: request.body?.openSwarmComposioApiKey,
+        openSwarmComposioUserId: request.body?.openSwarmComposioUserId,
+        openSwarmDefaultModel: request.body?.openSwarmDefaultModel,
+        openSwarmFalKey: request.body?.openSwarmFalKey,
+        openSwarmGoogleApiKey: request.body?.openSwarmGoogleApiKey,
+        openSwarmPexelsApiKey: request.body?.openSwarmPexelsApiKey,
+        openSwarmPixabayApiKey: request.body?.openSwarmPixabayApiKey,
+        openSwarmSearchApiKey: request.body?.openSwarmSearchApiKey,
+        openSwarmServerCommand: request.body?.openSwarmServerCommand,
+        openSwarmUnsplashAccessKey: request.body?.openSwarmUnsplashAccessKey,
         telegramAllowedChatIds: request.body?.telegramAllowedChatIds,
         telegramBotToken: request.body?.telegramBotToken,
         telegramEnabled: request.body?.telegramEnabled,
@@ -5980,6 +6016,69 @@ export async function createVibeResearchApp({
 
   app.get("/api/ottoauth/status", (_request, response) => {
     response.json({ ottoAuth: ottoAuthService.getStatus() });
+  });
+
+  // Claude Code OAuth flow — handles the user-pasted code path so the
+  // signed-in token can be injected into stream-session env on next
+  // launch. See src/claude-oauth-flow.js for the protocol summary.
+  // The flow object lives for the server lifetime — single-user is the
+  // realistic constraint, but the in-memory map keys by uuid so concurrent
+  // tests / parallel signins work.
+  const claudeOAuthFlow = new ClaudeOAuthFlow({ stateDir });
+  app.get("/api/auth/claude-oauth/status", async (_request, response) => {
+    try {
+      const token = await claudeOAuthFlow.loadToken();
+      response.json({
+        signedIn: Boolean(token?.access_token),
+        obtainedAt: token?.obtained_at || null,
+        expiresAt: token?.expires_at || null,
+        scope: token?.scope || null,
+      });
+    } catch (error) {
+      response.status(500).json({ error: error.message || "status-failed" });
+    }
+  });
+  app.post("/api/auth/claude-oauth/start", requireLocalOrNodeToken, (_request, response) => {
+    try {
+      const { id, url } = claudeOAuthFlow.start();
+      response.json({ id, url });
+    } catch (error) {
+      response.status(500).json({ error: error.message || "start-failed" });
+    }
+  });
+  app.post("/api/auth/claude-oauth/submit", requireLocalOrNodeToken, async (request, response) => {
+    const id = String(request.body?.id || "").trim();
+    const code = String(request.body?.code || "").trim();
+    if (!id) {
+      response.status(400).json({ error: "missing-flow-id" });
+      return;
+    }
+    if (!code) {
+      response.status(400).json({ error: "missing-code" });
+      return;
+    }
+    try {
+      const token = await claudeOAuthFlow.submit(id, code);
+      response.json({
+        ok: true,
+        obtainedAt: token.obtained_at,
+        expiresAt: token.expires_at || null,
+        scope: token.scope || null,
+      });
+    } catch (error) {
+      response.status(error?.code === "flow-not-found" ? 404 : 400).json({
+        error: error.message || "submit-failed",
+        code: error?.code || null,
+      });
+    }
+  });
+  app.post("/api/auth/claude-oauth/signout", requireLocalOrNodeToken, async (_request, response) => {
+    try {
+      const removed = await claudeOAuthFlow.clearToken();
+      response.json({ ok: true, removed });
+    } catch (error) {
+      response.status(500).json({ error: error.message || "signout-failed" });
+    }
   });
 
   app.post("/api/ottoauth/setup", requireLocalOrNodeToken, async (request, response) => {
@@ -7100,6 +7199,45 @@ export async function createVibeResearchApp({
       response.status(201).json({ session });
     } catch (error) {
       response.status(400).json({ error: error.message });
+    }
+  });
+
+  // Sticky auto-reply: when set to non-empty, the session manager fires
+  // this text as a fresh user input every time the agent goes idle.
+  // Use case: keep an agent moving overnight on a pre-typed prompt.
+  // GET returns the current text; PUT { text } sets/clears it.
+  app.get("/api/sessions/:sessionId/auto-reply", (request, response) => {
+    const session = sessionManager.getSession(request.params.sessionId);
+    if (!session) {
+      response.status(404).json({ error: "Session not found." });
+      return;
+    }
+    response.json({ autoReplyText: session.autoReplyText || "" });
+  });
+  app.put("/api/sessions/:sessionId/auto-reply", (request, response) => {
+    const text = typeof request.body?.text === "string" ? request.body.text : "";
+    const result = sessionManager.setAutoReplyText(request.params.sessionId, text);
+    if (!result.ok) {
+      response.status(result.reason === "session-not-found" ? 404 : 400).json(result);
+      return;
+    }
+    response.json(result);
+  });
+
+  // Re-spawn the claude subprocess for an existing stream-mode session,
+  // preserving the JSONL transcript via `--resume`. Triggered by the
+  // OAuth sign-in modal so a freshly-issued token (CLAUDE_CODE_OAUTH_TOKEN)
+  // can be picked up by a new subprocess without losing the conversation.
+  app.post("/api/sessions/:sessionId/restart-stream", async (request, response) => {
+    try {
+      const result = await sessionManager.restartStreamSession(request.params.sessionId);
+      if (!result.ok) {
+        response.status(result.reason === "session-not-found" ? 404 : 400).json(result);
+        return;
+      }
+      response.json(result);
+    } catch (error) {
+      response.status(500).json({ ok: false, error: error.message || "restart-failed" });
     }
   });
 
@@ -8987,279 +9125,9 @@ export async function createVibeResearchApp({
     }
   });
 
-  app.post("/api/sessions/:sessionId/research-autopilot/supervisor/chat", requireLocalOrNodeToken, async (request, response) => {
-    try {
-      const session = requireChatAutopilotSession(request.params.sessionId);
-      const body = request.body && typeof request.body === "object" && !Array.isArray(request.body)
-        ? request.body
-        : {};
-      const current = getChatAutopilotAttachment(request.params.sessionId);
-      const projectName = trimText(body.projectName) || current.projectName;
-      const objective = trimText(body.objective) || current.objective;
-      const message = compactSupervisorChatText(body.message || body.text || body.prompt || "", 2_000);
-      const mode = ["directive", "send", "tell-worker"].includes(trimText(body.mode).toLowerCase())
-        ? "directive"
-        : "ask";
-      if (!message) {
-        throw routeError("Supervisor message is required.", 400);
-      }
+  // Supervisor /chat and /tick routes removed: replaced by the
+  // auto-reply textbox (PUT /api/sessions/:id/auto-reply).
 
-      let orchestrator = null;
-      let supervisorError = "";
-      const driver = normalizeChatAutopilotDriver(current.driver, current.jobId ? "runner" : "session");
-      const projectSupervisor = projectName ? getResearchProjectSupervisor(projectName) : null;
-      const watchlist = normalizeSupervisorWatchlist(
-        body.watchlist === undefined
-          ? current.watchlist || projectSupervisor?.watchlist
-          : body.watchlist,
-      );
-      const supervisorState = projectSupervisor?.state || current.supervisor;
-      const runtime = await getSupervisorRuntimeForSession(session, {
-        ignoreTexts: [
-          current.lastMessage,
-          current.supervisor?.lastDirectivePreview,
-          projectSupervisor?.state?.lastDirectivePreview,
-        ],
-      });
-      if (projectName) {
-        try {
-          const resolved = await resolveResearchProjectDir(projectName);
-          orchestrator = await tickResearchOrchestrator({
-            projectDir: resolved.projectDir,
-            apply: false,
-            askHuman: false,
-            waitHuman: false,
-            allowCrossVersion: Boolean(body.allowCrossVersion),
-            checkPaper: Boolean(body.checkPaper),
-          });
-        } catch (error) {
-          supervisorError = error.message || "could not inspect project state";
-        }
-      }
-
-      const reply = supervisorError
-        ? `I could not inspect the durable project state: ${supervisorError}`
-        : buildSupervisorSideChatReply({ message, mode, projectName, orchestrator, runtime });
-      const directiveText = mode === "directive" && !supervisorError
-        ? buildSupervisorSideChatDirective({ message, orchestrator, runtime, watchlist })
-        : "";
-      const event = {
-        type: "supervisor-chat",
-        action: mode,
-        source: "human",
-      };
-      const card = {
-        label: "Supervisor side chat",
-        mode: mode === "directive" ? "route" : "review",
-        action: mode === "directive" ? "send directive" : "answer human",
-        reason: message,
-        evidence: "Answer from durable project state, worker/subagent trace, runtime, and validation artifacts.",
-        integrity: "Worker and subagent output are observations; human messages are supervisory input.",
-        compute: "Keep safe idle GPUs/subagents saturated only when work is independent and provenance-preserving.",
-        continuity: supervisorRuntimeSummary(runtime),
-        stop: "Send one directive only when explicitly requested.",
-        preview: directiveText || reply,
-      };
-      const decision = {
-        action: directiveText ? "directive" : "silent",
-        shouldSend: Boolean(directiveText),
-        reason: directiveText ? "human asked supervisor to tell the worker" : "human asked supervisor side chat",
-        event,
-        signature: `supervisor-chat|${mode}|${projectName}|${message}`.slice(0, 300),
-        card,
-        directive: directiveText ? { source: "supervisor-chat", text: directiveText, card } : null,
-      };
-      const now = new Date();
-      let supervisor = appendResearchSupervisorThread(supervisorState, [
-        {
-          role: "human",
-          kind: mode === "directive" ? "directive_request" : "question",
-          title: "You",
-          text: message,
-          source: "human",
-        },
-        {
-          role: "supervisor",
-          kind: supervisorError ? "error" : mode === "directive" ? "decision" : "answer",
-          title: supervisorError ? "Supervisor blocked" : "Supervisor",
-          text: reply,
-          source: "supervisor",
-        },
-      ], { now });
-      supervisor = updateResearchSupervisorState(supervisor, decision, event, { now });
-
-      let nextProjectSupervisor = projectSupervisor;
-      if (projectName) {
-        const sessionIds = normalizeResearchProjectSupervisorSessionIds(
-          [...(projectSupervisor?.sessionIds || []), request.params.sessionId],
-        );
-        nextProjectSupervisor = await setResearchProjectSupervisor(projectName, {
-          enabled: current.enabled && driver === "session",
-          objective,
-          watchlist,
-          primarySessionId: request.params.sessionId,
-          sessionIds,
-          state: supervisor,
-        });
-      }
-      const attachment = await setChatAutopilotAttachment(request.params.sessionId, {
-        ...current,
-        enabled: current.enabled,
-        driver,
-        projectName,
-        objective,
-        watchlist,
-        jobId: driver === "session" ? "" : current.jobId,
-        statusText: directiveText ? "supervisor directive ready" : "supervisor answered",
-        lastMessage: current.lastMessage,
-        supervisor,
-      });
-      response.json({
-        ok: true,
-        mode,
-        reply,
-        directive: directiveText ? { text: directiveText, card } : null,
-        attachment: serializeChatAutopilotAttachment(attachment),
-        projectSupervisor: nextProjectSupervisor ? serializeResearchProjectSupervisor(nextProjectSupervisor) : null,
-        runtime,
-        orchestrator: orchestrator
-          ? {
-              recommendation: orchestrator.recommendation,
-              counts: orchestrator.counts,
-              phase: orchestrator.phase,
-              projectContext: orchestrator.projectContext,
-            }
-          : null,
-      });
-    } catch (error) {
-      response.status(error.statusCode || 500).json({ error: error.message || "Could not chat with supervisor." });
-    }
-  });
-
-  app.post("/api/sessions/:sessionId/research-autopilot/supervisor/tick", requireLocalOrNodeToken, async (request, response) => {
-    try {
-      const session = requireChatAutopilotSession(request.params.sessionId);
-      const body = request.body && typeof request.body === "object" && !Array.isArray(request.body)
-        ? request.body
-        : {};
-      const current = getChatAutopilotAttachment(request.params.sessionId);
-      const projectName = trimText(body.projectName) || current.projectName;
-      const observedMessage = trimText(body.observedMessage || body.message || body.text);
-      let event = body.event && typeof body.event === "object" && !Array.isArray(body.event)
-        ? body.event
-        : {
-            type: trimText(body.event || body.type || "tick"),
-            action: trimText(body.action),
-            source: trimText(body.source) || "chat",
-          };
-      const eventType = trimText(event.type || event.event || "tick").toLowerCase();
-      if (observedMessage && !(event && typeof event === "object" && !Array.isArray(event) && (event.message || event.observedMessage || event.text))) {
-        event = { ...event, message: observedMessage };
-      }
-
-      let orchestrator = null;
-      let supervisorError = "";
-      const driver = normalizeChatAutopilotDriver(current.driver, current.jobId ? "runner" : "session");
-      const projectSupervisor = projectName ? getResearchProjectSupervisor(projectName) : null;
-      const watchlist = normalizeSupervisorWatchlist(
-        body.watchlist === undefined
-          ? current.watchlist || projectSupervisor?.watchlist
-          : body.watchlist,
-      );
-      const supervisorState = projectSupervisor?.state || current.supervisor;
-      const runtime = await getSupervisorRuntimeForSession(session, {
-        ignoreTexts: [
-          current.lastMessage,
-          current.supervisor?.lastDirectivePreview,
-          projectSupervisor?.state?.lastDirectivePreview,
-        ],
-      });
-      if (current.enabled && driver === "session" && projectName) {
-        try {
-          const resolved = await resolveResearchProjectDir(projectName);
-          orchestrator = await tickResearchOrchestrator({
-            projectDir: resolved.projectDir,
-            apply: false,
-            askHuman: false,
-            waitHuman: false,
-            allowCrossVersion: Boolean(body.allowCrossVersion),
-            checkPaper: Boolean(body.checkPaper),
-          });
-        } catch (error) {
-          supervisorError = error.message || "could not inspect project state";
-        }
-      }
-
-      const observedAttachment = {
-        ...current,
-        projectName,
-        objective: trimText(body.objective) || current.objective,
-        watchlist,
-        runtime,
-      };
-      const decision = supervisorError
-        ? {
-            action: "human-gate",
-            shouldSend: false,
-            reason: supervisorError,
-            event,
-            signature: `supervisor-error|${projectName}|${supervisorError}`.slice(0, 300),
-          }
-        : decideResearchSupervisorIntervention({
-            attachment: observedAttachment,
-            event,
-            orchestratorReport: orchestrator,
-            supervisorState,
-          });
-      const supervisor = updateResearchSupervisorState(supervisorState, decision, event);
-      let nextProjectSupervisor = projectSupervisor;
-      if (projectName) {
-        const sessionIds = normalizeResearchProjectSupervisorSessionIds(
-          [...(projectSupervisor?.sessionIds || []), request.params.sessionId],
-        );
-        nextProjectSupervisor = await setResearchProjectSupervisor(projectName, {
-          enabled: current.enabled && driver === "session",
-          objective: observedAttachment.objective,
-          watchlist,
-          primarySessionId: request.params.sessionId,
-          sessionIds,
-          state: supervisor,
-        });
-      }
-      const attachment = await setChatAutopilotAttachment(request.params.sessionId, {
-        ...current,
-        enabled: current.enabled,
-        driver,
-        projectName,
-        objective: observedAttachment.objective,
-        watchlist,
-        jobId: driver === "session" ? "" : current.jobId,
-        statusText: decision.shouldSend
-          ? "supervisor queued a directive"
-          : current.statusText || (current.enabled ? "supervisor listening" : ""),
-        lastMessage: eventType === "human-message" ? observedMessage || current.lastMessage : current.lastMessage,
-        supervisor,
-      });
-      response.json({
-        ok: true,
-        decision,
-        directive: decision.shouldSend ? decision.directive : null,
-        attachment: serializeChatAutopilotAttachment(attachment),
-        projectSupervisor: nextProjectSupervisor ? serializeResearchProjectSupervisor(nextProjectSupervisor) : null,
-        runtime,
-        orchestrator: orchestrator
-          ? {
-              recommendation: orchestrator.recommendation,
-              counts: orchestrator.counts,
-              phase: orchestrator.phase,
-              projectContext: orchestrator.projectContext,
-            }
-          : null,
-      });
-    } catch (error) {
-      response.status(error.statusCode || 500).json({ error: error.message || "Could not tick chat autopilot supervisor." });
-    }
-  });
 
   app.post("/api/sessions/:sessionId/research-autopilot/start", requireLocalOrNodeToken, async (request, response) => {
     try {
@@ -9436,19 +9304,7 @@ export async function createVibeResearchApp({
     }
   });
 
-  app.get("/api/research/projects/:name/supervisor", async (request, response) => {
-    try {
-      const { projectName } = await resolveResearchProjectDir(request.params.name);
-      const supervisor = getResearchProjectSupervisor(projectName);
-      response.json({
-        ok: true,
-        projectName,
-        supervisor: serializeResearchProjectSupervisor(supervisor),
-      });
-    } catch (error) {
-      response.status(error.statusCode || 500).json({ error: error.message || "Could not load research supervisor." });
-    }
-  });
+  // Supervisor route removed: replaced by the auto-reply textbox.
 
   app.post("/api/research/projects/:name/orchestrator/tick", async (request, response) => {
     try {
@@ -10143,7 +9999,18 @@ export async function createVibeResearchApp({
           // exercise this path; PTY sessions ignore the attachments
           // (typing the markdown reference is the legacy fallback).
           const attachments = Array.isArray(message.attachments) ? message.attachments : [];
-          sessionManager.write(session.id, message.data, { attachments });
+          // Optional clientMessageId — UUID the composer allocated when
+          // the user hit send. Threading it through to the user-echo
+          // narrative entry keeps the entry's id stable end-to-end:
+          // optimistic UI in the composer, the wire frame, the persisted
+          // record, and the rehydrated entry on reconnect all share the
+          // same id. Without it, dedup falls back to (label,text,timestamp)
+          // — fragile when wall clocks drift across reconnect.
+          const clientMessageId = typeof message.clientMessageId === "string"
+            && message.clientMessageId.trim()
+            ? message.clientMessageId.trim().slice(0, 64)
+            : null;
+          sessionManager.write(session.id, message.data, { attachments, clientMessageId });
           return;
         }
 

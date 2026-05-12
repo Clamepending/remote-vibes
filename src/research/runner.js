@@ -1094,53 +1094,13 @@ async function updatePaperForMove({
   return { paperPath, created, figure, lint };
 }
 
-async function publishAgentCanvas({
-  api,
-  projectDir,
-  slug,
-  imagePath = "",
-  imageUrl = "",
-  href = "",
-  title = "",
-  caption = "",
-  sessionId = "",
-  agentId = "",
-  fetchImpl = globalThis.fetch,
-} = {}) {
-  const endpoint = String(api || "").trim().replace(/\/+$/, "");
-  if (!endpoint) return { skipped: true, reason: "Agent Town API is not configured" };
-  if (typeof fetchImpl !== "function") return { skipped: true, reason: "fetch is unavailable" };
-  const resolvedSessionId = String(
-    sessionId ||
-      process.env.VIBE_RESEARCH_SESSION_ID ||
-      process.env.REMOTE_VIBES_SESSION_ID ||
-      "",
-  ).trim();
-  if (!resolvedSessionId) return { skipped: true, reason: "VIBE_RESEARCH_SESSION_ID is not configured" };
-  if (!imagePath && !imageUrl && !href) return { skipped: true, reason: "no canvas image, URL, or href provided" };
-
-  const canvasId = agentId ? `${resolvedSessionId}-${agentId}` : resolvedSessionId;
-  const body = {
-    id: canvasId,
-    sourceSessionId: resolvedSessionId,
-    sourceAgentId: agentId,
-    title: title || `Result: ${slug}`,
-    caption,
-    alt: title || `Result figure for ${slug}`,
-    href: href || imageUrl || "",
-    imagePath,
-    imageUrl,
-  };
-  const response = await fetchImpl(`${endpoint}/canvases`, {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify(body),
-  });
-  const payload = await response.json().catch(() => ({}));
-  if (!response.ok) {
-    throw new Error(payload?.error || `Agent Canvas publish failed: ${response.status}`);
-  }
-  return payload.canvas || payload;
+// publishAgentCanvas: agent canvas feature was deleted. Kept as a no-op
+// stub so existing callers passing publishCanvas:true get a deterministic
+// "skipped" response without errors. Result figures referenced by Claude
+// now render inline in the chat via extractImageRefs (in
+// session-native-narrative); no separate canvas surface remains.
+async function publishAgentCanvas() {
+  return { skipped: true, reason: "agent canvas feature removed" };
 }
 
 export async function claimNextMove({

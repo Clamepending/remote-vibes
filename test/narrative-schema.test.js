@@ -242,15 +242,16 @@ test("reducer: remove frame deletes the entry and tightens the order", () => {
   assert.deepEqual(entries.map((e) => e.id), ["u1", "a2"]);
 });
 
-test("reducer: selectNarrativeEntries sorts chronologically even when an upsert lands with an earlier timestamp than existing entries", () => {
-  // Regression: when a supervisor injects a message on behalf of the user
-  // (or a late-arriving tool result lands after live status updates), the
-  // upsert reaches the client with a timestamp that predates entries
-  // already in state.order. Without a render-time sort the new entry would
-  // render at the bottom of the chat instead of slotting into its true
-  // chronological spot. selectNarrativeEntries must order by (timestamp,
-  // seq) so the rendered chat matches the server's snapshot regardless of
-  // arrival sequence.
+test("reducer: selectNarrativeEntries returns entries in pure insertion order, ignoring entry timestamps", () => {
+  // The renderer is no longer authoritative on order — the server is, via
+  // the monotonic seq it stamps on every entry. selectNarrativeEntries
+  // walks state.order without any sort. This is the deliberate, opencode-
+  // style design that fixes the "user message renders below the assistant
+  // response" symptom: provider timestamps and client-stamped timestamps
+  // disagree across clocks, but insertion order owned by the server's seq
+  // counter is total. A late-arriving upsert with an "earlier" timestamp
+  // appends at the bottom — if a producer wants to insert chronologically
+  // it must do so via its seq, not its timestamp.
   let state = applyNarrativeFrame(createInitialNarrativeState(), makeNarrativeInitFrame({
     sessionId: "s",
     lastSeq: 0,
@@ -260,57 +261,68 @@ test("reducer: selectNarrativeEntries sorts chronologically even when an upsert 
     ],
   }));
 
-  // Supervisor-injected user message lands later but the timestamp falls
-  // between the two existing entries — emulates a directive that was
-  // stamped at decision time and arrives after live activity.
+  // Late upsert with an "earlier" timestamp arrives. Insertion order rule:
+  // it appends at the bottom regardless of timestamp.
   state = applyNarrativeFrame(state, makeNarrativeEventFrame({
     sessionId: "s", op: "upsert", seq: 3,
     entry: {
-      id: "u2", kind: "user", text: "supervisor directive",
+      id: "u2", kind: "user", text: "late directive",
       timestamp: "2026-05-01T18:09:30.000Z", seq: 3,
     },
   }));
 
   const order = selectNarrativeEntries(state).map((entry) => entry.id);
-  assert.deepEqual(order, ["u1", "u2", "a1"],
-    "chronological order is enforced at render time, not insertion time");
+  assert.deepEqual(order, ["u1", "a1", "u2"],
+    "insertion order — seq 3 is newer than seq 2, so u2 lands at the bottom");
 });
 
-test("reducer: same-timestamp entries fall back to seq for within-turn ordering", () => {
-  // A single Claude message can carry text + tool_use blocks that share the
-  // same payload timestamp. The seq tiebreaker keeps the narrating text
-  // above the tool card it introduces.
-  const sharedTs = "2026-05-01T18:00:00.000Z";
-  const state = applyNarrativeFrame(createInitialNarrativeState(), makeNarrativeInitFrame({
-    sessionId: "s",
-    lastSeq: 0,
-    entries: [
-      { id: "tool-1", kind: "tool", label: "Read", text: "/tmp/x", timestamp: sharedTs, seq: 11, status: "running" },
-      { id: "asst-1", kind: "assistant", text: "Let me check.", timestamp: sharedTs, seq: 10 },
-    ],
+test("reducer: a flurry of provider events arriving with mixed timestamps still renders in insertion order", () => {
+  // Regression for the user-reported symptom: assistant entry's provider
+  // timestamp can predate the user-echo timestamp because of clock skew or
+  // because Claude preserves provider stamps. With the old timestamp-sort
+  // renderer this scrambled the chat. Insertion order makes ordering
+  // deterministic: whoever was upserted first wins, full stop.
+  let state = createInitialNarrativeState();
+  state = applyNarrativeFrame(state, makeNarrativeEventFrame({
+    sessionId: "s", op: "upsert", seq: 1,
+    entry: { id: "u1", kind: "user", text: "what time is it",
+             timestamp: "2026-05-01T18:00:00.500Z", seq: 1 },
+  }));
+  // Assistant entry whose provider timestamp is EARLIER than the user-echo.
+  // Old behavior would put it above u1; new behavior keeps insertion order.
+  state = applyNarrativeFrame(state, makeNarrativeEventFrame({
+    sessionId: "s", op: "upsert", seq: 2,
+    entry: { id: "a1", kind: "assistant", text: "It's noon.",
+             timestamp: "2026-05-01T18:00:00.300Z", seq: 2 },
   }));
   const order = selectNarrativeEntries(state).map((entry) => entry.id);
-  assert.deepEqual(order, ["asst-1", "tool-1"], "lower seq wins when timestamps tie");
+  assert.deepEqual(order, ["u1", "a1"], "user message stays above response despite earlier provider timestamp");
 });
 
-test("reducer: undated and zero-seq entries fall back to insertion order so legacy upserts stay stable", () => {
-  // Pre-v2 producers and some test fixtures emit entries with no timestamp
-  // and no real seq (seq is stamped to 0 by normaliseNarrativeEntry). All
-  // three sort keys collapse, so the tertiary insertion-order tiebreaker
-  // must keep them in the order they arrived.
-  let state = applyNarrativeFrame(createInitialNarrativeState(), makeNarrativeInitFrame({
-    sessionId: "s", lastSeq: 0, entries: [{ id: "u1", kind: "user", text: "hi" }],
+test("reducer: same-id upsert mutates in place without changing position in insertion order", () => {
+  // Optimistic insert: client adds a user entry with seq=0 at composer
+  // flush. Server then upserts the same id with the real seq + final
+  // timestamp. The entry must mutate in place — same row in state.order.
+  let state = createInitialNarrativeState();
+  state = applyNarrativeFrame(state, makeNarrativeEventFrame({
+    sessionId: "s", op: "upsert", seq: 0,
+    entry: { id: "c-uuid-1", kind: "user", text: "hi", seq: 0 },
   }));
   state = applyNarrativeFrame(state, makeNarrativeEventFrame({
     sessionId: "s", op: "upsert", seq: 1,
-    entry: { id: "a1", kind: "assistant", text: "hello" },
+    entry: { id: "a1", kind: "assistant", text: "hello", seq: 1 },
   }));
+  // Server's authoritative user-echo with the SAME id (clientMessageId
+  // threaded through). Mutates in place.
   state = applyNarrativeFrame(state, makeNarrativeEventFrame({
     sessionId: "s", op: "upsert", seq: 2,
-    entry: { id: "t1", kind: "tool", label: "Read", text: "/tmp/x" },
+    entry: { id: "c-uuid-1", kind: "user", text: "hi", seq: 2,
+             timestamp: "2026-05-01T18:00:00.000Z" },
   }));
-  const order = selectNarrativeEntries(state).map((entry) => entry.id);
-  assert.deepEqual(order, ["u1", "a1", "t1"], "insertion order preserved when sort keys tie");
+  const entries = selectNarrativeEntries(state);
+  assert.deepEqual(entries.map((e) => e.id), ["c-uuid-1", "a1"],
+    "stable id keeps the user message in the same slot when the server upserts with real seq");
+  assert.equal(entries[0].seq, 2, "upsert replaced the optimistic entry in place");
 });
 
 test("reducer: schema invariant — selectNarrativeEntries returns canonical entries with structured fields preserved", () => {

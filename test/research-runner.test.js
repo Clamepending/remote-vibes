@@ -376,49 +376,10 @@ test("runCycle can launch a reviewer agent session for a review card", async () 
   }
 });
 
-test("runCycle can pin a live monitor URL to Agent Canvas", async () => {
-  const dir = makeProject("vr-runner-monitor");
-  const calls = [];
-  try {
-    await claimNextMove({ projectDir: dir });
-    const fetchImpl = async (url, options) => {
-      const body = JSON.parse(options.body);
-      calls.push({ url, body });
-      return {
-        ok: true,
-        status: 200,
-        async json() {
-          return { canvas: { id: body.id, title: body.title, href: body.href, imageUrl: body.imageUrl } };
-        },
-      };
-    };
-
-    const result = await runCycle({
-      projectDir: dir,
-      slug: "first-move",
-      command: "node -e \"console.log('score=0.84')\"",
-      metricRegex: "score=([0-9.]+)",
-      timeoutMs: 5_000,
-      monitorUrl: "https://wandb.example.test/run/abc",
-      monitorTitle: "W&B live run",
-      monitorCaption: "Training curve is still moving.",
-      canvasSessionId: "session-1",
-      agentTownApi: "http://agent-town.test/api/agent-town",
-      fetchImpl,
-    });
-    assert.equal(result.monitorCanvas.id, "session-1");
-    assert.equal(calls[0].url, "http://agent-town.test/api/agent-town/canvases");
-    assert.equal(calls[0].body.href, "https://wandb.example.test/run/abc");
-    assert.equal(calls[0].body.imageUrl, "");
-
-    const doc = readFileSync(join(dir, "results", "first-move.md"), "utf8");
-    assert.match(doc, /live monitor: \[W&B live run\]\(https:\/\/wandb\.example\.test\/run\/abc\)/);
-    const artifact = readFileSync(result.artifactPath, "utf8");
-    assert.match(artifact, /monitor_url: https:\/\/wandb\.example\.test\/run\/abc/);
-  } finally {
-    rmSync(dir, { recursive: true, force: true });
-  }
-});
+// "runCycle can pin a live monitor URL to Agent Canvas" removed:
+// agent canvas feature deleted. Live monitor URLs now appear inline in
+// the result doc only; the publish-to-canvas no-op stub returns
+// {skipped:true} without making any HTTP call.
 
 test("runNextMove combines claim and one cycle", async () => {
   const dir = makeProject("vr-runner-run");
@@ -599,49 +560,8 @@ test("finishMove can update paper.md with a generated figure", async () => {
   }
 });
 
-test("finishMove can publish the paper figure to Agent Canvas", async () => {
-  const dir = makeProject("vr-runner-canvas");
-  const calls = [];
-  try {
-    await claimNextMove({ projectDir: dir });
-    await runCycle({
-      projectDir: dir,
-      slug: "first-move",
-      command: "node -e \"console.log('score=0.83')\"",
-      metricRegex: "score=([0-9.]+)",
-      timeoutMs: 5_000,
-    });
-    const fetchImpl = async (url, options) => {
-      const body = JSON.parse(options.body);
-      calls.push({ url, body });
-      return {
-        ok: true,
-        status: 200,
-        async json() {
-          return { canvas: { id: body.id, title: body.title, imagePath: body.imagePath } };
-        },
-      };
-    };
-
-    const result = await finishMove({
-      projectDir: dir,
-      slug: "first-move",
-      takeaway: "Canvas publish completed.",
-      decision: "do not admit",
-      updatePaper: true,
-      publishCanvas: true,
-      canvasSessionId: "session-1",
-      agentTownApi: "http://agent-town.test/api/agent-town",
-      fetchImpl,
-    });
-    assert.equal(result.canvas.id, "session-1");
-    assert.equal(calls.length, 1);
-    assert.equal(calls[0].url, "http://agent-town.test/api/agent-town/canvases");
-    assert.match(calls[0].body.imagePath, /first-move-summary\.svg$/);
-  } finally {
-    rmSync(dir, { recursive: true, force: true });
-  }
-});
+// "finishMove can publish the paper figure to Agent Canvas" removed:
+// agent canvas feature deleted.
 
 test("vr-research-runner CLI help and run command work", async () => {
   const help = await runCli(["--help"]);

@@ -1652,6 +1652,11 @@ body.is-resizing-layout iframe {
   gap: 10px;
 }
 
+.settings-inline-grid {
+  display: grid;
+  gap: 10px;
+}
+
 .field-label,
 .checkbox-row,
 .settings-status,
@@ -14152,7 +14157,8 @@ button.visual-town-building:focus-visible {
   white-space: nowrap;
 }
 
-.agent-canvas-open {
+.agent-canvas-open,
+.agent-canvas-close {
   width: 30px;
   min-width: 30px;
   height: 30px;
@@ -14164,6 +14170,11 @@ button.visual-town-building:focus-visible {
 .agent-canvas-open .vr-icon {
   width: 15px;
   height: 15px;
+}
+
+.agent-canvas-close .vr-icon {
+  width: 14px;
+  height: 14px;
 }
 
 .agent-canvas-stage {
@@ -14243,20 +14254,6 @@ button.visual-town-building:focus-visible {
   font-size: 0.85rem;
   line-height: 1.3;
   word-break: break-word;
-}
-
-.agent-canvas-close {
-  width: 30px;
-  min-width: 30px;
-  height: 30px;
-  min-height: 30px;
-  padding: 0;
-  border-radius: 8px;
-}
-
-.agent-canvas-close .vr-icon {
-  width: 14px;
-  height: 14px;
 }
 
 .agent-canvas-caption {
@@ -15333,11 +15330,6 @@ body.is-reordering-file-tabs {
   font-size: 0.7rem;
 }
 
-.rich-session-supervisor-drawer-mount {
-  display: contents;
-}
-
-.rich-session-supervisor-drawer {
   position: absolute;
   top: 16px;
   right: 16px;
@@ -15358,459 +15350,6 @@ body.is-reordering-file-tabs {
   transition: opacity 160ms ease, transform 160ms ease;
 }
 
-.rich-session-supervisor-drawer.is-open {
-  opacity: 1;
-  pointer-events: auto;
-  transform: translateX(0);
-}
-
-@media (min-width: 1080px) {
-  .rich-session-surface.is-active.is-supervisor-open {
-    grid-template-columns: minmax(0, 1fr) minmax(340px, min(400px, 34vw));
-    column-gap: 16px;
-    padding-right: 16px;
-  }
-
-  .rich-session-surface.is-supervisor-open > :not(.rich-session-supervisor-drawer-mount) {
-    grid-column: 1;
-    min-width: 0;
-  }
-
-  .rich-session-surface.is-supervisor-open .rich-session-supervisor-drawer-mount {
-    display: block;
-    grid-column: 2;
-    grid-row: 1 / -1;
-    height: 100%;
-    min-height: 0;
-  }
-
-  .rich-session-surface.is-supervisor-open .rich-session-supervisor-drawer {
-    position: sticky;
-    top: 16px;
-    right: auto;
-    bottom: auto;
-    width: 100%;
-    height: 100%;
-    max-height: 100%;
-    transform: translateX(0);
-  }
-}
-
-.rich-session-supervisor-drawer-head,
-.rich-session-supervisor-head-actions,
-.rich-session-supervisor-event-top {
-  display: flex;
-  align-items: center;
-}
-
-.rich-session-supervisor-drawer-head {
-  justify-content: space-between;
-  gap: 12px;
-  padding: 14px 14px 12px;
-  border-bottom: 1px solid rgba(255, 255, 255, 0.075);
-}
-
-.rich-session-supervisor-drawer-head strong,
-.rich-session-supervisor-summary-title {
-  display: block;
-  color: rgba(244, 244, 242, 0.9);
-  font-size: 0.94rem;
-  font-weight: 650;
-}
-
-.rich-session-supervisor-head-actions {
-  gap: 8px;
-}
-
-.rich-session-supervisor-state {
-  display: inline-flex;
-  align-items: center;
-  min-height: 24px;
-  padding: 0 8px;
-  border-radius: 999px;
-  background: rgba(255, 255, 255, 0.055);
-  color: rgba(244, 244, 242, 0.66);
-  font-family: "IBM Plex Mono", monospace;
-  font-size: 0.68rem;
-  white-space: nowrap;
-}
-
-.rich-session-supervisor-state.is-live {
-  background: rgba(142, 210, 185, 0.12);
-  color: rgba(224, 248, 237, 0.86);
-}
-
-.rich-session-supervisor-close {
-  width: 28px;
-  height: 28px;
-  border: 1px solid rgba(255, 255, 255, 0.075);
-  border-radius: 8px;
-  background: rgba(255, 255, 255, 0.035);
-  color: rgba(244, 244, 242, 0.7);
-  cursor: pointer;
-}
-
-.rich-session-supervisor-drawer-body {
-  display: block;
-  flex: 1 1 auto;
-  min-height: 0;
-  overflow-x: hidden;
-  overflow-y: auto;
-  overscroll-behavior: contain;
-  padding: 12px;
-  touch-action: pan-y;
-  -webkit-overflow-scrolling: touch;
-  scrollbar-color: rgba(230, 234, 240, 0.3) rgba(255, 255, 255, 0.035);
-  scrollbar-width: thin;
-}
-
-.rich-session-supervisor-drawer-body > * + * {
-  margin-top: 12px;
-}
-
-.rich-session-supervisor-drawer-body:focus-visible {
-  outline: 2px solid rgba(142, 210, 185, 0.22);
-  outline-offset: -2px;
-}
-
-.rich-session-supervisor-summary,
-.rich-session-supervisor-processing,
-.rich-session-supervisor-history {
-  border: 0;
-  border-radius: 0;
-  background: transparent;
-}
-
-.rich-session-supervisor-summary {
-  display: grid;
-  gap: 7px;
-  padding: 10px 12px 8px;
-  border-bottom: 1px solid rgba(255, 255, 255, 0.06);
-}
-
-.rich-session-supervisor-kicker,
-.rich-session-supervisor-section-title,
-.rich-session-supervisor-event-top time {
-  color: rgba(244, 244, 242, 0.48);
-  font-family: "IBM Plex Mono", monospace;
-  font-size: 0.66rem;
-  text-transform: uppercase;
-}
-
-.rich-session-supervisor-summary-title {
-  color: rgba(244, 244, 242, 0.84);
-  font-size: 0.86rem;
-  font-weight: 650;
-}
-
-.rich-session-supervisor-summary p,
-.rich-session-supervisor-event p,
-.rich-session-supervisor-message p,
-.rich-session-supervisor-processing,
-.rich-session-supervisor-principles dd {
-  margin: 0;
-  color: rgba(244, 244, 242, 0.68);
-  font-size: 0.78rem;
-  line-height: 1.45;
-}
-
-.rich-session-supervisor-principles {
-  display: grid;
-  gap: 8px;
-  margin: 2px 0 0;
-}
-
-.rich-session-supervisor-signals {
-  display: grid;
-  grid-template-columns: repeat(2, minmax(0, 1fr));
-  gap: 6px;
-}
-
-.rich-session-supervisor-signal {
-  min-width: 0;
-  overflow: hidden;
-  border: 1px solid rgba(255, 255, 255, 0.065);
-  border-radius: 7px;
-  background: rgba(255, 255, 255, 0.035);
-  color: rgba(244, 244, 242, 0.58);
-  font-family: "IBM Plex Mono", monospace;
-  font-size: 0.62rem;
-  line-height: 1.25;
-  padding: 5px 6px;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-
-.rich-session-supervisor-signal.is-live {
-  border-color: rgba(142, 210, 185, 0.16);
-  background: rgba(142, 210, 185, 0.07);
-  color: rgba(224, 248, 237, 0.82);
-}
-
-.rich-session-supervisor-signal.is-warning {
-  border-color: rgba(255, 213, 128, 0.18);
-  background: rgba(255, 213, 128, 0.07);
-  color: rgba(255, 232, 185, 0.82);
-}
-
-.rich-session-supervisor-principles div {
-  display: grid;
-  gap: 2px;
-}
-
-.rich-session-supervisor-principles dt {
-  color: rgba(142, 210, 185, 0.72);
-  font-family: "IBM Plex Mono", monospace;
-  font-size: 0.64rem;
-  text-transform: uppercase;
-}
-
-.rich-session-supervisor-processing {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-  padding: 9px 12px;
-  border-bottom: 1px solid rgba(255, 255, 255, 0.055);
-}
-
-.rich-session-supervisor-dot {
-  width: 7px;
-  height: 7px;
-  border-radius: 999px;
-  background: #8ed2b9;
-  box-shadow: 0 0 0 5px rgba(142, 210, 185, 0.1);
-}
-
-.rich-session-supervisor-history {
-  overflow: visible;
-}
-
-.rich-session-supervisor-watchlist {
-  display: grid;
-  gap: 7px;
-  padding: 10px 12px;
-  border-bottom: 1px solid rgba(255, 255, 255, 0.055);
-}
-
-.rich-session-supervisor-watchlist-head {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: 8px;
-}
-
-.rich-session-supervisor-watchlist-head .rich-session-supervisor-section-title {
-  padding: 0;
-}
-
-.rich-session-supervisor-watchlist-head span {
-  color: rgba(244, 244, 242, 0.42);
-  font-family: "IBM Plex Mono", monospace;
-  font-size: 0.62rem;
-}
-
-.rich-session-supervisor-watchlist textarea {
-  width: 100%;
-  min-height: 96px;
-  max-height: 220px;
-  resize: vertical;
-  border: 1px solid rgba(142, 210, 185, 0.12);
-  border-radius: 8px;
-  background: rgba(142, 210, 185, 0.045);
-  color: rgba(234, 244, 239, 0.86);
-  font: inherit;
-  font-size: 0.78rem;
-  line-height: 1.4;
-  padding: 9px 10px;
-}
-
-.rich-session-supervisor-watchlist textarea:focus {
-  outline: 2px solid rgba(142, 210, 185, 0.26);
-  outline-offset: 1px;
-}
-
-.rich-session-supervisor-chat-log {
-  display: grid;
-  gap: 12px;
-  padding: 12px;
-}
-
-.rich-session-supervisor-message {
-  display: grid;
-  gap: 4px;
-  min-width: 0;
-  padding: 2px 4px;
-  border: 0;
-  border-radius: 0;
-  background: transparent;
-}
-
-.rich-session-supervisor-message.is-human {
-  justify-self: end;
-  max-width: min(86%, 340px);
-  padding: 8px 10px;
-  border: 1px solid rgba(255, 255, 255, 0.06);
-  border-radius: 12px;
-  background: rgba(255, 255, 255, 0.045);
-}
-
-.rich-session-supervisor-message.is-supervisor {
-  padding: 2px 4px 4px;
-}
-
-.rich-session-supervisor-message.is-directive {
-  padding: 8px 10px;
-  border: 1px solid rgba(255, 121, 109, 0.24);
-  border-radius: 10px;
-  background: rgba(255, 121, 109, 0.08);
-}
-
-.rich-session-supervisor-message.is-worker {
-  padding: 4px 6px;
-  opacity: 0.72;
-}
-
-.rich-session-supervisor-message-top {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: 8px;
-  color: rgba(244, 244, 242, 0.44);
-  font-family: "IBM Plex Mono", monospace;
-  font-size: 0.68rem;
-}
-
-.rich-session-supervisor-message.is-directive .rich-session-supervisor-message-top,
-.rich-session-supervisor-message.is-directive p {
-  color: rgba(255, 226, 222, 0.9);
-}
-
-.rich-session-supervisor-message.is-human .rich-session-supervisor-message-top {
-  color: rgba(244, 244, 242, 0.5);
-}
-
-.rich-session-supervisor-message.is-supervisor p {
-  color: rgba(251, 251, 248, 0.88);
-  font-size: 0.9rem;
-  line-height: 1.5;
-}
-
-.rich-session-supervisor-message.is-human p,
-.rich-session-supervisor-message.is-directive p {
-  font-size: 0.84rem;
-  line-height: 1.46;
-}
-
-.rich-session-supervisor-message.is-worker p {
-  color: rgba(244, 244, 242, 0.52);
-  font-size: 0.78rem;
-}
-
-.rich-session-supervisor-message-top time {
-  color: rgba(244, 244, 242, 0.44);
-  white-space: nowrap;
-}
-
-.rich-session-supervisor-empty {
-  padding: 12px;
-  color: rgba(244, 244, 242, 0.52);
-  font-size: 0.78rem;
-  line-height: 1.45;
-}
-
-.rich-session-supervisor-section-title {
-  display: block;
-  padding: 8px 12px 0;
-  cursor: pointer;
-}
-
-.rich-session-supervisor-history ol {
-  display: grid;
-  gap: 0;
-  margin: 0;
-  padding: 8px 0;
-  list-style: none;
-}
-
-.rich-session-supervisor-event {
-  display: grid;
-  gap: 4px;
-  padding: 9px 12px;
-  border-top: 1px solid rgba(255, 255, 255, 0.055);
-}
-
-.rich-session-supervisor-event:first-child {
-  border-top: 0;
-}
-
-.rich-session-supervisor-event.is-empty {
-  color: rgba(244, 244, 242, 0.48);
-  font-size: 0.78rem;
-}
-
-.rich-session-supervisor-event-top {
-  justify-content: space-between;
-  gap: 8px;
-  color: rgba(244, 244, 242, 0.76);
-  font-family: "IBM Plex Mono", monospace;
-  font-size: 0.7rem;
-}
-
-.rich-session-supervisor-history.is-audit {
-  background: rgba(255, 255, 255, 0.022);
-}
-
-.rich-session-supervisor-composer {
-  display: grid;
-  gap: 8px;
-  padding: 12px;
-  border-top: 1px solid rgba(255, 255, 255, 0.075);
-  background: rgba(13, 14, 16, 0.96);
-}
-
-.rich-session-supervisor-composer textarea {
-  width: 100%;
-  min-height: 58px;
-  max-height: 140px;
-  resize: vertical;
-  border: 1px solid rgba(255, 255, 255, 0.09);
-  border-radius: 8px;
-  background: rgba(255, 255, 255, 0.045);
-  color: rgba(244, 244, 242, 0.86);
-  font: inherit;
-  font-size: 0.8rem;
-  line-height: 1.4;
-  padding: 9px 10px;
-}
-
-.rich-session-supervisor-composer textarea:focus {
-  outline: 2px solid rgba(142, 210, 185, 0.26);
-  outline-offset: 1px;
-}
-
-.rich-session-supervisor-composer-actions {
-  display: flex;
-  justify-content: flex-end;
-  gap: 8px;
-}
-
-.rich-session-supervisor-composer-actions button {
-  min-height: 28px;
-  border: 1px solid rgba(255, 255, 255, 0.09);
-  border-radius: 8px;
-  background: rgba(255, 255, 255, 0.045);
-  color: rgba(244, 244, 242, 0.74);
-  cursor: pointer;
-  font-family: "IBM Plex Mono", monospace;
-  font-size: 0.7rem;
-  padding: 0 10px;
-}
-
-.rich-session-supervisor-composer-actions button[data-chat-autopilot-supervisor-submit="directive"] {
-  border-color: rgba(142, 210, 185, 0.22);
-  background: rgba(142, 210, 185, 0.08);
-  color: rgba(224, 248, 237, 0.86);
-}
 
 /* Sticky plan / todo panel — sits between the chat feed and the composer
    so the agent's CURRENT plan stays visible while the chat scrolls.
@@ -16059,15 +15598,6 @@ body.is-reordering-file-tabs {
   background: linear-gradient(180deg, rgba(123, 195, 255, 0.1), rgba(123, 195, 255, 0.04));
 }
 
-.rich-session-queue-item.is-supervisor {
-  border-color: rgba(93, 220, 190, 0.42);
-  background: linear-gradient(180deg, rgba(93, 220, 190, 0.1), rgba(123, 195, 255, 0.03));
-}
-
-.rich-session-queue-item.is-supervisor .rich-session-queue-icon,
-.rich-session-queue-item.is-supervisor .rich-session-queue-meta {
-  color: rgba(119, 235, 206, 0.84);
-}
 
 .rich-session-queue-icon {
   color: rgba(123, 195, 255, 0.92);
@@ -17275,50 +16805,234 @@ details.rich-session-compact-output[open] .rich-session-compact-output-toggle {
   font-size: 0.75rem;
 }
 
-.rich-session-image-strip-tiles {
+.rich-session-image-strip-rows {
   display: flex;
-  flex-wrap: wrap;
-  gap: 10px;
+  flex-direction: column;
+  gap: 14px;
 }
 
-.rich-session-image-tile {
-  display: grid;
+/* Card layout: the image is the primary content (large), full path is
+ * a tiny monospace caption underneath. Click → lightbox. */
+.rich-session-image-row {
+  display: flex;
+  flex-direction: column;
   gap: 4px;
   text-decoration: none;
-  border-radius: 12px;
-  overflow: hidden;
+  border-radius: 10px;
+  padding: 6px;
   border: 1px solid rgba(255, 255, 255, 0.05);
   background: rgba(8, 9, 11, 0.55);
-  max-width: min(420px, 80%);
-  transition: transform 120ms ease, border-color 120ms ease;
+  transition: border-color 120ms ease, background 120ms ease;
+  max-width: min(640px, 100%);
 }
 
+.rich-session-image-row:hover,
+.rich-session-image-row:focus-visible {
+  border-color: rgba(120, 188, 255, 0.42);
+  background: rgba(8, 9, 11, 0.75);
+  outline: none;
+}
+
+.rich-session-image-thumb {
+  display: block;
+  width: 100%;
+  max-height: 380px;
+  object-fit: contain;
+  border-radius: 6px;
+  background: rgba(0, 0, 0, 0.18);
+  cursor: zoom-in;
+}
+
+.rich-session-image-path {
+  display: block;
+  color: rgba(244, 244, 242, 0.5);
+  font-family: "IBM Plex Mono", monospace;
+  font-size: 0.7rem;
+  line-height: 1.3;
+  word-break: break-all;
+  background: transparent;
+  padding: 2px 4px 0;
+}
+
+/* Fullscreen lightbox: click an inline image to focus on it.
+ * Click backdrop / image / Esc to dismiss; the path caption is
+ * selectable text so the user can copy it. */
+.image-lightbox-backdrop {
+  position: fixed;
+  inset: 0;
+  background: rgba(0, 0, 0, 0.88);
+  z-index: 10000;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 32px;
+  cursor: zoom-out;
+}
+.image-lightbox-figure {
+  margin: 0;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 10px;
+  max-width: 100%;
+  max-height: 100%;
+  cursor: default;
+}
+.image-lightbox-img {
+  max-width: 100%;
+  max-height: calc(100vh - 120px);
+  object-fit: contain;
+  border-radius: 6px;
+  background: rgba(0, 0, 0, 0.4);
+  cursor: zoom-out;
+}
+.image-lightbox-caption {
+  color: rgba(244, 244, 242, 0.7);
+  font-family: "IBM Plex Mono", monospace;
+  font-size: 0.78rem;
+  word-break: break-all;
+  text-align: center;
+  user-select: text;
+  cursor: text;
+  max-width: 80ch;
+}
+.image-lightbox-close {
+  position: fixed;
+  top: 16px;
+  right: 20px;
+  background: transparent;
+  border: 0;
+  color: rgba(244, 244, 242, 0.7);
+  font-size: 2rem;
+  width: 40px;
+  height: 40px;
+  cursor: pointer;
+  border-radius: 8px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 0;
+  z-index: 10001;
+}
+.image-lightbox-close:hover {
+  background: rgba(255, 255, 255, 0.08);
+  color: #fff;
+}
+
+/* Backward-compat: legacy tile classes remain on entries that reference
+ * older render paths. Map them to the new row look so nothing visually
+ * regresses if an old code path renders the strip. */
+.rich-session-image-strip-tiles {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+.rich-session-image-tile {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  text-decoration: none;
+  border-radius: 10px;
+  padding: 4px;
+  border: 1px solid rgba(255, 255, 255, 0.05);
+  background: rgba(8, 9, 11, 0.55);
+}
 .rich-session-image-tile:hover,
 .rich-session-image-tile:focus-visible {
   border-color: rgba(120, 188, 255, 0.42);
   outline: none;
-  transform: translateY(-1px);
 }
-
 .rich-session-image-tile img {
   display: block;
-  width: 100%;
-  max-height: 360px;
-  object-fit: contain;
+  width: 64px;
+  height: 64px;
+  object-fit: cover;
+  border-radius: 6px;
   background: rgba(0, 0, 0, 0.18);
+  flex: 0 0 64px;
 }
-
 .rich-session-image-caption {
-  padding: 6px 10px;
-  color: rgba(244, 244, 242, 0.6);
+  flex: 1 1 auto;
+  min-width: 0;
+  padding: 0;
+  color: rgba(244, 244, 242, 0.78);
   font-family: "IBM Plex Mono", monospace;
-  font-size: 0.74rem;
+  font-size: 0.78rem;
   word-break: break-all;
-  border-top: 1px solid rgba(255, 255, 255, 0.04);
+  border-top: 0;
 }
 
 .rich-session-entry.is-tool .rich-session-image-strip {
   margin-top: 6px;
+}
+
+.rich-session-artifact-strip {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px;
+  margin-top: 10px;
+}
+
+.rich-session-artifact-card {
+  display: grid;
+  grid-template-columns: 34px minmax(0, 1fr);
+  align-items: center;
+  gap: 10px;
+  min-width: min(280px, 100%);
+  max-width: min(420px, 100%);
+  padding: 10px;
+  border: 1px solid rgba(120, 188, 255, 0.2);
+  border-radius: 8px;
+  background: rgba(10, 14, 18, 0.7);
+  color: rgba(244, 244, 242, 0.9);
+  text-decoration: none;
+  transition: border-color 120ms ease, transform 120ms ease, background 120ms ease;
+}
+
+.rich-session-artifact-card:hover,
+.rich-session-artifact-card:focus-visible {
+  border-color: rgba(120, 188, 255, 0.52);
+  background: rgba(16, 23, 30, 0.86);
+  outline: none;
+  transform: translateY(-1px);
+}
+
+.rich-session-artifact-icon {
+  display: grid;
+  place-items: center;
+  width: 34px;
+  height: 34px;
+  border-radius: 8px;
+  background: rgba(120, 188, 255, 0.12);
+  color: rgba(152, 206, 255, 0.95);
+}
+
+.rich-session-artifact-svg {
+  width: 18px;
+  height: 18px;
+}
+
+.rich-session-artifact-body {
+  display: grid;
+  gap: 2px;
+  min-width: 0;
+}
+
+.rich-session-artifact-kind {
+  color: rgba(152, 206, 255, 0.82);
+  font-size: 0.72rem;
+  font-weight: 700;
+  letter-spacing: 0.02em;
+  text-transform: uppercase;
+}
+
+.rich-session-artifact-name {
+  overflow: hidden;
+  color: rgba(244, 244, 242, 0.92);
+  font-family: "IBM Plex Mono", monospace;
+  font-size: 0.82rem;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 /* Browser-use widget — when a tool entry is a vr-browser screenshot,
@@ -18371,61 +18085,6 @@ select:disabled {
     border-radius: 20px;
   }
 
-  .workspace-split.has-agent-canvas,
-  .workspace-split.has-agent-canvas.has-file-preview,
-  .workspace-split.has-file-preview {
-    grid-template-columns: minmax(0, 1fr);
-    grid-template-rows: minmax(220px, 1fr) auto;
-    gap: 10px;
-  }
-
-  .workspace-split.has-agent-canvas.has-file-preview {
-    grid-template-rows: minmax(220px, 1fr) auto minmax(260px, 0.8fr);
-  }
-
-  .workspace-split.has-agent-canvas .workspace-resize-handle {
-    display: none;
-  }
-
-  .workspace-split:not(.is-mobile-canvas-view) .agent-canvas-host {
-    display: none;
-  }
-
-  .workspace-split.is-mobile-canvas-view {
-    grid-template-columns: minmax(0, 1fr);
-    grid-template-rows: minmax(0, 1fr);
-    gap: 0;
-  }
-
-  .workspace-split.is-mobile-canvas-view .terminal-stack,
-  .workspace-split.is-mobile-canvas-view .file-preview-pane,
-  .workspace-split.is-mobile-canvas-view .workspace-resize-handle {
-    display: none;
-  }
-
-  .workspace-split.is-mobile-canvas-view .agent-canvas-host {
-    display: block;
-  }
-
-  .agent-canvas-window,
-  .agent-canvas-window.is-floating {
-    position: static;
-    width: auto;
-    height: min(260px, 32vh);
-    max-height: 260px;
-  }
-
-  .workspace-split.is-mobile-canvas-view .agent-canvas-window,
-  .workspace-split.is-mobile-canvas-view .agent-canvas-window.is-floating {
-    height: 100%;
-    max-height: none;
-  }
-
-  .agent-canvas-window.is-floating {
-    box-shadow: none;
-  }
-
-  .icon-button#view-agent-canvas.is-active {
     background: rgba(242, 138, 104, 0.22);
     border-color: rgba(242, 138, 104, 0.55);
     color: #ffd9c8;
@@ -19623,14 +19282,6 @@ select:disabled {
     flex: 1 1 100%;
   }
 
-  .rich-session-supervisor-drawer {
-    top: 10px;
-    left: max(10px, calc(var(--safe-left) + 8px));
-    right: max(10px, calc(var(--safe-right) + 8px));
-    bottom: 92px;
-    width: auto;
-    border-radius: 10px;
-  }
 
   .rich-session-plan-panel {
     padding: 10px 12px;
@@ -19766,4 +19417,346 @@ select:disabled {
     padding-bottom: 4px;
     gap: 10px;
   }
+}
+
+/* ============================================================
+ * Claude OAuth sign-in modal — paste-back flow.
+ * Triggered when the user clicks Sign in on an authentication_failed
+ * status pill (or types /login). See src/client/main.js
+ * openClaudeOAuthSignInModal() for the JS and src/claude-oauth-flow.js
+ * for the underlying PKCE flow.
+ * ============================================================ */
+.claude-oauth-modal-backdrop {
+  position: fixed;
+  inset: 0;
+  background: rgba(8, 10, 18, 0.72);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  z-index: 9000;
+  backdrop-filter: blur(4px);
+}
+.claude-oauth-modal {
+  background: #14171f;
+  color: #e7e9ee;
+  border: 1px solid rgba(255, 255, 255, 0.08);
+  border-radius: 14px;
+  padding: 28px 28px 20px;
+  width: min(560px, calc(100vw - 32px));
+  max-height: calc(100vh - 64px);
+  overflow-y: auto;
+  box-shadow: 0 24px 64px rgba(0, 0, 0, 0.5);
+  position: relative;
+  font-size: 0.92rem;
+  line-height: 1.5;
+}
+.claude-oauth-modal h2 {
+  margin: 0 0 18px;
+  font-size: 1.18rem;
+  font-weight: 600;
+  letter-spacing: -0.01em;
+}
+.claude-oauth-modal-close {
+  position: absolute;
+  top: 10px;
+  right: 12px;
+  background: transparent;
+  border: 0;
+  color: rgba(231, 233, 238, 0.6);
+  font-size: 1.6rem;
+  width: 32px;
+  height: 32px;
+  cursor: pointer;
+  border-radius: 8px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 0;
+}
+.claude-oauth-modal-close:hover {
+  background: rgba(255, 255, 255, 0.06);
+  color: #fff;
+}
+.claude-oauth-modal-step {
+  margin: 14px 0 8px;
+  display: flex;
+  gap: 10px;
+  align-items: flex-start;
+  color: rgba(231, 233, 238, 0.86);
+}
+.claude-oauth-step-num {
+  flex: 0 0 22px;
+  height: 22px;
+  border-radius: 50%;
+  background: rgba(255, 255, 255, 0.08);
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 0.78rem;
+  font-weight: 600;
+  margin-top: 1px;
+}
+.claude-oauth-modal-url-row {
+  display: flex;
+  gap: 8px;
+  align-items: stretch;
+  margin: 4px 0 6px;
+}
+.claude-oauth-modal-url {
+  flex: 1;
+  min-width: 0;
+  padding: 10px 12px;
+  background: rgba(255, 255, 255, 0.04);
+  border: 1px solid rgba(255, 255, 255, 0.06);
+  border-radius: 8px;
+  color: #b8d4ff;
+  text-decoration: none;
+  font-family: ui-monospace, "SF Mono", Menlo, Consolas, monospace;
+  font-size: 0.78rem;
+  word-break: break-all;
+  white-space: pre-wrap;
+}
+.claude-oauth-modal-url:hover {
+  text-decoration: underline;
+}
+.claude-oauth-modal-copy {
+  background: rgba(255, 255, 255, 0.06);
+  color: #e7e9ee;
+  border: 1px solid rgba(255, 255, 255, 0.08);
+  border-radius: 8px;
+  padding: 0 12px;
+  font-size: 0.82rem;
+  cursor: pointer;
+}
+.claude-oauth-modal-copy:hover:not([disabled]) {
+  background: rgba(255, 255, 255, 0.1);
+}
+.claude-oauth-modal-copy[disabled] {
+  opacity: 0.45;
+  cursor: not-allowed;
+}
+.claude-oauth-modal-input {
+  width: 100%;
+  background: rgba(255, 255, 255, 0.04);
+  border: 1px solid rgba(255, 255, 255, 0.08);
+  border-radius: 8px;
+  padding: 10px 12px;
+  color: #e7e9ee;
+  font-family: ui-monospace, "SF Mono", Menlo, Consolas, monospace;
+  font-size: 0.85rem;
+  resize: vertical;
+  min-height: 64px;
+  margin-top: 4px;
+  box-sizing: border-box;
+}
+.claude-oauth-modal-input:focus {
+  outline: 2px solid rgba(184, 212, 255, 0.5);
+  outline-offset: -1px;
+}
+.claude-oauth-modal-status {
+  margin: 8px 0 16px;
+  font-size: 0.84rem;
+  min-height: 18px;
+  color: rgba(231, 233, 238, 0.7);
+}
+.claude-oauth-modal-status[data-kind="error"] {
+  color: #ff8e8e;
+}
+.claude-oauth-modal-status[data-kind="success"] {
+  color: #95e3a8;
+}
+.claude-oauth-modal-actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 8px;
+}
+.claude-oauth-modal-cancel {
+  background: transparent;
+  color: rgba(231, 233, 238, 0.7);
+  border: 1px solid rgba(255, 255, 255, 0.08);
+  border-radius: 8px;
+  padding: 8px 14px;
+  cursor: pointer;
+  font-size: 0.86rem;
+}
+.claude-oauth-modal-cancel:hover {
+  background: rgba(255, 255, 255, 0.04);
+  color: #e7e9ee;
+}
+.claude-oauth-modal-submit.is-success {
+  background: #2d6f3f;
+  border-color: #2d6f3f;
+}
+
+/* ============================================================
+ * Auto-reply: minimal UI.
+ *
+ * - Empty state: a tiny "Auto-reply…" link inside the composer
+ *   footer-meta (left of the Send button area). Zero space above
+ *   the composer.
+ * - Armed state: a one-line pill above the composer showing the
+ *   text + a Stop region. Click anywhere on the pill to re-edit
+ *   in the modal.
+ * - Editing: small modal dialog (matches the OAuth sign-in modal).
+ * ============================================================ */
+.auto-reply-pill {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 4px 8px 4px 10px;
+  margin: 0 0 6px;
+  border-radius: 999px;
+  border: 1px solid rgba(255, 200, 120, 0.5);
+  background: rgba(255, 200, 120, 0.06);
+  color: #ffc878;
+  font-family: inherit;
+  font-size: 0.78rem;
+  cursor: pointer;
+  text-align: left;
+  width: fit-content;
+  max-width: 100%;
+}
+.auto-reply-pill:hover {
+  background: rgba(255, 200, 120, 0.12);
+}
+.auto-reply-pill-kicker {
+  font-family: "IBM Plex Mono", monospace;
+  font-size: 0.68rem;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  color: #ffc878;
+}
+.auto-reply-pill-text {
+  color: rgba(244, 244, 242, 0.85);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  max-width: 60ch;
+  font-family: inherit;
+}
+.auto-reply-pill-stop {
+  border-left: 1px solid rgba(255, 200, 120, 0.4);
+  padding-left: 8px;
+  margin-left: 4px;
+  font-size: 0.7rem;
+  letter-spacing: 0.02em;
+  color: #ffc878;
+}
+.auto-reply-pill-stop:hover {
+  text-decoration: underline;
+}
+.auto-reply-link {
+  background: transparent;
+  border: 0;
+  color: rgba(244, 244, 242, 0.45);
+  font-size: 0.74rem;
+  cursor: pointer;
+  padding: 2px 6px;
+  border-radius: 6px;
+  font-family: inherit;
+}
+.auto-reply-link:hover {
+  color: rgba(244, 244, 242, 0.8);
+  background: rgba(255, 255, 255, 0.04);
+}
+.rich-session-composer-foot-meta {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-right: auto;
+  min-width: 0;
+}
+
+/* Modal for setting/editing the auto-reply. Same backdrop pattern as
+ * the Claude OAuth sign-in modal. */
+.auto-reply-modal-backdrop {
+  position: fixed;
+  inset: 0;
+  background: rgba(8, 10, 18, 0.72);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  z-index: 9000;
+  backdrop-filter: blur(4px);
+}
+.auto-reply-modal {
+  background: #14171f;
+  color: #e7e9ee;
+  border: 1px solid rgba(255, 255, 255, 0.08);
+  border-radius: 14px;
+  padding: 24px 24px 18px;
+  width: min(520px, calc(100vw - 32px));
+  max-height: calc(100vh - 64px);
+  overflow-y: auto;
+  box-shadow: 0 24px 64px rgba(0, 0, 0, 0.5);
+  position: relative;
+  font-size: 0.92rem;
+  line-height: 1.5;
+}
+.auto-reply-modal h2 {
+  margin: 0 0 6px;
+  font-size: 1.04rem;
+  font-weight: 600;
+}
+.auto-reply-modal-close {
+  position: absolute;
+  top: 8px;
+  right: 10px;
+  background: transparent;
+  border: 0;
+  color: rgba(231, 233, 238, 0.6);
+  font-size: 1.6rem;
+  width: 30px;
+  height: 30px;
+  cursor: pointer;
+  border-radius: 6px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 0;
+}
+.auto-reply-modal-close:hover {
+  background: rgba(255, 255, 255, 0.06);
+  color: #fff;
+}
+.auto-reply-modal-hint {
+  margin: 0 0 12px;
+  color: rgba(231, 233, 238, 0.7);
+  font-size: 0.84rem;
+}
+.auto-reply-modal-input {
+  width: 100%;
+  background: rgba(255, 255, 255, 0.04);
+  border: 1px solid rgba(255, 255, 255, 0.08);
+  border-radius: 8px;
+  padding: 8px 10px;
+  color: #e7e9ee;
+  font-family: inherit;
+  font-size: 0.88rem;
+  resize: vertical;
+  min-height: 80px;
+  margin-bottom: 12px;
+  box-sizing: border-box;
+}
+.auto-reply-modal-input:focus {
+  outline: 2px solid rgba(184, 212, 255, 0.5);
+  outline-offset: -1px;
+}
+.auto-reply-modal-actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 8px;
+}
+.auto-reply-modal-cancel {
+  background: transparent;
+  color: rgba(231, 233, 238, 0.7);
+  border: 1px solid rgba(255, 255, 255, 0.08);
+  border-radius: 8px;
+  padding: 6px 12px;
+  cursor: pointer;
+  font-size: 0.82rem;
+}
+.auto-reply-modal-cancel:hover {
+  background: rgba(255, 255, 255, 0.04);
+  color: #e7e9ee;
 }
