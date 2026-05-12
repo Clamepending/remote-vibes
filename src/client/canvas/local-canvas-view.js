@@ -32,6 +32,7 @@ import {
 const VIEW_ROOT_SELECTOR = "[data-swarmlab-canvas-root]";
 const STYLE_ID = "swarmlab-canvas-styles";
 const SNAPSHOT_URL = "/api/node/snapshot?mode=privileged";
+const FLEET_NODES_URL = "/api/fleet/nodes";
 const NARRATIVE_POLL_MS = 4_000;
 const REMOTE_NODES_STORAGE_KEY = "swarmlab.canvas.remoteNodes.v1";
 const REMOTE_NODE_FETCH_TIMEOUT_MS = 4_500;
@@ -717,11 +718,59 @@ async function fetchRemoteNodeRecord(baseUrl, { fetchImpl, signal }) {
   }
 }
 
+function normalizeFleetNodeUrls(payload) {
+  const nodes = Array.isArray(payload?.nodes) ? payload.nodes : [];
+  return nodes
+    .map((node) => normalizeRemoteNodeUrl(node?.baseUrl || node?.url || node?.href))
+    .filter(Boolean);
+}
+
+async function fetchRegistryNodeUrls({ fetchImpl, signal }) {
+  try {
+    const payload = await fetchJson(FLEET_NODES_URL, { fetchImpl, signal });
+    return normalizeFleetNodeUrls(payload);
+  } catch {
+    return [];
+  }
+}
+
+async function registerFleetNodeUrl(url, { fetchImpl, signal, source = "manual" } = {}) {
+  const normalizedUrl = normalizeRemoteNodeUrl(url);
+  if (!normalizedUrl) return null;
+  try {
+    const payload = await fetchJson(FLEET_NODES_URL, {
+      fetchImpl,
+      signal,
+      method: "POST",
+      body: {
+        url: normalizedUrl,
+        source,
+      },
+    });
+    return payload?.node || null;
+  } catch {
+    return null;
+  }
+}
+
+async function promoteRemoteNodeUrls(urls, { fetchImpl, signal, storage, source = "query" } = {}) {
+  const normalizedUrls = [...new Set((urls || []).map(normalizeRemoteNodeUrl).filter(Boolean))];
+  if (!normalizedUrls.length) return [];
+  writeRemoteNodeUrls(storage, [...readRemoteNodeUrls(storage), ...normalizedUrls]);
+  await Promise.all(normalizedUrls.map((url) => registerFleetNodeUrl(url, { fetchImpl, signal, source })));
+  return normalizedUrls;
+}
+
 async function fetchRemoteNodeRecords({ fetchImpl, signal, storage, currentOrigin }) {
-  const urls = readRemoteNodeUrls(storage)
+  const urls = [
+    ...await fetchRegistryNodeUrls({ fetchImpl, signal }),
+    ...readRemoteNodeUrls(storage),
+  ]
+    .map(normalizeRemoteNodeUrl)
     .filter((url) => url && url !== currentOrigin);
-  if (!urls.length) return [];
-  return Promise.all(urls.map((url) => fetchRemoteNodeRecord(url, { fetchImpl, signal })));
+  const uniqueUrls = [...new Set(urls)];
+  if (!uniqueUrls.length) return [];
+  return Promise.all(uniqueUrls.map((url) => fetchRemoteNodeRecord(url, { fetchImpl, signal })));
 }
 
 function readLayout(storage, key) {
@@ -760,7 +809,9 @@ function writeViewport(storage, key, viewport) {
 function normalizeRemoteNodeUrl(value) {
   const raw = String(value || "").trim();
   if (!raw) return "";
-  const withScheme = /^https?:\/\//i.test(raw) ? raw : `https://${raw}`;
+  const hasExplicitScheme = /^[a-z][a-z0-9+.-]*:/i.test(raw);
+  if (hasExplicitScheme && !/^https?:\/\//i.test(raw)) return "";
+  const withScheme = hasExplicitScheme ? raw : `https://${raw}`;
   try {
     const url = new URL(withScheme);
     if (!/^https?:$/i.test(url.protocol) || !url.hostname) return "";
@@ -791,18 +842,21 @@ function writeRemoteNodeUrls(storage, urls) {
   }
 }
 
-function applyRemoteNodeUrlParams(storage, locationRef) {
+function readRemoteNodeUrlParams(locationRef) {
   if (!locationRef?.search) return [];
   const params = new URLSearchParams(locationRef.search);
-  const requested = [
+  return [
     ...params.getAll("node"),
     ...params.getAll("nodes").flatMap((value) => String(value || "").split(",")),
   ]
     .map(normalizeRemoteNodeUrl)
     .filter(Boolean);
+}
+
+function applyRemoteNodeUrlParams(storage, locationRef) {
+  const requested = readRemoteNodeUrlParams(locationRef);
   if (!requested.length) return readRemoteNodeUrls(storage);
-  const merged = [...readRemoteNodeUrls(storage), ...requested];
-  writeRemoteNodeUrls(storage, merged);
+  writeRemoteNodeUrls(storage, [...readRemoteNodeUrls(storage), ...requested]);
   return readRemoteNodeUrls(storage);
 }
 
@@ -1556,10 +1610,19 @@ function bindCanvasActions(root, options) {
 }
 
 async function loadCanvas(root, options) {
-  const { abortController, fetchImpl, storage, currentOrigin } = options;
+  const { abortController, fetchImpl, storage, currentOrigin, pendingParamNodeUrls = [] } = options;
   clearAgentNarrativePoll(root);
   root.innerHTML = renderCanvasShell();
   try {
+    if (pendingParamNodeUrls.length) {
+      await promoteRemoteNodeUrls(pendingParamNodeUrls, {
+        fetchImpl,
+        signal: abortController.signal,
+        storage,
+        source: "query",
+      });
+      pendingParamNodeUrls.splice(0);
+    }
     const [payload, remoteRecords] = await Promise.all([
       fetchJson(SNAPSHOT_URL, {
         fetchImpl,
@@ -1609,6 +1672,7 @@ export function mountSwarmlabCanvasView({
   injectCanvasStyles(documentRef);
   const windowRef = documentRef.defaultView || globalThis.window;
   const locationRef = windowRef?.location || globalThis.location;
+  const pendingParamNodeUrls = readRemoteNodeUrlParams(locationRef);
   applyRemoteNodeUrlParams(storage, locationRef);
   activeController?.abort();
   let currentController = new AbortController();
@@ -1620,6 +1684,7 @@ export function mountSwarmlabCanvasView({
     storage,
     onOpenSession,
     currentOrigin: locationRef?.origin || "",
+    pendingParamNodeUrls,
   };
 
   const refresh = () => {
@@ -1641,7 +1706,7 @@ export function mountSwarmlabCanvasView({
   });
 
   documentRef.querySelectorAll("[data-swarmlab-canvas-add-node]").forEach((button) => {
-    button.addEventListener("click", (event) => {
+    button.addEventListener("click", async (event) => {
       event.preventDefault();
       const entered = windowRef?.prompt?.("Paste a Swarmlab machine URL, for example https://cthulhu1.tailnet.ts.net") || "";
       const url = normalizeRemoteNodeUrl(entered);
@@ -1649,6 +1714,10 @@ export function mountSwarmlabCanvasView({
         return;
       }
       writeRemoteNodeUrls(storage, [...readRemoteNodeUrls(storage), url]);
+      await registerFleetNodeUrl(url, {
+        fetchImpl,
+        source: "manual",
+      });
       refresh();
     });
   });

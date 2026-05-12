@@ -426,6 +426,9 @@ test("create-app wires node auth middleware onto dangerous write/control routes"
   const source = await readFile(CREATE_APP_SOURCE, "utf8");
   const requiredRegistrations = [
     [/app\.patch\("\/api\/settings",\s*requireLocalOrNodeToken,/, "PATCH /api/settings"],
+    [/app\.get\("\/api\/fleet\/nodes",\s*requireLocalOrNodeToken,/, "GET /api/fleet/nodes"],
+    [/app\.post\("\/api\/fleet\/nodes",\s*requireLocalOrNodeToken,/, "POST /api/fleet/nodes"],
+    [/app\.delete\("\/api\/fleet\/nodes\/:nodeId",\s*requireLocalOrNodeToken,/, "DELETE /api/fleet/nodes/:nodeId"],
     [/app\.patch\("\/api\/ports\/:port",\s*requireLocalOrNodeToken,/, "PATCH /api/ports/:port"],
     [/app\.post\("\/api\/ports\/:port\/tailscale",\s*requireLocalOrNodeToken,/, "POST /api/ports/:port/tailscale"],
     [/app\.post\("\/api\/files\/file",\s*requireLocalOrNodeToken,/, "POST /api/files/file"],
@@ -450,6 +453,9 @@ test("route security denies unauthenticated non-loopback write/control routes", 
 }, () => {
   const dangerousRoutes = [
     { method: "PATCH", path: "/api/settings" },
+    { method: "GET", path: "/api/fleet/nodes" },
+    { method: "POST", path: "/api/fleet/nodes" },
+    { method: "DELETE", path: "/api/fleet/nodes/node-1" },
     { method: "PATCH", path: "/api/ports/3000" },
     { method: "POST", path: "/api/ports/3000/tailscale" },
     { method: "POST", path: "/api/files/file" },

@@ -77,6 +77,7 @@ import { loadVideoMemoryRuntime } from "./videomemory-service-loader.js";
 import { runVideoMemoryGitPull, startPeriodicVideoMemoryGitPull } from "./videomemory-server-update.js";
 import { WalletService } from "./wallet-service.js";
 import { WikiBackupService } from "./wiki-backup.js";
+import { FleetRegistryStore } from "./node/fleet-registry.js";
 import { NodeIdentityStore } from "./node/identity-store.js";
 import { buildRouteClass, createLocalOrNodeTokenMiddleware, isLocalRequest } from "./node/security.js";
 import { NodeSnapshotService } from "./node/snapshot-service.js";
@@ -1633,8 +1634,10 @@ export async function createVibeResearchApp({
   const gpuOwnershipStore = new GpuOwnershipStore({ stateDir });
   const portAliasStore = new PortAliasStore({ stateDir });
   const nodeIdentityStore = new NodeIdentityStore({ stateDir });
+  const fleetRegistryStore = new FleetRegistryStore({ stateDir });
   await settingsStore.initialize();
   await nodeIdentityStore.initialize();
+  await fleetRegistryStore.initialize();
   const buildingHubAccountTokenStore =
     typeof buildingHubAccountTokenStoreFactory === "function"
       ? buildingHubAccountTokenStoreFactory({ stateDir })
@@ -3641,6 +3644,33 @@ export async function createVibeResearchApp({
     response.json({
       routes: hardenedRouteClasses,
       localRequest: isLocalRequest(request),
+    });
+  });
+
+  app.get("/api/fleet/nodes", requireLocalOrNodeToken, (_request, response) => {
+    response.setHeader("Cache-Control", "no-store");
+    response.json({ nodes: fleetRegistryStore.listNodes() });
+  });
+
+  app.post("/api/fleet/nodes", requireLocalOrNodeToken, async (request, response) => {
+    try {
+      const node = await fleetRegistryStore.addNode({
+        url: request.body?.url || request.body?.baseUrl || request.body?.href,
+        label: request.body?.label || request.body?.name,
+        source: request.body?.source || "manual",
+      });
+      response.status(201).json({ node, nodes: fleetRegistryStore.listNodes() });
+    } catch (error) {
+      response.status(error.statusCode || 400).json({ error: error.message || "Could not add fleet node." });
+    }
+  });
+
+  app.delete("/api/fleet/nodes/:nodeId", requireLocalOrNodeToken, async (request, response) => {
+    const removed = await fleetRegistryStore.removeNode(request.params.nodeId);
+    response.status(removed ? 200 : 404).json({
+      removed,
+      nodes: fleetRegistryStore.listNodes(),
+      ...(removed ? {} : { error: "Fleet node not found." }),
     });
   });
 

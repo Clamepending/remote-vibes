@@ -4,6 +4,9 @@ import net from "node:net";
 const LOOPBACK_HOSTS = new Set(["localhost", "127.0.0.1", "::1"]);
 const CONTROL_ROUTE_PATTERNS = [
   { method: "PATCH", pattern: /^\/api\/settings\/?$/ },
+  { method: "GET", pattern: /^\/api\/fleet\/nodes\/?$/ },
+  { method: "POST", pattern: /^\/api\/fleet\/nodes\/?$/ },
+  { method: "DELETE", pattern: /^\/api\/fleet\/nodes\/[^/]+\/?$/ },
   { method: "POST", pattern: /^\/api\/files\/(?:upload|folder|file)\/?$/ },
   { method: "PATCH", pattern: /^\/api\/files\/?$/ },
   { method: "DELETE", pattern: /^\/api\/files\/?$/ },

@@ -163,3 +163,61 @@ test("/api/node manifest, status, and snapshot routes expose the local node foun
     await started.cleanup();
   }
 });
+
+test("/api/fleet/nodes persists normalized machine URLs without exposing query secrets", async () => {
+  const started = await startNodeRoutesApp();
+  try {
+    const initialResponse = await fetch(`${started.baseUrl}/api/fleet/nodes`);
+    assert.equal(initialResponse.status, 200);
+    assert.deepEqual((await initialResponse.json()).nodes, []);
+
+    const addResponse = await fetch(`${started.baseUrl}/api/fleet/nodes`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        url: "https://gpu-node.example.test/private?token=route-secret",
+        label: "GPU node",
+      }),
+    });
+    assert.equal(addResponse.status, 201);
+    const addBody = await addResponse.json();
+    assert.equal(addBody.node.url, "https://gpu-node.example.test");
+    assert.equal(addBody.node.baseUrl, "https://gpu-node.example.test");
+    assert.equal(addBody.node.label, "GPU node");
+    assert.doesNotMatch(JSON.stringify(addBody), /route-secret|\/private/);
+
+    const duplicateResponse = await fetch(`${started.baseUrl}/api/fleet/nodes`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ url: "https://gpu-node.example.test/other?token=second" }),
+    });
+    assert.equal(duplicateResponse.status, 201);
+    const duplicateBody = await duplicateResponse.json();
+    assert.equal(duplicateBody.nodes.length, 1);
+    assert.equal(duplicateBody.nodes[0].url, "https://gpu-node.example.test");
+    assert.doesNotMatch(JSON.stringify(duplicateBody), /second|\/other/);
+
+    const invalidResponse = await fetch(`${started.baseUrl}/api/fleet/nodes`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ url: "file:///Users/mark/private" }),
+    });
+    assert.equal(invalidResponse.status, 400);
+
+    const persisted = JSON.parse(await readFile(path.join(started.stateDir, "fleet-registry.json"), "utf8"));
+    assert.equal(persisted.nodes.length, 1);
+    assert.equal(persisted.nodes[0].url, "https://gpu-node.example.test");
+
+    const deleteResponse = await fetch(`${started.baseUrl}/api/fleet/nodes/${encodeURIComponent(addBody.node.id)}`, {
+      method: "DELETE",
+    });
+    assert.equal(deleteResponse.status, 200);
+    assert.equal((await deleteResponse.json()).nodes.length, 0);
+
+    const finalResponse = await fetch(`${started.baseUrl}/api/fleet/nodes`);
+    assert.equal(finalResponse.status, 200);
+    assert.deepEqual((await finalResponse.json()).nodes, []);
+  } finally {
+    await started.cleanup();
+  }
+});

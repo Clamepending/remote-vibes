@@ -62,3 +62,41 @@ test("local-or-node-token middleware allows loopback and valid tokens only", () 
   assert.equal(passed, true);
 });
 
+test("fleet registry routes are local-or-node-token protected", () => {
+  const nodeIdentityStore = {
+    getLocalApiToken() {
+      return "secret-node-token";
+    },
+  };
+  const middleware = createLocalOrNodeTokenMiddleware({ nodeIdentityStore });
+
+  const denied = createResponseProbe();
+  middleware(
+    {
+      socket: { remoteAddress: "100.64.0.5" },
+      headers: {},
+      method: "GET",
+      path: "/api/fleet/nodes",
+    },
+    denied,
+    () => {
+      assert.fail("unexpected pass");
+    },
+  );
+  assert.equal(denied.statusCode, 403);
+
+  let passed = false;
+  middleware(
+    {
+      socket: { remoteAddress: "100.64.0.5" },
+      headers: { "x-swarmlab-node-token": "secret-node-token" },
+      method: "GET",
+      path: "/api/fleet/nodes",
+    },
+    createResponseProbe(),
+    () => {
+      passed = true;
+    },
+  );
+  assert.equal(passed, true);
+});
