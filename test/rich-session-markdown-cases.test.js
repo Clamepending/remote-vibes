@@ -96,6 +96,8 @@ async function runRenderCases({ providerId, providerLabel, sessionName, markdown
     browser = await chromium.launch({ executablePath, headless: true });
     const page = await browser.newPage();
     await page.goto(`${baseUrl}/?view=shell`, { waitUntil: "domcontentloaded" });
+    await page.waitForSelector("#toggle-shell-surface-native", { timeout: 10_000 });
+    await page.click("#toggle-shell-surface-native");
     // Different inputs can render on different surfaces (markdown, plain-text
     // pre, status row), so wait for the assistant entry shell itself and let
     // the assertions describe what each case actually expects to find inside.

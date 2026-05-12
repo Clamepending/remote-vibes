@@ -87,6 +87,54 @@ export function createKnowledgeBaseGraphRenderer(container, options = {}) {
   let hoveredKey = "";
   let dragging = null;
   let labelsAlwaysVisibleThreshold = 26;
+  let fitCount = 0;
+  let pulseCount = 0;
+
+  function isWebdriverRuntime() {
+    return typeof navigator !== "undefined" && navigator.webdriver;
+  }
+
+  function syncContainerAttributes() {
+    container.dataset.graphNodeCount = String(graph.order || 0);
+    container.dataset.graphEdgeCount = String(graph.size || 0);
+    container.dataset.graphSelected = selectedKey || "";
+    container.dataset.graphHovered = hoveredKey || "";
+    container.dataset.graphFitCount = String(fitCount);
+    container.dataset.graphPulseCount = String(pulseCount);
+
+    if (!isWebdriverRuntime()) {
+      delete container.dataset.graphConnectedKeys;
+      delete container.dataset.graphDebugNodes;
+      return;
+    }
+
+    container.dataset.graphConnectedKeys = JSON.stringify(Array.from(connectedKeys));
+    const debugNodes = [];
+    graph.forEachNode((key, attrs) => {
+      const x = Number(attrs.x);
+      const y = Number(attrs.y);
+      let viewport = null;
+      if (sigma && Number.isFinite(x) && Number.isFinite(y) && typeof sigma.graphToViewport === "function") {
+        try {
+          viewport = sigma.graphToViewport({ x, y });
+        } catch {
+          viewport = null;
+        }
+      }
+      debugNodes.push({
+        key,
+        title: attrs.title || key,
+        x,
+        y,
+        screenX: Number.isFinite(viewport?.x) ? viewport.x : null,
+        screenY: Number.isFinite(viewport?.y) ? viewport.y : null,
+        connected: connectedKeys.has(key),
+        hovered: key === hoveredKey,
+        selected: key === selectedKey,
+      });
+    });
+    container.dataset.graphDebugNodes = JSON.stringify(debugNodes);
+  }
 
   // d3-force state. d3Nodes is the source of truth for positions; on every
   // tick we mirror x/y into graphology so sigma renders them.
@@ -187,12 +235,14 @@ export function createKnowledgeBaseGraphRenderer(container, options = {}) {
       hoveredKey = node;
       recomputeConnected();
       handlers.onNodeHover(node);
+      syncContainerAttributes();
       sigma.refresh({ skipIndexation: true });
     });
     sigma.on("leaveNode", () => {
       hoveredKey = "";
       recomputeConnected();
       handlers.onNodeHover(null);
+      syncContainerAttributes();
       sigma.refresh({ skipIndexation: true });
     });
 
@@ -296,6 +346,9 @@ export function createKnowledgeBaseGraphRenderer(container, options = {}) {
       }
     }
     sigma?.refresh({ skipIndexation: true });
+    if (isWebdriverRuntime()) {
+      syncContainerAttributes();
+    }
   }
 
   function onSimulationEnd() {
@@ -459,6 +512,7 @@ export function createKnowledgeBaseGraphRenderer(container, options = {}) {
     } else {
       syncSimulationWithGraph();
     }
+    syncContainerAttributes();
   }
 
   function setSelected(path) {
@@ -466,11 +520,14 @@ export function createKnowledgeBaseGraphRenderer(container, options = {}) {
     if (next === selectedKey) return;
     selectedKey = next;
     recomputeConnected();
+    syncContainerAttributes();
     sigma?.refresh({ skipIndexation: true });
   }
 
   function fit() {
     if (!sigma) return;
+    fitCount += 1;
+    syncContainerAttributes();
     sigma.getCamera().animatedReset({ duration: 350 });
   }
 
@@ -483,6 +540,8 @@ export function createKnowledgeBaseGraphRenderer(container, options = {}) {
 
   function pulse() {
     if (graph.order === 0) return;
+    pulseCount += 1;
+    syncContainerAttributes();
     // Re-energize the simulation; nodes glide back into equilibrium from
     // their current positions. Same effect as opening the graph view.
     simulation?.alpha(1).restart();

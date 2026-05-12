@@ -26,6 +26,20 @@ import path from "node:path";
 import { createVibeResearchApp } from "../src/create-app.js";
 import { SleepPreventionService } from "../src/sleep-prevention.js";
 
+async function rmWithRetry(targetPath) {
+  for (let attempt = 0; attempt < 5; attempt += 1) {
+    try {
+      await rm(targetPath, { recursive: true, force: true });
+      return;
+    } catch (error) {
+      if (error?.code !== "ENOTEMPTY" || attempt === 4) {
+        throw error;
+      }
+      await new Promise((resolve) => setTimeout(resolve, 100));
+    }
+  }
+}
+
 async function startApp({ cwd, stateDir }) {
   const app = await createVibeResearchApp({
     host: "127.0.0.1",
@@ -91,7 +105,7 @@ test("POST /api/videomemory/update-server returns 404 when ~/videomemory isn't i
     assert.equal(body.reason, "not-installed");
   } finally {
     await app.close();
-    await rm(tmp, { recursive: true, force: true });
+    await rmWithRetry(tmp);
   }
 });
 
@@ -142,7 +156,7 @@ test("POST /api/videomemory/update-server runs git pull --ff-only against an ins
     assert.equal(body.installPath, checkout);
   } finally {
     await app.close();
-    await rm(tmp, { recursive: true, force: true });
+    await rmWithRetry(tmp);
   }
 });
 
@@ -186,7 +200,7 @@ test("POST /api/videomemory/install-server: validates platform and surfaces a pe
     }
   } finally {
     await app.close();
-    await rm(tmp, { recursive: true, force: true });
+    await rmWithRetry(tmp);
   }
 });
 
@@ -248,6 +262,6 @@ test("install-server endpoint includes installPath + repoUrl in error responses 
     assert.ok(body.repoUrl, "repoUrl must be echoed back so the user can manually clone");
   } finally {
     await app.close();
-    await rm(tmp, { recursive: true, force: true });
+    await rmWithRetry(tmp);
   }
 });

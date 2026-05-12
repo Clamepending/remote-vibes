@@ -64,6 +64,23 @@ async function installFakeModalCli(root) {
   };
 }
 
+async function rmWithRetry(target) {
+  let lastError;
+  for (let attempt = 0; attempt < 6; attempt += 1) {
+    try {
+      await rm(target, { recursive: true, force: true });
+      return;
+    } catch (error) {
+      lastError = error;
+      if (!["ENOTEMPTY", "EBUSY", "EPERM"].includes(error?.code)) {
+        throw error;
+      }
+      await new Promise((resolve) => setTimeout(resolve, 50 * (attempt + 1)));
+    }
+  }
+  throw lastError;
+}
+
 test("clicking Add Modal flips modalEnabled and the 'Add Modal' button disappears", async (t) => {
   const executablePath = await resolveBrowserExecutablePath({ env: process.env });
   if (!executablePath) {
@@ -167,7 +184,7 @@ test("clicking Add Modal flips modalEnabled and the 'Add Modal' button disappear
   } finally {
     if (browser) await browser.close();
     await app.close();
-    await rm(tmp, { recursive: true, force: true });
+    await rmWithRetry(tmp);
   }
 });
 
@@ -204,7 +221,7 @@ test("POST /api/buildings/:id/install and /authenticate are rate-limited (CodeQL
   } finally {
     await app.close();
     restoreModalEnv();
-    await rm(tmp, { recursive: true, force: true });
+    await rmWithRetry(tmp);
   }
 });
 
@@ -238,7 +255,7 @@ test("POST /api/buildings/modal/authenticate exists and runs only the auth phase
   } finally {
     await app.close();
     restoreModalEnv();
-    await rm(tmp, { recursive: true, force: true });
+    await rmWithRetry(tmp);
   }
 });
 
@@ -382,7 +399,7 @@ test("auth-browser-cli buildings: install returns auth-required, then a manual A
   } finally {
     if (browser) await browser.close();
     await app.close();
-    await rm(tmp, { recursive: true, force: true });
+    await rmWithRetry(tmp);
   }
 });
 
@@ -466,7 +483,7 @@ test("once Modal is fully installed and verified, the panel collapses to a green
   } finally {
     if (browser) await browser.close();
     await app.close();
-    await rm(tmp, { recursive: true, force: true });
+    await rmWithRetry(tmp);
   }
 });
 
@@ -513,7 +530,7 @@ test("Zinc settings: zincEnabled + zincApiKey persist; only zincApiKeyConfigured
     assert.equal(stateBody.includes("test-zinc-token-secret-1234"), false, "zincApiKey value must never serialize anywhere in /api/state");
   } finally {
     await app.close();
-    await rm(tmp, { recursive: true, force: true });
+    await rmWithRetry(tmp);
   }
 });
 
@@ -539,6 +556,6 @@ test("settings PATCH for modalEnabled round-trips correctly through /api/state",
     assert.equal(state.settings.modalEnabled, true, "/api/state should include modalEnabled=true after PATCH");
   } finally {
     await app.close();
-    await rm(tmp, { recursive: true, force: true });
+    await rmWithRetry(tmp);
   }
 });

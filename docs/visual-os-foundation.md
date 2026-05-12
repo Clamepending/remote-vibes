@@ -4,6 +4,8 @@ Swarmlab is growing toward a visual operating system for agents: nontechnical pe
 
 The foundation is not the town art by itself. The foundation is the contract between the visual interface, the local control plane, and the agents.
 
+Current direction: the primary visual shell should migrate from Agent Town to a spatial canvas of real work objects. Agent Town can remain as an optional skin, but the default control surface should be a dashboard/canvas of machines, agents, browsers, local apps, approvals, artifacts, repos, and projects. See [Swarmlab Canvas Migration Architecture](./canvas-migration-architecture.md) and [Vibe Account Machine Dashboard](./vibe-account-machine-dashboard.md).
+
 Research-org roadmap: [Agent-Native Swarmlab Roadmap](./agent-native-vibe-research-roadmap.md).
 
 ## Core Objects

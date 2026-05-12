@@ -299,7 +299,7 @@ function recommendationFromReport({ doc, issues, admitReport }) {
   };
 }
 
-function evaluatorStrength({ doc, issues, admitReport }) {
+function evaluatorStrength({ doc, issues, admitReport, artifactEvidence = [] }) {
   if (issues.some((item) => item.severity === "error")) return "blocked";
   if (issues.some((item) => (
     item.code === "artifact_missing" ||
@@ -310,6 +310,7 @@ function evaluatorStrength({ doc, issues, admitReport }) {
   if (admitReport?.candidateQuant && seeds >= 3 && !issues.some((item) => item.severity === "warning")) {
     return "strong";
   }
+  if (artifactEvidence.length && !issues.some((item) => item.severity === "warning")) return "medium";
   if (doc.cycles.length && !issues.some((item) => item.severity === "warning")) return "medium";
   return "weak";
 }
@@ -483,7 +484,7 @@ export async function judgeMove({
 
   const sortedIssues = sortIssues(issues);
   const recommendation = recommendationFromReport({ doc, issues, admitReport });
-  const strength = evaluatorStrength({ doc, issues, admitReport });
+  const strength = evaluatorStrength({ doc, issues, admitReport, artifactEvidence });
   const summary = summarizeJudge({
     slug: inferredSlug,
     doc,

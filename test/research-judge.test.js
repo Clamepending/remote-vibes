@@ -39,6 +39,7 @@ function runCli(args, { cwd, env = {}, timeoutMs = 10_000 } = {}) {
 
 function makeProject(prefix = "vr-judge") {
   const dir = tmp(prefix);
+  const today = new Date().toISOString().slice(0, 10);
   mkdirSync(join(dir, "results"), { recursive: true });
   writeFileSync(join(dir, "README.md"), `# example
 
@@ -71,7 +72,7 @@ _none_
 
 | move | result doc | branch | agent | started |
 |------|-----------|--------|-------|---------|
-| first-move | [first-move](results/first-move.md) | [r/first-move](https://github.com/example/widget/tree/r/first-move) | 0 | 2026-04-30 |
+| first-move | [first-move](results/first-move.md) | [r/first-move](https://github.com/example/widget/tree/r/first-move) | 0 | ${today} |
 
 ## QUEUE
 

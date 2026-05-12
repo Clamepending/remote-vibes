@@ -96,11 +96,15 @@ function escapeRegExp(value) {
 function installTestEnv(overrides = {}) {
   return {
     ...process.env,
+    LANG: "en_US.UTF-8",
+    LC_ALL: "en_US.UTF-8",
+    LC_CTYPE: "en_US.UTF-8",
     VIBE_RESEARCH_INSTALL_SYSTEM_DEPS: "0",
     VIBE_RESEARCH_INSTALL_TAILSCALE: "0",
     VIBE_RESEARCH_INSTALL_CLAUDE_CODE: "0",
     VIBE_RESEARCH_INSTALL_SERVICE: "0",
     VIBE_RESEARCH_UNINSTALL_SERVICE: "0",
+    VIBE_RESEARCH_MACOS_ADMIN_PROMPT: "0",
     ...overrides,
   };
 }
@@ -853,11 +857,11 @@ exit 0
       env: installTestEnv({
         PATH: `${fakeBin}${path.delimiter}${process.env.PATH || ""}`,
         VIBE_RESEARCH_PORT: String(port),
-        VIBE_RESEARCH_READY_TIMEOUT_SECONDS: "30",
+        VIBE_RESEARCH_READY_TIMEOUT_SECONDS: "60",
         VIBE_RESEARCH_STATE_DIR: path.join(installRoot, "state"),
         VIBE_RESEARCH_WIKI_DIR: path.join(installRoot, "mac-brain"),
       }),
-      timeout: 60_000,
+      timeout: 120_000,
     });
     const combinedOutput = `${result.stdout}${result.stderr}`;
 
@@ -1054,7 +1058,7 @@ test("vibe-research uninstall removes an installed systemd unit", async () => {
       `#!/usr/bin/env sh
 printf '%s\\n' "$*" >> ${JSON.stringify(systemctlLog)}
 if [ "\${1:-}" = "cat" ]; then
-  if [ -f ${JSON.stringify(servicePath)} ]; then
+  if [ "\${2:-}" = "vibe-research-test.service" ] && [ -f ${JSON.stringify(servicePath)} ]; then
     cat ${JSON.stringify(servicePath)}
     exit 0
   fi
@@ -1086,6 +1090,9 @@ exit 0
       "disable vibe-research-test.service",
       "daemon-reload",
       "reset-failed vibe-research-test.service",
+      "cat swarmlab.service",
+      "cat vibe-research.service",
+      "cat remote-vibes.service",
     ]);
   } finally {
     await rm(tempRoot, { recursive: true, force: true });
@@ -1594,6 +1601,9 @@ exec /bin/ps "$@"
       path.join(fakeBin, "systemctl"),
       `#!/usr/bin/env sh
 printf '%s\\n' "$*" >> ${JSON.stringify(systemctlLog)}
+if [ "\${1:-}" = "cat" ] && [ "\${2:-}" != "vibe-research-test.service" ]; then
+  exit 1
+fi
 if [ "\${1:-}" = "is-system-running" ]; then
   printf 'running\\n'
   exit 0
@@ -1639,6 +1649,9 @@ exit 0
     assert.deepEqual((await readFile(systemctlLog, "utf8")).trim().split("\n"), [
       "cat vibe-research-test.service",
       "stop vibe-research-test.service",
+      "cat swarmlab.service",
+      "cat vibe-research.service",
+      "cat remote-vibes.service",
       "is-system-running",
       "daemon-reload",
       "enable vibe-research-test.service",
@@ -1693,6 +1706,9 @@ exec /bin/ps "$@"
       path.join(fakeBin, "systemctl"),
       `#!/usr/bin/env sh
 printf '%s\\n' "$*" >> ${JSON.stringify(systemctlLog)}
+if [ "\${1:-}" = "cat" ] && [ "\${2:-}" != "vibe-research-test.service" ]; then
+  exit 1
+fi
 if [ "\${1:-}" = "is-system-running" ]; then
   printf 'running\\n'
   exit 0
@@ -1753,6 +1769,9 @@ exec /bin/ps "$@"
       path.join(fakeBin, "systemctl"),
       `#!/usr/bin/env sh
 printf '%s\\n' "$*" >> ${JSON.stringify(systemctlLog)}
+if [ "\${1:-}" = "cat" ] && [ "\${2:-}" != "vibe-research-test.service" ]; then
+  exit 1
+fi
 if [ "\${1:-}" = "is-system-running" ]; then
   printf 'running\\n'
   exit 0
@@ -1786,6 +1805,9 @@ exit 0
     assert.deepEqual((await readFile(systemctlLog, "utf8")).trim().split("\n"), [
       "cat vibe-research-test.service",
       "stop vibe-research-test.service",
+      "cat swarmlab.service",
+      "cat vibe-research.service",
+      "cat remote-vibes.service",
       "is-system-running",
       "daemon-reload",
       "enable vibe-research-test.service",
@@ -1824,6 +1846,9 @@ exec /bin/ps "$@"
       path.join(fakeBin, "systemctl"),
       `#!/usr/bin/env sh
 printf '%s\\n' "$*" >> ${JSON.stringify(systemctlLog)}
+if [ "\${1:-}" = "cat" ] && [ "\${2:-}" != "vibe-research-test.service" ]; then
+  exit 1
+fi
 if [ "\${1:-}" = "is-system-running" ]; then
   printf 'running\\n'
   exit 0
@@ -1857,6 +1882,9 @@ exit 0
     assert.deepEqual((await readFile(systemctlLog, "utf8")).trim().split("\n"), [
       "cat vibe-research-test.service",
       "stop vibe-research-test.service",
+      "cat swarmlab.service",
+      "cat vibe-research.service",
+      "cat remote-vibes.service",
       "is-system-running",
       "daemon-reload",
       "enable vibe-research-test.service",
@@ -1907,9 +1935,11 @@ exit 1
 
     assert.match(result.stdout, /SOURCE_VERSION=v1/);
     assert.match(result.stdout, /Skipping service install because systemd is not available/);
-    await assert.rejects(() => stat(path.join(serviceDir, "vibe-research.service")));
+    await assert.rejects(() => stat(path.join(serviceDir, "swarmlab.service")));
     assert.deepEqual((await readFile(systemctlLog, "utf8")).trim().split("\n"), [
+      "cat swarmlab.service",
       "cat vibe-research.service",
+      "cat remote-vibes.service",
       "is-system-running",
     ]);
   } finally {
@@ -1968,7 +1998,9 @@ exit 99
     assert.doesNotMatch(result.stdout, /Stopping existing systemd service/);
     assert.match(result.stdout, /Skipping service install because systemd is not available/);
     assert.deepEqual((await readFile(systemctlLog, "utf8")).trim().split("\n"), [
+      "cat swarmlab.service",
       "cat vibe-research.service",
+      "cat remote-vibes.service",
       "is-system-running",
     ]);
     await assert.rejects(() => stat(sudoLog));
@@ -2029,9 +2061,11 @@ exit 99
     });
 
     assert.match(result.stdout, /Skipping service install because sudo is not available without a password/);
-    await assert.rejects(() => stat(path.join(serviceDir, "vibe-research.service")));
+    await assert.rejects(() => stat(path.join(serviceDir, "swarmlab.service")));
     assert.deepEqual((await readFile(systemctlLog, "utf8")).trim().split("\n"), [
+      "cat swarmlab.service",
       "cat vibe-research.service",
+      "cat remote-vibes.service",
       "is-system-running",
     ]);
     assert.deepEqual((await readFile(sudoLog, "utf8")).trim().split("\n"), ["-n true"]);

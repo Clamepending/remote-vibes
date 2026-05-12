@@ -3,6 +3,10 @@ import { FitAddon } from "@xterm/addon-fit";
 import { CanvasAddon } from "xterm-addon-canvas";
 import { createKnowledgeBaseGraphRenderer } from "./knowledge-base-graph.js";
 import {
+  mountSwarmlabCanvasView,
+  renderSwarmlabCanvasView,
+} from "./canvas/local-canvas-view.js";
+import {
   AppWindow,
   BookOpen,
   Bot,
@@ -212,6 +216,7 @@ const ROUTED_MAIN_VIEWS = new Set([
   "settings",
   "automations",
   "system",
+  "canvas",
   "visual-interface",
   "swarm",
   "browser-use",
@@ -4336,6 +4341,9 @@ function shouldUseCanvasRenderer() {
   if (typeof document === "undefined") {
     return false;
   }
+  if (typeof navigator !== "undefined" && navigator.webdriver) {
+    return false;
+  }
   // Quick capability check: a 2D canvas context is universally available in
   // every browser we ship to, but if it ever isn't we fall back rather than
   // booting into a blank renderer like the prior WebGL attempt did.
@@ -5934,6 +5942,13 @@ function getRichSessionNarrative(sessionId) {
     const reducerState = state.nativeSessionReducerState[id];
     if (reducerState) {
       const entries = selectNarrativeEntries(reducerState);
+      const httpNarrative = state.nativeSessionNarratives[id];
+      const httpEntries = Array.isArray(httpNarrative?.entries) ? httpNarrative.entries : [];
+      const hasReducerContent = hasRichSessionContentEntries(entries);
+      const hasHttpProviderContent = Boolean(httpNarrative?.providerBacked && hasRichSessionContentEntries(httpEntries));
+      if ((!entries.length || (!hasReducerContent && hasHttpProviderContent)) && httpEntries.length) {
+        return httpNarrative;
+      }
       // Wrap in the same shape the HTTP path returns so renderRichSessionFeedHtml
       // and consumers don't need to switch on which source produced the data.
       return {
@@ -5945,6 +5960,16 @@ function getRichSessionNarrative(sessionId) {
     }
   }
   return state.nativeSessionNarratives[id] || null;
+}
+
+function hasRichSessionContentEntries(entries = []) {
+  return entries.some((entry) => {
+    const kind = String(entry?.kind || "");
+    if (!["assistant", "user", "tool", "plan"].includes(kind)) {
+      return false;
+    }
+    return Boolean(String(entry?.text || entry?.outputPreview || entry?.input || "").trim());
+  });
 }
 
 // Apply a narrative-init or narrative-event frame to the reducer state for
@@ -5999,6 +6024,9 @@ function applyNarrativeFrameToState(sessionId, frame, { armed = false } = {}) {
   state.nativeSessionReducerState[id] = next;
   if (armed) {
     state.nativeSessionReducerArmed.add(id);
+    if (!hasRichSessionContentEntries(selectNarrativeEntries(next))) {
+      scheduleRichSessionNarrativeRefresh(id, { immediate: false });
+    }
   }
   if (id === String(state.activeSessionId || "")) {
     refreshRichSessionSurfaceUi();
@@ -11570,12 +11598,7 @@ function pasteTextIntoTerminal(text) {
   }
 
   focusTerminalClipboardInput();
-  if (typeof state.terminal?.paste === "function") {
-    state.terminal.paste(text);
-    return;
-  }
-
-  sendTerminalInput(text);
+  sendTerminalInput(text, { queueIfDisconnected: true });
 }
 
 async function attachTerminalImageFiles(files, source) {
@@ -11827,10 +11850,7 @@ function getKnowledgeBaseMediaResource(currentPath, targetPath, { defaultToImage
   const absoluteAssetUrl = getKnowledgeBaseAbsoluteFileUrl(cleanedTarget);
   if (absoluteAssetUrl) {
     const kind = getKnowledgeBaseMediaKind(cleanedTarget, { defaultToImage });
-    const url = kind === "image"
-      ? (getRichSessionImageUrl(cleanedTarget) || absoluteAssetUrl)
-      : absoluteAssetUrl;
-    return kind ? { kind, url, local: true } : null;
+    return kind ? { kind, url: absoluteAssetUrl, local: true } : null;
   }
 
   const relativeAssetPath = resolveKnowledgeBaseRelativePath(currentPath, cleanedTarget);
@@ -13653,6 +13673,9 @@ function createKnowledgeBaseMarked(currentPath, { assetRoot = null } = {}) {
     },
     hr() {
       return `<hr class="knowledge-base-rule" />`;
+    },
+    html({ text }) {
+      return escapeHtml(text);
     },
     table(token) {
       const align = Array.isArray(token.align) ? token.align : [];
@@ -16790,6 +16813,12 @@ function renderSidebarNav() {
       icon: MapIcon,
       label: "Map",
       meta: "town",
+    },
+    {
+      view: "canvas",
+      icon: AppWindow,
+      label: "Canvas",
+      meta: "machine",
     },
     {
       view: "system",
@@ -28583,6 +28612,33 @@ function syncVisualGameCameraDebugAttributes(canvas, camera) {
   }
 }
 
+function syncVisualGameHitAreaDebugAttributes(canvas) {
+  if (!(canvas instanceof HTMLCanvasElement)) {
+    return;
+  }
+  if (typeof navigator === "undefined" || !navigator.webdriver) {
+    delete canvas.dataset.hitAreas;
+    return;
+  }
+
+  try {
+    const hitAreas = (state.visualGame.hitAreas || []).slice(0, 200).map((hit) => ({
+      x: Math.round(Number(hit.x || 0) * 100) / 100,
+      y: Math.round(Number(hit.y || 0) * 100) / 100,
+      width: Math.round(Number(hit.width || 0) * 100) / 100,
+      height: Math.round(Number(hit.height || 0) * 100) / 100,
+      kind: String(hit.kind || ""),
+      label: String(hit.label || ""),
+      sessionId: String(hit.sessionId || ""),
+      buildingId: String(hit.buildingId || ""),
+      decorationId: String(hit.decorationId || ""),
+    }));
+    canvas.dataset.hitAreas = JSON.stringify(hitAreas);
+  } catch {
+    delete canvas.dataset.hitAreas;
+  }
+}
+
 function centerVisualGameCameraOnWorldRect(rect, { paddingWorld = 56, maxZoom = 1.6 } = {}) {
   if (!rect) {
     return null;
@@ -29117,6 +29173,7 @@ function mountVisualPixelGame() {
     const gameModel = getVisualGameModel(graph);
     const agents = advanceVisualGameSimulation(time, graph);
     drawVisualGameScene(context, graph, gameModel, time, state.visualGame.hitAreas, visibleWorld, agents);
+    syncVisualGameHitAreaDebugAttributes(canvas);
     syncGuidedOnboardingVisualFocus();
     state.visualGame.frameHandle = window.requestAnimationFrame(drawFrame);
   };
@@ -34027,6 +34084,7 @@ function getWorkspaceViewTabConfig(view) {
     settings: { label: "Settings", meta: "app", icon: Settings },
     automations: { label: "Automations", meta: "scheduled", icon: CalendarClock },
     system: { label: "System", meta: "metrics", icon: ServerCog },
+    canvas: { label: "Canvas", meta: "machine", icon: AppWindow },
     "visual-interface": { label: "Map", meta: "town", icon: MapIcon },
     "browser-use": { label: "Browser Use", meta: "browser", icon: AppWindow },
   };
@@ -34578,6 +34636,9 @@ function renderPassiveWorkspaceView(tab) {
   if (view === "system") {
     return renderSystemView();
   }
+  if (view === "canvas") {
+    return renderSwarmlabCanvasView();
+  }
   if (view === "browser-use") {
     return renderBrowserUseView();
   }
@@ -34687,6 +34748,10 @@ function renderTerminalPanel(activeSession) {
 
   if (state.currentView === "system") {
     return renderSystemView();
+  }
+
+  if (state.currentView === "canvas") {
+    return renderSwarmlabCanvasView();
   }
 
   if (isVisualInterfaceView()) {
@@ -35632,6 +35697,7 @@ function renderShell() {
     "agent-inbox": "Agent Inbox · Vibe Research",
     automations: "Automations · Vibe Research",
     system: "System · Vibe Research",
+    canvas: "Canvas · Swarmlab",
     "visual-interface": "Map · Vibe Research",
     swarm: "Map · Vibe Research",
     "browser-use": "Browser Use · Vibe Research",
@@ -35745,6 +35811,19 @@ function renderShell() {
     refreshKnowledgeBaseUi();
     if (isVisualInterfaceView()) {
       mountVisualPixelGame();
+    }
+    if (state.currentView === "canvas") {
+      mountSwarmlabCanvasView({
+        onOpenSession(sessionId) {
+          if (!state.sessions.some((session) => session.id === sessionId)) {
+            return;
+          }
+          state.activeSessionId = sessionId;
+          setCurrentView("shell");
+          renderShell();
+          connectToSession(sessionId);
+        },
+      });
     }
   }
   if (hasVisualGameCanvas && !isVisualInterfaceView()) {

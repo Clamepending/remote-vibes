@@ -76,6 +76,9 @@ import { loadVideoMemoryRuntime } from "./videomemory-service-loader.js";
 import { runVideoMemoryGitPull, startPeriodicVideoMemoryGitPull } from "./videomemory-server-update.js";
 import { WalletService } from "./wallet-service.js";
 import { WikiBackupService } from "./wiki-backup.js";
+import { NodeIdentityStore } from "./node/identity-store.js";
+import { buildRouteClass, createLocalOrNodeTokenMiddleware, isLocalRequest } from "./node/security.js";
+import { NodeSnapshotService } from "./node/snapshot-service.js";
 import { detectProviders, getDefaultProviderId } from "./providers.js";
 import { listKnowledgeBase, readKnowledgeBaseNote } from "./knowledge-base.js";
 import { listProjects as listResearchProjects, getProjectDetail as getResearchProjectDetail } from "./research-api.js";
@@ -1616,7 +1619,9 @@ export async function createVibeResearchApp({
   const systemMetricsHistoryStore = new SystemMetricsHistoryStore({ stateDir });
   const gpuOwnershipStore = new GpuOwnershipStore({ stateDir });
   const portAliasStore = new PortAliasStore({ stateDir });
+  const nodeIdentityStore = new NodeIdentityStore({ stateDir });
   await settingsStore.initialize();
+  await nodeIdentityStore.initialize();
   const buildingHubAccountTokenStore =
     typeof buildingHubAccountTokenStoreFactory === "function"
       ? buildingHubAccountTokenStoreFactory({ stateDir })
@@ -1661,6 +1666,7 @@ export async function createVibeResearchApp({
   await mkdir(systemRootPath, { recursive: true });
   await systemMetricsHistoryStore.initialize();
   await gpuOwnershipStore.initialize();
+  const requireLocalOrNodeToken = createLocalOrNodeTokenMiddleware({ nodeIdentityStore });
   const walletService =
     typeof walletServiceFactory === "function"
       ? walletServiceFactory(settingsStore.settings, { cwd, stateDir, systemRootPath })
@@ -1853,14 +1859,16 @@ export async function createVibeResearchApp({
   // clobbering the user's checkout. We never auto-restart the launched
   // server (would interrupt running monitors); the new code lands at the
   // next manual restart.
-  const stopVideoMemoryGitPull = startPeriodicVideoMemoryGitPull({
-    installRoot: String(settingsStore.settings.videoMemoryLaunchCwd || path.join(homedir(), "videomemory")).trim(),
-    log: (entry) => {
-      if (entry?.result?.ok === false && entry.result.reason && entry.result.reason !== "not-installed") {
-        console.warn("[vibe-research] videomemory git pull warning:", entry.result.reason);
-      }
-    },
-  });
+  const stopVideoMemoryGitPull = typeof videoMemoryServiceFactory === "function"
+    ? () => {}
+    : startPeriodicVideoMemoryGitPull({
+        installRoot: String(settingsStore.settings.videoMemoryLaunchCwd || path.join(homedir(), "videomemory")).trim(),
+        log: (entry) => {
+          if (entry?.result?.ok === false && entry.result.reason && entry.result.reason !== "not-installed") {
+            console.warn("[vibe-research] videomemory git pull warning:", entry.result.reason);
+          }
+        },
+      });
   await agentCallbackService.initialize();
   await scaffoldRecipeService.initialize();
   await tutorialRegistry.load();
@@ -1975,6 +1983,81 @@ export async function createVibeResearchApp({
 
     return Promise.all(namedPorts.map((entry) => decoratePortForAccess(entry, serveStatus)));
   }
+
+  const hardenedRouteClasses = Object.freeze([
+    buildRouteClass({
+      method: "PATCH",
+      path: "/api/settings",
+      classification: "local-auth",
+      description: "Mutates local node settings and credentials.",
+    }),
+    buildRouteClass({
+      method: "PATCH",
+      path: "/api/ports/:port",
+      classification: "local-auth",
+      description: "Renames local app ports.",
+    }),
+    buildRouteClass({
+      method: "POST",
+      path: "/api/ports/:port/tailscale",
+      classification: "local-auth",
+      description: "Exposes a local-only port through Tailscale Serve.",
+    }),
+    buildRouteClass({
+      method: "ALL",
+      path: "/proxy/:port",
+      classification: "local-auth",
+      description: "Proxies a local app through the Swarmlab node.",
+    }),
+    buildRouteClass({
+      method: "POST",
+      path: "/api/sessions",
+      classification: "local-auth",
+      description: "Starts a local terminal or coding-agent session.",
+    }),
+    buildRouteClass({
+      method: "PUT/PATCH/DELETE",
+      path: "/api/sessions/:sessionId",
+      classification: "local-auth",
+      description: "Renames or deletes a local session.",
+    }),
+    buildRouteClass({
+      method: "POST",
+      path: "/api/sessions/:sessionId/*",
+      classification: "local-auth",
+      description: "Controls or forks local sessions.",
+    }),
+    buildRouteClass({
+      method: "POST",
+      path: "/api/terminate",
+      classification: "local-auth",
+      description: "Stops the local node process.",
+    }),
+    buildRouteClass({
+      method: "POST",
+      path: "/api/relaunch",
+      classification: "local-auth",
+      description: "Restarts the local node process.",
+    }),
+  ]);
+
+  const nodeSnapshotService = new NodeSnapshotService({
+    nodeIdentityStore,
+    metadataProvider: getAppMetadata,
+    providersProvider: () => providers,
+    sessionsProvider: () => sessionManager.listSessions(),
+    browserSessionsProvider: () => browserUseService.listSessions({ includeSnapshot: false }),
+    agentTownStateProvider: () => agentTownStore.getState(),
+    portsProvider: listNamedPorts,
+    systemProvider: () => collectAndRecordSystemMetrics({ staleWhileRevalidate: true }),
+    buildingsProvider: () => [...BUILDING_CATALOG, ...buildingHubService.listBuildings()],
+    projectsProvider: () => sessionManager.listProjectPaths().map((projectPath) => ({
+      id: createHash("sha256").update(projectPath).digest("hex").slice(0, 16),
+      name: path.basename(projectPath),
+      path: projectPath,
+      status: "known",
+    })),
+  });
 
   function getSettingsState() {
     return settingsStore.getState({
@@ -2988,7 +3071,7 @@ export async function createVibeResearchApp({
   // workspace-relative drop endpoint used by drag-and-drop in the file
   // tree; `uploadWorkspaceFile` streams `request` directly into a temp
   // file, enforces a max byte cap, and atomically renames into place.
-  app.post("/api/files/upload", async (request, response) => {
+  app.post("/api/files/upload", requireLocalOrNodeToken, async (request, response) => {
     let streamReleased = false;
     try {
       const root =
@@ -3041,7 +3124,7 @@ export async function createVibeResearchApp({
     }
   });
 
-  app.post("/api/files/folder", async (request, response) => {
+  app.post("/api/files/folder", requireLocalOrNodeToken, async (request, response) => {
     // mkdir helper for nested folder drops. Body is small JSON so it's
     // fine to register this AFTER express.json — but we want the same
     // error/security shape as `/api/files/upload`, so co-locate them.
@@ -3472,6 +3555,58 @@ export async function createVibeResearchApp({
     response.sendFile(masterplanIndexPath);
   });
 
+  app.get("/api/node/manifest", async (request, response) => {
+    try {
+      response.setHeader("Cache-Control", "no-store");
+      response.json({
+        manifest: await nodeSnapshotService.getManifest({
+          privileged: isLocalRequest(request),
+        }),
+      });
+    } catch (error) {
+      response.status(error.statusCode || 500).json({ error: error.message || "Could not read node manifest." });
+    }
+  });
+
+  app.get("/api/node/status", async (_request, response) => {
+    try {
+      response.setHeader("Cache-Control", "no-store");
+      response.json({ status: await nodeSnapshotService.getStatus() });
+    } catch (error) {
+      response.status(error.statusCode || 500).json({ error: error.message || "Could not read node status." });
+    }
+  });
+
+  app.get("/api/node/snapshot", async (request, response) => {
+    try {
+      const mode = nodeSnapshotService.normalizeMode(request.query.mode);
+      if (mode === "privileged") {
+        requireLocalOrNodeToken(request, response, async () => {
+          try {
+            response.setHeader("Cache-Control", "no-store");
+            response.json({ snapshot: await nodeSnapshotService.getSnapshot({ mode }) });
+          } catch (error) {
+            response.status(error.statusCode || 500).json({ error: error.message || "Could not read node snapshot." });
+          }
+        });
+        return;
+      }
+
+      response.setHeader("Cache-Control", "no-store");
+      response.json({ snapshot: await nodeSnapshotService.getSnapshot({ mode: "redacted" }) });
+    } catch (error) {
+      response.status(error.statusCode || 500).json({ error: error.message || "Could not read node snapshot." });
+    }
+  });
+
+  app.get("/api/node/security/routes", (request, response) => {
+    response.setHeader("Cache-Control", "no-store");
+    response.json({
+      routes: hardenedRouteClasses,
+      localRequest: isLocalRequest(request),
+    });
+  });
+
   app.get("/api/state", async (_request, response) => {
     // /api/state is the first thing the browser hits on page load. If anything
     // here throws (network blip refreshing the BuildingHub catalog, transient
@@ -3894,7 +4029,7 @@ export async function createVibeResearchApp({
     });
   });
 
-  app.post("/api/system/gpu-restrictions", async (request, response) => {
+  app.post("/api/system/gpu-restrictions", requireLocalOrNodeToken, async (request, response) => {
     try {
       const body = request.body || {};
       const index = Number(body.index);
@@ -3933,7 +4068,7 @@ export async function createVibeResearchApp({
     }
   });
 
-  app.patch("/api/ports/:port", async (request, response) => {
+  app.patch("/api/ports/:port", requireLocalOrNodeToken, async (request, response) => {
     try {
       const port = normalizePort(request.params.port);
 
@@ -3967,7 +4102,7 @@ export async function createVibeResearchApp({
     }
   });
 
-  app.post("/api/ports/:port/tailscale", async (request, response) => {
+  app.post("/api/ports/:port/tailscale", requireLocalOrNodeToken, async (request, response) => {
     try {
       const port = normalizePort(request.params.port);
 
@@ -4680,7 +4815,7 @@ export async function createVibeResearchApp({
     });
   });
 
-  app.patch("/api/settings", async (request, response) => {
+  app.patch("/api/settings", requireLocalOrNodeToken, async (request, response) => {
     try {
       // Snapshot the previously-installed building set BEFORE the update so
       // we can detect uninstalls and clean up MCP-launch declarations. The
@@ -5343,7 +5478,7 @@ export async function createVibeResearchApp({
     response.json({ telegram: telegramService.getStatus() });
   });
 
-  app.post("/api/telegram/setup", async (request, response) => {
+  app.post("/api/telegram/setup", requireLocalOrNodeToken, async (request, response) => {
     try {
       const botToken = String(request.body?.botToken || request.body?.telegramBotToken || "").trim();
       const enabled = request.body?.enabled ?? request.body?.telegramEnabled;
@@ -5409,7 +5544,7 @@ export async function createVibeResearchApp({
     });
   });
 
-  app.post("/api/wallet/setup", async (request, response) => {
+  app.post("/api/wallet/setup", requireLocalOrNodeToken, async (request, response) => {
     try {
       const stripeSecretKey = String(request.body?.stripeSecretKey || request.body?.walletStripeSecretKey || "").trim();
       const stripeWebhookSecret = String(
@@ -5458,7 +5593,7 @@ export async function createVibeResearchApp({
     }
   });
 
-  app.post("/api/wallet/credits/grant", async (request, response) => {
+  app.post("/api/wallet/credits/grant", requireLocalOrNodeToken, async (request, response) => {
     try {
       const result = await walletService.grantCredits({
         actor: request.body?.actor,
@@ -5521,7 +5656,7 @@ export async function createVibeResearchApp({
     response.json({ twilio: twilioService.getStatus() });
   });
 
-  app.post("/api/twilio/setup", async (request, response) => {
+  app.post("/api/twilio/setup", requireLocalOrNodeToken, async (request, response) => {
     try {
       const accountSid = String(request.body?.accountSid || request.body?.twilioAccountSid || "").trim();
       const authToken = String(request.body?.authToken || request.body?.twilioAuthToken || "").trim();
@@ -5817,7 +5952,7 @@ export async function createVibeResearchApp({
     response.json({ browserUse: browserUseService.getStatus() });
   });
 
-  app.post("/api/browser-use/setup", async (request, response) => {
+  app.post("/api/browser-use/setup", requireLocalOrNodeToken, async (request, response) => {
     try {
       const apiKey = String(request.body?.anthropicApiKey || request.body?.browserUseAnthropicApiKey || "").trim();
       await settingsStore.update({
@@ -5847,7 +5982,7 @@ export async function createVibeResearchApp({
     response.json({ ottoAuth: ottoAuthService.getStatus() });
   });
 
-  app.post("/api/ottoauth/setup", async (request, response) => {
+  app.post("/api/ottoauth/setup", requireLocalOrNodeToken, async (request, response) => {
     try {
       const privateKey = String(request.body?.privateKey || request.body?.ottoAuthPrivateKey || "").trim();
       await settingsStore.update({
@@ -5901,7 +6036,7 @@ export async function createVibeResearchApp({
     }
   });
 
-  app.post("/api/videomemory/setup", async (request, response) => {
+  app.post("/api/videomemory/setup", requireLocalOrNodeToken, async (request, response) => {
     try {
       const rawApiKey =
         request.body?.anthropicApiKey ?? request.body?.videoMemoryAnthropicApiKey;
@@ -5934,7 +6069,7 @@ export async function createVibeResearchApp({
   // user has to clone github.com/Clamepending/videomemory and configure the
   // launch command manually before `Open VideoMemory` can reach 127.0.0.1:5050.
   // We also ensure `uv` is installed because start.sh runs `uv run flask_app/app.py`.
-  app.post("/api/videomemory/install-server", async (request, response) => {
+  app.post("/api/videomemory/install-server", requireLocalOrNodeToken, async (request, response) => {
     const installRoot = String(
       request.body?.installPath || path.join(homedir(), "videomemory"),
     ).trim();
@@ -6116,7 +6251,7 @@ export async function createVibeResearchApp({
   // updates; this endpoint exists so the UI can offer an explicit
   // "update server" button for users who want to apply newer code right
   // now without waiting for the next 24h tick.
-  app.post("/api/videomemory/update-server", async (request, response) => {
+  app.post("/api/videomemory/update-server", requireLocalOrNodeToken, async (request, response) => {
     const installRoot = String(
       request.body?.installPath
         || settingsStore.settings.videoMemoryLaunchCwd
@@ -6137,7 +6272,7 @@ export async function createVibeResearchApp({
     response.json({ monitors: videoMemoryService.listMonitors() });
   });
 
-  app.post("/api/videomemory/monitors", async (request, response) => {
+  app.post("/api/videomemory/monitors", requireLocalOrNodeToken, async (request, response) => {
     try {
       const token = String(
         request.headers["x-vibe-research-videomemory-token"] ||
@@ -6161,7 +6296,7 @@ export async function createVibeResearchApp({
     }
   });
 
-  app.delete("/api/videomemory/monitors/:monitorId", async (request, response) => {
+  app.delete("/api/videomemory/monitors/:monitorId", requireLocalOrNodeToken, async (request, response) => {
     try {
       const token = String(
         request.headers["x-vibe-research-videomemory-token"] ||
@@ -6225,7 +6360,7 @@ export async function createVibeResearchApp({
     response.json({ sessions: browserUseService.listSessions() });
   });
 
-  app.post("/api/browser-use/sessions", async (request, response) => {
+  app.post("/api/browser-use/sessions", requireLocalOrNodeToken, async (request, response) => {
     try {
       const token = String(request.headers["x-vibe-research-browser-use-token"] || request.body?.token || "").trim();
       if (!browserUseService.validateCreateRequest(token)) {
@@ -6261,7 +6396,7 @@ export async function createVibeResearchApp({
     response.json({ session });
   });
 
-  app.delete("/api/browser-use/sessions/:browserUseSessionId", async (request, response) => {
+  app.delete("/api/browser-use/sessions/:browserUseSessionId", requireLocalOrNodeToken, async (request, response) => {
     try {
       const session = await browserUseService.deleteSession(request.params.browserUseSessionId);
       if (!session) {
@@ -6281,7 +6416,7 @@ export async function createVibeResearchApp({
     response.json({ tasks: ottoAuthService.listTasks() });
   });
 
-  app.post("/api/ottoauth/tasks", async (request, response) => {
+  app.post("/api/ottoauth/tasks", requireLocalOrNodeToken, async (request, response) => {
     try {
       const token = String(request.headers["x-vibe-research-ottoauth-token"] || request.body?.token || "").trim();
       if (!ottoAuthService.validateCreateRequest(token)) {
@@ -6337,7 +6472,7 @@ export async function createVibeResearchApp({
     response.json({ task });
   });
 
-  app.post("/api/ottoauth/tasks/:ottoAuthTaskId/refresh", async (request, response) => {
+  app.post("/api/ottoauth/tasks/:ottoAuthTaskId/refresh", requireLocalOrNodeToken, async (request, response) => {
     try {
       const task = await ottoAuthService.refreshTask(request.params.ottoAuthTaskId);
       if (!task) {
@@ -6470,7 +6605,7 @@ export async function createVibeResearchApp({
     }
   });
 
-  app.post("/api/folders", async (request, response) => {
+  app.post("/api/folders", requireLocalOrNodeToken, async (request, response) => {
     try {
       const payload = await createFolderEntry({
         root: typeof request.body?.root === "string" ? request.body.root : cwd,
@@ -6502,7 +6637,7 @@ export async function createVibeResearchApp({
   // Right-click "New File" in the workspace tree. Creates an empty file
   // at <root>/<path>/<name>. Path is the parent directory (relative);
   // name is a single leaf segment (sanitized server-side).
-  app.post("/api/files/file", async (request, response) => {
+  app.post("/api/files/file", requireLocalOrNodeToken, async (request, response) => {
     try {
       const result = await createEmptyWorkspaceFile({
         root: typeof request.body?.root === "string" && request.body.root ? request.body.root : cwd,
@@ -6518,7 +6653,7 @@ export async function createVibeResearchApp({
 
   // Right-click "Rename". Body: { root, path, name } where path is the
   // current relative path of the entry and name is the new leaf segment.
-  app.patch("/api/files", async (request, response) => {
+  app.patch("/api/files", requireLocalOrNodeToken, async (request, response) => {
     try {
       const result = await renameWorkspaceEntry({
         root: typeof request.body?.root === "string" && request.body.root ? request.body.root : cwd,
@@ -6534,7 +6669,7 @@ export async function createVibeResearchApp({
 
   // Right-click "Delete". Body: { root, path }. Directories removed
   // recursively; the client confirmed the action before calling.
-  app.delete("/api/files", async (request, response) => {
+  app.delete("/api/files", requireLocalOrNodeToken, async (request, response) => {
     try {
       const result = await removeWorkspaceEntry({
         root: typeof request.body?.root === "string" && request.body.root ? request.body.root : cwd,
@@ -6622,7 +6757,7 @@ export async function createVibeResearchApp({
     }
   });
 
-  app.put("/api/files/text", async (request, response) => {
+  app.put("/api/files/text", requireLocalOrNodeToken, async (request, response) => {
     try {
       const file = await writeWorkspaceTextFile({
         root: typeof request.body?.root === "string" ? request.body.root : cwd,
@@ -6830,7 +6965,7 @@ export async function createVibeResearchApp({
     }
   });
 
-  app.post("/api/attachments/images", async (request, response) => {
+  app.post("/api/attachments/images", requireLocalOrNodeToken, async (request, response) => {
     try {
       const sessionId = String(request.body?.sessionId || "").trim();
       const session = sessionId ? sessionManager.getSession(sessionId) : null;
@@ -6855,7 +6990,7 @@ export async function createVibeResearchApp({
     }
   });
 
-  app.post("/api/sessions", (request, response) => {
+  app.post("/api/sessions", requireLocalOrNodeToken, (request, response) => {
     try {
       const session = sessionManager.createSession({
         providerId: String(request.body?.providerId || defaultProviderId),
@@ -6920,8 +7055,8 @@ export async function createVibeResearchApp({
     }
   };
 
-  app.put("/api/sessions/:sessionId", handleSessionRename);
-  app.patch("/api/sessions/:sessionId", handleSessionRename);
+  app.put("/api/sessions/:sessionId", requireLocalOrNodeToken, handleSessionRename);
+  app.patch("/api/sessions/:sessionId", requireLocalOrNodeToken, handleSessionRename);
 
   app.get("/api/agent-prompt", async (_request, response) => {
     try {
@@ -6953,7 +7088,7 @@ export async function createVibeResearchApp({
     }
   });
 
-  app.post("/api/sessions/:sessionId/fork", (request, response) => {
+  app.post("/api/sessions/:sessionId/fork", requireLocalOrNodeToken, (request, response) => {
     try {
       const session = sessionManager.forkSession(request.params.sessionId);
 
@@ -6979,7 +7114,7 @@ export async function createVibeResearchApp({
   // through to the agent's tool_result content block. 4096 is well
   // above any reasonable explanation; longer reasoning belongs in the
   // composer as its own message.
-  app.post("/api/sessions/:sessionId/plan-response", (request, response) => {
+  app.post("/api/sessions/:sessionId/plan-response", requireLocalOrNodeToken, (request, response) => {
     const PLAN_PUSHBACK_MAX_LENGTH = 4096;
     try {
       const { approve = true, message = "" } = request.body || {};
@@ -8791,7 +8926,7 @@ export async function createVibeResearchApp({
     response.json({ ok: true, job: serializeResearchAutopilotJob(job) });
   });
 
-  app.post("/api/research/autopilot/jobs/:jobId/stop", async (request, response) => {
+  app.post("/api/research/autopilot/jobs/:jobId/stop", requireLocalOrNodeToken, async (request, response) => {
     const job = researchAutopilotJobs.get(String(request.params.jobId || ""));
     if (!job) {
       response.status(404).json({ error: "research autopilot job not found" });
@@ -8823,7 +8958,7 @@ export async function createVibeResearchApp({
     }
   });
 
-  app.put("/api/sessions/:sessionId/research-autopilot", async (request, response) => {
+  app.put("/api/sessions/:sessionId/research-autopilot", requireLocalOrNodeToken, async (request, response) => {
     try {
       requireChatAutopilotSession(request.params.sessionId);
       const body = request.body && typeof request.body === "object" && !Array.isArray(request.body)
@@ -8852,7 +8987,7 @@ export async function createVibeResearchApp({
     }
   });
 
-  app.post("/api/sessions/:sessionId/research-autopilot/supervisor/chat", async (request, response) => {
+  app.post("/api/sessions/:sessionId/research-autopilot/supervisor/chat", requireLocalOrNodeToken, async (request, response) => {
     try {
       const session = requireChatAutopilotSession(request.params.sessionId);
       const body = request.body && typeof request.body === "object" && !Array.isArray(request.body)
@@ -9001,7 +9136,7 @@ export async function createVibeResearchApp({
     }
   });
 
-  app.post("/api/sessions/:sessionId/research-autopilot/supervisor/tick", async (request, response) => {
+  app.post("/api/sessions/:sessionId/research-autopilot/supervisor/tick", requireLocalOrNodeToken, async (request, response) => {
     try {
       const session = requireChatAutopilotSession(request.params.sessionId);
       const body = request.body && typeof request.body === "object" && !Array.isArray(request.body)
@@ -9126,7 +9261,7 @@ export async function createVibeResearchApp({
     }
   });
 
-  app.post("/api/sessions/:sessionId/research-autopilot/start", async (request, response) => {
+  app.post("/api/sessions/:sessionId/research-autopilot/start", requireLocalOrNodeToken, async (request, response) => {
     try {
       requireChatAutopilotSession(request.params.sessionId);
       const body = request.body && typeof request.body === "object" && !Array.isArray(request.body)
@@ -9149,7 +9284,7 @@ export async function createVibeResearchApp({
     }
   });
 
-  app.post("/api/sessions/:sessionId/research-autopilot/steer", async (request, response) => {
+  app.post("/api/sessions/:sessionId/research-autopilot/steer", requireLocalOrNodeToken, async (request, response) => {
     try {
       requireChatAutopilotSession(request.params.sessionId);
       const body = request.body && typeof request.body === "object" && !Array.isArray(request.body)
@@ -9222,7 +9357,7 @@ export async function createVibeResearchApp({
     }
   });
 
-  app.post("/api/sessions/:sessionId/research-autopilot/stop", async (request, response) => {
+  app.post("/api/sessions/:sessionId/research-autopilot/stop", requireLocalOrNodeToken, async (request, response) => {
     try {
       requireChatAutopilotSession(request.params.sessionId);
       const current = getChatAutopilotAttachment(request.params.sessionId);
@@ -9249,7 +9384,7 @@ export async function createVibeResearchApp({
     }
   });
 
-  app.post("/api/research/autopilot/jobs/:jobId/steer", async (request, response) => {
+  app.post("/api/research/autopilot/jobs/:jobId/steer", requireLocalOrNodeToken, async (request, response) => {
     try {
       const job = researchAutopilotJobs.get(String(request.params.jobId || ""));
       const body = request.body && typeof request.body === "object" && !Array.isArray(request.body)
@@ -9628,7 +9763,7 @@ export async function createVibeResearchApp({
     }
   });
 
-  app.delete("/api/sessions/:sessionId", (request, response) => {
+  app.delete("/api/sessions/:sessionId", requireLocalOrNodeToken, (request, response) => {
     const deleted = sessionManager.deleteSession(request.params.sessionId);
 
     if (!deleted) {
@@ -9655,17 +9790,17 @@ export async function createVibeResearchApp({
     response.once("close", requestOnce);
   }
 
-  app.post("/api/terminate", (_request, response) => {
+  app.post("/api/terminate", requireLocalOrNodeToken, (_request, response) => {
     scheduleTerminateAfterResponse(response, { relaunch: false });
     response.json({ ok: true, shuttingDown: true });
   });
 
-  app.post("/api/relaunch", (_request, response) => {
+  app.post("/api/relaunch", requireLocalOrNodeToken, (_request, response) => {
     scheduleTerminateAfterResponse(response, { relaunch: true });
     response.json({ ok: true, relaunching: true });
   });
 
-  app.use("/proxy/:port", (request, response) => {
+  app.use("/proxy/:port", requireLocalOrNodeToken, (request, response) => {
     const proxyPort = normalizePort(request.params.port);
 
     if (!proxyPort) {

@@ -3609,8 +3609,9 @@ test("BuildingHub is the catalog entry point instead of an installable detail", 
       await loginButton.click();
     }
     await page.locator("#plugin-results").waitFor({ timeout: 10_000 });
-    assert.equal(await page.locator('.sidebar-primary-nav [data-open-main-view="plugins"]').count(), 1);
-    assert.equal(await page.locator('.sidebar-primary-nav [data-open-main-view="system"]').count(), 0);
+    assert.equal(await page.locator('.sidebar-primary-nav [data-open-main-view="plugins"]').count(), 0);
+    assert.equal(await page.locator('.sidebar-primary-nav [data-open-main-view="system"]').count(), 1);
+    assert.equal(await page.locator('.sidebar-primary-nav [data-open-main-view="canvas"]').count(), 1);
     assert.equal(await page.getByRole("button", { name: "Install BuildingHub" }).count(), 0);
     assert.equal(await page.locator("#plugin-results").getByText("Scaffold Recipes", { exact: true }).count(), 0);
     await page.goto(`${baseUrl}/?view=plugins&buildinghubTab=scaffolds`, { waitUntil: "domcontentloaded" });
@@ -3619,7 +3620,7 @@ test("BuildingHub is the catalog entry point instead of an installable detail", 
     await page.getByRole("tab", { name: "Buildings" }).click();
     await page.locator("#plugin-results").getByText("System", { exact: true }).waitFor({ timeout: 10_000 });
     await page.getByRole("button", { name: "Open System building" }).click();
-    await page.getByRole("button", { name: "Open System", exact: true }).waitFor({ timeout: 10_000 });
+    await page.locator(".plugin-ready-panel").getByText("System", { exact: true }).waitFor({ timeout: 10_000 });
     await page.getByRole("button", { name: "Back to BuildingHub", exact: true }).click();
     const communityToggle = page.locator("#buildinghub-community-enabled");
     const advancedButton = page.locator("[data-buildinghub-advanced-toggle]");
@@ -4158,9 +4159,52 @@ test("placed cosmetic buildings open an Agent Town drawer", async (t) => {
     assert.ok(box, "visual game canvas should be visible");
     await page.mouse.click(box.x + x, box.y + y);
   };
+  const getDebugCanvasHoverPoint = async (page, labelText) => {
+    return page.evaluate((targetLabel) => {
+      const canvas = document.querySelector("#visual-game-canvas");
+      if (!(canvas instanceof HTMLCanvasElement)) {
+        return null;
+      }
+      let hitAreas = [];
+      try {
+        hitAreas = JSON.parse(canvas.dataset.hitAreas || "[]");
+      } catch {
+        hitAreas = [];
+      }
+      const hit = hitAreas.find((area) => String(area?.label || "").includes(targetLabel));
+      if (!hit) {
+        return null;
+      }
+      const box = canvas.getBoundingClientRect();
+      const viewport = {
+        width: Math.max(120, box.width / 2),
+        height: Math.max(90, box.height / 2),
+      };
+      const camera = {
+        x: Number(canvas.dataset.cameraX || 0),
+        y: Number(canvas.dataset.cameraY || 0),
+        zoom: Number(canvas.dataset.cameraZoom || 1) || 1,
+      };
+      const worldX = Number(hit.x || 0) + Number(hit.width || 0) / 2;
+      const worldY = Number(hit.y || 0) + Number(hit.height || 0) / 2;
+      return {
+        x: ((worldX - camera.x) * camera.zoom / viewport.width) * box.width,
+        y: ((worldY - camera.y) * camera.zoom / viewport.height) * box.height,
+      };
+    }, labelText);
+  };
   const findCanvasHoverPoint = async (page, labelText) => {
     const box = await page.locator("#visual-game-canvas").boundingBox();
     assert.ok(box, "visual game canvas should be visible");
+
+    for (let attempt = 0; attempt < 20; attempt += 1) {
+      const debugPoint = await getDebugCanvasHoverPoint(page, labelText);
+      if (debugPoint) {
+        await page.mouse.move(box.x + debugPoint.x, box.y + debugPoint.y);
+        return debugPoint;
+      }
+      await page.waitForTimeout(100);
+    }
 
     for (let y = 8; y <= box.height - 8; y += 16) {
       for (let x = 8; x <= box.width - 8; x += 16) {
@@ -4566,7 +4610,7 @@ test("Agent Town builder searches buildings and layouts, then rolls a layout bac
     await page.getByRole("tab", { name: /Functional/ }).click();
     await page.waitForSelector(".agent-town-building-health", { timeout: 10_000 });
     await page.getByRole("searchbox", { name: "Search buildings" }).fill("github");
-    await page.getByText("GitHub").waitFor({ timeout: 10_000 });
+    await page.locator(".agent-town-builder-functional-card").filter({ hasText: "GitHub" }).first().waitFor({ timeout: 10_000 });
     await page.getByRole("tab", { name: /Layouts/ }).click();
     await page.getByRole("searchbox", { name: "Search layouts" }).fill("factory");
     await page.getByText("Factory Cells").waitFor({ timeout: 10_000 });
@@ -5041,7 +5085,14 @@ test("system endpoint reports host storage and utilization metrics", async () =>
     const response = await fetch(`${baseUrl}/api/system`);
     assert.equal(response.status, 200);
     const systemResponse = await response.json();
-    assert.deepEqual(systemResponse, { system: systemPayload });
+    assert.deepEqual(systemResponse.system.storage, systemPayload.storage);
+    assert.deepEqual(systemResponse.system.cpu, systemPayload.cpu);
+    assert.deepEqual(systemResponse.system.memory, systemPayload.memory);
+    assert.deepEqual(systemResponse.system.gpus, systemPayload.gpus);
+    assert.deepEqual(systemResponse.system.accelerators, systemPayload.accelerators);
+    assert.deepEqual(systemResponse.gpuOffLimits, []);
+    assert.deepEqual(systemResponse.gpuManualReservations, []);
+    assert.deepEqual(systemResponse.gpuForeignOccupied, []);
     assert.equal(systemResponse.system.agentUsage.source, "vibe-research-local");
     assert.equal(systemResponse.system.agentUsage.providers[0].id, "codex");
     const historyResponse = await fetch(`${baseUrl}/api/system/history?range=1h`);
@@ -5052,7 +5103,7 @@ test("system endpoint reports host storage and utilization metrics", async () =>
     assert.equal(history.samples[0].checkedAt, checkedAt);
     assert.equal(history.samples[0].memory.usedPercent, 50);
     assert.equal(history.samples[0].storage.primary.usedPercent, 70);
-    assert.equal(calls, 1);
+    assert.ok(calls >= 2, `expected startup history sample and live /api/system collection, saw ${calls}`);
   } finally {
     await app.close();
     await removeTempWorkspace(workspaceDir);
@@ -5753,47 +5804,86 @@ test("library graph highlights linked notes on hover and can pulse physics", asy
 
     browser = await chromium.launch({ executablePath, headless: true });
     const page = await browser.newPage();
+    await page.addInitScript(() => {
+      window.localStorage.setItem("vibe-research-knowledge-base-graph-collapsed-v1", "0");
+    });
     await page.goto(`${baseUrl}/?view=knowledge-base`, { waitUntil: "domcontentloaded" });
-    await page.waitForSelector("#knowledge-base-graph", { timeout: 10_000 });
+    await page.waitForSelector(".knowledge-base-graph-container canvas", { timeout: 10_000 });
     await page.waitForFunction(() => {
-      return Boolean(
-        document.querySelector('[data-kb-graph-node="topic-a.md"]') &&
-          document.querySelector('[data-kb-graph-node="topic-b.md"]'),
+      const container = document.querySelector(".knowledge-base-graph-container");
+      if (!container) return false;
+      const debugNodes = JSON.parse(container.dataset.graphDebugNodes || "[]");
+      return (
+        Number(container.dataset.graphNodeCount || 0) >= 3 &&
+        Number(container.dataset.graphEdgeCount || 0) >= 2 &&
+        debugNodes.some((node) => node.key === "topic-a.md" && Number.isFinite(node.screenX)) &&
+        debugNodes.some((node) => node.key === "topic-b.md" && Number.isFinite(node.screenX))
       );
     }, null, {
       timeout: 10_000,
     });
 
+    const readGraphNode = async (key) =>
+      page.evaluate((nodeKey) => {
+        const container = document.querySelector(".knowledge-base-graph-container");
+        const nodes = JSON.parse(container?.dataset.graphDebugNodes || "[]");
+        return nodes.find((node) => node.key === nodeKey) || null;
+      }, key);
+
+    const getGraphBox = async () => {
+      const box = await page.locator(".knowledge-base-graph-container").boundingBox();
+      assert.ok(box, "knowledge graph canvas should be visible");
+      return box;
+    };
+
+    const moveToGraphNode = async (key) => {
+      const box = await getGraphBox();
+      const node = await readGraphNode(key);
+      assert.ok(node, `${key} node should be projected into the graph canvas`);
+      await page.mouse.move(box.x + node.screenX, box.y + node.screenY);
+      return { box, node };
+    };
+
+    const pulseCountBefore = await page.locator(".knowledge-base-graph-container").evaluate((container) =>
+      Number(container.dataset.graphPulseCount || 0),
+    );
     await page.click("#pulse-knowledge-base-graph");
-    await page.locator('[data-kb-graph-node="topic-a.md"] circle').hover();
+    await page.waitForFunction((previous) => {
+      const container = document.querySelector(".knowledge-base-graph-container");
+      return Number(container?.dataset.graphPulseCount || 0) > previous;
+    }, pulseCountBefore);
+
+    await moveToGraphNode("topic-a.md");
     await page.waitForFunction(() => {
-      return document.querySelector('[data-kb-graph-node="topic-b.md"]')?.classList.contains("is-connected");
+      const container = document.querySelector(".knowledge-base-graph-container");
+      const connectedKeys = JSON.parse(container?.dataset.graphConnectedKeys || "[]");
+      return container?.dataset.graphHovered === "topic-a.md" && connectedKeys.includes("topic-b.md");
     }, null, { timeout: 10_000 });
 
     const graphState = await page.evaluate(() => {
+      const container = document.querySelector(".knowledge-base-graph-container");
+      const connectedKeys = JSON.parse(container?.dataset.graphConnectedKeys || "[]");
       return {
         pulseLabel: document.querySelector("#pulse-knowledge-base-graph")?.getAttribute("aria-label") || "",
-        topicBConnected: document
-          .querySelector('[data-kb-graph-node="topic-b.md"]')
-          ?.classList.contains("is-connected"),
-        connectedEdges: document.querySelectorAll(".knowledge-base-graph-edge.is-connected").length,
+        graphHovered: container?.dataset.graphHovered || "",
+        topicBConnected: connectedKeys.includes("topic-b.md"),
       };
     });
 
     assert.equal(graphState.pulseLabel, "Pulse graph physics");
+    assert.equal(graphState.graphHovered, "topic-a.md");
     assert.equal(graphState.topicBConnected, true);
-    assert.ok(graphState.connectedEdges >= 1);
 
-    await page.locator('[data-kb-graph-node="topic-a.md"] circle').click();
+    await page.locator('[data-kb-note="topic-a.md"]').click();
     await page.waitForFunction(() => {
       return (
         new URL(window.location.href).searchParams.get("note") === "topic-a.md" &&
-        document.querySelector('[data-kb-graph-node="topic-a.md"]')?.classList.contains("is-selected")
+        document.querySelector(".knowledge-base-graph-container")?.dataset.graphSelected === "topic-a.md"
       );
     }, null, { timeout: 10_000 });
 
-    await page.waitForSelector("#knowledge-base-graph", { state: "visible", timeout: 10_000 });
-    const graphBox = await page.locator("#knowledge-base-graph").boundingBox();
+    await page.waitForSelector(".knowledge-base-graph-container canvas", { state: "visible", timeout: 10_000 });
+    const graphBox = await page.locator(".knowledge-base-graph-container").boundingBox();
     assert.ok(graphBox, "knowledge graph should be visible");
     await page.mouse.click(graphBox.x + 8, graphBox.y + 8);
 
@@ -5801,7 +5891,7 @@ test("library graph highlights linked notes on hover and can pulse physics", asy
       return (
         !new URL(window.location.href).searchParams.has("note") &&
         !document.querySelector(".knowledge-base-note-row.is-active") &&
-        !document.querySelector("[data-kb-graph-node].is-selected") &&
+        !document.querySelector(".knowledge-base-graph-container")?.dataset.graphSelected &&
         document.querySelector(".knowledge-base-note-card")?.textContent?.includes("select a note")
       );
     }, null, { timeout: 10_000 });
@@ -5842,121 +5932,67 @@ test("library graph keeps dense replay inside the viewport", async (t) => {
   const { app, baseUrl } = await startApp({ cwd: workspaceDir });
   let browser = null;
 
-  const readGraphClipState = async (page) =>
+  const readGraphCanvasState = async (page) =>
     page.evaluate(() => {
-      const svg = document.querySelector("#knowledge-base-graph");
       const frame = document.querySelector(".knowledge-base-graph-frame");
-      const viewport = document.querySelector("[data-kb-graph-viewport]");
-      const svgBox = svg?.getBoundingClientRect();
+      const container = document.querySelector(".knowledge-base-graph-container");
+      const canvas = container?.querySelector("canvas");
       const frameBox = frame?.getBoundingClientRect();
-      if (!svg || !svgBox || !frameBox) {
+      const containerBox = container?.getBoundingClientRect();
+      const canvasBox = canvas?.getBoundingClientRect();
+      const frameStyle = frame ? window.getComputedStyle(frame) : null;
+
+      if (!frame || !container || !canvas || !frameBox || !containerBox || !canvasBox) {
         return {
-          clippedCircles: -1,
-          clippedCirclesAgainstFrame: -1,
-          clippedVisibleLabelsAgainstFrame: -1,
+          backingHeight: 0,
+          backingWidth: 0,
+          canvasFillsFrame: false,
+          canvasHeight: 0,
+          canvasWidth: 0,
+          containerFillsFrame: false,
+          edgeCount: 0,
+          fitCount: 0,
           graphFrameCornerRadii: {},
-          minCircleFrameGutter: -1,
-          minVisibleLabelFrameGutter: -1,
-          scale: 0,
-          svgExtendsPastFrame: true,
-          svgFrameGaps: {},
-          transform: "",
+          nodeCount: 0,
+          pulseCount: 0,
         };
       }
 
-      const getMinimumFrameGutter = (elements) => {
-        if (!elements.length) {
-          return Infinity;
-        }
-
-        return Math.min(
-          ...elements.map((element) => {
-            const box = element.getBoundingClientRect();
-            return Math.min(
-              box.left - frameBox.left,
-              frameBox.right - box.right,
-              box.top - frameBox.top,
-              frameBox.bottom - box.bottom,
-            );
-          }),
+      const fillsFrame = (box, tolerance = 1) =>
+        (
+          Math.abs(box.left - frameBox.left) <= tolerance &&
+          Math.abs(box.right - frameBox.right) <= tolerance &&
+          Math.abs(box.top - frameBox.top) <= tolerance &&
+          Math.abs(box.bottom - frameBox.bottom) <= tolerance
         );
-      };
-
-      const isOutsideBox = (element, box, tolerance = 1) => {
-        const elementBox = element.getBoundingClientRect();
-        return (
-          elementBox.left < box.left - tolerance ||
-          elementBox.right > box.right + tolerance ||
-          elementBox.top < box.top - tolerance ||
-          elementBox.bottom > box.bottom + tolerance
-        );
-      };
-
-      const circles = Array.from(document.querySelectorAll("[data-kb-graph-node] circle"));
-      const visibleLabels = Array.from(
-        document.querySelectorAll(
-          "[data-kb-graph-node].has-visible-label text, [data-kb-graph-node].is-connected text, [data-kb-graph-node].is-hovered text, [data-kb-graph-node].is-selected text",
-        ),
-      );
-      const clippedCircles = circles.filter((circle) => {
-        const box = circle.getBoundingClientRect();
-        return (
-          box.left < svgBox.left - 1 ||
-          box.right > svgBox.right + 1 ||
-          box.top < svgBox.top - 1 ||
-          box.bottom > svgBox.bottom + 1
-        );
-      }).length;
-      const clippedCirclesAgainstFrame = circles.filter((circle) => isOutsideBox(circle, frameBox)).length;
-      const clippedVisibleLabelsAgainstFrame = visibleLabels.filter((label) => isOutsideBox(label, frameBox)).length;
-      const frameStyle = window.getComputedStyle(frame);
-
-      const transform = viewport?.getAttribute("transform") || "";
-      const scaleMatch = transform.match(/scale\(([0-9.]+)\)/);
 
       return {
-        clippedCircles,
-        clippedCirclesAgainstFrame,
-        clippedVisibleLabelsAgainstFrame,
+        backingHeight: canvas.height || 0,
+        backingWidth: canvas.width || 0,
+        canvasFillsFrame: fillsFrame(canvasBox),
+        canvasHeight: canvasBox.height,
+        canvasWidth: canvasBox.width,
+        containerFillsFrame: fillsFrame(containerBox),
+        edgeCount: Number(container.dataset.graphEdgeCount || 0),
+        fitCount: Number(container.dataset.graphFitCount || 0),
         graphFrameCornerRadii: {
           bottomLeft: frameStyle.borderBottomLeftRadius,
           bottomRight: frameStyle.borderBottomRightRadius,
         },
-        minCircleFrameGutter: getMinimumFrameGutter(circles),
-        minVisibleLabelFrameGutter: getMinimumFrameGutter(visibleLabels),
-        scale: Number.parseFloat(scaleMatch?.[1] || "0"),
-        svgExtendsPastFrame:
-          svgBox.left < frameBox.left - 1 ||
-          svgBox.right > frameBox.right + 1 ||
-          svgBox.top < frameBox.top - 1 ||
-          svgBox.bottom > frameBox.bottom + 1,
-        svgFrameGaps: {
-          bottom: frameBox.bottom - svgBox.bottom,
-          left: svgBox.left - frameBox.left,
-          right: frameBox.right - svgBox.right,
-          top: svgBox.top - frameBox.top,
-        },
-        transform,
+        nodeCount: Number(container.dataset.graphNodeCount || 0),
+        pulseCount: Number(container.dataset.graphPulseCount || 0),
       };
     });
 
   const readGraphRadialState = async (page) =>
     page.evaluate(() => {
-      const svg = document.querySelector("#knowledge-base-graph");
-      const viewBox = svg?.viewBox?.baseVal;
-      const centerX = viewBox ? viewBox.x + viewBox.width / 2 : 460;
-      const centerY = viewBox ? viewBox.y + viewBox.height / 2 : 340;
-      const distances = Array.from(document.querySelectorAll("[data-kb-graph-node]"))
+      const container = document.querySelector(".knowledge-base-graph-container");
+      const nodes = JSON.parse(container?.dataset.graphDebugNodes || "[]");
+      const distances = nodes
         .map((node) => {
-          const transform = node.getAttribute("transform") || "";
-          const match = transform.match(/translate\((-?[0-9.]+)\s+(-?[0-9.]+)\)/);
-          if (!match) {
-            return null;
-          }
-
-          const x = Number.parseFloat(match[1]);
-          const y = Number.parseFloat(match[2]);
-          return Number.isFinite(x) && Number.isFinite(y) ? Math.hypot(x - centerX, y - centerY) : null;
+          const x = Number(node.x);
+          const y = Number(node.y);
+          return Number.isFinite(x) && Number.isFinite(y) ? Math.hypot(x, y) : null;
         })
         .filter((distance) => Number.isFinite(distance));
       const minRadius = distances.length ? Math.min(...distances) : 0;
@@ -5973,41 +6009,15 @@ test("library graph keeps dense replay inside the viewport", async (t) => {
       };
     });
 
-  const assertGraphHasFrameGutter = (graphState, phase) => {
-    assert.equal(graphState.svgExtendsPastFrame, false, `${phase}: graph SVG should fit inside the outer frame`);
-    for (const [side, gap] of Object.entries(graphState.svgFrameGaps || {})) {
-      assert.ok(Math.abs(gap) <= 1, `${phase}: graph SVG should be flush to ${side} frame edge, saw ${gap}px`);
-    }
+  const assertGraphCanvasFillsFrame = (graphState, phase) => {
+    assert.equal(graphState.containerFillsFrame, true, `${phase}: graph container should fill the outer frame`);
+    assert.equal(graphState.canvasFillsFrame, true, `${phase}: sigma canvas should fill the outer frame`);
     assert.equal(graphState.graphFrameCornerRadii?.bottomLeft, "0px", `${phase}: lower graph edge should meet legend`);
     assert.equal(graphState.graphFrameCornerRadii?.bottomRight, "0px", `${phase}: lower graph edge should meet legend`);
-    assert.equal(graphState.clippedCircles, 0, `${phase}: circles should fit inside the SVG viewport`);
-    assert.equal(
-      graphState.clippedCirclesAgainstFrame,
-      0,
-      `${phase}: circles should not be clipped by the outer graph frame`,
-    );
-    assert.equal(
-      graphState.clippedVisibleLabelsAgainstFrame,
-      0,
-      `${phase}: visible labels should not be clipped by the outer graph frame`,
-    );
-    assert.ok(
-      graphState.minCircleFrameGutter >= 8,
-      `${phase}: expected at least 8px circle gutter, saw ${graphState.minCircleFrameGutter}`,
-    );
-    assert.ok(
-      graphState.minVisibleLabelFrameGutter >= 4,
-      `${phase}: expected at least 4px visible-label gutter, saw ${graphState.minVisibleLabelFrameGutter}`,
-    );
-  };
-
-  const sampleReplayScales = async (page) => {
-    const scales = [];
-    for (let index = 0; index < 5; index += 1) {
-      await page.waitForTimeout(120);
-      scales.push((await readGraphClipState(page)).scale);
-    }
-    return scales;
+    assert.ok(graphState.canvasWidth >= 240, `${phase}: graph canvas should have nonzero CSS width`);
+    assert.ok(graphState.canvasHeight >= 180, `${phase}: graph canvas should have nonzero CSS height`);
+    assert.ok(graphState.backingWidth >= graphState.canvasWidth, `${phase}: canvas backing store should not be undersized`);
+    assert.ok(graphState.backingHeight >= graphState.canvasHeight, `${phase}: canvas backing store should not be undersized`);
   };
 
   try {
@@ -6023,25 +6033,32 @@ test("library graph keeps dense replay inside the viewport", async (t) => {
     browser = await chromium.launch({ executablePath, headless: true });
     const page = await browser.newPage();
     await page.setViewportSize({ width: 1024, height: 720 });
+    await page.addInitScript(() => {
+      window.localStorage.setItem("vibe-research-knowledge-base-graph-collapsed-v1", "0");
+    });
     await page.goto(`${baseUrl}/?view=knowledge-base`, { waitUntil: "domcontentloaded" });
-    await page.waitForSelector("#knowledge-base-graph", { timeout: 10_000 });
-    await page.waitForFunction(() => document.querySelectorAll("[data-kb-graph-node]").length >= 49, null, {
+    await page.waitForSelector(".knowledge-base-graph-container canvas", { timeout: 10_000 });
+    await page.waitForFunction(() => {
+      const container = document.querySelector(".knowledge-base-graph-container");
+      const nodes = JSON.parse(container?.dataset.graphDebugNodes || "[]");
+      return Number(container?.dataset.graphNodeCount || 0) >= 49 && nodes.length >= 49;
+    }, null, {
       timeout: 10_000,
     });
 
-    const initialReplayScales = await sampleReplayScales(page);
-    const maxInitialReplayScale = Math.max(...initialReplayScales);
-    assert.ok(
-      maxInitialReplayScale > 0 && maxInitialReplayScale <= 1.16,
-      `dense graph replay should stay at overview scale, saw ${initialReplayScales.join(", ")}`,
-    );
     await page.waitForTimeout(700);
 
-    const initialClipState = await readGraphClipState(page);
-    assertGraphHasFrameGutter(initialClipState, "initial dense replay");
-    assert.match(initialClipState.transform, /scale\([0-9.]+\)/);
+    const initialCanvasState = await readGraphCanvasState(page);
+    assert.ok(initialCanvasState.nodeCount >= 49, `expected dense graph nodes, saw ${initialCanvasState.nodeCount}`);
+    assert.ok(initialCanvasState.edgeCount >= 49, `expected dense graph links, saw ${initialCanvasState.edgeCount}`);
+    assertGraphCanvasFillsFrame(initialCanvasState, "initial dense replay");
 
+    const pulseCountBefore = initialCanvasState.pulseCount;
     await page.click("#pulse-knowledge-base-graph");
+    await page.waitForFunction((previous) => {
+      const container = document.querySelector(".knowledge-base-graph-container");
+      return Number(container?.dataset.graphPulseCount || 0) > previous;
+    }, pulseCountBefore);
     const pulseStartShape = await readGraphRadialState(page);
     assert.ok(pulseStartShape.count >= 49, `expected dense graph nodes, saw ${pulseStartShape.count}`);
     assert.ok(
@@ -6056,24 +6073,22 @@ test("library graph keeps dense replay inside the viewport", async (t) => {
       pulseStartShape.closeToCenterShare < 0.55,
       `pulse replay should not collapse most nodes near center, saw share ${pulseStartShape.closeToCenterShare}`,
     );
-    const pulseReplayScales = await sampleReplayScales(page);
-    const maxPulseReplayScale = Math.max(...pulseReplayScales);
-    assert.ok(
-      maxPulseReplayScale > 0 && maxPulseReplayScale <= 1.16,
-      `pulse replay should stay at overview scale, saw ${pulseReplayScales.join(", ")}`,
-    );
     await page.waitForTimeout(700);
 
-    const replayClipState = await readGraphClipState(page);
-    assertGraphHasFrameGutter(replayClipState, "pulse replay");
+    const replayCanvasState = await readGraphCanvasState(page);
+    assertGraphCanvasFillsFrame(replayCanvasState, "pulse replay");
 
     await page.setViewportSize({ width: 1024, height: 620 });
     await page.waitForTimeout(200);
+    const fitCountBefore = (await readGraphCanvasState(page)).fitCount;
     await page.click("#fit-knowledge-base-graph");
-    await page.waitForTimeout(700);
+    await page.waitForFunction((previous) => {
+      const container = document.querySelector(".knowledge-base-graph-container");
+      return Number(container?.dataset.graphFitCount || 0) > previous;
+    }, fitCountBefore);
 
-    const shortViewportClipState = await readGraphClipState(page);
-    assertGraphHasFrameGutter(shortViewportClipState, "short viewport fit");
+    const shortViewportCanvasState = await readGraphCanvasState(page);
+    assertGraphCanvasFillsFrame(shortViewportCanvasState, "short viewport fit");
   } finally {
     await browser?.close().catch(() => {});
     await app.close();
@@ -6154,9 +6169,52 @@ test("visual graph empty canvas click closes the selected session panel and dele
     assert.ok(box, "visual game canvas should be visible");
     await page.mouse.click(box.x + x, box.y + y);
   };
+  const getDebugCanvasHoverPoint = async (page, labelText) => {
+    return page.evaluate((targetLabel) => {
+      const canvas = document.querySelector("#visual-game-canvas");
+      if (!(canvas instanceof HTMLCanvasElement)) {
+        return null;
+      }
+      let hitAreas = [];
+      try {
+        hitAreas = JSON.parse(canvas.dataset.hitAreas || "[]");
+      } catch {
+        hitAreas = [];
+      }
+      const hit = hitAreas.find((area) => String(area?.label || "").includes(targetLabel));
+      if (!hit) {
+        return null;
+      }
+      const box = canvas.getBoundingClientRect();
+      const viewport = {
+        width: Math.max(120, box.width / 2),
+        height: Math.max(90, box.height / 2),
+      };
+      const camera = {
+        x: Number(canvas.dataset.cameraX || 0),
+        y: Number(canvas.dataset.cameraY || 0),
+        zoom: Number(canvas.dataset.cameraZoom || 1) || 1,
+      };
+      const worldX = Number(hit.x || 0) + Number(hit.width || 0) / 2;
+      const worldY = Number(hit.y || 0) + Number(hit.height || 0) / 2;
+      return {
+        x: ((worldX - camera.x) * camera.zoom / viewport.width) * box.width,
+        y: ((worldY - camera.y) * camera.zoom / viewport.height) * box.height,
+      };
+    }, labelText);
+  };
   const canvasHoverLabelPoint = async (page, labelText) => {
     const box = await page.locator("#visual-game-canvas").boundingBox();
     assert.ok(box, "visual game canvas should be visible");
+
+    for (let attempt = 0; attempt < 20; attempt += 1) {
+      const debugPoint = await getDebugCanvasHoverPoint(page, labelText);
+      if (debugPoint) {
+        await page.mouse.move(box.x + debugPoint.x, box.y + debugPoint.y);
+        return debugPoint;
+      }
+      await page.waitForTimeout(100);
+    }
 
     for (let y = 8; y <= box.height - 8; y += 24) {
       for (let x = 8; x <= box.width - 8; x += 24) {

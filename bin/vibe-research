@@ -285,7 +285,7 @@ collect_orphan_server_pids() {
   # broadly here — `looks_like_vibe_research_server` is the strict filter
   # applied downstream before we kill anything.
   if has_command pgrep; then
-    pgrep -u "$user" -f 'node.*src/server\.js' 2>/dev/null | tr '\n' ' '
+    pgrep -u "$user" -f 'node.*src/server\.js' 2>/dev/null | tr '\n' ' ' || true
     return
   fi
 
@@ -311,7 +311,7 @@ stop_managed_tmux_sessions() {
   prefixes="swarmlab- vibe-research- remote-vibes-"
 
   # `tmux list-sessions` exits non-zero with no server running; that's fine.
-  for session in $(tmux list-sessions -F '#{session_name}' 2>/dev/null); do
+  for session in $(tmux list-sessions -F '#{session_name}' 2>/dev/null || true); do
     for prefix in $prefixes; do
       case "$session" in
         "${prefix}"*)
