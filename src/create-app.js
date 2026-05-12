@@ -9,6 +9,9 @@ import { promisify } from "node:util";
 import express from "express";
 import { rateLimit } from "express-rate-limit";
 import { WebSocket as NodeWebSocket, WebSocketServer } from "ws";
+import { AccountService } from "./account/account-service.js";
+import { AccountTokenStore } from "./account/account-token-store.js";
+import { NodeHeartbeatService } from "./account/node-heartbeat-service.js";
 import {
   buildPortUrlFromBase,
   getTailscaleDnsNameFromStatus,
@@ -151,6 +154,7 @@ const BUILDINGHUB_GITHUB_OAUTH_START_PATH = "/buildinghub/auth/github/start";
 const BUILDINGHUB_GITHUB_OAUTH_CALLBACK_PATH = "/buildinghub/auth/github/callback";
 const BUILDINGHUB_GITHUB_OAUTH_DISCONNECT_PATH = "/buildinghub/auth/github/disconnect";
 const BUILDINGHUB_ACCOUNT_AUTH_COMPLETE_PATH = "/buildinghub/auth/complete";
+const ACCOUNT_AUTH_COMPLETE_PATH = "/account/auth/complete";
 const GITHUB_OAUTH_RESULT_MESSAGE_TYPE = "buildinghub-github-oauth-result";
 const GITHUB_OAUTH_STATE_TTL_MS = 10 * 60 * 1000;
 const GITHUB_OAUTH_SCOPES = Object.freeze(["read:user"]);
@@ -1592,6 +1596,10 @@ export async function createVibeResearchApp({
   twilioServiceFactory = null,
   videoMemoryServiceFactory = null,
   walletServiceFactory = null,
+  accountFetchImpl = globalThis.fetch,
+  accountTokenStoreFactory = null,
+  accountServiceFactory = null,
+  nodeHeartbeatServiceFactory = null,
   buildingHubFetchImpl = globalThis.fetch,
   buildingHubAccountTokenStoreFactory = null,
   buildingHubAccountServiceFactory = null,
@@ -1638,6 +1646,20 @@ export async function createVibeResearchApp({
   await settingsStore.initialize();
   await nodeIdentityStore.initialize();
   await fleetRegistryStore.initialize();
+  const accountTokenStore =
+    typeof accountTokenStoreFactory === "function"
+      ? accountTokenStoreFactory({ stateDir })
+      : new AccountTokenStore({ stateDir });
+  await accountTokenStore.load();
+  const accountService =
+    typeof accountServiceFactory === "function"
+      ? accountServiceFactory({ tokenStore: accountTokenStore, nodeIdentityStore, settingsStore, fetchImpl: accountFetchImpl })
+      : new AccountService({
+          tokenStore: accountTokenStore,
+          nodeIdentityStore,
+          fetchImpl: accountFetchImpl,
+          env: serverEnv,
+        });
   const buildingHubAccountTokenStore =
     typeof buildingHubAccountTokenStoreFactory === "function"
       ? buildingHubAccountTokenStoreFactory({ stateDir })
@@ -2082,9 +2104,27 @@ export async function createVibeResearchApp({
       status: "known",
     })),
   });
+  const nodeHeartbeatService =
+    typeof nodeHeartbeatServiceFactory === "function"
+      ? nodeHeartbeatServiceFactory({
+          accountService,
+          tokenStore: accountTokenStore,
+          nodeIdentityStore,
+          nodeSnapshotService,
+          settingsStore,
+        })
+      : new NodeHeartbeatService({
+          accountService,
+          tokenStore: accountTokenStore,
+          nodeIdentityStore,
+          nodeSnapshotService,
+          settingsProvider: () => settingsStore.settings,
+          connectionHintsProvider: () => buildNodeConnectionHints(),
+        });
 
   function getSettingsState() {
     return settingsStore.getState({
+      accountStatus: nodeHeartbeatService.getStatus(),
       agentMailStatus: agentMailService.getStatus(),
       backupStatus: wikiBackupService.getStatus(),
       buildingHubAccountStatus: buildingHubAccountTokenStore.getStatus(),
@@ -2126,6 +2166,31 @@ export async function createVibeResearchApp({
     }
 
     return { version, commit, branch };
+  }
+
+  function buildNodeConnectionHints() {
+    const hints = [];
+    const pushHint = (kind, url, label = "") => {
+      const normalizedUrl = String(url || "").trim();
+      if (!normalizedUrl) return;
+      hints.push({ kind, url: normalizedUrl, label });
+    };
+    pushHint("local", helperBaseUrl, "Local");
+    pushHint("public", publicBaseUrl, "Public");
+    for (const entry of urls) {
+      const label = String(entry?.label || "").trim();
+      const url = String(entry?.url || "").trim();
+      if (!url) continue;
+      const lowerLabel = label.toLowerCase();
+      const kind = lowerLabel.includes("tailscale") || /\.ts\.net\b/i.test(url)
+        ? "tailscale"
+        : lowerLabel.includes("local") || /127\.0\.0\.1|localhost/i.test(url)
+        ? "local"
+        : "manual";
+      pushHint(kind, url, label);
+    }
+    pushHint("manual", preferredUrl, "Preferred");
+    return hints;
   }
 
   async function resolveGitState(dirPath) {
@@ -2775,6 +2840,11 @@ export async function createVibeResearchApp({
   function getBuildingHubAccountCompletionUrl(callbackPort) {
     const callbackBaseUrl = getBuildingHubAuthCallbackBaseUrl(callbackPort, serverEnv);
     return callbackBaseUrl ? `${callbackBaseUrl}${BUILDINGHUB_ACCOUNT_AUTH_COMPLETE_PATH}` : "";
+  }
+
+  function getAccountCompletionUrl(callbackPort) {
+    const callbackBaseUrl = getBuildingHubAuthCallbackBaseUrl(callbackPort, serverEnv);
+    return callbackBaseUrl ? `${callbackBaseUrl}${ACCOUNT_AUTH_COMPLETE_PATH}` : "";
   }
 
   async function syncBuildingHubPublication(publication) {
@@ -3672,6 +3742,122 @@ export async function createVibeResearchApp({
       nodes: fleetRegistryStore.listNodes(),
       ...(removed ? {} : { error: "Fleet node not found." }),
     });
+  });
+
+  app.get("/api/node/account/status", requireLocalOrNodeToken, (_request, response) => {
+    response.setHeader("Cache-Control", "no-store");
+    response.json({ account: nodeHeartbeatService.getStatus() });
+  });
+
+  app.post("/api/node/account/pair/start", requireLocalOrNodeToken, async (request, response) => {
+    try {
+      const callbackPort = exposedPort || port;
+      const pairing = await accountService.startPairing({
+        settings: settingsStore.settings,
+        redirectUri: request.body?.redirectUri || getAccountCompletionUrl(callbackPort),
+        label: request.body?.label || "Swarmlab",
+        connectionHints: buildNodeConnectionHints(),
+      });
+      response.status(201).json({ pairing, account: nodeHeartbeatService.getStatus() });
+    } catch (error) {
+      response.status(error.statusCode || 400).json({ error: error.message || "Could not start Vibe account pairing." });
+    }
+  });
+
+  app.post("/api/node/account/pair/complete", requireLocalOrNodeToken, async (request, response) => {
+    try {
+      const callbackPort = exposedPort || port;
+      const record = await accountService.completePairing({
+        settings: settingsStore.settings,
+        grant: request.body?.grant || request.body?.vibe_grant,
+        pairingId: request.body?.pairingId || request.body?.pairing_id,
+        redirectUri: request.body?.redirectUri || getAccountCompletionUrl(callbackPort),
+        label: request.body?.label || "Swarmlab",
+        connectionHints: buildNodeConnectionHints(),
+      });
+      nodeHeartbeatService.start({ immediate: false });
+      let heartbeat = null;
+      let heartbeatError = "";
+      try {
+        heartbeat = await nodeHeartbeatService.tick({ reason: "pair-complete", forceRegister: true });
+      } catch (error) {
+        heartbeatError = error?.message || String(error);
+      }
+      response.json({
+        record: {
+          appBaseUrl: record?.appBaseUrl || "",
+          account: record?.account || null,
+          node: record?.node || null,
+        },
+        heartbeat,
+        heartbeatError,
+        account: nodeHeartbeatService.getStatus(),
+      });
+    } catch (error) {
+      response.status(error.statusCode || 400).json({ error: error.message || "Could not complete Vibe account pairing." });
+    }
+  });
+
+  app.post("/api/node/account/heartbeat", requireLocalOrNodeToken, async (request, response) => {
+    try {
+      const heartbeat = await nodeHeartbeatService.tick({
+        reason: request.body?.reason || "manual",
+        forceRegister: Boolean(request.body?.forceRegister),
+      });
+      response.json({ heartbeat, account: nodeHeartbeatService.getStatus() });
+    } catch (error) {
+      response.status(error.statusCode || 400).json({ error: error.message || "Could not send Vibe account heartbeat." });
+    }
+  });
+
+  app.post("/api/node/account/disconnect", requireLocalOrNodeToken, async (_request, response) => {
+    try {
+      nodeHeartbeatService.stop();
+      await accountService.disconnect({ settings: settingsStore.settings });
+      response.json({ ok: true, account: nodeHeartbeatService.getStatus() });
+    } catch (error) {
+      response.status(error.statusCode || 500).json({ error: error.message || "Could not disconnect Vibe account." });
+    }
+  });
+
+  app.get(ACCOUNT_AUTH_COMPLETE_PATH, async (request, response) => {
+    const grant = String(request.query?.vibe_grant || request.query?.grant || "").trim();
+    const pairingId = String(request.query?.pairing_id || request.query?.pairingId || "").trim();
+    const callbackPort = exposedPort || port;
+    const completionUrl = getAccountCompletionUrl(callbackPort);
+    if ((!grant && !pairingId) || !completionUrl) {
+      response.status(400).send(renderGitHubOAuthPopupPage({
+        message: "Vibe account did not return a usable pairing grant.",
+      }));
+      return;
+    }
+
+    try {
+      await accountService.completePairing({
+        settings: settingsStore.settings,
+        grant,
+        pairingId,
+        redirectUri: completionUrl,
+        label: "Swarmlab",
+        connectionHints: buildNodeConnectionHints(),
+      });
+      nodeHeartbeatService.start({ immediate: false });
+      try {
+        await nodeHeartbeatService.tick({ reason: "pair-callback", forceRegister: true });
+      } catch (error) {
+        console.warn("[swarmlab] Vibe account registration after callback failed", error?.message || error);
+      }
+
+      response.setHeader("Cache-Control", "no-store");
+      response.send(renderGitHubOAuthPopupPage({
+        status: "success",
+        message: "Vibe account connected. Returning to Swarmlab.",
+      }));
+    } catch (error) {
+      response.status(Number(error?.statusCode) || 500).send(renderGitHubOAuthPopupPage({
+        message: error?.message || "Could not complete Vibe account login.",
+      }));
+    }
   });
 
   app.get("/api/state", async (_request, response) => {
@@ -9976,6 +10162,7 @@ export async function createVibeResearchApp({
     helperBaseUrl,
     preferredUrl: publicBaseUrl || preferredUrl,
   });
+  nodeHeartbeatService.start({ immediate: true });
   if (systemMetricsSampleIntervalMs > 0) {
     // Fire one sample immediately so the storage caches are warm before the
     // first user opens the system tab; setInterval otherwise waits the full
@@ -10111,6 +10298,7 @@ export async function createVibeResearchApp({
 
     closePromise = (async () => {
       stopLibraryActivityWatcher();
+      nodeHeartbeatService.stop();
       await shutdownResearchAutopilotJobs();
       await flushResearchAutopilotJobs();
       await sessionManager.shutdown({ preserveSessions: persistSessions });
@@ -10222,6 +10410,7 @@ export async function createVibeResearchApp({
     server,
     sessionManager,
     websocketServer,  // Exposed for integration tests of the heartbeat.
+    nodeHeartbeatService,
     ottoAuthService,
     videoMemoryService,
     relaunch: () => requestTerminate({ relaunch: true }),

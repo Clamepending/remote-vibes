@@ -1,4 +1,4 @@
-import { generateKeyPairSync, randomBytes, randomUUID } from "node:crypto";
+import { generateKeyPairSync, randomBytes, randomUUID, sign, verify } from "node:crypto";
 import { mkdir, readFile, rename, writeFile } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
@@ -51,6 +51,16 @@ function generateSigningKeypair() {
     publicKey: publicKey.export({ format: "pem", type: "spki" }),
     privateKey: privateKey.export({ format: "pem", type: "pkcs8" }),
   };
+}
+
+function stableStringify(value) {
+  if (value === null || typeof value !== "object") {
+    return JSON.stringify(value);
+  }
+  if (Array.isArray(value)) {
+    return `[${value.map((entry) => stableStringify(entry)).join(",")}]`;
+  }
+  return `{${Object.keys(value).sort().map((key) => `${JSON.stringify(key)}:${stableStringify(value[key])}`).join(",")}}`;
 }
 
 async function readJsonFile(filePath) {
@@ -117,4 +127,20 @@ export class NodeIdentityStore {
       ...(includeHostname ? { hostname: this.hostnameProvider() } : {}),
     };
   }
+
+  signPayload(payload) {
+    const record = this.getRecord();
+    return sign(null, Buffer.from(stableStringify(payload)), record.privateKey).toString("base64url");
+  }
+
+  verifyPayloadSignature(payload, signature) {
+    const record = this.getRecord();
+    const signatureBuffer = Buffer.from(String(signature || ""), "base64url");
+    if (!signatureBuffer.length) {
+      return false;
+    }
+    return verify(null, Buffer.from(stableStringify(payload)), record.publicKey, signatureBuffer);
+  }
 }
+
+export { stableStringify as canonicalizeNodePayload };

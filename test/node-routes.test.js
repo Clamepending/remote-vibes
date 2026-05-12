@@ -42,7 +42,7 @@ function createNoopService(status = {}) {
   };
 }
 
-async function startNodeRoutesApp() {
+async function startNodeRoutesApp(overrides = {}) {
   const root = await mkdtemp(path.join(os.tmpdir(), "swarmlab-node-routes-"));
   const stateDir = path.join(root, ".swarmlab");
   const app = await createVibeResearchApp({
@@ -99,6 +99,7 @@ async function startNodeRoutesApp() {
     }),
     sleepPreventionFactory: (settings) =>
       new SleepPreventionService({ enabled: settings.preventSleepEnabled, platform: "test" }),
+    ...overrides,
   });
 
   return {
@@ -159,6 +160,94 @@ test("/api/node manifest, status, and snapshot routes expose the local node foun
 
     const persistedIdentity = JSON.parse(await readFile(path.join(started.stateDir, "node.json"), "utf8"));
     assert.equal(persistedIdentity.nodeId, manifestBody.manifest.nodeId);
+  } finally {
+    await started.cleanup();
+  }
+});
+
+test("/api/node/account routes pair, register, heartbeat, and never echo account tokens", async () => {
+  const accountRequests = [];
+  const accountFetchImpl = async (url, init = {}) => {
+    const body = init.body ? JSON.parse(init.body) : null;
+    accountRequests.push({ url, init, body });
+    const pathname = new URL(url).pathname;
+    if (pathname === "/api/account/nodes/pairing") {
+      return new Response(JSON.stringify({
+        pairingId: "pair_1",
+        pairingCode: "ABCD-EFGH",
+        pairingUrl: "https://account.example.test/pair",
+      }), { status: 200 });
+    }
+    if (pathname === "/api/account/nodes/pairing/complete") {
+      return new Response(JSON.stringify({
+        accessToken: "secret-account-token",
+        account: { id: "acct_1", login: "mark" },
+        node: { nodeId: body.identity.nodeId, displayName: "Mac", status: "online" },
+      }), { status: 200 });
+    }
+    if (pathname === "/api/account/nodes") {
+      return new Response(JSON.stringify({
+        node: {
+          nodeId: body.registration.nodeId,
+          displayName: body.registration.displayName,
+          status: "online",
+          connectionHints: body.registration.connectionHints,
+        },
+      }), { status: 200 });
+    }
+    if (/\/api\/account\/nodes\/[^/]+\/heartbeat/u.test(pathname)) {
+      return new Response(JSON.stringify({
+        status: "ok",
+        node: { nodeId: body.heartbeat.nodeId, status: body.heartbeat.status },
+      }), { status: 200 });
+    }
+    if (pathname === "/api/account/nodes/disconnect") {
+      return new Response(JSON.stringify({ ok: true }), { status: 200 });
+    }
+    return new Response(JSON.stringify({ error: "unexpected account route" }), { status: 404 });
+  };
+
+  const started = await startNodeRoutesApp({ accountFetchImpl });
+  try {
+    const initialStatusResponse = await fetch(`${started.baseUrl}/api/node/account/status`);
+    assert.equal(initialStatusResponse.status, 200);
+    assert.equal((await initialStatusResponse.json()).account.configured, false);
+
+    const startResponse = await fetch(`${started.baseUrl}/api/node/account/pair/start`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ label: "Mac" }),
+    });
+    assert.equal(startResponse.status, 201);
+    assert.equal((await startResponse.json()).pairing.pairingCode, "ABCD-EFGH");
+
+    const completeResponse = await fetch(`${started.baseUrl}/api/node/account/pair/complete`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ grant: "grant_1" }),
+    });
+    assert.equal(completeResponse.status, 200);
+    const completeBody = await completeResponse.json();
+    assert.equal(completeBody.account.configured, true);
+    assert.doesNotMatch(JSON.stringify(completeBody), /secret-account-token/);
+
+    const heartbeatResponse = await fetch(`${started.baseUrl}/api/node/account/heartbeat`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ reason: "test" }),
+    });
+    assert.equal(heartbeatResponse.status, 200);
+    const heartbeatBody = await heartbeatResponse.json();
+    assert.equal(heartbeatBody.account.configured, true);
+    assert.doesNotMatch(JSON.stringify(heartbeatBody), /secret-account-token/);
+
+    const sentText = JSON.stringify(accountRequests.map((request) => request.body));
+    assert.match(sentText, /node\.registration|nodeId|heartbeat/);
+    assert.doesNotMatch(sentText, /route-secret|example\.test\/private|\/proxy\/3456|secret-account-token|privateKey|localApiToken/);
+
+    const disconnectResponse = await fetch(`${started.baseUrl}/api/node/account/disconnect`, { method: "POST" });
+    assert.equal(disconnectResponse.status, 200);
+    assert.equal((await disconnectResponse.json()).account.configured, false);
   } finally {
     await started.cleanup();
   }

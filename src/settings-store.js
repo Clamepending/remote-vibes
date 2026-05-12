@@ -15,6 +15,9 @@ const SETTINGS_FILE_VERSION = 1;
 const SETTINGS_FILENAME = "settings.json";
 const DEFAULT_WIKI_BACKUP_INTERVAL_MS = 5 * 60 * 1000;
 const LEGACY_WIKI_BACKUP_INTERVAL_MS = 10 * 60 * 1000;
+const DEFAULT_ACCOUNT_HEARTBEAT_INTERVAL_MS = 30 * 1000;
+const MIN_ACCOUNT_HEARTBEAT_INTERVAL_MS = 15 * 1000;
+const MAX_ACCOUNT_HEARTBEAT_INTERVAL_MS = 5 * 60 * 1000;
 const WORKSPACE_DATA_FOLDER_NAME = "vibe-research";
 const WORKSPACE_LIBRARY_RELATIVE_PATH = path.join(WORKSPACE_DATA_FOLDER_NAME, "buildings", "library");
 const WORKSPACE_USER_RELATIVE_PATH = path.join(WORKSPACE_DATA_FOLDER_NAME, "user");
@@ -70,6 +73,18 @@ function normalizeIntervalMs(value) {
   return roundedIntervalMs === LEGACY_WIKI_BACKUP_INTERVAL_MS
     ? DEFAULT_WIKI_BACKUP_INTERVAL_MS
     : roundedIntervalMs;
+}
+
+function normalizeAccountHeartbeatIntervalMs(value, fallback = DEFAULT_ACCOUNT_HEARTBEAT_INTERVAL_MS) {
+  const intervalMs = Number(value);
+  if (!Number.isFinite(intervalMs)) {
+    return fallback;
+  }
+
+  return Math.max(
+    MIN_ACCOUNT_HEARTBEAT_INTERVAL_MS,
+    Math.min(MAX_ACCOUNT_HEARTBEAT_INTERVAL_MS, Math.round(intervalMs)),
+  );
 }
 
 function normalizeNonNegativeCents(value, fallback = "2") {
@@ -355,6 +370,14 @@ export class SettingsStore {
     const configuredBuildingHubCatalogUrl = normalizeBuildingHubUrl(
       this.env.VIBE_RESEARCH_BUILDINGHUB_URL || this.env.REMOTE_VIBES_BUILDINGHUB_URL || "",
     );
+    const configuredSwarmlabAccountUrl = normalizeBuildingHubUrl(
+      this.env.SWARMLAB_ACCOUNT_APP_URL ||
+        this.env.VIBE_RESEARCH_ACCOUNT_APP_URL ||
+        this.env.SWARMLAB_ACCOUNT_URL ||
+        this.env.VIBE_RESEARCH_ACCOUNT_URL ||
+        this.env.VIBE_RESEARCH_NODE_ACCOUNT_URL ||
+        "",
+    );
     const workspaceRootPath = this.normalizeWorkspaceRootPath(configuredWorkspaceRootPath || this.cwd);
     const workspacePaths = this.deriveWorkspacePaths(workspaceRootPath);
 
@@ -398,6 +421,20 @@ export class SettingsStore {
         Boolean(configuredBuildingHubAppUrl || configuredBuildingHubCatalogUrl || this.env.VIBE_RESEARCH_BUILDINGHUB_PATH),
       ),
       buildingHubProfileUrl: normalizeBuildingHubUrl(this.env.VIBE_RESEARCH_BUILDINGHUB_PROFILE_URL || ""),
+      swarmlabAccountHeartbeatEnabled: normalizeBooleanEnv(
+        this.env.SWARMLAB_ACCOUNT_HEARTBEAT_ENABLED ||
+          this.env.VIBE_RESEARCH_ACCOUNT_HEARTBEAT_ENABLED ||
+          "",
+        true,
+      ),
+      swarmlabAccountHeartbeatIntervalMs: normalizeAccountHeartbeatIntervalMs(
+        this.env.SWARMLAB_ACCOUNT_HEARTBEAT_INTERVAL_MS ||
+          this.env.VIBE_RESEARCH_ACCOUNT_HEARTBEAT_INTERVAL_MS ||
+          this.env.SWARMLAB_NODE_HEARTBEAT_INTERVAL_MS ||
+          this.env.VIBE_RESEARCH_NODE_HEARTBEAT_INTERVAL_MS ||
+          DEFAULT_ACCOUNT_HEARTBEAT_INTERVAL_MS,
+      ),
+      swarmlabAccountUrl: configuredSwarmlabAccountUrl,
       githubOAuthClientId: String(
         this.env.VIBE_RESEARCH_GITHUB_OAUTH_CLIENT_ID ||
           this.env.REMOTE_VIBES_GITHUB_OAUTH_CLIENT_ID ||
@@ -802,6 +839,18 @@ export class SettingsStore {
         payload.buildingHubProfileUrl === undefined
           ? defaults.buildingHubProfileUrl
           : normalizeBuildingHubUrl(payload.buildingHubProfileUrl),
+      swarmlabAccountHeartbeatEnabled: normalizeBoolean(
+        payload.swarmlabAccountHeartbeatEnabled,
+        defaults.swarmlabAccountHeartbeatEnabled,
+      ),
+      swarmlabAccountHeartbeatIntervalMs: normalizeAccountHeartbeatIntervalMs(
+        payload.swarmlabAccountHeartbeatIntervalMs === undefined
+          ? defaults.swarmlabAccountHeartbeatIntervalMs
+          : payload.swarmlabAccountHeartbeatIntervalMs,
+      ),
+      swarmlabAccountUrl: normalizeBuildingHubUrl(
+        payload.swarmlabAccountUrl === undefined ? defaults.swarmlabAccountUrl : payload.swarmlabAccountUrl,
+      ),
       githubOAuthClientId: String(payload.githubOAuthClientId || defaults.githubOAuthClientId || "").trim(),
       githubOAuthClientSecret:
         payload.githubOAuthClientSecret === undefined
@@ -1370,6 +1419,7 @@ export class SettingsStore {
   }
 
   getState({
+    accountStatus = null,
     agentMailStatus = null,
     backupStatus = null,
     browserUseStatus = null,
@@ -1397,6 +1447,7 @@ export class SettingsStore {
       agentMailApiKey: "",
       agentMailApiKeyConfigured: Boolean(this.settings.agentMailApiKey),
       agentMailStatus,
+      accountStatus,
       agentOpenAiApiKey: "",
       agentOpenAiApiKeyConfigured: Boolean(this.settings.agentOpenAiApiKey || this.env.OPENAI_API_KEY),
       browserUseAnthropicApiKey: "",
@@ -1430,6 +1481,10 @@ export class SettingsStore {
       openSwarmSearchApiKeyConfigured: Boolean(this.settings.openSwarmSearchApiKey || this.env.SEARCH_API_KEY),
       openSwarmUnsplashAccessKey: "",
       openSwarmUnsplashAccessKeyConfigured: Boolean(this.settings.openSwarmUnsplashAccessKey || this.env.UNSPLASH_ACCESS_KEY),
+      swarmlabAccountHeartbeatEnabled: this.settings.swarmlabAccountHeartbeatEnabled,
+      swarmlabAccountHeartbeatIntervalMs: this.settings.swarmlabAccountHeartbeatIntervalMs,
+      swarmlabAccountStatus: accountStatus,
+      swarmlabAccountUrl: this.settings.swarmlabAccountUrl,
       telegramBotToken: "",
       telegramBotTokenConfigured: Boolean(this.settings.telegramBotToken),
       telegramStatus,

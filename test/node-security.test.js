@@ -100,3 +100,42 @@ test("fleet registry routes are local-or-node-token protected", () => {
   );
   assert.equal(passed, true);
 });
+
+test("node account routes are local-or-node-token protected", () => {
+  const nodeIdentityStore = {
+    getLocalApiToken() {
+      return "secret-node-token";
+    },
+  };
+  const middleware = createLocalOrNodeTokenMiddleware({ nodeIdentityStore });
+
+  const denied = createResponseProbe();
+  middleware(
+    {
+      socket: { remoteAddress: "100.64.0.5" },
+      headers: {},
+      method: "POST",
+      path: "/api/node/account/heartbeat",
+    },
+    denied,
+    () => {
+      assert.fail("unexpected pass");
+    },
+  );
+  assert.equal(denied.statusCode, 403);
+
+  let passed = false;
+  middleware(
+    {
+      socket: { remoteAddress: "100.64.0.5" },
+      headers: { authorization: "Bearer secret-node-token" },
+      method: "POST",
+      path: "/api/node/account/heartbeat",
+    },
+    createResponseProbe(),
+    () => {
+      passed = true;
+    },
+  );
+  assert.equal(passed, true);
+});
