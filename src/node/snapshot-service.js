@@ -494,6 +494,9 @@ function summarizeProviderLauncher(provider = {}) {
     id: `provider:${id}`,
     label: compactText(provider.label || provider.defaultName || id, 80),
     kind: "agent-provider",
+    category: "agent",
+    priority: 100,
+    description: `Start a new ${compactText(provider.label || provider.defaultName || id, 80)} agent on this machine.`,
     providerId: id,
     defaultName: compactText(provider.defaultName || provider.label || id, 80),
     available: true,
@@ -508,6 +511,9 @@ function summarizeAppLauncher(launcher = {}) {
     id: `app:${id}`,
     label: compactText(launcher.label || id, 80),
     kind: compactText(launcher.kind || "desktop-app", 40),
+    category: compactText(launcher.category || "app", 40),
+    priority: Number.isFinite(Number(launcher.priority)) ? Math.round(Number(launcher.priority)) : 0,
+    description: compactText(launcher.description || "", 160),
     appId: id,
     available: true,
     platform: compactText(launcher.platform, 40),
@@ -526,6 +532,7 @@ function buildLaunchers(providers = [], appLaunchers = []) {
       seen.add(key);
       return true;
     })
+    .sort((left, right) => (right.priority || 0) - (left.priority || 0) || String(left.label || "").localeCompare(String(right.label || "")))
     .slice(0, 24);
 }
 

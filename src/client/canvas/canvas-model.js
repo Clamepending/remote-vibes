@@ -39,7 +39,7 @@ const MAX_CANVAS_BROWSER_CARDS = 2;
 const MAX_CANVAS_MONITOR_CARDS = 4;
 const MAX_CANVAS_ARTIFACT_CARDS = 1;
 const MAX_CANVAS_APP_CARDS = 4;
-const MAX_CANVAS_LAUNCHER_CARDS = 6;
+const MAX_CANVAS_LAUNCHER_CARDS = 8;
 const ACTIVE_STATUSES = new Set(["active", "busy", "connected", "launching", "open", "pending", "queued", "resuming", "running", "starting", "streaming", "working"]);
 const QUIET_STATUSES = new Set(["archived", "closed", "completed", "dismissed", "done", "exited", "idle", "resolved", "stopped", "succeeded"]);
 const PROBLEM_STATUSES = new Set(["blocked", "error", "failed", "failing", "needs_attention", "warning"]);
@@ -1170,19 +1170,22 @@ function launcherCard(launcher, index, machineId) {
   const appId = normalizeText(launcher.appId || (launcherKind === "desktop-app" ? rawId.replace(/^app:/u, "") : ""));
   const label = normalizeText(pickFirst(launcher.label, launcher.defaultName, providerId, appId, rawId), "Launcher");
   const isAgentProvider = launcherKind === "agent-provider" || Boolean(providerId);
+  const category = normalizeText(launcher.category || (isAgentProvider ? "agent" : "app"));
+  const description = normalizeText(launcher.description);
   return makeCard({
     id: `launcher:${rawId}`,
     type: "launcher",
     title: label,
     subtitle: isAgentProvider ? "agent launcher" : "desktop app",
     status: launcher.available === false ? "unavailable" : "available",
-    detail: isAgentProvider
+    detail: description || (isAgentProvider
       ? `Start a new ${label} agent on this machine.`
-      : `Open ${label} on this machine.`,
+      : `Open ${label} on this machine.`),
     meta: launcher.platform || "",
     tags: [
       isAgentProvider ? "agent" : "app",
       providerId || appId,
+      category,
     ],
     ref: {
       machineId,
@@ -1190,6 +1193,7 @@ function launcherCard(launcher, index, machineId) {
       launcherKind,
       providerId,
       appId,
+      category,
       defaultName: normalizeText(launcher.defaultName || label, label),
       actionLabel: "Launch",
     },
@@ -1220,7 +1224,8 @@ function launcherSummaryCard(launchers, machineId) {
 function buildLauncherCards(launchers, machineId) {
   const entries = launchers
     .map((launcher, index) => ({ launcher, index }))
-    .filter((entry) => entry.launcher?.available !== false);
+    .filter((entry) => entry.launcher?.available !== false)
+    .sort((left, right) => normalizeNumber(right.launcher?.priority, 0) - normalizeNumber(left.launcher?.priority, 0) || left.index - right.index);
   const visible = entries.slice(0, MAX_CANVAS_LAUNCHER_CARDS);
   const cards = visible.map((entry) => launcherCard(entry.launcher, entry.index, machineId));
   if (entries.length > visible.length) {

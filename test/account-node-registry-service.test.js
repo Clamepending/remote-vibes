@@ -60,7 +60,7 @@ function sampleSnapshot(nodeId, installId) {
     }],
     launchers: [
       { id: "provider:codex", label: "Codex", kind: "agent-provider", providerId: "codex", available: true },
-      { id: "app:cursor", label: "Cursor", kind: "desktop-app", appId: "cursor", available: true, platform: "linux" },
+      { id: "app:cursor", label: "Cursor", kind: "desktop-app", category: "editor", priority: 90, description: "Open Cursor.", appId: "cursor", available: true, platform: "linux" },
     ],
     generatedAt: "2026-05-12T20:00:00.000Z",
   };
@@ -117,6 +117,8 @@ test("AccountNodeRegistryService pairs, registers, heartbeats, lists, and discon
     assert.equal(registered.capabilities.launcherCount, 2);
     assert.equal(registered.launchers[0].providerId, "codex");
     assert.equal(registered.launchers[1].appId, "cursor");
+    assert.equal(registered.launchers[1].category, "editor");
+    assert.equal(registered.launchers[1].priority, 90);
     assert.equal(registered.baseUrl, "https://gpu.tailnet.test");
 
     const heartbeatUnsigned = buildNodeHeartbeatPayload({

@@ -86,8 +86,8 @@ test("buildCanvasCards renders available app and agent launchers as first-class 
   const cards = buildCanvasCards({
     node: { id: "node-1", name: "Mac", status: "online" },
     launchers: [
-      { id: "provider:codex", label: "Codex", kind: "agent-provider", providerId: "codex", defaultName: "Codex", available: true },
-      { id: "app:cursor", label: "Cursor", kind: "desktop-app", appId: "cursor", available: true, platform: "darwin" },
+      { id: "app:cursor", label: "Cursor", kind: "desktop-app", category: "editor", priority: 90, description: "Open Cursor from the canvas.", appId: "cursor", available: true, platform: "darwin" },
+      { id: "provider:codex", label: "Codex", kind: "agent-provider", priority: 100, providerId: "codex", defaultName: "Codex", available: true },
       { id: "app:missing", label: "Missing", kind: "desktop-app", appId: "missing", available: false },
     ],
   });
@@ -98,6 +98,8 @@ test("buildCanvasCards renders available app and agent launchers as first-class 
   assert.equal(launchers[0].ref.actionLabel, "Launch");
   assert.equal(launchers[1].ref.appId, "cursor");
   assert.equal(launchers[1].subtitle, "desktop app");
+  assert.equal(launchers[1].detail, "Open Cursor from the canvas.");
+  assert.equal(launchers[1].ref.category, "editor");
 });
 
 test("buildCanvasCards promotes W&B tabs to monitor cards linked to source agents", () => {
