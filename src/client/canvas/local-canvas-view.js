@@ -72,7 +72,7 @@ const CARD_TYPE_ICONS = {
   summary: Archive,
 };
 const REGION_COLORS = ["#f97316", "#74c7b8", "#7aa2f7", "#9ece6a", "#e879f9", "#f6c177"];
-const TERMINAL_COMMAND_STATUSES = new Set(["completed", "failed", "expired", "cancelled", "canceled"]);
+const TERMINAL_COMMAND_STATUSES = new Set(["completed", "failed", "expired", "cancelled", "canceled", "dismissed"]);
 
 let activeController = null;
 
@@ -2043,6 +2043,7 @@ function normalizeLaunchLifecycle(item) {
     createdAt: String(item.createdAt || new Date().toISOString()),
     updatedAt: String(item.updatedAt || item.createdAt || new Date().toISOString()),
     completedAt: String(item.completedAt || ""),
+    dismissedAt: String(item.dismissedAt || ""),
     result: item.result && typeof item.result === "object" ? item.result : {},
   };
 }
@@ -2088,6 +2089,10 @@ function isTerminalLaunchStatus(status) {
   return TERMINAL_COMMAND_STATUSES.has(normalizeLaunchLifecycleStatus(status));
 }
 
+function isDismissedLaunchLifecycle(lifecycle) {
+  return Boolean(lifecycle?.dismissedAt) || normalizeLaunchLifecycleStatus(lifecycle?.status) === "dismissed";
+}
+
 function sessionIdFromLifecycle(lifecycle) {
   return String(
     lifecycle?.result?.session?.id ||
@@ -2124,7 +2129,7 @@ function lifecycleResultAppInfo(lifecycle) {
     appId: rawAppId,
     port: Number.isInteger(port) && port > 0 ? port : null,
     url,
-    commandId: String(result.commandId || lifecycle.commandId || "").trim(),
+    commandId: String(result.commandId || result.clientCommandId || lifecycle.commandId || lifecycle.clientCommandId || "").trim(),
   };
 }
 
@@ -2161,6 +2166,7 @@ function findMaterializedLaunchCard(cards, lifecycle) {
       const cardCommandId = String(card.ref?.launchCommandId || card.ref?.commandId || "").trim();
       const cardUrl = cardUrlForLaunchMatch(card);
       if (info.commandId && cardCommandId && info.commandId === cardCommandId) return true;
+      if (info.commandId && cardCommandId && info.commandId !== cardCommandId) return false;
       if (info.appId && cardAppId && info.appId === cardAppId) return true;
       if (info.port && Number.isInteger(cardPort) && cardPort === info.port) return true;
       if (info.url && cardUrl && cardUrl === info.url) return true;
@@ -2192,6 +2198,15 @@ function materializeLaunchLifecycleLinks(cards, lifecycles) {
   });
   if (!updates.size) return cards;
   return cards.map((card) => updates.get(card.id) || card);
+}
+
+function suppressDismissedLaunchCards(cards, lifecycles) {
+  const dismissedLaunches = (lifecycles || [])
+    .filter((lifecycle) => lifecycle.operation === "app.launch" && isDismissedLaunchLifecycle(lifecycle));
+  if (!dismissedLaunches.length) return cards;
+  return cards.filter((card) =>
+    !dismissedLaunches.some((lifecycle) => findMaterializedLaunchCard([card], lifecycle)?.id === card.id),
+  );
 }
 
 function launchLifecycleDetail(lifecycle) {
@@ -2252,8 +2267,11 @@ function launchLifecycleCard(lifecycle) {
 }
 
 function mergeLaunchLifecycleCards(cards, lifecycles) {
-  const linkedCards = materializeLaunchLifecycleLinks(cards, lifecycles);
-  const lifecycleCards = lifecycles
+  const normalizedLifecycles = (lifecycles || []).map(normalizeLaunchLifecycle).filter(Boolean);
+  const visibleCards = suppressDismissedLaunchCards(cards, normalizedLifecycles);
+  const activeLifecycles = normalizedLifecycles.filter((lifecycle) => !isDismissedLaunchLifecycle(lifecycle));
+  const linkedCards = materializeLaunchLifecycleLinks(visibleCards, activeLifecycles);
+  const lifecycleCards = activeLifecycles
     .filter((lifecycle) => !findMaterializedLaunchCard(linkedCards, lifecycle))
     .map(launchLifecycleCard);
   return [...linkedCards, ...lifecycleCards];
@@ -4247,12 +4265,22 @@ function dismissLaunchLifecycle(button, root, { storage, refresh } = {}) {
   const key = root?.dataset?.swarmlabCanvasLaunchStorageKey || "";
   if (!lifecycleId || !key) return;
   const current = readLaunchLifecycles(storage, key);
-  const next = current.filter((item) => item.lifecycleId !== lifecycleId);
+  const now = new Date().toISOString();
+  const next = current.map((item) => item.lifecycleId === lifecycleId
+    ? {
+        ...item,
+        status: "dismissed",
+        dismissedAt: now,
+        updatedAt: now,
+      }
+    : item);
   writeLaunchLifecycles(storage, key, next);
   const layoutKey = root.dataset.swarmlabCanvasStorageKey || "";
   if (layoutKey) {
     const layout = readLayout(storage, layoutKey);
+    const cardId = button.closest("[data-swarmlab-canvas-card-id]")?.getAttribute("data-swarmlab-canvas-card-id") || "";
     delete layout[`lifecycle:${lifecycleId}`];
+    if (cardId) delete layout[cardId];
     writeLayout(storage, layoutKey, layout);
   }
   if (typeof refresh === "function") {

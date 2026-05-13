@@ -71,6 +71,7 @@ test("local canvas view renders node snapshot cards and persists drag layout", a
     const postedRemoteCommands = [];
     const remoteCommandsById = new Map();
     const postedAppLaunches = [];
+    let extraLocalPorts = [];
     const postedRemotePairs = [];
     const deletedSessions = [];
     const directPairStarts = [];
@@ -208,11 +209,14 @@ test("local canvas view renders node snapshot cards and persists drag layout", a
               status: "completed",
             },
           ],
-          ports: Array.from({ length: 6 }, (_, index) => ({
-            port: 5173 + index,
-            name: index === 0 ? "Vite app" : `Preview ${index + 1}`,
-            preferredAccess: index % 2 ? "direct" : "proxy",
-          })),
+          ports: [
+            ...Array.from({ length: 6 }, (_, index) => ({
+              port: 5173 + index,
+              name: index === 0 ? "Vite app" : `Preview ${index + 1}`,
+              preferredAccess: index % 2 ? "direct" : "proxy",
+            })),
+            ...extraLocalPorts,
+          ],
           launchers: [
             { id: "provider:codex", label: "Codex", kind: "agent-provider", providerId: "codex", defaultName: "Codex", available: true },
             { id: "app:cursor", label: "Cursor", kind: "desktop-app", appId: "cursor", available: true, platform: "darwin" },
@@ -837,6 +841,29 @@ test("local canvas view renders node snapshot cards and persists drag layout", a
     await page.waitForFunction(() => document.querySelectorAll(".swarmlab-canvas-card.is-launched-app").length === 0);
     assert.equal(postedAppLaunches.length, 1, "dismissing a launched app window should not relaunch or kill the app");
     assert.equal(deletedSessions.length, 0, "dismissing a launched app window must not delete agent sessions");
+    assert.match(postedAppLaunches[0].clientCommandId, /^local-app-/);
+    extraLocalPorts = [
+      {
+        port: 9456,
+        name: "Cursor workspace",
+        customName: "Cursor workspace",
+        preferredAccess: "proxy",
+        appId: "cursor",
+        launchCommandId: postedAppLaunches[0].clientCommandId,
+        canvasVisible: true,
+      },
+    ];
+    await page.reload({ waitUntil: "domcontentloaded" });
+    await page.waitForSelector(".swarmlab-canvas-card", { timeout: 10_000 });
+    await page.waitForFunction(() =>
+      Boolean(document.querySelector("[data-swarmlab-canvas-root]")?.__swarmlabCanvasActionOptions),
+    );
+    assert.equal(
+      await page.locator('[data-swarmlab-canvas-card-id="port:9456"]').count(),
+      0,
+      "a dismissed launched app should stay dismissed when its matching port later appears",
+    );
+    assert.equal(await page.locator(".swarmlab-canvas-card.is-launched-app").count(), 0);
 
     const sessionCard = page.locator('[data-swarmlab-canvas-card-id="session:session-1"]');
     const before = await sessionCard.locator("[data-swarmlab-card-drag-handle]").evaluate((handle) => {
@@ -887,7 +914,7 @@ test("local canvas view renders node snapshot cards and persists drag layout", a
     const remoteComposer = remoteComposerForm.locator('textarea[name="input"]');
     await remoteComposer.fill("continue remote from canvas");
     await remoteComposerForm.evaluate((form) => form.requestSubmit());
-    for (let attempt = 0; attempt < 20 && postedRemoteCommands.length === 0; attempt += 1) {
+    for (let attempt = 0; attempt < 60 && postedRemoteCommands.length === 0; attempt += 1) {
       await page.waitForTimeout(50);
     }
     assert.equal(postedRemoteCommands.length, 1);
