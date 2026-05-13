@@ -76,7 +76,6 @@ test("local canvas view renders node snapshot cards and persists drag layout", a
     const postedRemoteCommands = [];
     const remoteCommandsById = new Map();
     const postedAppLaunches = [];
-    const postedSessions = [];
     let extraLocalPorts = [];
     const postedRemotePairs = [];
     const deletedSessions = [];
@@ -616,24 +615,6 @@ test("local canvas view renders node snapshot cards and persists drag layout", a
         body: JSON.stringify({ launched: true, launcher: { id: postedAppLaunches.at(-1).appId } }),
       });
     });
-    await page.route(`${baseUrl}/api/sessions`, async (route) => {
-      if (route.request().method() !== "POST") {
-        await route.fallback();
-        return;
-      }
-      postedSessions.push(JSON.parse(route.request().postData() || "{}"));
-      await route.fulfill({
-        status: 201,
-        contentType: "application/json",
-        body: JSON.stringify({
-          session: {
-            id: `canvas-session-${postedSessions.length}`,
-            providerId: postedSessions.at(-1).providerId,
-            name: postedSessions.at(-1).name,
-          },
-        }),
-      });
-    });
     await page.route(`${baseUrl}/api/sessions/session-1`, async (route) => {
       if (route.request().method() === "DELETE") {
         deletedSessions.push(route.request().url());
@@ -972,14 +953,6 @@ test("local canvas view renders node snapshot cards and persists drag layout", a
     await page.locator('[data-swarmlab-canvas-focus-region="mac-main"]').evaluate((button) => button.click());
     await page.waitForSelector('[data-swarmlab-canvas-card-id="session:session-1"]', { timeout: 10_000 });
 
-    await page.click('[data-swarmlab-canvas-launcher="launcher:provider:codex"]');
-    for (let attempt = 0; attempt < 20 && postedSessions.length === 0; attempt += 1) {
-      await page.waitForTimeout(50);
-    }
-    assert.equal(postedSessions.length, 1);
-    assert.equal(postedSessions[0].providerId, "codex");
-    assert.equal(postedSessions[0].name, "Codex");
-
     await page.click('[data-swarmlab-canvas-launcher="launcher:app:cursor"]');
     for (let attempt = 0; attempt < 20 && postedAppLaunches.length === 0; attempt += 1) {
       await page.waitForTimeout(50);
@@ -1081,7 +1054,7 @@ test("local canvas view renders node snapshot cards and persists drag layout", a
     assert.equal(await remoteComposerForm.getAttribute("data-swarmlab-agent-remote-node-id"), "account-node");
     const remoteComposer = remoteComposerForm.locator('textarea[name="input"]');
     await remoteComposer.fill("continue remote from canvas");
-    await remoteComposerForm.evaluate((form) => form.requestSubmit());
+    await remoteComposer.press("Enter");
     for (let attempt = 0; attempt < 60 && postedRemoteCommands.length === 0; attempt += 1) {
       await page.waitForTimeout(50);
     }
@@ -1379,6 +1352,111 @@ test("local canvas view renders node snapshot cards and persists drag layout", a
     assert.match(await page.locator("[data-swarmlab-canvas-notice]").innerText(), /Vibe account connected|Machines will appear/i);
   } finally {
     await browser?.close().catch(() => {});
+    await app.close();
+  }
+});
+
+test("canvas agent launcher renders the created native session on the board", async () => {
+  const executablePath = await resolveBrowserExecutablePath({ env: process.env });
+  if (!executablePath) {
+    test.skip("Playwright browser executable is not available in this environment.");
+    return;
+  }
+
+  const workspaceDir = await createTempWorkspace("swarmlab-canvas-open-agent-");
+  const stateDir = path.join(workspaceDir, ".vibe-research");
+  const { app, baseUrl } = await startApp({ cwd: workspaceDir, stateDir });
+  let browser = null;
+
+  try {
+    const settingsResponse = await fetch(`${baseUrl}/api/settings`, {
+      method: "PATCH",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ wikiPath: workspaceDir }),
+    });
+    assert.equal(settingsResponse.status, 200);
+
+    browser = await chromium.launch({ executablePath, headless: true });
+    const page = await browser.newPage();
+    await page.addInitScript(() => {
+      window.localStorage.setItem("vibeResearch.agentSetupComplete.v1", "1");
+      window.localStorage.setItem("vibe-research-guided-onboarding-v2", "1");
+    });
+
+    const postedSessions = [];
+    await page.route(`${baseUrl}/api/node/snapshot**`, async (route) => {
+      await route.fulfill({
+        status: 200,
+        contentType: "application/json",
+        body: JSON.stringify({
+          schemaVersion: 1,
+          node: {
+            id: "mac-main",
+            name: "Mac Main",
+            status: "online",
+            os: "darwin",
+            version: "1.0.19",
+          },
+          sessions: [],
+          ports: [],
+          launchers: [
+            { id: "provider:codex", label: "Codex", kind: "agent-provider", providerId: "codex", defaultName: "Codex", available: true },
+          ],
+          counts: { sessions: 0, ports: 0, approvals: 0, artifacts: 0 },
+          generatedAt: "2026-05-13T12:00:00.000Z",
+        }),
+      });
+    });
+    await page.route(`${baseUrl}/api/sessions`, async (route) => {
+      if (route.request().method() !== "POST") {
+        await route.fallback();
+        return;
+      }
+      postedSessions.push(JSON.parse(route.request().postData() || "{}"));
+      await route.fulfill({
+        status: 201,
+        contentType: "application/json",
+        body: JSON.stringify({
+          session: {
+            id: "canvas-codex-session",
+            providerId: "codex",
+            providerLabel: "Codex",
+            name: "Codex",
+            cwd: workspaceDir,
+            status: "running",
+          },
+        }),
+      });
+    });
+    await page.route(`${baseUrl}/api/sessions/canvas-codex-session/narrative`, async (route) => {
+      await route.fulfill({
+        status: 200,
+        contentType: "application/json",
+        body: JSON.stringify({
+          narrative: {
+            providerId: "codex",
+            providerLabel: "Codex",
+            entries: [],
+          },
+        }),
+      });
+    });
+
+    await page.goto(`${baseUrl}/?view=canvas`, { waitUntil: "domcontentloaded" });
+    await page.waitForSelector('[data-swarmlab-canvas-launcher="launcher:provider:codex"]', { timeout: 10_000 });
+    await page.click('[data-swarmlab-canvas-launcher="launcher:provider:codex"]');
+
+    await page.waitForSelector('[data-swarmlab-canvas-card-id="session:canvas-codex-session"]', { timeout: 10_000 });
+    assert.equal(postedSessions.length, 1);
+    assert.equal(postedSessions[0].providerId, "codex");
+    assert.equal(postedSessions[0].name, "Codex");
+    assert.equal(new URL(page.url()).searchParams.get("view"), "canvas");
+    assert.match(
+      await page.locator('[data-swarmlab-canvas-card-id="session:canvas-codex-session"]').innerText(),
+      /Codex/,
+    );
+  } finally {
+    if (browser) await browser.close();
     await app.close();
   }
 });

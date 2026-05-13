@@ -2182,6 +2182,7 @@ const state = {
   richSessionActionShortcutsBound: false,
   sessionProviderPickerGlobalListenersBound: false,
   sessions: [],
+  optimisticSessions: {},
   sessionReadAt: loadSessionReadState(),
   sessionsRefreshDeferred: false,
   deferredSelectableRefreshes: new Set(),
@@ -36009,14 +36010,21 @@ function renderShell() {
     }
     if (state.currentView === "canvas") {
       mountSwarmlabCanvasView({
-        onOpenSession(sessionId) {
-          if (!state.sessions.some((session) => session.id === sessionId)) {
+        onOpenSession(sessionId, session = null) {
+          const normalizedSessionId = String(sessionId || session?.id || "").trim();
+          if (!normalizedSessionId) {
             return;
           }
-          state.activeSessionId = sessionId;
+          if (session?.id) {
+            updateSession(session, { optimisticMs: 10_000 });
+          }
+          if (!state.sessions.some((entry) => entry.id === normalizedSessionId)) {
+            return;
+          }
+          state.activeSessionId = normalizedSessionId;
           setCurrentView("shell");
           renderShell();
-          connectToSession(sessionId);
+          connectToSession(normalizedSessionId);
         },
       });
     }
@@ -48821,13 +48829,47 @@ function connectToSession(sessionId) {
   });
 }
 
-function updateSession(session) {
+function rememberOptimisticSession(session, ttlMs = 0) {
+  const sessionId = String(session?.id || "").trim();
+  const expiresAt = Date.now() + Math.max(0, Number(ttlMs) || 0);
+  if (!sessionId || !ttlMs || expiresAt <= Date.now()) {
+    return;
+  }
+  state.optimisticSessions[sessionId] = { session, expiresAt };
+}
+
+function mergeOptimisticSessions(serverSessions = []) {
+  const now = Date.now();
+  const nextSessions = Array.isArray(serverSessions) ? [...serverSessions] : [];
+  const serverIds = new Set(nextSessions.map((session) => String(session?.id || "").trim()).filter(Boolean));
+
+  for (const [sessionId, entry] of Object.entries(state.optimisticSessions)) {
+    if (!entry || entry.expiresAt <= now) {
+      delete state.optimisticSessions[sessionId];
+      continue;
+    }
+    if (serverIds.has(sessionId)) {
+      delete state.optimisticSessions[sessionId];
+      continue;
+    }
+    if (entry.session) {
+      nextSessions.unshift(entry.session);
+      serverIds.add(sessionId);
+    }
+  }
+
+  return nextSessions;
+}
+
+function updateSession(session, { optimisticMs = 0 } = {}) {
   const index = state.sessions.findIndex((entry) => entry.id === session.id);
   if (index === -1) {
     state.sessions.unshift(session);
   } else {
     state.sessions[index] = session;
   }
+
+  rememberOptimisticSession(session, optimisticMs);
 
   if (shouldMarkSessionRead(session.id)) {
     markSessionRead(session, { refresh: false });
@@ -48921,7 +48963,7 @@ async function loadSessions() {
     const previousActiveSessionId = state.activeSessionId;
     const previousSessions = state.sessions;
     const payload = await fetchJson("/api/sessions");
-    state.sessions = payload.sessions;
+    state.sessions = mergeOptimisticSessions(payload.sessions);
     pruneSessionReadState();
 
     if (state.activeSessionId && !state.sessions.some((session) => session.id === state.activeSessionId)) {

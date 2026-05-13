@@ -48,6 +48,8 @@ const NARRATIVE_POLL_MS = 4_000;
 const REMOTE_NODES_STORAGE_KEY = "swarmlab.canvas.remoteNodes.v1";
 const LAUNCH_LIFECYCLE_STORAGE_PREFIX = "swarmlab.canvas.launches.v1";
 const REMOTE_NODE_FETCH_TIMEOUT_MS = 4_500;
+const OPTIMISTIC_SESSION_STORAGE_PREFIX = "swarmlab.canvas.optimisticSessions.v1";
+const OPTIMISTIC_SESSION_TTL_MS = 12_000;
 const BOARD_WIDTH = 4_800;
 const BOARD_HEIGHT = 5_200;
 const DEFAULT_VIEWPORT = { x: 28, y: 42, zoom: 0.74 };
@@ -2228,6 +2230,103 @@ function getLaunchLifecycleStorageKey(boardId) {
   return `${LAUNCH_LIFECYCLE_STORAGE_PREFIX}:${slugPart(boardId, "machine:local")}`;
 }
 
+function getOptimisticSessionStorageKey(boardId) {
+  return `${OPTIMISTIC_SESSION_STORAGE_PREFIX}:${slugPart(boardId, "machine:local")}`;
+}
+
+function normalizeOptimisticSessionRecord(record) {
+  if (!record || typeof record !== "object") return null;
+  const session = record.session && typeof record.session === "object" ? record.session : record;
+  const id = String(session?.id || "").trim();
+  if (!id) return null;
+  const expiresAt = Number(record.expiresAt || 0);
+  return {
+    session: {
+      ...session,
+      id,
+      status: session.status || "running",
+    },
+    expiresAt: Number.isFinite(expiresAt) && expiresAt > 0 ? expiresAt : Date.now() + OPTIMISTIC_SESSION_TTL_MS,
+  };
+}
+
+function readOptimisticSessionRecords(storage, key) {
+  if (!storage || typeof storage.getItem !== "function") return [];
+  try {
+    const raw = JSON.parse(storage.getItem(key) || "[]");
+    const records = Array.isArray(raw) ? raw : [];
+    return records.map(normalizeOptimisticSessionRecord).filter(Boolean);
+  } catch {
+    return [];
+  }
+}
+
+function writeOptimisticSessionRecords(storage, key, records) {
+  if (!storage || typeof storage.setItem !== "function") return;
+  try {
+    storage.setItem(key, JSON.stringify(records));
+  } catch {
+    // Optimistic canvas sessions are transient UI state.
+  }
+}
+
+function rememberOptimisticCanvasSession(root, storage, session) {
+  const boardId = root?.dataset?.swarmlabCanvasBoardId || "";
+  const key = boardId ? getOptimisticSessionStorageKey(boardId) : "";
+  const normalized = normalizeOptimisticSessionRecord({
+    session,
+    expiresAt: Date.now() + OPTIMISTIC_SESSION_TTL_MS,
+  });
+  if (!key || !storage || !normalized) return "";
+  const records = readOptimisticSessionRecords(storage, key)
+    .filter((entry) => entry.session.id !== normalized.session.id);
+  records.unshift(normalized);
+  writeOptimisticSessionRecords(storage, key, records.slice(0, 12));
+  return normalized.session.id;
+}
+
+function mergeOptimisticCanvasSessions(snapshot, storage, boardId) {
+  const key = boardId ? getOptimisticSessionStorageKey(boardId) : "";
+  if (!key) return snapshot;
+  const now = Date.now();
+  const currentSessions = Array.isArray(snapshot.sessions) ? snapshot.sessions : [];
+  const currentIds = new Set(currentSessions.map((session) => String(session?.id || "").trim()).filter(Boolean));
+  let changed = false;
+  const pending = [];
+  const merged = [...currentSessions];
+  const records = readOptimisticSessionRecords(storage, key);
+
+  for (const record of records) {
+    if (record.expiresAt <= now) {
+      changed = true;
+      continue;
+    }
+    if (currentIds.has(record.session.id)) {
+      changed = true;
+      continue;
+    }
+    pending.push(record);
+    merged.unshift(record.session);
+    currentIds.add(record.session.id);
+  }
+
+  if (changed || pending.length !== records.length) {
+    writeOptimisticSessionRecords(storage, key, pending);
+  }
+
+  if (merged.length === currentSessions.length) {
+    return snapshot;
+  }
+  return {
+    ...snapshot,
+    sessions: merged,
+    counts: {
+      ...(snapshot.counts || {}),
+      sessions: Math.max(Number(snapshot.counts?.sessions || 0), merged.length),
+    },
+  };
+}
+
 function normalizeLaunchLifecycleStatus(value) {
   return String(value || "queued").trim().toLowerCase().replace(/\s+/g, "_") || "queued";
 }
@@ -3865,10 +3964,12 @@ function viewportShowsCanvasContent(root, viewport) {
 }
 
 function renderSnapshot(root, payload, { storage, remoteRecords = [] } = {}) {
-  const { snapshot, cards: baseCards, launcherCards } = combineCanvasCards(payload, remoteRecords);
+  const localSnapshot = normalizeNodeSnapshot(payload);
   const boardId = remoteRecords.length
-    ? `fleet:${slugPart(snapshot.node.id, "local")}`
-    : getCanvasBoardId(snapshot);
+    ? `fleet:${slugPart(localSnapshot.node.id, "local")}`
+    : getCanvasBoardId(localSnapshot);
+  const payloadWithOptimisticSessions = mergeOptimisticCanvasSessions(localSnapshot, storage, boardId);
+  const { snapshot, cards: baseCards, launcherCards } = combineCanvasCards(payloadWithOptimisticSessions, remoteRecords);
   const storageKey = getCanvasLayoutStorageKey(boardId);
   const viewportKey = getCanvasViewportStorageKey(boardId);
   const launchStorageKey = getLaunchLifecycleStorageKey(boardId);
@@ -4556,9 +4657,11 @@ async function launchAgentCapsule(button, root, { fetchImpl, abortController, on
       });
       const sessionId = result?.session?.id || "";
       button.textContent = "Copied";
-      if (sessionId && typeof onOpenSession === "function") {
-        onOpenSession(sessionId);
-      } else if (typeof refresh === "function") {
+      if (sessionId) {
+        rememberOptimisticCanvasSession(root, storage, result.session || { id: sessionId, name: payload.name, providerId: payload.providerId });
+        showCanvasNotice(root, `${result.session?.name || payload.name || "Agent"} copied into this machine. The source agent keeps running.`);
+      }
+      if (typeof refresh === "function") {
         refresh();
       }
       return;
@@ -4716,10 +4819,12 @@ async function launchCanvasLauncher(button, root, { fetchImpl, abortController, 
         body: payload,
       });
       const sessionId = result?.session?.id || "";
-      button.textContent = "Launched";
-      if (sessionId && typeof onOpenSession === "function") {
-        onOpenSession(sessionId);
-      } else if (typeof refresh === "function") {
+      button.textContent = "Started";
+      if (sessionId) {
+        rememberOptimisticCanvasSession(root, storage, result.session || { id: sessionId, name: payload.name, providerId: payload.providerId });
+        showCanvasNotice(root, `${result.session?.name || payload.name || card.title || "Agent"} started on the canvas.`);
+      }
+      if (typeof refresh === "function") {
         refresh();
       }
       return;
@@ -4999,9 +5104,11 @@ function bindCanvasActions(root, options) {
           method: "POST",
           body: {},
         });
-        if (payload?.session?.id && typeof onOpenSession === "function") {
-          onOpenSession(payload.session.id);
-        } else if (typeof refresh === "function") {
+        if (payload?.session?.id) {
+          rememberOptimisticCanvasSession(root, storage, payload.session);
+          showCanvasNotice(root, `${payload.session.name || "Agent"} started on the canvas.`);
+        }
+        if (typeof refresh === "function") {
           refresh();
         }
       } catch (error) {
