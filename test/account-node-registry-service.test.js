@@ -37,6 +37,7 @@ function sampleSnapshot(nodeId, installId) {
     },
     capabilities: {
       providerCount: 5,
+      launcherCount: 2,
       buildingCount: 76,
       gpuCount: 6,
       cameraCount: 0,
@@ -57,6 +58,10 @@ function sampleSnapshot(nodeId, installId) {
       cwd: "/home/ogata/private",
       command: "OPENAI_API_KEY=sk-secret npm run train --token=secret",
     }],
+    launchers: [
+      { id: "provider:codex", label: "Codex", kind: "agent-provider", providerId: "codex", available: true },
+      { id: "app:cursor", label: "Cursor", kind: "desktop-app", appId: "cursor", available: true, platform: "linux" },
+    ],
     generatedAt: "2026-05-12T20:00:00.000Z",
   };
 }
@@ -109,6 +114,9 @@ test("AccountNodeRegistryService pairs, registers, heartbeats, lists, and discon
     });
     assert.equal(registered.displayName, "GPU Cluster");
     assert.equal(registered.capabilities.gpuCount, 6);
+    assert.equal(registered.capabilities.launcherCount, 2);
+    assert.equal(registered.launchers[0].providerId, "codex");
+    assert.equal(registered.launchers[1].appId, "cursor");
     assert.equal(registered.baseUrl, "https://gpu.tailnet.test");
 
     const heartbeatUnsigned = buildNodeHeartbeatPayload({
@@ -128,10 +136,12 @@ test("AccountNodeRegistryService pairs, registers, heartbeats, lists, and discon
     assert.equal(heartbeaten.node.status, "busy");
     assert.equal(heartbeaten.node.counts.sessions, 4);
     assert.equal(heartbeaten.node.capabilities.brainNoteCount, 327);
+    assert.equal(heartbeaten.node.launchers.length, 2);
 
     const nodes = service.listNodesForToken(`Bearer ${completed.accessToken}`);
     assert.equal(nodes.length, 1);
     assert.equal(nodes[0].nodeId, identity.nodeId);
+    assert.equal(nodes[0].launchers[1].label, "Cursor");
     assert.doesNotMatch(JSON.stringify(nodes), /slnode_|grant_|sk-secret|OPENAI_API_KEY|token=secret|\/private|\/canvas|\/home\/ogata/);
 
     await service.disconnectToken(`Bearer ${completed.accessToken}`);
@@ -281,6 +291,59 @@ test("AccountNodeRegistryService queues sanitized session create capsule command
     assert.match(leased[0].payload.initialPrompt, /Source session id: session-1/);
     assert.equal(leased[0].payload.initialPromptDelayMs, 900);
     assert.equal(leased[0].payload.ignoredField, undefined);
+    assert.equal(verifyCommandSignature(leased[0], completed.commandPublicKey), true);
+  } finally {
+    await rm(stateDir, { recursive: true, force: true });
+  }
+});
+
+test("AccountNodeRegistryService queues sanitized app launch commands", async () => {
+  const stateDir = await mkdtemp(path.join(os.tmpdir(), "swarmlab-account-app-command-"));
+  try {
+    const nodeIdentityStore = new NodeIdentityStore({ stateDir: path.join(stateDir, "node") });
+    await nodeIdentityStore.initialize();
+    const identity = nodeIdentityStore.getPublicIdentity({ includeHostname: false });
+    const service = new AccountNodeRegistryService({ stateDir: path.join(stateDir, "account") });
+    await service.initialize();
+    const pairing = await service.createPairing({ identity, label: "Remote worker" });
+    const approval = await service.approvePairing({ pairingId: pairing.id, ownerAccountId: "acct_mark" });
+    const completed = await service.completePairing({ grant: approval.grant, identity });
+    const registration = buildNodeRegistrationPayload({
+      identity,
+      snapshot: sampleSnapshot(identity.nodeId, identity.installId),
+    });
+    await service.registerNode({
+      authorization: `Bearer ${completed.accessToken}`,
+      body: {
+        type: "node.registration",
+        registration,
+        signature: nodeIdentityStore.signPayload({ type: "node.registration", registration }),
+      },
+    });
+
+    const queued = await service.enqueueCommandForOwner({
+      ownerAccountId: "acct_mark",
+      nodeId: identity.nodeId,
+      body: {
+        operation: "app.launch",
+        payload: {
+          appId: "cursor",
+          ignored: "drop",
+        },
+      },
+    });
+
+    assert.equal(queued.operation, "app.launch");
+    assert.equal(queued.payload, undefined);
+    assert.equal(queued.target.appId, "cursor");
+
+    const leased = await service.leaseCommandsForNode({
+      authorization: `Bearer ${completed.accessToken}`,
+      nodeId: identity.nodeId,
+    });
+    assert.equal(leased.length, 1);
+    assert.equal(leased[0].payload.appId, "cursor");
+    assert.equal(leased[0].payload.ignored, undefined);
     assert.equal(verifyCommandSignature(leased[0], completed.commandPublicKey), true);
   } finally {
     await rm(stateDir, { recursive: true, force: true });

@@ -1,4 +1,5 @@
 import { verify as verifySignature } from "node:crypto";
+import { launchAppLauncher } from "../app-launchers.js";
 import { canonicalizeNodePayload } from "../node/identity-store.js";
 
 const DEFAULT_COMMAND_RELAY_INTERVAL_MS = 5_000;
@@ -7,6 +8,7 @@ const MAX_COMMAND_RELAY_INTERVAL_MS = 60_000;
 const SUPPORTED_COMMAND_OPERATIONS = new Set([
   "session.input.write",
   "session.create",
+  "app.launch",
 ]);
 
 function nowIso() {
@@ -78,6 +80,8 @@ export class NodeCommandRelayService {
     tokenStore,
     nodeIdentityStore,
     sessionManager,
+    appLaunchersProvider = () => [],
+    appLauncher = launchAppLauncher,
     settingsProvider = () => ({}),
     intervalMs = null,
     log = console,
@@ -98,6 +102,8 @@ export class NodeCommandRelayService {
     this.tokenStore = tokenStore;
     this.nodeIdentityStore = nodeIdentityStore;
     this.sessionManager = sessionManager;
+    this.appLaunchersProvider = appLaunchersProvider;
+    this.appLauncher = appLauncher;
     this.settingsProvider = settingsProvider;
     this.intervalOverrideMs = intervalMs;
     this.log = log || console;
@@ -204,12 +210,24 @@ export class NodeCommandRelayService {
     };
   }
 
+  async executeAppLaunch(command) {
+    const payload = command.payload || {};
+    const launcherId = compactText(payload.appId || payload.launcherId || payload.id, 80);
+    if (!launcherId) {
+      throw new Error("Remote app launch command is missing appId.");
+    }
+    return this.appLauncher(launcherId, this.appLaunchersProvider());
+  }
+
   async executeCommand(command) {
     if (command.operation === "session.input.write") {
       return this.executeSessionInput(command);
     }
     if (command.operation === "session.create") {
       return this.executeSessionCreate(command);
+    }
+    if (command.operation === "app.launch") {
+      return this.executeAppLaunch(command);
     }
     throw new Error(`Unsupported command operation: ${command.operation || "unknown"}.`);
   }

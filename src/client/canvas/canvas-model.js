@@ -13,6 +13,8 @@ const APP_CARD_WIDTH = 410;
 const APP_CARD_HEIGHT = 270;
 const APP_SUMMARY_CARD_WIDTH = 320;
 const APP_SUMMARY_CARD_HEIGHT = 190;
+const LAUNCHER_CARD_WIDTH = 320;
+const LAUNCHER_CARD_HEIGHT = 170;
 const HANDOFF_CARD_WIDTH = 360;
 const HANDOFF_CARD_HEIGHT = 230;
 const BRAIN_CARD_WIDTH = 360;
@@ -37,6 +39,7 @@ const MAX_CANVAS_BROWSER_CARDS = 2;
 const MAX_CANVAS_MONITOR_CARDS = 4;
 const MAX_CANVAS_ARTIFACT_CARDS = 1;
 const MAX_CANVAS_APP_CARDS = 4;
+const MAX_CANVAS_LAUNCHER_CARDS = 6;
 const ACTIVE_STATUSES = new Set(["active", "busy", "connected", "launching", "open", "pending", "queued", "resuming", "running", "starting", "streaming", "working"]);
 const QUIET_STATUSES = new Set(["archived", "closed", "completed", "dismissed", "done", "exited", "idle", "resolved", "stopped", "succeeded"]);
 const PROBLEM_STATUSES = new Set(["blocked", "error", "failed", "failing", "needs_attention", "warning"]);
@@ -286,6 +289,7 @@ export function normalizeNodeSnapshot(payload) {
   const browserSessions = asArray(snapshot.browserSessions || snapshot.browsers || input.browserSessions);
   const actionItems = asArray(snapshot.actionItems || snapshot.approvals || input.actionItems || input.approvals);
   const ports = asArray(snapshot.ports || snapshot.apps || input.ports);
+  const rawLaunchers = asArray(snapshot.launchers || snapshot.appLaunchers || snapshot.applicationLaunchers || input.launchers);
   const canvases = asArray(snapshot.canvases || snapshot.artifacts || input.canvases || input.artifacts);
   const resources = asArray(snapshot.resources || snapshot.monitors || snapshot.researchResources || input.resources || input.monitors);
   const projects = asArray(snapshot.projects || input.projects);
@@ -294,6 +298,19 @@ export function normalizeNodeSnapshot(payload) {
   const brain = asObject(snapshot.brain || input.brain);
   const system = asObject(snapshot.system || input.system);
   const capabilities = asObject(snapshot.capabilities || input.capabilities);
+  const providerLaunchers = rawLaunchers.length
+    ? []
+    : asArray(capabilities.providers)
+      .filter((provider) => provider?.available && provider?.id && provider.id !== "shell")
+      .map((provider) => ({
+        id: `provider:${provider.id}`,
+        label: provider.label || provider.id,
+        kind: "agent-provider",
+        providerId: provider.id,
+        defaultName: provider.defaultName || provider.label || provider.id,
+        available: true,
+      }));
+  const launchers = rawLaunchers.length ? rawLaunchers : providerLaunchers;
   const generatedAt = normalizeOptionalDate(snapshot.generatedAt || input.generatedAt) || new Date(0).toISOString();
 
   return {
@@ -318,6 +335,7 @@ export function normalizeNodeSnapshot(payload) {
     canvases,
     resources,
     ports,
+    launchers,
     projects,
     system,
     buildings,
@@ -328,6 +346,7 @@ export function normalizeNodeSnapshot(payload) {
       browserSessions: countFromSummary(snapshot, "browserSessions", browserSessions.length),
       approvals: countFromSummary(snapshot, "approvals", actionItems.length),
       ports: countFromSummary(snapshot, "ports", ports.length),
+      launchers: countFromSummary(snapshot, "launchers", launchers.length),
       artifacts: countFromSummary(snapshot, "artifacts", canvases.length),
       resources: countFromSummary(snapshot, "resources", resources.length),
       projects: countFromSummary(snapshot, "projects", projects.length),
@@ -1144,6 +1163,72 @@ function brainCard(brain, machineId) {
   });
 }
 
+function launcherCard(launcher, index, machineId) {
+  const rawId = normalizeText(pickFirst(launcher.id, launcher.providerId, launcher.appId, launcher.label), `launcher-${index + 1}`);
+  const launcherKind = normalizeText(launcher.kind || (launcher.providerId ? "agent-provider" : "app"));
+  const providerId = normalizeText(launcher.providerId);
+  const appId = normalizeText(launcher.appId || (launcherKind === "desktop-app" ? rawId.replace(/^app:/u, "") : ""));
+  const label = normalizeText(pickFirst(launcher.label, launcher.defaultName, providerId, appId, rawId), "Launcher");
+  const isAgentProvider = launcherKind === "agent-provider" || Boolean(providerId);
+  return makeCard({
+    id: `launcher:${rawId}`,
+    type: "launcher",
+    title: label,
+    subtitle: isAgentProvider ? "agent launcher" : "desktop app",
+    status: launcher.available === false ? "unavailable" : "available",
+    detail: isAgentProvider
+      ? `Start a new ${label} agent on this machine.`
+      : `Open ${label} on this machine.`,
+    meta: launcher.platform || "",
+    tags: [
+      isAgentProvider ? "agent" : "app",
+      providerId || appId,
+    ],
+    ref: {
+      machineId,
+      launcherId: rawId,
+      launcherKind,
+      providerId,
+      appId,
+      defaultName: normalizeText(launcher.defaultName || label, label),
+      actionLabel: "Launch",
+    },
+    width: LAUNCHER_CARD_WIDTH,
+    height: LAUNCHER_CARD_HEIGHT,
+  });
+}
+
+function launcherSummaryCard(launchers, machineId) {
+  const items = compactSummaryItems(launchers, (entry) => ({
+    title: normalizeText(pickFirst(entry.launcher.label, entry.launcher.id), `Launcher ${entry.index + 1}`),
+    status: normalizeText(entry.launcher.kind || "app"),
+    meta: entry.launcher.available === false ? "unavailable" : "available",
+  }));
+  return summaryCard({
+    id: "launchers-archive",
+    title: "More launchers",
+    subtitle: `${items.length} hidden`,
+    detail: items.slice(0, 3).map((item) => item.title).join(" · "),
+    meta: "Available apps and agent providers are collapsed.",
+    tags: ["launchers"],
+    items,
+    machineId,
+    summaryKind: "launcher",
+  });
+}
+
+function buildLauncherCards(launchers, machineId) {
+  const entries = launchers
+    .map((launcher, index) => ({ launcher, index }))
+    .filter((entry) => entry.launcher?.available !== false);
+  const visible = entries.slice(0, MAX_CANVAS_LAUNCHER_CARDS);
+  const cards = visible.map((entry) => launcherCard(entry.launcher, entry.index, machineId));
+  if (entries.length > visible.length) {
+    cards.push(launcherSummaryCard(entries.slice(visible.length), machineId));
+  }
+  return cards;
+}
+
 function machineCard(snapshot) {
   const node = snapshot.node;
   const system = snapshot.system || {};
@@ -1180,12 +1265,14 @@ export function buildCanvasCards(payload) {
   const linkedSessionIds = collectLinkedSessionIds(snapshot);
   const portCards = buildPortCards(snapshot.ports, machineId);
   const approvalCards = buildApprovalCards(snapshot.actionItems, machineId);
+  const launcherCards = buildLauncherCards(snapshot.launchers, machineId);
   const sessionCards = buildSessionCards(snapshot.sessions, machineId, { redacted: isRedacted, linkedSessionIds });
   const monitorCards = buildMonitorCards(snapshot, machineId);
   const browserCards = buildBrowserCards(snapshot.browserSessions, machineId, { redacted: isRedacted });
   const artifactCards = buildArtifactCards(snapshot.canvases, machineId);
   const cards = [
     machineCard(snapshot),
+    ...launcherCards,
     brainCard(snapshot.brain, machineId),
     ...approvalCards,
     ...snapshot.handoffJobs.map((job, index) => handoffCard(job, index, machineId)),
@@ -1213,6 +1300,7 @@ export function createFallbackCanvasLayout(cards) {
   const layout = {};
   const lanePriority = (card) => {
     if (card.type === "machine") return -1;
+    if (card.type === "launcher") return 0;
     if (card.type === "handoff") return 0;
     if (card.type === "approval") return 1;
     if (card.type === "brain") return 2;

@@ -58,6 +58,7 @@ export function buildNodeHeartbeatPayload({
     status: summary.status,
     counts: summary.counts,
     capabilities: summary.capabilities,
+    launchers: summary.launchers,
     system: summary.system,
     portHints: summary.portHints,
     degraded: summary.degraded,

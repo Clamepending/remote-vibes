@@ -69,6 +69,7 @@ test("local canvas view renders node snapshot cards and persists drag layout", a
     });
     const postedInputs = [];
     const postedRemoteCommands = [];
+    const postedAppLaunches = [];
     const postedRemotePairs = [];
     const deletedSessions = [];
     const directPairStarts = [];
@@ -132,6 +133,12 @@ test("local canvas view renders node snapshot cards and persists drag layout", a
           },
         ],
         ports: [{ port: remote.port, name: `${remote.name} app`, preferredAccess: "proxy" }],
+        launchers: origin === "https://account-node.example.test"
+          ? [
+              { id: "provider:codex", label: "Codex", kind: "agent-provider", providerId: "codex", defaultName: "Codex", available: true },
+              { id: "app:cursor", label: "Cursor", kind: "desktop-app", appId: "cursor", available: true, platform: "linux" },
+            ]
+          : [],
         counts: { sessions: 1, ports: 1, approvals: 0, artifacts: 0 },
         generatedAt: "2026-05-12T12:00:10.000Z",
       };
@@ -199,6 +206,10 @@ test("local canvas view renders node snapshot cards and persists drag layout", a
             name: index === 0 ? "Vite app" : `Preview ${index + 1}`,
             preferredAccess: index % 2 ? "direct" : "proxy",
           })),
+          launchers: [
+            { id: "provider:codex", label: "Codex", kind: "agent-provider", providerId: "codex", defaultName: "Codex", available: true },
+            { id: "app:cursor", label: "Cursor", kind: "desktop-app", appId: "cursor", available: true, platform: "darwin" },
+          ],
           handoffJobs: [
             {
               id: "deploy-pi",
@@ -508,6 +519,14 @@ test("local canvas view renders node snapshot cards and persists drag layout", a
         body: JSON.stringify({ ok: true, session: { id: "session-1" } }),
       });
     });
+    await page.route(`${baseUrl}/api/node/apps/launch`, async (route) => {
+      postedAppLaunches.push(JSON.parse(route.request().postData() || "{}"));
+      await route.fulfill({
+        status: 202,
+        contentType: "application/json",
+        body: JSON.stringify({ launched: true, launcher: { id: postedAppLaunches.at(-1).appId } }),
+      });
+    });
     await page.route(`${baseUrl}/api/sessions/session-1`, async (route) => {
       if (route.request().method() === "DELETE") {
         deletedSessions.push(route.request().url());
@@ -571,6 +590,7 @@ test("local canvas view renders node snapshot cards and persists drag layout", a
     assert.match(rendered, /More local apps/);
     assert.match(rendered, /Vite app/);
     assert.match(rendered, /Result chart/);
+    assert.match(rendered, /Cursor/);
     assert.match(rendered, /Handoff/);
     assert.match(rendered, /Please inspect the dashboard/);
     assert.match(rendered, /native session feed/);
@@ -593,7 +613,10 @@ test("local canvas view renders node snapshot cards and persists drag layout", a
     const composerBox = await page.locator('[data-swarmlab-canvas-card-id="session:session-1"] [data-swarmlab-agent-composer]').boundingBox();
     assert.ok(composerBox && composerBox.height <= 62, "canvas chat composer should stay compact on a large agent card");
     assert.equal(await page.locator(".swarmlab-canvas-card.is-summary:not(.is-remote)").count(), 2);
-    assert.equal(await page.locator(".swarmlab-canvas-card.is-remote").count(), 13);
+    assert.equal(await page.locator(".swarmlab-canvas-card.is-remote").count(), 15);
+    assert.equal(await page.locator(".swarmlab-canvas-card.is-launcher").count(), 4);
+    assert.equal(await page.locator(".swarmlab-canvas-card.is-launcher:not(.is-remote)").count(), 2);
+    assert.equal(await page.locator(".swarmlab-canvas-card.is-launcher.is-remote").count(), 2);
     const regionIds = await page.locator(".swarmlab-canvas-region").evaluateAll((regions) =>
       regions.map((region) => region.getAttribute("data-swarmlab-canvas-region-id")).filter(Boolean),
     );
@@ -646,6 +669,13 @@ test("local canvas view renders node snapshot cards and persists drag layout", a
       await page.locator(".swarmlab-canvas-stage").evaluate((element) => getComputedStyle(element).overflow),
       "hidden",
     );
+
+    await page.click('[data-swarmlab-canvas-card-id="launcher:app:cursor"] [data-swarmlab-canvas-launcher]');
+    for (let attempt = 0; attempt < 20 && postedAppLaunches.length === 0; attempt += 1) {
+      await page.waitForTimeout(50);
+    }
+    assert.equal(postedAppLaunches.length, 1);
+    assert.equal(postedAppLaunches[0].appId, "cursor");
 
     const sessionCard = page.locator('[data-swarmlab-canvas-card-id="session:session-1"]');
     const before = await sessionCard.boundingBox();
@@ -732,6 +762,23 @@ test("local canvas view renders node snapshot cards and persists drag layout", a
     assert.match(postedRemoteCommands[1].payload.initialPrompt, /Target machine id: account-box/);
     assert.match(postedRemoteCommands[1].payload.initialPrompt, /source agent is still running/i);
     assert.doesNotMatch(postedRemoteCommands[1].payload.initialPrompt, /token=secret|private/u);
+
+    await page.locator('[data-swarmlab-canvas-card-id="remote:account-box:launcher:provider:codex"] [data-swarmlab-canvas-launcher]').evaluate((button) => button.click());
+    for (let attempt = 0; attempt < 20 && postedRemoteCommands.length < 3; attempt += 1) {
+      await page.waitForTimeout(50);
+    }
+    assert.equal(postedRemoteCommands.length, 3);
+    assert.equal(postedRemoteCommands[2].operation, "session.create");
+    assert.equal(postedRemoteCommands[2].payload.providerId, "codex");
+    assert.equal(postedRemoteCommands[2].payload.name, "Codex");
+
+    await page.locator('[data-swarmlab-canvas-card-id="remote:account-box:launcher:app:cursor"] [data-swarmlab-canvas-launcher]').evaluate((button) => button.click());
+    for (let attempt = 0; attempt < 20 && postedRemoteCommands.length < 4; attempt += 1) {
+      await page.waitForTimeout(50);
+    }
+    assert.equal(postedRemoteCommands.length, 4);
+    assert.equal(postedRemoteCommands[3].operation, "app.launch");
+    assert.equal(postedRemoteCommands[3].payload.appId, "cursor");
 
     await page.evaluate(() => {
       const root = document.querySelector("[data-swarmlab-canvas-root]");

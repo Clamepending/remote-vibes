@@ -16,6 +16,7 @@ const ACCOUNT_NODE_STATUSES = new Set(["online", "idle", "busy", "stale", "offli
 const ACCOUNT_NODE_COMMAND_OPERATIONS = new Set([
   "session.input.write",
   "session.create",
+  "app.launch",
 ]);
 const ACCOUNT_NODE_COMMAND_STATUSES = new Set(["queued", "running", "completed", "failed", "expired", "canceled"]);
 
@@ -110,6 +111,7 @@ function normalizeCounts(value = {}) {
 function normalizeCapabilities(value = {}) {
   return {
     providerCount: normalizeNumber(value.providerCount),
+    launcherCount: normalizeNumber(value.launcherCount),
     buildingCount: normalizeNumber(value.buildingCount),
     gpuCount: normalizeNumber(value.gpuCount),
     cameraCount: normalizeNumber(value.cameraCount),
@@ -118,6 +120,28 @@ function normalizeCapabilities(value = {}) {
     hasTailscale: Boolean(value.hasTailscale),
     roles: normalizeRoles(value.roles),
   };
+}
+
+function normalizeLaunchers(value = []) {
+  const seen = new Set();
+  return (Array.isArray(value) ? value : [])
+    .map((launcher) => {
+      const id = compactText(launcher?.id, 120);
+      if (!id || seen.has(id)) return null;
+      seen.add(id);
+      return {
+        id,
+        label: compactText(launcher?.label || id, 80),
+        kind: compactText(launcher?.kind || "app", 40),
+        providerId: compactText(launcher?.providerId, 80),
+        appId: compactText(launcher?.appId, 80),
+        defaultName: compactText(launcher?.defaultName || launcher?.label, 80),
+        available: launcher?.available !== false,
+        platform: compactText(launcher?.platform, 40),
+      };
+    })
+    .filter(Boolean)
+    .slice(0, 24);
 }
 
 function normalizeSystem(value = {}) {
@@ -200,6 +224,7 @@ function normalizeNodeRecord(input = {}, existing = null, { ownerAccountId = "lo
   const counts = normalizeCounts(input.counts || summary.counts || existing?.counts || {});
   const capabilities = normalizeCapabilities(input.capabilities || summary.capabilities || existing?.capabilities || {});
   const system = normalizeSystem(input.system || summary.system || existing?.system || {});
+  const launchers = normalizeLaunchers(input.launchers || summary.launchers || existing?.launchers || []);
 
   return {
     id: existing?.id || nodeId,
@@ -213,6 +238,7 @@ function normalizeNodeRecord(input = {}, existing = null, { ownerAccountId = "lo
     connectionHints,
     counts,
     capabilities,
+    launchers,
     system,
     swarmlabVersion: compactText(input.swarmlabVersion || summaryNode.swarmlabVersion || existing?.swarmlabVersion, 80),
     commit: compactText(input.commit || summaryNode.commit || existing?.commit, 80),
@@ -238,6 +264,7 @@ function normalizeNodeRecord(input = {}, existing = null, { ownerAccountId = "lo
       status: normalizeStatus(input.status || summary.status || existing?.status, "unknown"),
       counts,
       capabilities,
+      launchers,
       system,
       degraded: Array.isArray(summary.degraded) ? summary.degraded.slice(0, 10).map((entry) => compactText(entry, 120)) : [],
     },
@@ -258,6 +285,7 @@ function cloneNode(node) {
       ...(node.capabilities || {}),
       roles: Array.isArray(node.capabilities?.roles) ? [...node.capabilities.roles] : [],
     },
+    launchers: Array.isArray(node.launchers) ? node.launchers.map((launcher) => ({ ...launcher })) : [],
     system: node.system && typeof node.system === "object" ? { ...node.system } : null,
     summary: node.summary && typeof node.summary === "object"
       ? JSON.parse(JSON.stringify(node.summary))
@@ -317,6 +345,13 @@ function normalizeCommandPayload(operation, value = {}) {
       initialPromptDelayMs: Number.isFinite(Number(source.initialPromptDelayMs)) ? Math.max(0, Math.min(60_000, Math.round(Number(source.initialPromptDelayMs)))) : undefined,
     };
   }
+  if (operation === "app.launch") {
+    const appId = compactText(source.appId || source.app_id || source.launcherId || source.launcher_id || source.id, 80);
+    if (!appId) {
+      throw buildHttpError("app.launch requires appId.", 400);
+    }
+    return { appId };
+  }
   return {};
 }
 
@@ -329,6 +364,9 @@ function commandTargetFromPayload(operation, payload) {
       providerId: payload.providerId || "",
       cwdHint: payload.cwd ? createHash("sha256").update(payload.cwd).digest("hex").slice(0, 16) : "",
     };
+  }
+  if (operation === "app.launch") {
+    return { appId: payload.appId || "" };
   }
   return {};
 }
@@ -645,6 +683,7 @@ export class AccountNodeRegistryService {
       connectionHints: cloned.connectionHints,
       counts: cloned.counts,
       capabilities: cloned.capabilities,
+      launchers: cloned.launchers,
       system: cloned.system,
       summary: cloned.summary,
       updatedAt: cloned.updatedAt,
@@ -724,6 +763,7 @@ export class AccountNodeRegistryService {
       connectionHints: heartbeat.connectionHints,
       counts: heartbeat.counts,
       capabilities: heartbeat.capabilities,
+      launchers: heartbeat.launchers,
       system: heartbeat.system,
       swarmlabVersion: heartbeat.swarmlabVersion,
       commit: heartbeat.commit,
@@ -747,6 +787,7 @@ export class AccountNodeRegistryService {
         status: heartbeat.status,
         counts: heartbeat.counts,
         capabilities: heartbeat.capabilities,
+        launchers: heartbeat.launchers,
         system: heartbeat.system,
         degraded: heartbeat.degraded,
       },

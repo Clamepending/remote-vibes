@@ -53,6 +53,7 @@ const CARD_TYPE_ICONS = {
   browser: Globe2,
   brain: MessageSquare,
   handoff: Send,
+  launcher: AppWindow,
   machine: HardDrive,
   monitor: Globe2,
   summary: Archive,
@@ -1116,6 +1117,41 @@ function absoluteRemoteHref(href, baseUrl) {
   }
 }
 
+function snapshotFromRegistryNode(registryNode = {}, baseUrl = "", error = "") {
+  const hasUsefulSummary = registryNode.nodeId ||
+    registryNode.id ||
+    registryNode.displayName ||
+    registryNode.launchers?.length ||
+    Object.keys(registryNode.counts || {}).length ||
+    Object.keys(registryNode.capabilities || {}).length;
+  if (!hasUsefulSummary) return null;
+  const host = remoteNodeHost(baseUrl);
+  const nodeId = registryNode.nodeId || registryNode.id || slugPart(host, "remote-node");
+  return normalizeNodeSnapshot({
+    schemaVersion: 1,
+    mode: "redacted",
+    generatedAt: registryNode.lastSeenAt || new Date(0).toISOString(),
+    node: {
+      id: nodeId,
+      nodeId,
+      name: registryNode.displayName || registryNode.label || host,
+      displayName: registryNode.displayName || registryNode.label || host,
+      status: registryNode.status || "offline",
+      os: registryNode.os || "",
+      version: registryNode.swarmlabVersion || "",
+      lastSeenAt: registryNode.lastSeenAt || "",
+    },
+    status: registryNode.status || "offline",
+    counts: registryNode.counts || {},
+    capabilities: registryNode.capabilities || {},
+    launchers: registryNode.launchers || [],
+    sessions: [],
+    ports: [],
+    handoffJobs: [],
+    degraded: error ? [{ source: "remoteSnapshot", error }] : [],
+  });
+}
+
 async function fetchRemoteNodeRecord(baseUrl, { fetchImpl, signal }) {
   const registryNode = typeof baseUrl === "string"
     ? { baseUrl: normalizeRemoteNodeUrl(baseUrl), url: normalizeRemoteNodeUrl(baseUrl) }
@@ -1146,12 +1182,14 @@ async function fetchRemoteNodeRecord(baseUrl, { fetchImpl, signal }) {
       error: null,
     };
   } catch (error) {
+    const errorText = error?.name === "AbortError" ? "timed out fetching redacted snapshot" : (error?.message || "unreachable");
+    const fallbackSnapshot = snapshotFromRegistryNode(registryNode, normalizedBaseUrl, errorText);
     return {
       baseUrl: normalizedBaseUrl,
       host: remoteNodeHost(normalizedBaseUrl),
       registryNode,
-      snapshot: null,
-      error: error?.name === "AbortError" ? "timed out fetching redacted snapshot" : (error?.message || "unreachable"),
+      snapshot: fallbackSnapshot,
+      error: errorText,
     };
   } finally {
     timeout.clear();
@@ -1210,6 +1248,7 @@ function normalizeRegistryFleetNode(node) {
     swarmlabVersion: String(node?.swarmlabVersion || node?.version || "").trim(),
     counts: node?.counts && typeof node.counts === "object" ? node.counts : {},
     capabilities: node?.capabilities && typeof node.capabilities === "object" ? node.capabilities : {},
+    launchers: Array.isArray(node?.launchers) ? node.launchers : [],
     connectionHints,
     lastError: String(node?.lastError || "").trim(),
   };
@@ -1273,6 +1312,7 @@ async function fetchRemoteNodeRecords({ fetchImpl, signal, storage, currentOrigi
     const existing = nodesByUrl.get(normalized.baseUrl) || {};
     const counts = Object.keys(normalized.counts || {}).length ? normalized.counts : (existing.counts || {});
     const capabilities = Object.keys(normalized.capabilities || {}).length ? normalized.capabilities : (existing.capabilities || {});
+    const launchers = normalized.launchers?.length ? normalized.launchers : (existing.launchers || []);
     const connectionHints = normalized.connectionHints?.length ? normalized.connectionHints : (existing.connectionHints || []);
     nodesByUrl.set(normalized.baseUrl, {
       ...normalized,
@@ -1289,6 +1329,7 @@ async function fetchRemoteNodeRecords({ fetchImpl, signal, storage, currentOrigi
       swarmlabVersion: normalized.swarmlabVersion || existing.swarmlabVersion || "",
       counts,
       capabilities,
+      launchers,
       connectionHints,
       lastError: normalized.lastError || existing.lastError || "",
     });
@@ -1587,6 +1628,22 @@ function renderAgentTransferBarContent(card, layout, targetRegion, localMachineI
 }
 
 function renderCardAction(card) {
+  if (card.type === "launcher") {
+    if (card.ref?.remoteUrl && !card.ref?.remoteNodeId) {
+      return `
+        <button class="swarmlab-canvas-open swarmlab-canvas-button" type="button" data-swarmlab-canvas-pair-region="${escapeHtml(card.ref?.machineId || "")}">
+          ${renderIcon(HardDrive)}
+          <span>Pair</span>
+        </button>
+      `;
+    }
+    return `
+      <button class="swarmlab-canvas-open swarmlab-canvas-button" type="button" data-swarmlab-canvas-launcher="${escapeHtml(card.id)}">
+        ${renderIcon(Send)}
+        <span>${escapeHtml(card.ref?.actionLabel || "Launch")}</span>
+      </button>
+    `;
+  }
   if (card.type === "handoff" && card.ref?.launchedSessionId && !card.ref?.remoteUrl) {
     return `
       <button class="swarmlab-canvas-open swarmlab-canvas-button" type="button" data-swarmlab-canvas-open-session="${escapeHtml(card.ref.launchedSessionId)}">
@@ -1900,6 +1957,18 @@ function renderAppCard(card, layout) {
   return cardFrame(card, layout, body, footer);
 }
 
+function renderLauncherCard(card, layout) {
+  const action = renderCardAction(card);
+  const body = `
+    <div class="swarmlab-canvas-card-body">
+      ${card.detail ? `<div>${escapeHtml(card.detail)}</div>` : ""}
+      ${renderTags(card, { limit: 4 })}
+    </div>
+  `;
+  const footer = `<div class="swarmlab-canvas-card-footer"><span>${escapeHtml(card.meta || card.status || "available")}</span>${action}</div>`;
+  return cardFrame(card, layout, body, footer);
+}
+
 function renderHandoffCard(card, layout) {
   const steps = Array.isArray(card.ref?.steps) ? card.ref.steps : [];
   const action = renderCardAction(card);
@@ -1987,6 +2056,7 @@ function renderCanvasCard(card, layout) {
   if (card.type === "monitor") return renderBrowserCard(card, layout);
   if (card.type === "browser") return renderBrowserCard(card, layout);
   if (card.type === "app") return renderAppCard(card, layout);
+  if (card.type === "launcher") return renderLauncherCard(card, layout);
   if (card.type === "handoff") return renderHandoffCard(card, layout);
   if (card.type === "brain") return renderBrainCard(card, layout);
   if (card.type === "summary") return renderSummaryCard(card, layout);
@@ -2058,6 +2128,9 @@ function remoteCardHref(card, baseUrl) {
   if (card.type === "handoff") {
     return absoluteRemoteHref("/?view=canvas", baseUrl);
   }
+  if (card.type === "launcher") {
+    return "";
+  }
   return absoluteRemoteHref(card.href, baseUrl);
 }
 
@@ -2066,6 +2139,7 @@ function remoteCardActionLabel(card) {
   if (card.type === "agent") return "Open agent";
   if (card.type === "handoff" && card.ref?.launchedSessionId) return "Open agent";
   if (card.type === "handoff") return "Open canvas";
+  if (card.type === "launcher") return "Launch";
   return card.ref?.actionLabel || "Open";
 }
 
@@ -2732,6 +2806,101 @@ async function launchAgentCapsule(button, root, { fetchImpl, abortController, on
   }
 }
 
+function launcherAppId(card) {
+  const explicit = String(card?.ref?.appId || "").trim();
+  if (explicit) return explicit;
+  return String(card?.ref?.launcherId || "").replace(/^app:/u, "").trim();
+}
+
+function launcherSessionPayload(card) {
+  const providerId = String(card?.ref?.providerId || "").trim();
+  return {
+    ...(providerId ? { providerId } : {}),
+    name: String(card?.ref?.defaultName || card?.title || "Agent").trim() || "Agent",
+  };
+}
+
+async function launchCanvasLauncher(button, root, { fetchImpl, abortController, onOpenSession, refresh }) {
+  const cardId = button.getAttribute("data-swarmlab-canvas-launcher") || "";
+  const card = root.__swarmlabCanvasCardsById?.[cardId];
+  if (!card) return;
+  const remoteNodeId = String(card.ref?.remoteNodeId || "").trim();
+  const isRemote = Boolean(card.ref?.remoteUrl);
+  const launcherKind = String(card.ref?.launcherKind || "").trim();
+  const isAgentProvider = launcherKind === "agent-provider" || Boolean(card.ref?.providerId);
+  if (isRemote && !remoteNodeId) {
+    button.textContent = "Pair first";
+    return;
+  }
+  button.setAttribute("disabled", "true");
+  const previousText = button.textContent;
+  button.textContent = isRemote ? "Queueing..." : "Launching...";
+  try {
+    if (isAgentProvider) {
+      const payload = launcherSessionPayload(card);
+      if (isRemote) {
+        const clientCommandId = `launcher-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 8)}`;
+        await fetchJson(`/api/account/nodes/${encodeURIComponent(remoteNodeId)}/commands`, {
+          fetchImpl,
+          signal: abortController.signal,
+          method: "POST",
+          body: {
+            operation: "session.create",
+            clientCommandId,
+            payload,
+          },
+        });
+        button.textContent = "Queued";
+        return;
+      }
+      const result = await fetchJson("/api/sessions", {
+        fetchImpl,
+        signal: abortController.signal,
+        method: "POST",
+        body: payload,
+      });
+      const sessionId = result?.session?.id || "";
+      button.textContent = "Launched";
+      if (sessionId && typeof onOpenSession === "function") {
+        onOpenSession(sessionId);
+      } else if (typeof refresh === "function") {
+        refresh();
+      }
+      return;
+    }
+
+    const appId = launcherAppId(card);
+    if (!appId) {
+      throw new Error("Launcher is missing an app id.");
+    }
+    if (isRemote) {
+      const clientCommandId = `app-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 8)}`;
+      await fetchJson(`/api/account/nodes/${encodeURIComponent(remoteNodeId)}/commands`, {
+        fetchImpl,
+        signal: abortController.signal,
+        method: "POST",
+        body: {
+          operation: "app.launch",
+          clientCommandId,
+          payload: { appId },
+        },
+      });
+      button.textContent = "Queued";
+      return;
+    }
+    await fetchJson("/api/node/apps/launch", {
+      fetchImpl,
+      signal: abortController.signal,
+      method: "POST",
+      body: { appId },
+    });
+    button.textContent = "Launched";
+  } catch (error) {
+    button.removeAttribute("disabled");
+    button.textContent = compactText(error?.message || previousText || "Launch failed", 32);
+  }
+}
+
 async function pairCanvasRegion(button, root, { fetchImpl, abortController, refresh }) {
   const regionId = button.getAttribute("data-swarmlab-canvas-pair-region") || "";
   const region = root.__swarmlabCanvasRegionsById?.[regionId] || null;
@@ -2840,6 +3009,19 @@ function bindCanvasActions(root, options) {
       event.preventDefault();
       event.stopPropagation();
       void pairCanvasRegion(button, root, root.__swarmlabCanvasActionOptions || {});
+    });
+  }
+
+  if (!root.__swarmlabCanvasLauncherBound) {
+    root.__swarmlabCanvasLauncherBound = true;
+    root.addEventListener("click", (event) => {
+      const button = event.target instanceof Element
+        ? event.target.closest("[data-swarmlab-canvas-launcher]")
+        : null;
+      if (!(button instanceof HTMLButtonElement)) return;
+      event.preventDefault();
+      event.stopPropagation();
+      void launchCanvasLauncher(button, root, root.__swarmlabCanvasActionOptions || {});
     });
   }
 

@@ -229,3 +229,93 @@ test("NodeCommandRelayService executes signed session create commands", async ()
     await rm(stateDir, { recursive: true, force: true });
   }
 });
+
+test("NodeCommandRelayService executes signed app launch commands", async () => {
+  const stateDir = await mkdtemp(path.join(os.tmpdir(), "swarmlab-command-relay-app-"));
+  try {
+    const nodeIdentityStore = new NodeIdentityStore({ stateDir: path.join(stateDir, "node") });
+    await nodeIdentityStore.initialize();
+    const identity = nodeIdentityStore.getPublicIdentity({ includeHostname: false });
+    const registry = new AccountNodeRegistryService({ stateDir: path.join(stateDir, "account") });
+    await registry.initialize();
+    const pairing = await registry.createPairing({ identity, ownerAccountId: "acct_mark" });
+    const approval = await registry.approvePairing({ pairingId: pairing.id, ownerAccountId: "acct_mark" });
+    const completed = await registry.completePairing({ grant: approval.grant, identity });
+    const registration = buildNodeRegistrationPayload({
+      identity,
+      snapshot: snapshot(identity.nodeId, identity.installId),
+    });
+    await registry.registerNode({
+      authorization: `Bearer ${completed.accessToken}`,
+      body: {
+        type: "node.registration",
+        registration,
+        signature: nodeIdentityStore.signPayload({ type: "node.registration", registration }),
+      },
+    });
+    await registry.enqueueCommandForOwner({
+      ownerAccountId: "acct_mark",
+      nodeId: identity.nodeId,
+      body: {
+        operation: "app.launch",
+        payload: { appId: "cursor" },
+      },
+    });
+    const leased = await registry.leaseCommandsForNode({
+      authorization: `Bearer ${completed.accessToken}`,
+      nodeId: identity.nodeId,
+    });
+
+    const tokenStore = new AccountTokenStore({ stateDir: path.join(stateDir, "local") });
+    await tokenStore.load();
+    await tokenStore.setRecord({
+      accessToken: completed.accessToken,
+      appBaseUrl: "https://account.example.test",
+      accountPublicKey: completed.commandPublicKey,
+      account: completed.account,
+      node: completed.node,
+    });
+
+    const launched = [];
+    const accountService = {
+      async listCommands() {
+        return { commands: leased, accountPublicKey: completed.commandPublicKey };
+      },
+      async acknowledgeCommand({ commandId, ack }) {
+        return registry.acknowledgeCommandFromNode({
+          authorization: `Bearer ${completed.accessToken}`,
+          nodeId: identity.nodeId,
+          commandId,
+          body: ack,
+        });
+      },
+    };
+    const relay = new NodeCommandRelayService({
+      accountService,
+      tokenStore,
+      nodeIdentityStore,
+      sessionManager: { getSession() {} },
+      appLaunchersProvider: () => [{ id: "cursor", label: "Cursor", available: true }],
+      appLauncher: async (launcherId, launchers) => {
+        launched.push({ launcherId, launchers });
+        return { launched: true, launcher: { id: launcherId } };
+      },
+      settingsProvider: () => ({}),
+    });
+
+    const result = await relay.tick({ reason: "test" });
+    assert.equal(result.commandCount, 1);
+    assert.equal(launched.length, 1);
+    assert.equal(launched[0].launcherId, "cursor");
+    const command = registry.getCommandForOwner({
+      ownerAccountId: "acct_mark",
+      nodeId: identity.nodeId,
+      commandId: leased[0].id,
+    });
+    assert.equal(command.status, "completed");
+    assert.equal(command.result.launched, true);
+    assert.equal(command.result.launcher.id, "cursor");
+  } finally {
+    await rm(stateDir, { recursive: true, force: true });
+  }
+});

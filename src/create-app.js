@@ -87,6 +87,7 @@ import { HandoffJobStore, buildHandoffLaunchPrompt } from "./node/handoff-job-st
 import { NodeIdentityStore } from "./node/identity-store.js";
 import { buildRouteClass, createLocalOrNodeTokenMiddleware, isLocalRequest } from "./node/security.js";
 import { NodeSnapshotService } from "./node/snapshot-service.js";
+import { detectAppLaunchers, launchAppLauncher } from "./app-launchers.js";
 import { detectProviders, getDefaultProviderId } from "./providers.js";
 import { listKnowledgeBase, readKnowledgeBaseNote } from "./knowledge-base.js";
 import { listProjects as listResearchProjects, getProjectDetail as getResearchProjectDetail } from "./research-api.js";
@@ -1682,6 +1683,7 @@ export async function createVibeResearchApp({
   listPorts = listListeningPorts,
   accessUrlsProvider = getAccessUrls,
   providers: providerOverrides = null,
+  appLaunchers: appLauncherOverrides = null,
   persistentTerminals = true,
   tailscaleServeManager = new TailscaleServeManager(),
   sleepPreventionFactory = (settings) =>
@@ -1723,6 +1725,7 @@ export async function createVibeResearchApp({
   defaultSessionCwd = process.env.VIBE_RESEARCH_DEFAULT_CWD || process.env.REMOTE_VIBES_DEFAULT_CWD || "",
 } = {}) {
   let providers = Array.isArray(providerOverrides) ? providerOverrides : await detectProviders();
+  let appLaunchers = Array.isArray(appLauncherOverrides) ? appLauncherOverrides : await detectAppLaunchers();
   let defaultProviderId = getDefaultProviderId(providers);
   const app = express();
   const wikiCloneRateLimit = rateLimit({
@@ -2269,6 +2272,7 @@ export async function createVibeResearchApp({
     nodeIdentityStore,
     metadataProvider: getAppMetadata,
     providersProvider: () => providers,
+    appLaunchersProvider: () => appLaunchers,
     sessionsProvider: () => sessionManager.listSessions(),
     browserSessionsProvider: () => browserUseService.listSessions({ includeSnapshot: false }),
     agentTownStateProvider: () => agentTownStore.getState(),
@@ -2308,6 +2312,7 @@ export async function createVibeResearchApp({
           tokenStore: accountTokenStore,
           nodeIdentityStore,
           sessionManager,
+          appLaunchersProvider: () => appLaunchers,
           settingsStore,
         })
       : new NodeCommandRelayService({
@@ -2315,6 +2320,7 @@ export async function createVibeResearchApp({
           tokenStore: accountTokenStore,
           nodeIdentityStore,
           sessionManager,
+          appLaunchersProvider: () => appLaunchers,
           settingsProvider: () => settingsStore.settings,
         });
 
@@ -3205,6 +3211,13 @@ export async function createVibeResearchApp({
     defaultProviderId = getDefaultProviderId(providers);
     sessionManager.providers = providers;
     return { providers, defaultProviderId };
+  }
+
+  async function refreshAppLaunchers() {
+    appLaunchers = Array.isArray(appLauncherOverrides)
+      ? appLauncherOverrides
+      : await detectAppLaunchers();
+    return { appLaunchers };
   }
 
   function getProviderInstallOutput(error) {
@@ -4309,6 +4322,17 @@ export async function createVibeResearchApp({
         return;
       }
       response.status(error.statusCode || 500).json({ error: error.message || "Could not fetch remote node snapshot." });
+    }
+  });
+
+  app.post("/api/node/apps/launch", requireLocalOrNodeToken, async (request, response) => {
+    try {
+      const launcherId = String(request.body?.appId || request.body?.launcherId || request.body?.id || "").trim();
+      await refreshAppLaunchers();
+      const result = await launchAppLauncher(launcherId, appLaunchers);
+      response.status(202).json(result);
+    } catch (error) {
+      response.status(error.statusCode || 400).json({ error: error.message || "Could not launch app on this node." });
     }
   });
 

@@ -486,11 +486,55 @@ function summarizeSystem(system, mode) {
   };
 }
 
+function summarizeProviderLauncher(provider = {}) {
+  if (!provider?.available || provider?.id === "shell") return null;
+  const id = compactText(provider.id, 80);
+  if (!id) return null;
+  return {
+    id: `provider:${id}`,
+    label: compactText(provider.label || provider.defaultName || id, 80),
+    kind: "agent-provider",
+    providerId: id,
+    defaultName: compactText(provider.defaultName || provider.label || id, 80),
+    available: true,
+  };
+}
+
+function summarizeAppLauncher(launcher = {}) {
+  if (!launcher?.available) return null;
+  const id = compactText(launcher.id, 80);
+  if (!id) return null;
+  return {
+    id: `app:${id}`,
+    label: compactText(launcher.label || id, 80),
+    kind: compactText(launcher.kind || "desktop-app", 40),
+    appId: id,
+    available: true,
+    platform: compactText(launcher.platform, 40),
+  };
+}
+
+function buildLaunchers(providers = [], appLaunchers = []) {
+  const seen = new Set();
+  return [
+    ...arrayOrEmpty(providers).map(summarizeProviderLauncher),
+    ...arrayOrEmpty(appLaunchers).map(summarizeAppLauncher),
+  ]
+    .filter((launcher) => {
+      const key = launcher?.id || "";
+      if (!key || seen.has(key)) return false;
+      seen.add(key);
+      return true;
+    })
+    .slice(0, 24);
+}
+
 export class NodeSnapshotService {
   constructor({
     nodeIdentityStore,
     metadataProvider,
     providersProvider,
+    appLaunchersProvider,
     sessionsProvider,
     browserSessionsProvider,
     agentTownStateProvider,
@@ -505,6 +549,7 @@ export class NodeSnapshotService {
     this.nodeIdentityStore = nodeIdentityStore;
     this.metadataProvider = metadataProvider || (() => ({}));
     this.providersProvider = providersProvider || (() => []);
+    this.appLaunchersProvider = appLaunchersProvider || (() => []);
     this.sessionsProvider = sessionsProvider || (() => []);
     this.browserSessionsProvider = browserSessionsProvider || (() => []);
     this.agentTownStateProvider = agentTownStateProvider || (() => ({}));
@@ -594,6 +639,7 @@ export class NodeSnapshotService {
       buildingsResult,
       projectsResult,
       providersResult,
+      appLaunchersResult,
       handoffJobsResult,
       brainResult,
     ] = await Promise.all([
@@ -606,6 +652,7 @@ export class NodeSnapshotService {
       withTimeout("buildings", this.buildingsProvider, [], this.timeoutMs),
       withTimeout("projects", this.projectsProvider, [], this.timeoutMs),
       withTimeout("providers", this.providersProvider, [], this.timeoutMs),
+      withTimeout("appLaunchers", this.appLaunchersProvider, [], this.timeoutMs),
       withTimeout("handoffJobs", this.handoffJobsProvider, [], this.timeoutMs),
       withTimeout("brain", this.brainProvider, {}, this.timeoutMs),
     ]);
@@ -619,6 +666,8 @@ export class NodeSnapshotService {
     const buildings = arrayOrEmpty(buildingsResult.value);
     const projects = arrayOrEmpty(projectsResult.value);
     const providers = arrayOrEmpty(providersResult.value);
+    const appLaunchers = arrayOrEmpty(appLaunchersResult.value);
+    const launchers = buildLaunchers(providers, appLaunchers);
     const handoffJobs = arrayOrEmpty(handoffJobsResult.value);
     const brain = brainResult.value || {};
     const degraded = [
@@ -630,6 +679,7 @@ export class NodeSnapshotService {
       buildingsResult,
       projectsResult,
       providersResult,
+      appLaunchersResult,
       handoffJobsResult,
       brainResult,
     ]
@@ -646,6 +696,7 @@ export class NodeSnapshotService {
       node: manifest,
       capabilities: {
         providerCount: providers.length,
+        launcherCount: launchers.length,
         providers: normalizedMode === "privileged"
           ? providers.map((provider) => ({
               id: provider?.id || "",
@@ -694,6 +745,7 @@ export class NodeSnapshotService {
         brainNotes: Number(brain?.noteCount ?? brain?.notes?.length ?? 0) || 0,
       },
       sessions: sessions.slice(0, 100).map((session) => summarizeSession(session, normalizedMode)),
+      launchers,
       browserSessions: browserSessions.slice(0, 100).map((session) => summarizeBrowserSession(session, normalizedMode)),
       actionItems: actionItems.slice(0, 100).map((item) => summarizeActionItem(item, normalizedMode)),
       canvases: canvases.slice(0, 100).map((canvas) => summarizeCanvas(canvas, normalizedMode)),

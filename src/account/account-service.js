@@ -80,6 +80,7 @@ function normalizeNodeCapabilities(value = {}) {
     : [];
   return {
     providerCount: normalizeNumber(value.providerCount),
+    launcherCount: normalizeNumber(value.launcherCount),
     buildingCount: normalizeNumber(value.buildingCount),
     gpuCount: normalizeNumber(value.gpuCount),
     cameraCount: normalizeNumber(value.cameraCount),
@@ -88,6 +89,28 @@ function normalizeNodeCapabilities(value = {}) {
     hasTailscale: Boolean(value.hasTailscale),
     roles,
   };
+}
+
+function normalizeNodeLaunchers(value = []) {
+  const seen = new Set();
+  return (Array.isArray(value) ? value : [])
+    .map((launcher) => {
+      const id = String(launcher?.id || "").replace(/\s+/g, "-").trim().slice(0, 120);
+      if (!id || seen.has(id)) return null;
+      seen.add(id);
+      return {
+        id,
+        label: String(launcher?.label || id).replace(/\s+/g, " ").trim().slice(0, 80),
+        kind: String(launcher?.kind || "app").replace(/\s+/g, "-").trim().slice(0, 40),
+        providerId: String(launcher?.providerId || "").replace(/\s+/g, "-").trim().slice(0, 80),
+        appId: String(launcher?.appId || "").replace(/\s+/g, "-").trim().slice(0, 80),
+        defaultName: String(launcher?.defaultName || launcher?.label || "").replace(/\s+/g, " ").trim().slice(0, 80),
+        available: launcher?.available !== false,
+        platform: String(launcher?.platform || "").replace(/\s+/g, "-").trim().slice(0, 40),
+      };
+    })
+    .filter(Boolean)
+    .slice(0, 24);
 }
 
 function isLocalConnectionHint(hint = {}) {
@@ -148,6 +171,7 @@ function normalizeAccountFleetNode(node = {}) {
     connectionHints,
     counts: normalizeNodeCounts(node.counts || summary.counts || {}),
     capabilities: normalizeNodeCapabilities(node.capabilities || summary.capabilities || {}),
+    launchers: normalizeNodeLaunchers(node.launchers || summary.launchers || []),
   };
 }
 
@@ -236,6 +260,7 @@ export function buildNodeSummaryFromSnapshot(snapshot = {}) {
     },
     capabilities: {
       providerCount: Number(capabilities.providerCount || 0),
+      launcherCount: Number(capabilities.launcherCount || 0),
       buildingCount: Number(capabilities.buildingCount || 0),
       gpuCount: Number(capabilities.gpuCount || system.gpuCount || 0),
       cameraCount: Number(capabilities.cameraCount || system.cameraCount || 0),
@@ -259,6 +284,7 @@ export function buildNodeSummaryFromSnapshot(snapshot = {}) {
         : null,
     },
     portHints: snapshot.portHints && typeof snapshot.portHints === "object" ? { ...snapshot.portHints } : null,
+    launchers: normalizeNodeLaunchers(snapshot.launchers || []),
     degraded: Array.isArray(snapshot.degraded) ? snapshot.degraded.slice(0, 10) : [],
   };
 }

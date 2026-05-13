@@ -82,6 +82,24 @@ test("buildCanvasCards renders machine, brain, handoff, session, browser, approv
   assert.equal(cards.find((card) => card.type === "artifact")?.detail, "Best run so far");
 });
 
+test("buildCanvasCards renders available app and agent launchers as first-class canvas cards", () => {
+  const cards = buildCanvasCards({
+    node: { id: "node-1", name: "Mac", status: "online" },
+    launchers: [
+      { id: "provider:codex", label: "Codex", kind: "agent-provider", providerId: "codex", defaultName: "Codex", available: true },
+      { id: "app:cursor", label: "Cursor", kind: "desktop-app", appId: "cursor", available: true, platform: "darwin" },
+      { id: "app:missing", label: "Missing", kind: "desktop-app", appId: "missing", available: false },
+    ],
+  });
+
+  const launchers = cards.filter((card) => card.type === "launcher");
+  assert.deepEqual(launchers.map((card) => card.title), ["Codex", "Cursor"]);
+  assert.equal(launchers[0].ref.providerId, "codex");
+  assert.equal(launchers[0].ref.actionLabel, "Launch");
+  assert.equal(launchers[1].ref.appId, "cursor");
+  assert.equal(launchers[1].subtitle, "desktop app");
+});
+
 test("buildCanvasCards promotes W&B tabs to monitor cards linked to source agents", () => {
   const cards = buildCanvasCards({
     node: { id: "node-1", name: "GPU box", status: "online" },
