@@ -35649,6 +35649,10 @@ function renderUpdateBanner() {
     `;
   }
 
+  if (!update.canUpdate && !state.updateApplying && state.currentView !== "settings" && state.currentView !== "system") {
+    return "";
+  }
+
   const current = update.currentTag || update.currentVersion || update.currentShort || "current";
   const branch = update.branch || "main";
   const detail = update.canUpdate
