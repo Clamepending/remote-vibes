@@ -337,6 +337,6 @@ test("canvas board id and storage key are stable per node", () => {
   );
   assert.equal(
     getCanvasViewportStorageKey(boardId),
-    "swarmlab.canvas.viewport.v3:machine:mac-main",
+    "swarmlab.canvas.viewport.v4:machine:mac-main",
   );
 });

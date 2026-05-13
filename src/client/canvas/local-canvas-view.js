@@ -1723,11 +1723,27 @@ async function promoteRemoteNodeUrls(urls, { fetchImpl, signal, storage, source 
   return normalizedUrls;
 }
 
-async function fetchRemoteNodeRecords({ fetchImpl, signal, storage, currentOrigin }) {
+function isLocalNodeAlias(node, localNodeId = "") {
+  const normalizedLocalNodeId = String(localNodeId || "").trim();
+  if (!normalizedLocalNodeId) return false;
+  const normalized = normalizeRegistryFleetNode(node);
+  return Boolean(normalized.nodeId && normalized.nodeId === normalizedLocalNodeId);
+}
+
+function isLocalSnapshotAlias(record, localNodeId = "") {
+  const normalizedLocalNodeId = String(localNodeId || "").trim();
+  if (!normalizedLocalNodeId || !record) return false;
+  const snapshotNodeId = String(record.snapshot?.node?.id || record.snapshot?.node?.nodeId || "").trim();
+  const registryNodeId = String(record.registryNode?.nodeId || "").trim();
+  return snapshotNodeId === normalizedLocalNodeId || registryNodeId === normalizedLocalNodeId;
+}
+
+async function fetchRemoteNodeRecords({ fetchImpl, signal, storage, currentOrigin, localNodeId = "" }) {
   const nodesByUrl = new Map();
   const addNode = (node) => {
     const normalized = normalizeRegistryFleetNode(node);
     if (!normalized.baseUrl || normalized.baseUrl === currentOrigin) return;
+    if (isLocalNodeAlias(normalized, localNodeId)) return;
     const existing = nodesByUrl.get(normalized.baseUrl) || {};
     const counts = Object.keys(normalized.counts || {}).length ? normalized.counts : (existing.counts || {});
     const capabilities = Object.keys(normalized.capabilities || {}).length ? normalized.capabilities : (existing.capabilities || {});
@@ -1761,7 +1777,8 @@ async function fetchRemoteNodeRecords({ fetchImpl, signal, storage, currentOrigi
   }
   const nodes = [...nodesByUrl.values()];
   if (!nodes.length) return [];
-  const records = await Promise.all(nodes.map((node) => fetchRemoteNodeRecord(node, { fetchImpl, signal })));
+  const records = (await Promise.all(nodes.map((node) => fetchRemoteNodeRecord(node, { fetchImpl, signal }))))
+    .filter((record) => !isLocalSnapshotAlias(record, localNodeId));
   await Promise.all(records.map((record) => {
     if (!record.snapshot) return null;
     return registerFleetNodeUrl(record.baseUrl, {
@@ -4226,18 +4243,18 @@ async function loadCanvas(root, options) {
       });
       pendingParamNodeUrls.splice(0);
     }
-    const [payload, remoteRecords] = await Promise.all([
-      fetchJson(SNAPSHOT_URL, {
-        fetchImpl,
-        signal: abortController.signal,
-      }),
-      fetchRemoteNodeRecords({
-        fetchImpl,
-        signal: abortController.signal,
-        storage,
-        currentOrigin,
-      }),
-    ]);
+    const payload = await fetchJson(SNAPSHOT_URL, {
+      fetchImpl,
+      signal: abortController.signal,
+    });
+    const localSnapshot = normalizeNodeSnapshot(payload);
+    const remoteRecords = await fetchRemoteNodeRecords({
+      fetchImpl,
+      signal: abortController.signal,
+      storage,
+      currentOrigin,
+      localNodeId: localSnapshot.node.id,
+    });
     if (abortController.signal.aborted) {
       return;
     }

@@ -280,6 +280,13 @@ test("local canvas view renders node snapshot cards and persists drag layout", a
               status: "online",
               connectionHints: [{ kind: "public", url: "https://account-node.example.test" }],
             },
+            {
+              id: "self-account-node",
+              nodeId: "mac-main",
+              displayName: "This Mac over Tailscale",
+              status: "online",
+              connectionHints: [{ kind: "public", url: "https://self-node.example.test" }],
+            },
           ],
         }),
       });
@@ -608,6 +615,7 @@ test("local canvas view renders node snapshot cards and persists drag layout", a
     assert.match(rendered, /registry-node\.example\.test/);
     assert.match(rendered, /query-node\.example\.test/);
     assert.match(rendered, /account-node\.example\.test/);
+    assert.doesNotMatch(rendered, /self-node\.example\.test|This Mac over Tailscale/);
     assert.match(rendered, /2 sessions, 1 apps, 1 handoffs/);
     assert.match(rendered, /6 gpus/);
     assert.doesNotMatch(rendered, /private|token=secret|token=registry/);
@@ -684,6 +692,7 @@ test("local canvas view renders node snapshot cards and persists drag layout", a
       await page.locator('.swarmlab-canvas-region[data-swarmlab-canvas-region-id="mac-main"] .swarmlab-canvas-region-badges').innerText(),
       /local/i,
     );
+    assert.equal(remoteSnapshotHits.get("https://self-node.example.test") || 0, 0);
     assert.match(
       await page.locator('.swarmlab-canvas-region[data-swarmlab-canvas-region-id="account-box"] .swarmlab-canvas-region-badges').innerText(),
       /account/i,
@@ -750,7 +759,7 @@ test("local canvas view renders node snapshot cards and persists drag layout", a
       "hidden",
     );
     const initialViewport = await page.evaluate(() =>
-      JSON.parse(window.localStorage.getItem("swarmlab.canvas.viewport.v3:fleet:mac-main") || "{}"),
+      JSON.parse(window.localStorage.getItem("swarmlab.canvas.viewport.v4:fleet:mac-main") || "{}"),
     );
     assert.ok(initialViewport.zoom >= 0.42, "initial safe fit should persist a usable zoom");
 
@@ -792,7 +801,7 @@ test("local canvas view renders node snapshot cards and persists drag layout", a
 
     await page.click("[data-swarmlab-canvas-zoom-in]");
     const viewport = await page.evaluate(() =>
-      JSON.parse(window.localStorage.getItem("swarmlab.canvas.viewport.v3:fleet:mac-main") || "{}"),
+      JSON.parse(window.localStorage.getItem("swarmlab.canvas.viewport.v4:fleet:mac-main") || "{}"),
     );
     assert.ok(viewport.zoom > initialViewport.zoom, "zoom controls should persist a zoomed viewport");
 
