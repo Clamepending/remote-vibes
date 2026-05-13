@@ -688,6 +688,13 @@ test("local canvas view renders node snapshot cards and persists drag layout", a
     assert.match(dockText, /Codex/);
     assert.match(dockText, /Cursor/);
     assert.doesNotMatch(dockText, /\b\d+\s+apps?\b/i, "machine app counts should stay in labels, not visible dock chrome");
+    assert.equal(await page.locator(".swarmlab-canvas-machine-rail").count(), 1);
+    assert.equal(await page.locator("[data-swarmlab-canvas-focus-region]").count(), 6);
+    const machineRailText = await page.locator(".swarmlab-canvas-machine-rail").innerText();
+    assert.match(machineRailText, /Machines/);
+    assert.match(machineRailText, /Mac Main/);
+    assert.match(machineRailText, /GPU Cluster/);
+    assert.doesNotMatch(machineRailText, /\b\d+\s+apps?\b/i, "machine rail should navigate regions without duplicating app launcher state");
     const regionIds = await page.locator(".swarmlab-canvas-region").evaluateAll((regions) =>
       regions.map((region) => region.getAttribute("data-swarmlab-canvas-region-id")).filter(Boolean),
     );
@@ -778,6 +785,15 @@ test("local canvas view renders node snapshot cards and persists drag layout", a
       JSON.parse(window.localStorage.getItem("swarmlab.canvas.viewport.v4:fleet:mac-main") || "{}"),
     );
     assert.ok(initialViewport.zoom >= 0.42, "initial safe fit should persist a usable zoom");
+    await page.click('[data-swarmlab-canvas-focus-region="gpu-cluster"]');
+    await page.waitForFunction(() =>
+      document.querySelector('[data-swarmlab-canvas-focus-region="gpu-cluster"]')?.getAttribute("aria-current") === "true",
+    );
+    assert.equal(await page.locator('[data-swarmlab-canvas-launch-machine="gpu-cluster"]').getAttribute("aria-selected"), "true");
+    const railViewport = await page.evaluate(() =>
+      JSON.parse(window.localStorage.getItem("swarmlab.canvas.viewport.v4:fleet:mac-main") || "{}"),
+    );
+    assert.notDeepEqual(railViewport, initialViewport, "machine rail selection should focus the selected region");
     await page.evaluate(() => {
       const root = document.querySelector("[data-swarmlab-canvas-root]");
       window.localStorage.setItem(root.dataset.swarmlabCanvasViewportStorageKey, JSON.stringify({ x: -7200, y: -5200, zoom: 0.62 }));

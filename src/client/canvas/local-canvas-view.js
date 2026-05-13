@@ -272,6 +272,68 @@ function injectCanvasStyles(documentRef = document) {
   width: 34px;
   padding: 0;
 }
+.swarmlab-canvas-machine-rail {
+  position: absolute;
+  left: 14px;
+  top: 14px;
+  z-index: 26;
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  max-width: calc(100% - 28px);
+  padding: 4px;
+  border: 1px solid rgba(232, 222, 206, 0.13);
+  border-radius: 10px;
+  background: rgba(31, 30, 27, 0.84);
+  box-shadow: 0 14px 38px rgba(0, 0, 0, 0.28);
+  backdrop-filter: blur(14px);
+  overflow-x: auto;
+  pointer-events: auto;
+  scrollbar-width: none;
+}
+.swarmlab-canvas-machine-rail::-webkit-scrollbar {
+  display: none;
+}
+.swarmlab-canvas-machine-rail-title,
+.swarmlab-canvas-machine-jump {
+  display: inline-flex;
+  align-items: center;
+  min-height: 32px;
+  border: 1px solid rgba(232, 222, 206, 0.1);
+  border-radius: 8px;
+  background: rgba(255, 255, 255, 0.035);
+}
+.swarmlab-canvas-machine-rail-title {
+  gap: 6px;
+  padding: 0 8px;
+  color: var(--canvas-muted);
+  font-size: 10px;
+  font-weight: 760;
+}
+.swarmlab-canvas-machine-jump {
+  gap: 6px;
+  max-width: 152px;
+  padding: 0 8px;
+  color: var(--canvas-muted);
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+}
+.swarmlab-canvas-machine-jump:hover,
+.swarmlab-canvas-machine-jump.is-active {
+  border-color: color-mix(in srgb, var(--machine-accent, var(--canvas-accent)) 46%, rgba(232, 222, 206, 0.16));
+  background: color-mix(in srgb, var(--machine-accent, var(--canvas-accent)) 13%, rgba(255, 255, 255, 0.035));
+  color: var(--canvas-text);
+}
+.swarmlab-canvas-machine-jump strong {
+  display: block;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: 10px;
+  font-weight: 720;
+}
 .swarmlab-canvas-launch-dock {
   position: absolute;
   left: 14px;
@@ -3443,6 +3505,37 @@ function renderLauncherDock(launcherCards, regions = [], localMachineId = "", se
   `;
 }
 
+function renderMachineNavigator(regions = [], localMachineId = "", selectedMachineId = "") {
+  if (!Array.isArray(regions) || regions.length <= 1) return "";
+  const activeMachineId = regions.some((region) => region?.id === selectedMachineId)
+    ? selectedMachineId
+    : localMachineId;
+  return `
+    <nav class="swarmlab-canvas-machine-rail" data-swarmlab-canvas-machine-rail aria-label="Machine regions">
+      <div class="swarmlab-canvas-machine-rail-title">${renderIcon(HardDrive, { width: 15, height: 15 })}<span>Machines</span></div>
+      ${regions.map((region) => {
+        const regionId = String(region?.id || "").trim();
+        if (!regionId) return "";
+        const title = regionDisplayName(region, regionId) || regionId;
+        const active = regionId === activeMachineId;
+        return `
+          <button
+            class="swarmlab-canvas-machine-jump${active ? " is-active" : ""}"
+            type="button"
+            data-swarmlab-canvas-focus-region="${escapeHtml(regionId)}"
+            aria-current="${active ? "true" : "false"}"
+            title="${escapeHtml(`${title} · ${regionSummary(region)}`)}"
+            style="--machine-accent: ${escapeHtml(regionAccent(region))};"
+          >
+            <span class="swarmlab-canvas-launch-chip" aria-hidden="true"></span>
+            <strong>${escapeHtml(title)}</strong>
+          </button>
+        `;
+      }).join("")}
+    </nav>
+  `;
+}
+
 function renderFloatingControls(viewport) {
   const zoom = Math.round((Number(viewport.zoom) || 1) * 100);
   return `
@@ -3527,10 +3620,14 @@ function getViewportSafeInsets(root) {
   const rect = root.getBoundingClientRect();
   const insets = { top: 24, right: 24, bottom: 24, left: 24 };
   if (rect.width <= 0 || rect.height <= 0) return insets;
-  root.querySelectorAll("[data-swarmlab-canvas-launch-dock], [data-swarmlab-canvas-controls]").forEach((element) => {
+  root.querySelectorAll("[data-swarmlab-canvas-machine-rail], [data-swarmlab-canvas-launch-dock], [data-swarmlab-canvas-controls]").forEach((element) => {
     const box = element.getBoundingClientRect();
     if (box.width <= 0 || box.height <= 0) return;
-    if (box.top >= rect.top && box.top <= rect.bottom) {
+    const isMachineRail = element.hasAttribute("data-swarmlab-canvas-machine-rail");
+    if (isMachineRail && box.bottom >= rect.top && box.top <= rect.bottom) {
+      insets.top = Math.max(insets.top, Math.round(box.bottom - rect.top + 18));
+    }
+    if (!isMachineRail && box.top >= rect.top && box.top <= rect.bottom) {
       insets.bottom = Math.max(insets.bottom, Math.round(rect.bottom - box.top + 18));
     }
     if (box.left >= rect.left && box.left <= rect.right && box.width > rect.width * 0.4) {
@@ -3705,6 +3802,7 @@ function renderSnapshot(root, payload, { storage, remoteRecords = [] } = {}) {
       ${renderCanvasPipeLayer(renderCards, layout, regions, localMachineId)}
       ${renderCards.map((card) => renderCanvasCard(card, layout[card.id])).join("")}
     </div>
+    ${renderMachineNavigator(regions, localMachineId, selectedLauncherMachineId)}
     ${renderLauncherDock(launcherCards, regions, localMachineId, selectedLauncherMachineId)}
     ${renderFloatingControls(viewport)}
     ${renderCanvasNotice()}
@@ -4718,6 +4816,33 @@ function bindCanvasActions(root, options) {
           storage.setItem(key, machineId);
         } catch {
           // Dock machine selection is convenience UI state.
+        }
+      }
+      if (machineId) {
+        setViewport(root, storage, fitViewportToMachine(root, machineId));
+      }
+      if (typeof refresh === "function") {
+        refresh();
+      }
+    });
+  }
+
+  if (!root.__swarmlabCanvasFocusRegionBound) {
+    root.__swarmlabCanvasFocusRegionBound = true;
+    root.addEventListener("click", (event) => {
+      const button = event.target instanceof Element
+        ? event.target.closest("[data-swarmlab-canvas-focus-region]")
+        : null;
+      if (!(button instanceof HTMLButtonElement)) return;
+      event.preventDefault();
+      event.stopPropagation();
+      const machineId = button.getAttribute("data-swarmlab-canvas-focus-region") || "";
+      const key = root.dataset.swarmlabCanvasLaunchDockStorageKey || "";
+      if (machineId && key) {
+        try {
+          storage.setItem(key, machineId);
+        } catch {
+          // Machine focus mirrors the dock machine selection when storage is available.
         }
       }
       if (machineId) {
