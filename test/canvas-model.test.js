@@ -226,13 +226,28 @@ test("mergeCanvasLayout preserves saved positions and creates defaults for new c
     sessions: [{ id: "s1", name: "One" }, { id: "s2", name: "Two" }],
   });
   const layout = mergeCanvasLayout(cards, {
-    "session:s1": { x: 444, y: 222, width: 300, height: 190, z: 99, regionId: "gpu-box" },
+    "session:s1": {
+      x: 444,
+      y: 222,
+      width: 300,
+      height: 190,
+      z: 99,
+      regionId: "gpu-box",
+      regionX: 400,
+      regionY: 200,
+      regionWidth: 960,
+      regionHeight: 720,
+    },
   });
 
   assert.equal(layout["session:s1"].x, 444);
   assert.equal(layout["session:s1"].y, 222);
   assert.equal(layout["session:s1"].z, 99);
   assert.equal(layout["session:s1"].regionId, "gpu-box");
+  assert.equal(layout["session:s1"].regionX, 400);
+  assert.equal(layout["session:s1"].regionY, 200);
+  assert.equal(layout["session:s1"].regionWidth, 960);
+  assert.equal(layout["session:s1"].regionHeight, 720);
   assert.equal(getCanvasCardMachineId(cards.find((card) => card.id === "session:s1")), "node-1");
   assert.equal(getCanvasCardRegionId(cards.find((card) => card.id === "session:s1"), layout["session:s1"]), "gpu-box");
   assert.equal(layout["session:s2"].regionId, "node-1");
@@ -333,7 +348,7 @@ test("canvas board id and storage key are stable per node", () => {
   assert.equal(boardId, "machine:mac-main");
   assert.equal(
     getCanvasLayoutStorageKey(boardId),
-    "swarmlab.canvas.layout.v6:machine:mac-main",
+    "swarmlab.canvas.layout.v7:machine:mac-main",
   );
   assert.equal(
     getCanvasViewportStorageKey(boardId),

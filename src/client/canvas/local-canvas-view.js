@@ -48,6 +48,10 @@ const BOARD_WIDTH = 4_800;
 const BOARD_HEIGHT = 5_200;
 const DEFAULT_VIEWPORT = { x: 28, y: 42, zoom: 0.74 };
 const MAX_VISIBLE_DOCK_LAUNCHERS = 6;
+const REGION_RESIZE_MIN_WIDTH = 420;
+const REGION_RESIZE_MIN_HEIGHT = 320;
+const REGION_RESIZE_MAX_WIDTH = 4_000;
+const REGION_RESIZE_MAX_HEIGHT = 5_000;
 const CARD_TYPE_ICONS = {
   agent: Bot,
   approval: CheckSquare,
@@ -504,6 +508,9 @@ function injectCanvasStyles(documentRef = document) {
 .swarmlab-canvas-stage.is-card-dragging {
   cursor: grabbing;
 }
+.swarmlab-canvas-stage.is-region-resizing {
+  cursor: nwse-resize;
+}
 .swarmlab-canvas-plane {
   position: absolute;
   inset: 0 auto auto 0;
@@ -530,6 +537,12 @@ function injectCanvasStyles(documentRef = document) {
   border-color: color-mix(in srgb, var(--region-accent) 76%, white 8%);
   background:
     linear-gradient(180deg, color-mix(in srgb, var(--region-accent) 16%, transparent), transparent 38%),
+    color-mix(in srgb, var(--region-accent) 8%, transparent);
+}
+.swarmlab-canvas-region.is-resizing {
+  border-color: color-mix(in srgb, var(--region-accent) 78%, white 10%);
+  background:
+    linear-gradient(180deg, color-mix(in srgb, var(--region-accent) 15%, transparent), transparent 40%),
     color-mix(in srgb, var(--region-accent) 8%, transparent);
 }
 .swarmlab-canvas-region-drop-label {
@@ -589,6 +602,15 @@ function injectCanvasStyles(documentRef = document) {
   gap: 8px;
   min-width: 0;
 }
+.swarmlab-canvas-region-title-row .swarmlab-canvas-region-resize {
+  position: static;
+  width: 21px;
+  height: 21px;
+  min-height: 21px;
+  flex: 0 0 auto;
+  border-radius: 6px;
+  opacity: 0.64;
+}
 .swarmlab-canvas-region-name,
 .swarmlab-canvas-region-summary {
   display: block;
@@ -623,6 +645,34 @@ function injectCanvasStyles(documentRef = document) {
   margin-top: 2px;
   color: var(--canvas-muted);
   font-size: 10px;
+}
+.swarmlab-canvas-region-resize {
+  position: absolute;
+  right: 9px;
+  bottom: 9px;
+  z-index: 2;
+  display: grid;
+  place-items: center;
+  width: 28px;
+  height: 28px;
+  min-height: 28px;
+  padding: 0;
+  border: 1px solid color-mix(in srgb, var(--region-accent) 26%, rgba(232, 222, 206, 0.16));
+  border-radius: 7px;
+  background: rgba(18, 17, 15, 0.56);
+  color: color-mix(in srgb, var(--region-accent) 34%, var(--canvas-muted));
+  cursor: nwse-resize;
+  opacity: 0.56;
+  pointer-events: auto;
+  touch-action: none;
+  transition: opacity 120ms ease, border-color 120ms ease, background 120ms ease, color 120ms ease;
+}
+.swarmlab-canvas-region-resize:hover,
+.swarmlab-canvas-region.is-resizing .swarmlab-canvas-region-resize {
+  border-color: color-mix(in srgb, var(--region-accent) 58%, rgba(232, 222, 206, 0.22));
+  background: color-mix(in srgb, var(--region-accent) 12%, rgba(18, 17, 15, 0.72));
+  color: var(--canvas-text);
+  opacity: 1;
 }
 .swarmlab-canvas-pipe-layer {
   position: absolute;
@@ -2181,13 +2231,16 @@ function regionAccent(region) {
 }
 
 function regionSummary(region) {
-  return [region.subtitle, region.status].filter(Boolean).join(" / ") || region.detail || "machine region";
+  const system = [region.subtitle, region.status].filter(Boolean).join(" / ");
+  return [system, region.detail].filter(Boolean).join(" · ") || "machine region";
 }
 
 function regionConnectionBadges(region) {
-  if (region.remoteNodeId) return ["account"];
-  if (region.remoteUrl) return ["view only"];
-  return ["local"];
+  const connection = region.remoteNodeId ? "account" : region.remoteUrl ? "view only" : "local";
+  const capabilityBadges = Array.isArray(region.tags)
+    ? region.tags.map((tag) => String(tag || "").trim()).filter(Boolean).slice(0, 2)
+    : [];
+  return [connection, ...capabilityBadges];
 }
 
 function regionDropLabel(region, localMachineId = "") {
@@ -2221,11 +2274,29 @@ function renderCanvasRegion(region, localMachineId = "") {
           <span class="swarmlab-canvas-region-title-row">
             <strong class="swarmlab-canvas-region-name">${escapeHtml(region.title || region.id)}</strong>
             ${renderRegionBadges(region)}
+            <button
+              class="swarmlab-canvas-region-resize is-header"
+              type="button"
+              title="Resize machine region"
+              aria-label="Resize ${escapeHtml(region.title || region.id)} region"
+              data-swarmlab-canvas-region-resize="${escapeHtml(region.id)}"
+            >
+              ${renderIcon(Maximize2, { width: 12, height: 12 })}
+            </button>
           </span>
           <span class="swarmlab-canvas-region-summary">${escapeHtml(regionSummary(region))}</span>
         </span>
       </div>
       <span class="swarmlab-canvas-region-drop-label">${escapeHtml(regionDropLabel(region, localMachineId))}</span>
+      <button
+        class="swarmlab-canvas-region-resize is-corner"
+        type="button"
+        title="Resize machine region"
+        aria-label="Resize ${escapeHtml(region.title || region.id)} region"
+        data-swarmlab-canvas-region-resize="${escapeHtml(region.id)}"
+      >
+        ${renderIcon(Maximize2, { width: 14, height: 14 })}
+      </button>
     </section>
   `;
 }
@@ -3203,7 +3274,11 @@ function isInitialViewportFocusCard(card) {
 function getCardsBounds(root, { machineId = "", initialFocus = false } = {}) {
   const layout = root.__swarmlabCanvasLayout || {};
   const cardsById = root.__swarmlabCanvasCardsById || {};
-  let entries = Object.entries(layout);
+  const visibleCardIds = root.__swarmlabCanvasVisibleCardIds instanceof Set
+    ? root.__swarmlabCanvasVisibleCardIds
+    : null;
+  let entries = Object.entries(layout)
+    .filter(([id]) => !visibleCardIds || visibleCardIds.has(id));
   if (machineId) {
     const filtered = entries.filter(([id, item]) => {
       const card = cardsById[id];
@@ -3307,6 +3382,8 @@ function renderSnapshot(root, payload, { storage, remoteRecords = [] } = {}) {
   const dockStorageKey = launcherDockStorageKey(boardId);
   const launchLifecycles = readLaunchLifecycles(storage, launchStorageKey);
   const cards = mergeLaunchLifecycleCards(baseCards, launchLifecycles);
+  const visibleCards = cards.filter((card) => card.type !== "machine");
+  const visibleCardIds = new Set(visibleCards.map((card) => card.id));
   const savedLayout = readLayout(storage, storageKey);
   const viewportState = readViewportState(storage, viewportKey);
   const viewport = viewportState.viewport;
@@ -3324,7 +3401,7 @@ function renderSnapshot(root, payload, { storage, remoteRecords = [] } = {}) {
     const remoteText = remoteRecords.length
       ? ` / ${onlineRemotes} remote online${offlineRemotes ? `, ${offlineRemotes} unreachable` : ""}`
       : "";
-    meta.textContent = `${snapshot.node.name}${remoteText} / ${cards.length} windows / ${snapshot.generatedAt}`;
+    meta.textContent = `${snapshot.node.name}${remoteText} / ${visibleCards.length} windows / ${snapshot.generatedAt}`;
   }
 
   root.dataset.swarmlabCanvasBoardId = boardId;
@@ -3334,14 +3411,16 @@ function renderSnapshot(root, payload, { storage, remoteRecords = [] } = {}) {
   root.dataset.swarmlabCanvasLaunchDockStorageKey = dockStorageKey;
   root.__swarmlabCanvasLayout = layout;
   root.__swarmlabCanvasViewport = viewport;
-  root.__swarmlabCanvasCards = cards;
+  root.__swarmlabCanvasCards = visibleCards;
+  root.__swarmlabCanvasAllCards = cards;
+  root.__swarmlabCanvasVisibleCardIds = visibleCardIds;
   root.__swarmlabCanvasLaunchers = launcherCards;
   root.__swarmlabCanvasCardsById = cardsById;
   root.__swarmlabCanvasRegions = regions;
   root.__swarmlabCanvasRegionsById = regionsById;
   root.__swarmlabCanvasLocalMachineId = localMachineId;
 
-  if (!cards.length) {
+  if (!visibleCards.length && !regions.length) {
     root.innerHTML = renderCanvasShell({ status: "empty" });
     return;
   }
@@ -3353,8 +3432,8 @@ function renderSnapshot(root, payload, { storage, remoteRecords = [] } = {}) {
       style="--canvas-pan-x: ${viewport.x}px; --canvas-pan-y: ${viewport.y}px; --canvas-zoom: ${viewport.zoom};"
     >
       ${regions.map((region) => renderCanvasRegion(region, localMachineId)).join("")}
-      ${renderCanvasPipeLayer(cards, layout, regions, localMachineId)}
-      ${cards.map((card) => renderCanvasCard(card, layout[card.id])).join("")}
+      ${renderCanvasPipeLayer(visibleCards, layout, regions, localMachineId)}
+      ${visibleCards.map((card) => renderCanvasCard(card, layout[card.id])).join("")}
     </div>
     ${renderLauncherDock(launcherCards, regions, localMachineId, selectedLauncherMachineId)}
     ${renderFloatingControls(viewport)}
@@ -3570,6 +3649,136 @@ function bindCardDrag(root, { storage }) {
 
     card.addEventListener("pointerup", finish);
     card.addEventListener("pointercancel", finish);
+  });
+}
+
+function regionContentMinimum(root, regionId, region) {
+  const layout = root.__swarmlabCanvasLayout || {};
+  const cards = Array.isArray(root.__swarmlabCanvasCards) ? root.__swarmlabCanvasCards : [];
+  const regionX = Number(region?.x) || 0;
+  const regionY = Number(region?.y) || 0;
+  let minWidth = REGION_RESIZE_MIN_WIDTH;
+  let minHeight = REGION_RESIZE_MIN_HEIGHT;
+  cards.forEach((card) => {
+    const item = layout[card.id];
+    if (!item || getCanvasCardRegionId(card, item) !== regionId) return;
+    const itemX = Number(item.x);
+    const itemY = Number(item.y);
+    const itemWidth = Number(item.width) || Number(card.width) || 0;
+    const itemHeight = Number(item.height) || Number(card.height) || 0;
+    if (!Number.isFinite(itemX) || !Number.isFinite(itemY)) return;
+    minWidth = Math.max(minWidth, Math.ceil(itemX + itemWidth + 34 - regionX));
+    minHeight = Math.max(minHeight, Math.ceil(itemY + itemHeight + 46 - regionY));
+  });
+  return {
+    width: clamp(minWidth, REGION_RESIZE_MIN_WIDTH, REGION_RESIZE_MAX_WIDTH),
+    height: clamp(minHeight, REGION_RESIZE_MIN_HEIGHT, REGION_RESIZE_MAX_HEIGHT),
+  };
+}
+
+function persistRegionBoundsInLayout(root, regionId, bounds) {
+  const layout = root.__swarmlabCanvasLayout || {};
+  const cards = Array.isArray(root.__swarmlabCanvasAllCards)
+    ? root.__swarmlabCanvasAllCards
+    : Array.isArray(root.__swarmlabCanvasCards)
+      ? root.__swarmlabCanvasCards
+      : [];
+  cards.forEach((card) => {
+    const item = layout[card.id];
+    if (!item) return;
+    const homeRegionId = getCanvasCardMachineId(card);
+    const displayedRegionId = getCanvasCardRegionId(card, item);
+    if (homeRegionId !== regionId && displayedRegionId !== regionId) return;
+    item.regionId = displayedRegionId || item.regionId || homeRegionId;
+    item.regionX = bounds.x;
+    item.regionY = bounds.y;
+    item.regionWidth = bounds.width;
+    item.regionHeight = bounds.height;
+  });
+}
+
+function bindRegionResize(root, { storage }) {
+  const active = {
+    button: null,
+    regionElement: null,
+    regionId: "",
+    pointerId: null,
+    startClientX: 0,
+    startClientY: 0,
+    startWidth: 0,
+    startHeight: 0,
+    minWidth: REGION_RESIZE_MIN_WIDTH,
+    minHeight: REGION_RESIZE_MIN_HEIGHT,
+  };
+
+  root.querySelectorAll("[data-swarmlab-canvas-region-resize]").forEach((button) => {
+    button.addEventListener("pointerdown", (event) => {
+      if (!(button instanceof HTMLElement)) return;
+      const regionId = button.getAttribute("data-swarmlab-canvas-region-resize") || "";
+      const region = root.__swarmlabCanvasRegionsById?.[regionId];
+      const regionElement = button.closest("[data-swarmlab-canvas-region-id]");
+      if (!regionId || !region || !(regionElement instanceof HTMLElement)) return;
+      event.preventDefault();
+      event.stopPropagation();
+      const minimum = regionContentMinimum(root, regionId, region);
+      active.button = button;
+      active.regionElement = regionElement;
+      active.regionId = regionId;
+      active.pointerId = event.pointerId;
+      active.startClientX = event.clientX;
+      active.startClientY = event.clientY;
+      active.startWidth = Number(region.width) || REGION_RESIZE_MIN_WIDTH;
+      active.startHeight = Number(region.height) || REGION_RESIZE_MIN_HEIGHT;
+      active.minWidth = minimum.width;
+      active.minHeight = minimum.height;
+      root.classList.add("is-region-resizing");
+      regionElement.classList.add("is-resizing");
+      button.setPointerCapture?.(event.pointerId);
+    });
+
+    button.addEventListener("pointermove", (event) => {
+      if (active.button !== button || !active.regionId) return;
+      const region = root.__swarmlabCanvasRegionsById?.[active.regionId];
+      if (!region || !(active.regionElement instanceof HTMLElement)) return;
+      const viewport = sanitizeViewport(root.__swarmlabCanvasViewport || DEFAULT_VIEWPORT);
+      const dx = (event.clientX - active.startClientX) / viewport.zoom;
+      const dy = (event.clientY - active.startClientY) / viewport.zoom;
+      const width = Math.round(clamp(active.startWidth + dx, active.minWidth, REGION_RESIZE_MAX_WIDTH));
+      const height = Math.round(clamp(active.startHeight + dy, active.minHeight, REGION_RESIZE_MAX_HEIGHT));
+      region.width = width;
+      region.height = height;
+      active.regionElement.style.setProperty("--region-width", `${width}px`);
+      active.regionElement.style.setProperty("--region-height", `${height}px`);
+      persistRegionBoundsInLayout(root, active.regionId, {
+        x: Number(region.x) || 0,
+        y: Number(region.y) || 0,
+        width,
+        height,
+      });
+      refreshCanvasPipes(root);
+    });
+
+    const finish = (event) => {
+      if (active.button !== button) return;
+      active.regionElement?.classList?.remove("is-resizing");
+      root.classList.remove("is-region-resizing");
+      if (active.pointerId != null) {
+        button.releasePointerCapture?.(active.pointerId);
+      } else if (event?.pointerId != null) {
+        button.releasePointerCapture?.(event.pointerId);
+      }
+      const storageKey = root.dataset.swarmlabCanvasStorageKey || "";
+      if (storageKey) {
+        writeLayout(storage, storageKey, root.__swarmlabCanvasLayout || {});
+      }
+      active.button = null;
+      active.regionElement = null;
+      active.regionId = "";
+      active.pointerId = null;
+    };
+
+    button.addEventListener("pointerup", finish);
+    button.addEventListener("pointercancel", finish);
   });
 }
 
@@ -4104,6 +4313,7 @@ function bindCanvasActions(root, options) {
   root.__swarmlabCanvasActionOptions = options;
   bindViewportPanAndZoom(root, { storage });
   bindCardDrag(root, { storage });
+  bindRegionResize(root, { storage });
   bindAgentComposers(root, options);
 
   if (!root.__swarmlabCanvasCapsuleBound) {

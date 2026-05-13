@@ -617,7 +617,7 @@ test("local canvas view renders node snapshot cards and persists drag layout", a
     assert.match(rendered, /account-node\.example\.test/);
     assert.doesNotMatch(rendered, /self-node\.example\.test|This Mac over Tailscale/);
     assert.match(rendered, /2 sessions, 1 apps, 1 handoffs/);
-    assert.match(rendered, /6 gpus/);
+    assert.match(rendered, /6 gpus/i);
     assert.doesNotMatch(rendered, /private|token=secret|token=registry/);
     assert.match(rendered, /Worker B/);
     assert.match(rendered, /Quiet agents/);
@@ -655,7 +655,8 @@ test("local canvas view renders node snapshot cards and persists drag layout", a
     const composerBox = await page.locator('[data-swarmlab-canvas-card-id="session:session-1"] [data-swarmlab-agent-composer]').boundingBox();
     assert.ok(composerBox && composerBox.height <= 62, "canvas chat composer should stay compact on a large agent card");
     assert.equal(await page.locator(".swarmlab-canvas-card.is-summary:not(.is-remote)").count(), 2);
-    assert.equal(await page.locator(".swarmlab-canvas-card.is-remote").count(), 13);
+    assert.equal(await page.locator(".swarmlab-canvas-card.is-machine").count(), 0);
+    assert.equal(await page.locator(".swarmlab-canvas-card.is-remote").count(), 8);
     assert.equal(await page.locator(".swarmlab-canvas-card.is-launcher").count(), 0);
     assert.equal(await page.locator(".swarmlab-canvas-launch-dock").count(), 1);
     assert.equal(await page.locator("[data-swarmlab-canvas-launch-machine]").count(), 6);
@@ -764,6 +765,58 @@ test("local canvas view renders node snapshot cards and persists drag layout", a
     );
     assert.ok(initialViewport.zoom >= 0.42, "initial safe fit should persist a usable zoom");
 
+    assert.equal(
+      await page.locator('[data-swarmlab-canvas-region-id="mac-main"] [data-swarmlab-canvas-region-resize="mac-main"].is-header').count(),
+      1,
+    );
+    const regionHandle = page.locator('[data-swarmlab-canvas-region-id="mac-main"] [data-swarmlab-canvas-region-resize="mac-main"].is-corner');
+    assert.equal(await regionHandle.count(), 1);
+    const resizeStart = await page.evaluate(() => {
+      const root = document.querySelector("[data-swarmlab-canvas-root]");
+      const plane = root?.querySelector("[data-swarmlab-canvas-plane]");
+      const region = root?.__swarmlabCanvasRegionsById?.["mac-main"];
+      if (!root || !plane || !region) return null;
+      const rect = root.getBoundingClientRect();
+      const zoom = 0.5;
+      const boardX = region.x + region.width - 20;
+      const boardY = region.y + region.height - 20;
+      const targetX = Math.max(220, rect.width - 180);
+      const targetY = Math.max(220, rect.height - 180);
+      const viewport = {
+        x: Math.round(targetX - boardX * zoom),
+        y: Math.round(targetY - boardY * zoom),
+        zoom,
+      };
+      root.__swarmlabCanvasViewport = viewport;
+      plane.style.setProperty("--canvas-pan-x", `${viewport.x}px`);
+      plane.style.setProperty("--canvas-pan-y", `${viewport.y}px`);
+      plane.style.setProperty("--canvas-zoom", `${viewport.zoom}`);
+      window.localStorage.setItem(root.dataset.swarmlabCanvasViewportStorageKey, JSON.stringify(viewport));
+      return { width: region.width, height: region.height };
+    });
+    assert.ok(resizeStart, "region resize handle should be focusable in the viewport");
+    const resizeBox = await regionHandle.boundingBox();
+    assert.ok(resizeBox, "region resize handle should be visible");
+    await page.mouse.move(resizeBox.x + resizeBox.width / 2, resizeBox.y + resizeBox.height / 2);
+    await page.mouse.down();
+    assert.equal(await page.locator(".swarmlab-canvas-stage.is-region-resizing").count(), 1);
+    await page.mouse.move(resizeBox.x + resizeBox.width / 2 + 96, resizeBox.y + resizeBox.height / 2 + 72, { steps: 8 });
+    await page.mouse.up();
+    assert.equal(await page.locator(".swarmlab-canvas-stage.is-region-resizing").count(), 0);
+    const resizedLayout = await page.evaluate(() =>
+      JSON.parse(window.localStorage.getItem("swarmlab.canvas.layout.v7:fleet:mac-main") || "{}"),
+    );
+    assert.ok(
+      resizedLayout["machine:mac-main"].regionWidth > resizeStart.width,
+      "resizing a machine region should persist the wider region bounds",
+    );
+    assert.ok(
+      resizedLayout["machine:mac-main"].regionHeight > resizeStart.height,
+      "resizing a machine region should persist the taller region bounds",
+    );
+    await page.locator('[data-swarmlab-canvas-launch-machine="mac-main"]').evaluate((button) => button.click());
+    await page.waitForSelector('[data-swarmlab-canvas-card-id="session:session-1"]', { timeout: 10_000 });
+
     await page.click('[data-swarmlab-canvas-launcher="launcher:app:cursor"]');
     for (let attempt = 0; attempt < 20 && postedAppLaunches.length === 0; attempt += 1) {
       await page.waitForTimeout(50);
@@ -794,7 +847,7 @@ test("local canvas view renders node snapshot cards and persists drag layout", a
     assert.equal(await page.locator(".swarmlab-canvas-stage.is-card-dragging").count(), 0);
 
     const saved = await page.evaluate(() =>
-      JSON.parse(window.localStorage.getItem("swarmlab.canvas.layout.v6:fleet:mac-main") || "{}"),
+      JSON.parse(window.localStorage.getItem("swarmlab.canvas.layout.v7:fleet:mac-main") || "{}"),
     );
     assert.ok(saved["session:session-1"], "drag should persist session layout");
     assert.ok(saved["session:session-1"].x > 0);

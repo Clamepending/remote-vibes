@@ -1,4 +1,4 @@
-export const CANVAS_LAYOUT_STORAGE_PREFIX = "swarmlab.canvas.layout.v6";
+export const CANVAS_LAYOUT_STORAGE_PREFIX = "swarmlab.canvas.layout.v7";
 export const CANVAS_VIEWPORT_STORAGE_PREFIX = "swarmlab.canvas.viewport.v4";
 
 const DEFAULT_CARD_WIDTH = 270;
@@ -433,6 +433,9 @@ export function buildCanvasRegions(cards, layout = {}) {
     const regionHeight = finiteNumber(item.regionHeight);
     if (regionId === machineId && regionX != null && regionY != null && regionWidth != null && regionHeight != null) {
       extendRegion(region, regionX, regionY, regionWidth, regionHeight);
+    }
+    if (item.hidden) {
+      return;
     }
     const cardX = finiteNumber(item.x);
     const cardY = finiteNumber(item.y);
@@ -1375,9 +1378,14 @@ export function createFallbackCanvasLayout(cards) {
 
   machineOrder.forEach((machineId) => {
     const entries = machineGroups.get(machineId) || [];
+    const metadataOnly = [];
     const left = [];
     const right = [];
     entries.forEach((entry) => {
+      if (entry.card.type === "machine") {
+        metadataOnly.push(entry);
+        return;
+      }
       if (
         entry.card.type === "agent" ||
         entry.card.type === "monitor" ||
@@ -1399,6 +1407,18 @@ export function createFallbackCanvasLayout(cards) {
     const contentY = region.y + MACHINE_REGION_HEADER_HEIGHT;
     const leftX = region.x + MACHINE_REGION_PADDING_X;
     const rightX = leftX + MACHINE_REGION_LEFT_WIDTH + MACHINE_REGION_COLUMN_GAP;
+    const metadataIds = [];
+    metadataOnly.forEach(({ card, index }) => {
+      layout[card.id] = {
+        x: leftX,
+        y: region.y + 16,
+        width: 1,
+        height: 1,
+        z: index + 1,
+        hidden: true,
+      };
+      metadataIds.push(card.id);
+    });
     const leftResult = placeStack(left, leftX, contentY, MACHINE_REGION_LEFT_WIDTH, region);
     const rightResult = placeColumn(right, rightX, contentY + (left.length && right.length ? 22 : 0), region);
     region.height = Math.max(
@@ -1406,7 +1426,7 @@ export function createFallbackCanvasLayout(cards) {
       MACHINE_REGION_HEADER_HEIGHT + MACHINE_REGION_BOTTOM_PADDING + leftResult.height,
       MACHINE_REGION_HEADER_HEIGHT + MACHINE_REGION_BOTTOM_PADDING + (left.length && right.length ? 22 : 0) + rightResult.height,
     );
-    applyRegionMeta([...leftResult.ids, ...rightResult.ids], region);
+    applyRegionMeta([...metadataIds, ...leftResult.ids, ...rightResult.ids], region);
     rowHeight = Math.max(rowHeight, region.height);
     column += 1;
     if (column >= MACHINE_REGION_COLUMNS) {
@@ -1463,16 +1483,20 @@ export function mergeCanvasLayout(cards, savedLayout = {}) {
     const base = fallback[card.id] || { x: 32, y: 32, width: card.width, height: card.height, z: index + 1 };
     const override = saved[card.id] || {};
     const homeRegionId = getCanvasCardMachineId(card);
+    const overrideRegionX = Number.isFinite(override.regionX) ? override.regionX : null;
+    const overrideRegionY = Number.isFinite(override.regionY) ? override.regionY : null;
+    const overrideRegionWidth = Number.isFinite(override.regionWidth) ? override.regionWidth : null;
+    const overrideRegionHeight = Number.isFinite(override.regionHeight) ? override.regionHeight : null;
     return [
       card.id,
       {
         ...base,
         ...override,
         regionId: override.regionId || base.regionId || homeRegionId,
-        regionX: base.regionX,
-        regionY: base.regionY,
-        regionWidth: base.regionWidth,
-        regionHeight: base.regionHeight,
+        regionX: overrideRegionX ?? base.regionX,
+        regionY: overrideRegionY ?? base.regionY,
+        regionWidth: overrideRegionWidth ?? base.regionWidth,
+        regionHeight: overrideRegionHeight ?? base.regionHeight,
         width: override.width || card.width || base.width,
         height: override.height || card.height || base.height,
         z: override.z || base.z,
