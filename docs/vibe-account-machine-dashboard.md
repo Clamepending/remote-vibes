@@ -600,15 +600,34 @@ Done when:
 - tests cover node manifest and snapshot redaction
 - non-loopback requests cannot mutate settings, proxy arbitrary ports, expose Tailscale Serve, send session input, or control sessions without node auth
 
-### Phase 2: Desktop Machine Registry
+### Product TODO: Account-First Onboarding
 
-Allow manually adding machines by URL/token in the desktop app.
+The default onboarding must be:
+
+```text
+curl install -> open Swarmlab -> log in to Vibe Research -> machine appears in account canvas
+```
+
+Do not make users choose, create, clone, or understand a Library before entering the product. The Library is account/workspace state that should be provisioned automatically after login. Manual machine URL entry remains only as an advanced fallback for development, private-network edge cases, or account-service outages.
 
 Done when:
 
-- desktop can switch between local machine and a manually entered Tailscale URL
+- first-run screen is a Vibe Research login screen
+- account login pairs the current node and registers its heartbeat
+- every curl-installed node appears automatically in the account/fleet canvas after login
+- manual URL pairing is no longer a primary canvas toolbar action
+- Library defaults are created/synced after account login without asking the user to pick clone/open/new modes
+- hosted `vibe-research.net` and the desktop app show the same account machine regions
+
+### Phase 2: Desktop Machine Registry
+
+Allow account-populated machines to appear in the desktop app, with manual URL entry only as an advanced fallback.
+
+Done when:
+
+- desktop can switch between local machine and machines returned by the Vibe account node registry
 - unreachable machine shows stale state
-- no cloud required
+- manual URL fallback is available but visually secondary
 
 ### Phase 3: Account Pairing Prototype
 

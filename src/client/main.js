@@ -2475,6 +2475,9 @@ const state = {
     ottoAuthPrivateKeyConfigured: false,
     ottoAuthStatus: null,
     ottoAuthUsername: "",
+    swarmlabAccountCommandRelayStatus: null,
+    swarmlabAccountStatus: null,
+    swarmlabAccountUrl: "https://vibe-research.net",
     openSwarmApiBaseUrl: "http://127.0.0.1:8080",
     openSwarmApiMode: false,
     openSwarmComposioApiKeyConfigured: false,
@@ -11213,7 +11216,21 @@ function maybeRedirectToPreferredOrigin() {
 }
 
 function isBrainSetupRequired() {
+  if (isVibeAccountConnected()) {
+    return false;
+  }
   return state.settings.wikiPathConfigured === false;
+}
+
+function isVibeAccountConnected() {
+  const status = state.settings.swarmlabAccountStatus || {};
+  return Boolean(status.configured || status.connected || status.account);
+}
+
+function getVibeAccountLabel() {
+  const status = state.settings.swarmlabAccountStatus || {};
+  const account = status.account && typeof status.account === "object" ? status.account : {};
+  return String(account.login || account.name || account.email || account.id || "").trim();
 }
 
 function isAgentSetupRequired() {
@@ -35773,117 +35790,57 @@ function renderAgentSetupScreen() {
 }
 
 function renderBrainSetupScreen() {
-  document.title = "Open Brain · Vibe Research";
-  const gitMode = state.brainSetupGitMode === "ssh" ? "ssh" : "clone";
-  const gitTitle = gitMode === "ssh" ? "Connect via SSH" : "Clone brain";
-  const gitDescription =
-    gitMode === "ssh"
-      ? "Paste an SSH git remote for a markdown brain."
-      : "Paste a git remote for a markdown brain.";
-  const gitLabel = gitMode === "ssh" ? "SSH git URL" : "Git repo URL";
-  const gitPlaceholder =
-    gitMode === "ssh"
-      ? "git@github.com:you/brain.git"
-      : "https://github.com/you/brain.git";
-  const gitButtonLabel =
-    state.brainSetupCloning
-      ? "cloning..."
-      : gitMode === "ssh"
-        ? "clone over SSH"
-        : "clone brain";
+  document.title = "Log in · Vibe Research";
+  const connected = isVibeAccountConnected();
+  const accountLabel = getVibeAccountLabel();
+  const accountUrl = state.settings.swarmlabAccountUrl || "https://vibe-research.net";
+  const loginDisabled = state.brainSetupCloning || connected;
+  const loginLabel = connected
+    ? "logged in"
+    : state.brainSetupCloning
+      ? "opening login..."
+      : "Log in to Vibe Research";
 
   app.innerHTML = `
     <main class="screen brain-setup-screen">
       <section class="brain-setup-card" aria-labelledby="brain-setup-title">
         <div class="brain-setup-brand">
-          <span class="brain-setup-logo" aria-hidden="true">${renderIcon(BookOpen)}</span>
+          <span class="brain-setup-logo" aria-hidden="true">${renderIcon(Zap)}</span>
           <div>
             <h1 id="brain-setup-title">Vibe Research</h1>
-            <p><span>Brains</span><span>Settings</span></p>
+            <p><span>Account</span><span>Machines</span></p>
           </div>
         </div>
-        <div class="brain-setup-option-grid" aria-label="Brain setup options">
-          <button class="brain-setup-option brain-setup-button" type="button" data-folder-picker-target="brain-open">
-            <span class="brain-setup-option-icon" aria-hidden="true">${renderIcon(FolderOpen)}</span>
-            <strong>Open brain</strong>
-          </button>
-          <button class="brain-setup-option" type="button" data-folder-picker-target="brain-new">
-            <span class="brain-setup-option-icon" aria-hidden="true">${renderIcon(FolderPlus)}</span>
-            <strong>New brain</strong>
-          </button>
-          <button class="brain-setup-option" type="button" data-focus-brain-git="clone">
-            <span class="brain-setup-option-icon" aria-hidden="true">${renderIcon(GitFork)}</span>
-            <strong>Clone brain</strong>
-          </button>
-          <button class="brain-setup-option" type="button" data-focus-brain-git="ssh">
-            <span class="brain-setup-option-icon" aria-hidden="true">${renderIcon(ServerCog)}</span>
-            <strong>Connect via SSH</strong>
-          </button>
-        </div>
-        <div class="brain-setup-picker">
-          <label class="field-label" for="brain-folder-input">brain folder</label>
-          <input
-            id="brain-folder-input"
-            class="file-root-input"
-            type="text"
-            value="${escapeHtml(state.settings.wikiPathConfigured ? state.settings.wikiPath || "" : "")}"
-            placeholder="${escapeHtml(state.settings.wikiPathConfigured ? state.settings.wikiPath || "" : state.settings.workspaceRootPath || state.defaultCwd || "choose a brain folder")}"
-            readonly
-            data-folder-picker-target="brain-open"
-            autocomplete="off"
-            autocorrect="off"
-            autocapitalize="none"
-            spellcheck="false"
-          />
-        </div>
-        <form class="brain-setup-git-form" id="brain-git-form">
+        <div class="brain-setup-git-form">
           <div class="brain-setup-git-head">
             <div>
-              <h2>${escapeHtml(gitTitle)}</h2>
-              <p>${escapeHtml(gitDescription)}</p>
+              <h2>${escapeHtml(connected ? "Connected" : "Log in once")}</h2>
+              <p>${escapeHtml(connected
+                ? `This machine is linked to ${accountLabel || "your Vibe Research account"}.`
+                : "Logging in links this machine, its agents, apps, ports, and Library to your Vibe Research account. Other curl-installed machines appear automatically after they log in."
+              )}</p>
             </div>
-            <span class="brain-setup-note">Markdown wiki</span>
+            <span class="brain-setup-note">${escapeHtml(accountUrl)}</span>
           </div>
-          <label class="field-label" for="brain-git-url">${escapeHtml(gitLabel)}</label>
-          <input
-            id="brain-git-url"
-            class="file-root-input"
-            name="remoteUrl"
-            type="text"
-            value="${escapeHtml(state.brainSetupCloneUrl)}"
-            placeholder="${escapeHtml(gitPlaceholder)}"
-            autocomplete="off"
-            autocorrect="off"
-            autocapitalize="none"
-            spellcheck="false"
-            ${state.brainSetupCloning ? "disabled" : ""}
-          />
-          <label class="field-label" for="brain-clone-path">local brain folder (optional)</label>
-          <input
-            id="brain-clone-path"
-            class="file-root-input"
-            name="wikiPath"
-            type="text"
-            value="${escapeHtml(state.brainSetupClonePath)}"
-            placeholder="${escapeHtml(getDefaultBrainClonePathHint())}"
-            autocomplete="off"
-            autocorrect="off"
-            autocapitalize="none"
-            spellcheck="false"
-            ${state.brainSetupCloning ? "disabled" : ""}
-          />
           <div class="brain-setup-git-actions">
-            <button class="ghost-button brain-setup-clone-button" type="submit" ${state.brainSetupCloning ? "disabled" : ""}>
-              ${escapeHtml(gitButtonLabel)}
+            <button class="primary-button brain-setup-clone-button" type="button" data-vibe-account-login ${loginDisabled ? "disabled" : ""}>
+              ${escapeHtml(loginLabel)}
             </button>
-            <span class="brain-setup-hint">Private brains work if this machine's git credentials can clone them.</span>
+            <span class="brain-setup-hint">${escapeHtml(connected ? "You can enter Swarmlab now." : "No Library folder or git clone step is required.")}</span>
           </div>
           ${
             state.brainSetupError
               ? `<div class="brain-setup-error" role="alert">${escapeHtml(state.brainSetupError)}</div>`
               : ""
           }
-        </form>
+          <details class="brain-setup-local-fallback">
+            <summary>Advanced local-only mode</summary>
+            <p>Use this only when developing Swarmlab without the account service. Machines will not sync automatically.</p>
+            <button class="ghost-button" type="button" data-vibe-local-mode>
+              Continue on this machine
+            </button>
+          </details>
+        </div>
       </section>
       ${renderFolderPickerModal()}
       ${renderSystemToasts()}
@@ -44928,6 +44885,9 @@ function applySettingsState(payload) {
   const backup = settings.wikiBackup || settings.backup || state.settings.wikiBackup;
   const sleepPrevention = settings.sleepPrevention || settings.sleep || state.settings.sleepPrevention;
   const agentMailStatus = settings.agentMailStatus || settings.agentMail || state.settings.agentMailStatus;
+  const swarmlabAccountStatus = settings.swarmlabAccountStatus || settings.accountStatus || state.settings.swarmlabAccountStatus;
+  const swarmlabAccountCommandRelayStatus =
+    settings.swarmlabAccountCommandRelayStatus || settings.accountCommandRelayStatus || state.settings.swarmlabAccountCommandRelayStatus;
   const browserUseStatus = settings.browserUseStatus || settings.browserUse || state.settings.browserUseStatus;
   const ottoAuthStatus = settings.ottoAuthStatus || settings.ottoAuth || state.settings.ottoAuthStatus;
   const telegramStatus = settings.telegramStatus || settings.telegram || state.settings.telegramStatus;
@@ -45074,6 +45034,12 @@ function applySettingsState(payload) {
     ottoAuthStatus: ottoAuthStatus || null,
     ottoAuthUsername:
       settings.ottoAuthUsername === undefined ? state.settings.ottoAuthUsername || "" : String(settings.ottoAuthUsername || ""),
+    swarmlabAccountCommandRelayStatus: swarmlabAccountCommandRelayStatus || null,
+    swarmlabAccountStatus: swarmlabAccountStatus || null,
+    swarmlabAccountUrl:
+      settings.swarmlabAccountUrl === undefined
+        ? state.settings.swarmlabAccountUrl || "https://vibe-research.net"
+        : String(settings.swarmlabAccountUrl || "https://vibe-research.net"),
     openSwarmApiBaseUrl:
       settings.openSwarmApiBaseUrl === undefined
         ? state.settings.openSwarmApiBaseUrl || "http://127.0.0.1:8080"
@@ -46855,6 +46821,23 @@ function bindShellEvents() {
       if (provider) {
         void installAgentProvider(provider.id);
       }
+    });
+  });
+
+  document.querySelectorAll("[data-vibe-account-login]").forEach((button) => {
+    button.addEventListener("click", (event) => {
+      event.preventDefault();
+      void startVibeAccountLoginFromSetup();
+    });
+  });
+
+  document.querySelectorAll("[data-vibe-local-mode]").forEach((button) => {
+    button.addEventListener("click", (event) => {
+      event.preventDefault();
+      void continueWithLocalWorkspace().catch((error) => {
+        state.brainSetupError = error?.message || "Could not enter local mode.";
+        renderShell();
+      });
     });
   });
 
@@ -49535,6 +49518,44 @@ async function saveOpenBrainSelection(selectedPath) {
   await loadKnowledgeBaseIndex();
   await ensureKnowledgeBaseSelectionLoaded({ force: true });
   renderShell();
+}
+
+async function startVibeAccountLoginFromSetup() {
+  state.brainSetupCloning = true;
+  state.brainSetupError = "";
+  renderShell();
+
+  try {
+    const payload = await fetchJson("/api/node/account/pair/start", {
+      method: "POST",
+      body: JSON.stringify({
+        label: "Swarmlab",
+        redirectUri: `${window.location.origin}/account/auth/complete`,
+      }),
+    });
+    const pairingUrl = payload?.pairing?.pairingUrl || payload?.pairingUrl || "";
+    if (!pairingUrl) {
+      throw new Error("Vibe account did not return a login URL.");
+    }
+    window.open(pairingUrl, "_blank", "noopener,noreferrer");
+    state.brainSetupError = "Finish login in the browser window, then return here.";
+    await loadSettingsStatus();
+  } catch (error) {
+    state.brainSetupError = error?.message || "Could not start Vibe Research login.";
+  } finally {
+    state.brainSetupCloning = false;
+    renderShell();
+  }
+}
+
+async function continueWithLocalWorkspace() {
+  const workspacePath = state.settings.workspaceRootPath || state.defaultCwd || state.settings.wikiPath;
+  if (!workspacePath) {
+    state.brainSetupError = "Could not find a local workspace path.";
+    renderShell();
+    return;
+  }
+  await saveBrainFolderSelection(workspacePath);
 }
 
 async function cloneBrainFromGit({ remoteUrl, wikiPath = "" }) {

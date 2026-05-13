@@ -592,6 +592,8 @@ test("local canvas view renders node snapshot cards and persists drag layout", a
     assert.match(rendered, /Result chart/);
     assert.match(rendered, /Cursor/);
     assert.match(rendered, /Handoff/);
+    assert.match(rendered, /Vibe account/);
+    assert.doesNotMatch(rendered, /Add machine/);
     assert.match(rendered, /Please inspect the dashboard/);
     assert.match(rendered, /native session feed/);
     assert.match(rendered, /Follow-up 10/);
@@ -853,6 +855,7 @@ test("local canvas view renders node snapshot cards and persists drag layout", a
     await page.evaluate(() => {
       window.prompt = () => "https://manual-node.example.test/secret?token=manual";
     });
+    await page.locator(".swarmlab-canvas-advanced").evaluate((element) => { element.open = true; });
     await page.click("[data-swarmlab-canvas-add-node]");
     for (let attempt = 0; attempt < 20 && !postedFleetNodes.some((node) => node.source === "manual"); attempt += 1) {
       await page.waitForTimeout(50);

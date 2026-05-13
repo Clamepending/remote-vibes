@@ -196,6 +196,35 @@ function injectCanvasStyles(documentRef = document) {
   flex-wrap: wrap;
   justify-content: flex-end;
 }
+.swarmlab-canvas-advanced {
+  position: relative;
+}
+.swarmlab-canvas-advanced > summary {
+  list-style: none;
+}
+.swarmlab-canvas-advanced > summary::-webkit-details-marker {
+  display: none;
+}
+.swarmlab-canvas-advanced-panel {
+  position: absolute;
+  right: 0;
+  z-index: 30;
+  display: grid;
+  gap: 8px;
+  min-width: 260px;
+  margin-top: 8px;
+  padding: 10px;
+  border: 1px solid var(--canvas-line);
+  border-radius: 8px;
+  background: rgba(27, 26, 24, 0.96);
+  box-shadow: 0 18px 48px rgba(0, 0, 0, 0.34);
+}
+.swarmlab-canvas-advanced-panel p {
+  margin: 0;
+  color: var(--canvas-muted);
+  font-size: 12px;
+  line-height: 1.35;
+}
 .swarmlab-canvas-button {
   display: inline-flex;
   align-items: center;
@@ -927,9 +956,9 @@ export function renderSwarmlabCanvasView() {
           </div>
         </div>
         <div class="swarmlab-canvas-actions">
-          <button class="swarmlab-canvas-button is-primary" type="button" data-swarmlab-canvas-add-node>
+          <button class="swarmlab-canvas-button is-primary" type="button" data-swarmlab-canvas-account-login>
             ${renderIcon(HardDrive)}
-            <span>Add machine</span>
+            <span>Vibe account</span>
           </button>
           <button class="swarmlab-canvas-button" type="button" data-swarmlab-canvas-new-handoff>
             ${renderIcon(Send)}
@@ -939,6 +968,19 @@ export function renderSwarmlabCanvasView() {
             ${renderIcon(RefreshCw)}
             <span>Refresh</span>
           </button>
+          <details class="swarmlab-canvas-advanced">
+            <summary class="swarmlab-canvas-button" aria-label="Advanced machine options">
+              ${renderIcon(Plus)}
+              <span>Advanced</span>
+            </summary>
+            <div class="swarmlab-canvas-advanced-panel">
+              <p>Machines normally appear after you log in to Vibe Research on each curl-installed node.</p>
+              <button class="swarmlab-canvas-button" type="button" data-swarmlab-canvas-add-node>
+                ${renderIcon(HardDrive)}
+                <span>Manual URL fallback</span>
+              </button>
+            </div>
+          </details>
         </div>
       </div>
       <div class="swarmlab-canvas-stage" data-swarmlab-canvas-root>
@@ -3181,6 +3223,40 @@ export function mountSwarmlabCanvasView({
     button.addEventListener("click", (event) => {
       event.preventDefault();
       refresh();
+    });
+  });
+
+  documentRef.querySelectorAll("[data-swarmlab-canvas-account-login]").forEach((button) => {
+    button.addEventListener("click", async (event) => {
+      event.preventDefault();
+      const original = button.textContent || "Vibe account";
+      button.setAttribute("disabled", "disabled");
+      button.textContent = "Opening login...";
+      try {
+        const payload = await fetchJson("/api/node/account/pair/start", {
+          fetchImpl,
+          signal: currentController.signal,
+          method: "POST",
+          body: {
+            label: "Swarmlab",
+            redirectUri: `${locationRef?.origin || ""}/account/auth/complete`,
+          },
+        });
+        const pairingUrl = payload?.pairing?.pairingUrl || payload?.pairingUrl || "";
+        if (!pairingUrl) {
+          throw new Error("Vibe account did not return a login URL.");
+        }
+        windowRef?.open?.(pairingUrl, "_blank", "noopener,noreferrer");
+        button.textContent = "Check browser";
+      } catch (error) {
+        button.textContent = error?.message || "Login failed";
+      } finally {
+        windowRef?.setTimeout?.(() => {
+          button.removeAttribute("disabled");
+          button.textContent = original;
+          refresh();
+        }, 2_800);
+      }
     });
   });
 

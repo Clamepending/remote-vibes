@@ -6495,8 +6495,6 @@ test("fresh browser starts on brain setup until a brain folder is chosen", async
   }
 
   const workspaceDir = await createTempWorkspace("vibe-research-brain-setup-");
-  const selectedBrainDir = path.join(workspaceDir, "brain-root");
-  await mkdir(selectedBrainDir, { recursive: true });
   const { app, baseUrl } = await startApp({ cwd: workspaceDir });
   let browser = null;
 
@@ -6505,23 +6503,13 @@ test("fresh browser starts on brain setup until a brain folder is chosen", async
     const page = await browser.newPage();
     await page.goto(baseUrl, { waitUntil: "domcontentloaded" });
     await page.waitForSelector(".brain-setup-screen", { timeout: 10_000 });
-    await page.waitForSelector("text=Open brain", { timeout: 10_000 });
-    await page.waitForSelector("text=New brain", { timeout: 10_000 });
-    await page.waitForSelector("text=Clone brain", { timeout: 10_000 });
-    await page.waitForSelector("text=Connect via SSH", { timeout: 10_000 });
+    await page.waitForSelector("text=Log in to Vibe Research", { timeout: 10_000 });
+    await page.waitForSelector("text=No Library folder or git clone step is required.", { timeout: 10_000 });
+    assert.doesNotMatch(await page.locator(".brain-setup-screen").innerText(), /Open brain|New brain|Clone brain|Connect via SSH/);
     assert.equal(await page.locator(".app-shell").count(), 0);
-    await page.getByRole("button", { name: "Connect via SSH" }).click();
-    assert.equal(await page.locator("#brain-git-url").getAttribute("placeholder"), "git@github.com:you/brain.git");
 
-    await page.locator(".brain-setup-button").click();
-    await page.waitForSelector(".folder-picker-modal", { timeout: 10_000 });
-    await page.locator(".folder-picker-tree-row", { hasText: "brain-root" }).click();
-    await page.waitForFunction(() => document.querySelector(".folder-picker-path")?.textContent?.includes("brain-root"), null, {
-      timeout: 10_000,
-    });
-    const canonicalBrainRoot = await realpath(selectedBrainDir);
-
-    await page.click("#folder-picker-select");
+    await page.locator(".brain-setup-local-fallback").evaluate((element) => { element.open = true; });
+    await page.click("[data-vibe-local-mode]");
     await page.waitForSelector(".agent-setup-screen", { timeout: 10_000 });
     await page.waitForSelector("text=Set up a coding agent", { timeout: 10_000 });
     assert.equal(await page.locator(".app-shell").count(), 0);
@@ -6529,8 +6517,9 @@ test("fresh browser starts on brain setup until a brain folder is chosen", async
     const settingsResponse = await fetch(`${baseUrl}/api/settings`);
     assert.equal(settingsResponse.status, 200);
     const settingsPayload = await settingsResponse.json();
+    const canonicalWorkspaceRoot = await realpath(workspaceDir);
     assert.equal(settingsPayload.settings.wikiPathConfigured, true);
-    assert.equal(settingsPayload.settings.wikiPath, canonicalBrainRoot);
+    assert.equal(await realpath(settingsPayload.settings.workspaceRootPath), canonicalWorkspaceRoot);
     assert.equal(settingsPayload.settings.wikiGitRemoteUrl, "");
   } finally {
     await browser?.close().catch(() => {});
@@ -6742,17 +6731,38 @@ test("New Agent starts in the configured agent folder without opening the folder
   }
 });
 
-test("Library setup can clone an existing git Library from the browser", async (t) => {
+test("first-run Vibe account login starts node pairing from the browser", async (t) => {
   const executablePath = await resolveBrowserExecutablePath({ env: process.env });
   if (!executablePath) {
-    t.skip("No local Chromium/Chrome executable is available for the Library clone smoke.");
+    t.skip("No local Chromium/Chrome executable is available for the account login smoke.");
     return;
   }
 
-  const workspaceDir = await createTempWorkspace("vibe-research-brain-clone-ui-");
-  const { remoteDir } = await createBrainGitRemote(workspaceDir, "existing-brain");
+  const workspaceDir = await createTempWorkspace("vibe-research-account-login-ui-");
+  const accountRequests = [];
+  const accountFetchImpl = async (url, init = {}) => {
+    const body = init.body ? JSON.parse(String(init.body)) : {};
+    accountRequests.push({ url, body });
+    const requestUrl = new URL(url);
+    if (requestUrl.pathname === "/api/account/nodes/pairing") {
+      return new Response(JSON.stringify({
+        pairingId: "pair_first_run",
+        pairingCode: "PAIR-RUN",
+        pairingUrl: "https://vibe-research.net/account/pair?pairingId=pair_first_run",
+        expiresAt: "2026-05-13T08:00:00.000Z",
+      }), {
+        status: 201,
+        headers: { "content-type": "application/json" },
+      });
+    }
+    return new Response(JSON.stringify({ error: "unexpected account route" }), {
+      status: 404,
+      headers: { "content-type": "application/json" },
+    });
+  };
   const { app, baseUrl } = await startApp({
     cwd: workspaceDir,
+    accountFetchImpl,
     providers: [
       {
         id: "test-agent",
@@ -6778,26 +6788,22 @@ test("Library setup can clone an existing git Library from the browser", async (
     browser = await chromium.launch({ executablePath, headless: true });
     const page = await browser.newPage();
     await page.addInitScript(() => {
-      window.localStorage.setItem("vibeResearch.agentSetupComplete.v1", "1");
+      window.__openedVibeAccountUrls = [];
+      window.open = (url) => {
+        window.__openedVibeAccountUrls.push(String(url || ""));
+        return null;
+      };
     });
     await page.goto(baseUrl, { waitUntil: "domcontentloaded" });
     await page.waitForSelector(".brain-setup-screen", { timeout: 10_000 });
-    await page.fill("#brain-git-url", remoteDir);
-    await page.click("#brain-git-form button[type='submit']");
-    await page.waitForSelector(".app-shell", { timeout: 20_000 });
-    await page.waitForSelector(".knowledge-base-view", { timeout: 10_000 });
-    await page.waitForSelector(".knowledge-base-markdown", { timeout: 10_000 });
-
-    const renderedText = await page.locator(".knowledge-base-markdown").textContent();
-    assert.match(renderedText || "", /Existing Library/);
-
-    const settingsResponse = await fetch(`${baseUrl}/api/settings`);
-    assert.equal(settingsResponse.status, 200);
-    const settingsPayload = await settingsResponse.json();
-    const expectedWikiDir = await realpath(path.join(workspaceDir, "vibe-research", "buildings", "library"));
-    assert.equal(settingsPayload.settings.wikiPathConfigured, true);
-    assert.equal(settingsPayload.settings.wikiPath, expectedWikiDir);
-    assert.equal(settingsPayload.settings.wikiGitRemoteUrl, remoteDir);
+    await page.click("[data-vibe-account-login]");
+    await page.waitForFunction(() => window.__openedVibeAccountUrls?.length === 1, null, { timeout: 10_000 });
+    const opened = await page.evaluate(() => window.__openedVibeAccountUrls);
+    assert.deepEqual(opened, ["https://vibe-research.net/account/pair?pairingId=pair_first_run"]);
+    assert.equal(accountRequests.length, 1);
+    assert.equal(new URL(accountRequests[0].url).pathname, "/api/account/nodes/pairing");
+    assert.equal(accountRequests[0].body.label, "Swarmlab");
+    assert.match(accountRequests[0].body.redirectUri, /\/account\/auth\/complete$/);
   } finally {
     await browser?.close().catch(() => {});
     await app.close();
@@ -6815,7 +6821,6 @@ test("brain setup remains scrollable on short viewports", async (t) => {
   const workspaceDir = await createTempWorkspace("vibe-research-brain-scroll-ui-");
   const stateDir = path.join(workspaceDir, ".vibe-research");
   const appDir = path.join(stateDir, "app");
-  const expectedClonePath = path.join(appDir, "vibe-research", "buildings", "library");
   await mkdir(appDir, { recursive: true });
   const { app, baseUrl } = await startApp({ cwd: appDir, stateDir });
   let browser = null;
@@ -6829,12 +6834,10 @@ test("brain setup remains scrollable on short viewports", async (t) => {
     const before = await page.evaluate(() => {
       const screen = document.querySelector(".brain-setup-screen");
       const cloneButton = document.querySelector(".brain-setup-clone-button");
-      const clonePathInput = document.querySelector("#brain-clone-path");
       const screenBounds = screen.getBoundingClientRect();
       const buttonBounds = cloneButton.getBoundingClientRect();
 
       return {
-        clonePathPlaceholder: clonePathInput?.getAttribute("placeholder") || "",
         screenBottom: screenBounds.bottom,
         screenClientHeight: screen.clientHeight,
         screenScrollHeight: screen.scrollHeight,
@@ -6843,10 +6846,8 @@ test("brain setup remains scrollable on short viewports", async (t) => {
       };
     });
 
-    assert.equal(before.clonePathPlaceholder, expectedClonePath);
-    assert.ok(before.screenScrollHeight > before.screenClientHeight, "setup screen should expose a scroll range");
     assert.equal(before.screenBottom, before.viewportHeight);
-    assert.ok(before.buttonBottom > before.viewportHeight, "clone button should start below the short viewport");
+    assert.ok(before.buttonBottom <= before.viewportHeight, "login button should be visible without scrolling on short viewports");
 
     await page.locator(".brain-setup-clone-button").scrollIntoViewIfNeeded();
 
@@ -6863,7 +6864,6 @@ test("brain setup remains scrollable on short viewports", async (t) => {
       };
     });
 
-    assert.ok(after.screenScrollTop > 0, "setup screen did not scroll");
     assert.ok(after.buttonTop >= 0, "clone button scrolled above the viewport");
     assert.ok(after.buttonBottom <= after.viewportHeight, "clone button is still below the viewport");
 
@@ -6882,7 +6882,6 @@ test("brain setup remains scrollable on short viewports", async (t) => {
       };
     });
 
-    assert.ok(afterPoll.screenScrollTop > 0, "session polling reset the setup scroll position");
     assert.ok(afterPoll.buttonTop >= 0, "clone button scrolled above the viewport after polling");
     assert.ok(afterPoll.buttonBottom <= afterPoll.viewportHeight, "clone button moved below the viewport after polling");
   } finally {
