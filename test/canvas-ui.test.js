@@ -687,10 +687,20 @@ test("local canvas view renders node snapshot cards and persists drag layout", a
     assert.match(dockText, /GPU Cluster/);
     assert.match(dockText, /Codex/);
     assert.match(dockText, /Cursor/);
+    assert.doesNotMatch(dockText, /\b\d+\s+apps?\b/i, "machine app counts should stay in labels, not visible dock chrome");
     const regionIds = await page.locator(".swarmlab-canvas-region").evaluateAll((regions) =>
       regions.map((region) => region.getAttribute("data-swarmlab-canvas-region-id")).filter(Boolean),
     );
     assert.deepEqual(regionIds, ["mac-main", "registry-box", "offline-gpu", "account-box", "gpu-cluster", "query-box"]);
+    const regionMetrics = await page.evaluate(() => {
+      const regions = document.querySelector("[data-swarmlab-canvas-root]")?.__swarmlabCanvasRegionsById || {};
+      return Object.fromEntries(Object.entries(regions).map(([id, region]) => [
+        id,
+        { width: region.width, height: region.height },
+      ]));
+    });
+    assert.ok(regionMetrics["offline-gpu"]?.width <= 980, "quiet machine regions should not reserve a huge board lane");
+    assert.ok(regionMetrics["offline-gpu"]?.height <= 720, "quiet machine regions should be compact until work appears there");
     assert.equal(await page.locator('.swarmlab-canvas-region[data-swarmlab-canvas-region-id="mac-main"]').count(), 1);
     assert.equal(await page.locator('.swarmlab-canvas-region[data-swarmlab-canvas-region-id="account-box"]').getAttribute("data-swarmlab-canvas-region-remote-node-id"), "account-node");
     assert.equal(await page.locator('.swarmlab-canvas-region[data-swarmlab-canvas-region-id="gpu-cluster"]').getAttribute("data-swarmlab-canvas-region-remote-node-id"), null);

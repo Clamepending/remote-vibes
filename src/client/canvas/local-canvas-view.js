@@ -282,7 +282,7 @@ function injectCanvasStyles(documentRef = document) {
   grid-template-columns: auto minmax(0, 1fr);
   gap: 8px;
   width: max-content;
-  max-width: min(860px, calc(100% - 276px));
+  max-width: min(760px, calc(100% - 248px));
   min-height: 38px;
   padding: 4px;
   border: 1px solid rgba(232, 222, 206, 0.14);
@@ -303,7 +303,7 @@ function injectCanvasStyles(documentRef = document) {
   align-items: stretch;
   gap: 5px;
   min-width: 0;
-  max-width: 286px;
+  max-width: 242px;
   overflow-x: auto;
   scrollbar-width: none;
 }
@@ -328,8 +328,8 @@ function injectCanvasStyles(documentRef = document) {
 }
 .swarmlab-canvas-launch-machine {
   gap: 6px;
-  max-width: 128px;
-  padding: 0 8px;
+  max-width: 112px;
+  padding: 0 7px;
   color: var(--canvas-muted);
   font: inherit;
   text-align: left;
@@ -360,9 +360,7 @@ function injectCanvasStyles(documentRef = document) {
   line-height: 1.15;
 }
 .swarmlab-canvas-launch-machine-text span {
-  margin-top: 3px;
-  color: var(--canvas-faint);
-  font-size: 9px;
+  display: none;
 }
 .swarmlab-canvas-launch-panel {
   display: grid;
@@ -409,12 +407,12 @@ function injectCanvasStyles(documentRef = document) {
 }
 .swarmlab-canvas-launch-item {
   display: grid;
-  flex: 0 0 58px;
+  flex: 0 0 54px;
   grid-template-rows: 17px 1fr;
   gap: 3px;
   place-items: center;
   align-items: center;
-  width: 58px;
+  width: 54px;
   min-height: 36px;
   border: 1px solid rgba(232, 222, 206, 0.13);
   border-radius: 8px;
@@ -467,7 +465,7 @@ function injectCanvasStyles(documentRef = document) {
   align-items: center;
   justify-content: center;
   gap: 5px;
-  width: 62px;
+  width: 58px;
   min-height: 36px;
   border: 1px solid rgba(232, 222, 206, 0.13);
   border-radius: 8px;
@@ -484,7 +482,7 @@ function injectCanvasStyles(documentRef = document) {
   bottom: calc(100% + 9px);
   z-index: 45;
   display: grid;
-  grid-template-columns: repeat(3, 58px);
+  grid-template-columns: repeat(3, 54px);
   gap: 6px;
   width: max-content;
   max-width: calc(100vw - 52px);
@@ -497,8 +495,8 @@ function injectCanvasStyles(documentRef = document) {
   overflow: auto;
 }
 .swarmlab-canvas-launch-more-panel .swarmlab-canvas-launch-item {
-  width: 58px;
-  flex-basis: 58px;
+  width: 54px;
+  flex-basis: 54px;
 }
 .swarmlab-canvas-stage {
   position: relative;
@@ -1370,6 +1368,34 @@ function injectCanvasStyles(documentRef = document) {
     bottom: 72px;
   }
 }
+@media (max-width: 760px) {
+  .swarmlab-canvas-toolbar {
+    gap: 8px;
+  }
+  .swarmlab-canvas-actions {
+    flex-wrap: nowrap;
+    gap: 5px;
+  }
+  .swarmlab-canvas-actions > .swarmlab-canvas-button,
+  .swarmlab-canvas-advanced > summary {
+    width: 34px;
+    min-width: 34px;
+    padding: 0;
+  }
+  .swarmlab-canvas-actions > .swarmlab-canvas-button > span,
+  .swarmlab-canvas-advanced > summary > span {
+    display: none;
+  }
+  .swarmlab-canvas-title {
+    gap: 8px;
+  }
+  .swarmlab-canvas-title span[data-swarmlab-canvas-meta] {
+    max-width: 220px;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+}
 `;
   documentRef.head.appendChild(style);
 }
@@ -1419,15 +1445,15 @@ export function renderSwarmlabCanvasView() {
           </div>
         </div>
         <div class="swarmlab-canvas-actions">
-          <button class="swarmlab-canvas-button is-primary" type="button" data-swarmlab-canvas-account-login>
+          <button class="swarmlab-canvas-button is-primary" type="button" data-swarmlab-canvas-account-login aria-label="Vibe account" title="Vibe account">
             ${renderIcon(HardDrive)}
             <span data-swarmlab-canvas-account-label>Vibe account</span>
           </button>
-          <button class="swarmlab-canvas-button" type="button" data-swarmlab-canvas-new-handoff>
+          <button class="swarmlab-canvas-button" type="button" data-swarmlab-canvas-new-handoff aria-label="New handoff" title="New handoff">
             ${renderIcon(Send)}
             <span>Handoff</span>
           </button>
-          <button class="swarmlab-canvas-button" type="button" data-swarmlab-canvas-refresh>
+          <button class="swarmlab-canvas-button" type="button" data-swarmlab-canvas-refresh aria-label="Refresh canvas" title="Refresh canvas">
             ${renderIcon(RefreshCw)}
             <span>Refresh</span>
           </button>
@@ -3345,7 +3371,8 @@ function renderLauncherDock(launcherCards, regions = [], localMachineId = "", se
                   aria-selected="${active ? "true" : "false"}"
                   data-swarmlab-canvas-launch-machine="${escapeHtml(machineId)}"
                   style="--machine-accent: ${escapeHtml(accent)};"
-                  title="${escapeHtml(title)}"
+                  title="${escapeHtml(`${title} · ${count} app${count === 1 ? "" : "s"}`)}"
+                  aria-label="${escapeHtml(`Launch apps on ${title}`)}"
                 >
                   <span class="swarmlab-canvas-launch-chip" aria-hidden="true"></span>
                   <span class="swarmlab-canvas-launch-machine-text">

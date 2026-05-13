@@ -323,6 +323,19 @@ test("createFallbackCanvasLayout creates machine regions without overlapping car
   }
 });
 
+test("createFallbackCanvasLayout keeps quiet machine regions compact", () => {
+  const cards = buildCanvasCards({
+    node: { id: "empty-gpu", name: "Idle GPU box" },
+  });
+  const layout = createFallbackCanvasLayout(cards);
+  const [region] = buildCanvasRegions(cards, layout);
+
+  assert.equal(layout["machine:empty-gpu"].regionWidth, 980);
+  assert.equal(layout["machine:empty-gpu"].regionHeight, 720);
+  assert.equal(region.width, 980);
+  assert.equal(region.height, 720);
+});
+
 test("sanitizeCanvasLayout clamps invalid layout values before persistence", () => {
   const layout = sanitizeCanvasLayout({
     card: {
