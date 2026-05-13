@@ -1005,6 +1005,16 @@ test("local canvas view renders node snapshot cards and persists drag layout", a
       "a dismissed launched app should stay dismissed when its matching port later appears",
     );
     assert.equal(await page.locator(".swarmlab-canvas-card.is-launched-app").count(), 0);
+    await page.locator('[data-swarmlab-canvas-focus-region="mac-main"]').evaluate((button) => button.click());
+    await page.waitForFunction(() => {
+      const handle = document.querySelector('[data-swarmlab-canvas-card-id="session:session-1"] [data-swarmlab-card-drag-handle]');
+      if (!(handle instanceof HTMLElement)) return false;
+      const rect = handle.getBoundingClientRect();
+      const x = rect.left + Math.min(40, rect.width / 2);
+      const y = rect.top + Math.min(24, rect.height / 2);
+      const target = document.elementFromPoint(x, y);
+      return Boolean(target && handle.contains(target));
+    });
 
     const sessionCard = page.locator('[data-swarmlab-canvas-card-id="session:session-1"]');
     const before = await sessionCard.locator("[data-swarmlab-card-drag-handle]").evaluate((handle) => {
@@ -1050,6 +1060,8 @@ test("local canvas view renders node snapshot cards and persists drag layout", a
     assert.equal(postedInputs.length, 1);
     assert.equal(postedInputs[0].input, "continue from canvas");
 
+    await page.locator('[data-swarmlab-canvas-focus-region="account-box"]').evaluate((button) => button.click());
+    await page.waitForSelector('[data-swarmlab-canvas-card-id="remote:account-box:session:account-box-agent-1"] [data-swarmlab-agent-composer]', { timeout: 10_000 });
     const remoteComposerForm = page.locator('[data-swarmlab-canvas-card-id="remote:account-box:session:account-box-agent-1"] [data-swarmlab-agent-composer]');
     assert.equal(await remoteComposerForm.getAttribute("data-swarmlab-agent-remote-node-id"), "account-node");
     const remoteComposer = remoteComposerForm.locator('textarea[name="input"]');
@@ -1447,10 +1459,20 @@ test("canvas agent launcher renders the created native session on the board", as
     await page.click('[data-swarmlab-canvas-launcher="launcher:provider:codex"]');
 
     await page.waitForSelector('[data-swarmlab-canvas-card-id="session:canvas-codex-session"]', { timeout: 10_000 });
+    await page.waitForSelector('[data-swarmlab-canvas-card-id="session:canvas-codex-session"][data-swarmlab-canvas-focused-card="true"]', { timeout: 10_000 });
+    await page.waitForFunction(() => {
+      const active = document.activeElement;
+      return active instanceof HTMLTextAreaElement
+        && active.closest('[data-swarmlab-canvas-card-id="session:canvas-codex-session"]');
+    });
     assert.equal(postedSessions.length, 1);
     assert.equal(postedSessions[0].providerId, "codex");
     assert.equal(postedSessions[0].name, "Codex");
     assert.equal(new URL(page.url()).searchParams.get("view"), "canvas");
+    const viewport = await page.evaluate(() =>
+      JSON.parse(window.localStorage.getItem("swarmlab.canvas.viewport.v4:machine:mac-main") || "{}"),
+    );
+    assert.ok(Number(viewport.zoom) >= 0.5, "new canvas agent should be focused into the visible work area");
     assert.match(
       await page.locator('[data-swarmlab-canvas-card-id="session:canvas-codex-session"]').innerText(),
       /Codex/,

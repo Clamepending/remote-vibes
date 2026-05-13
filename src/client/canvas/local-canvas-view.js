@@ -808,6 +808,13 @@ function injectCanvasStyles(documentRef = document) {
   box-shadow: 0 34px 90px rgba(0, 0, 0, 0.46);
   user-select: none;
 }
+.swarmlab-canvas-card.is-launch-focus {
+  border-color: rgba(116, 199, 184, 0.72);
+  box-shadow:
+    0 0 0 1px rgba(116, 199, 184, 0.26),
+    0 0 38px rgba(116, 199, 184, 0.18),
+    0 28px 82px rgba(0, 0, 0, 0.4);
+}
 .swarmlab-canvas-card-head {
   display: grid;
   grid-template-columns: 22px minmax(0, 1fr) auto;
@@ -3902,6 +3909,61 @@ function fitViewportToMachine(root, machineId) {
   });
 }
 
+function getCardViewportBounds(root, cardId) {
+  const layout = root.__swarmlabCanvasLayout || {};
+  const item = layout[cardId];
+  if (!item || item.hidden) return null;
+  const x = Number(item.x);
+  const y = Number(item.y);
+  if (!Number.isFinite(x) || !Number.isFinite(y)) return null;
+  const width = Number(item.width) || 320;
+  const height = Number(item.height) || 220;
+  return {
+    minX: x,
+    minY: y,
+    maxX: x + width,
+    maxY: y + height,
+    width,
+    height,
+  };
+}
+
+function queueCanvasCardFocus(root, cardId, { focusComposer = false } = {}) {
+  const id = String(cardId || "").trim();
+  if (!id) return;
+  root.__swarmlabCanvasPendingFocus = {
+    cardId: id,
+    focusComposer: Boolean(focusComposer),
+  };
+}
+
+function applyPendingCanvasCardFocus(root, storage) {
+  const pending = root.__swarmlabCanvasPendingFocus || null;
+  const cardId = String(pending?.cardId || "").trim();
+  if (!cardId) return false;
+  const card = root.querySelector(`[data-swarmlab-canvas-card-id="${CSS.escape(cardId)}"]`);
+  const bounds = getCardViewportBounds(root, cardId);
+  if (!(card instanceof HTMLElement) || !bounds) return false;
+  setViewport(root, storage, fitViewportToBounds(root, bounds));
+  card.classList.add("is-launch-focus");
+  card.setAttribute("data-swarmlab-canvas-focused-card", "true");
+  window.setTimeout(() => {
+    card.classList.remove("is-launch-focus");
+    card.removeAttribute("data-swarmlab-canvas-focused-card");
+  }, 2_400);
+  if (pending.focusComposer) {
+    window.setTimeout(() => {
+      const textarea = card.querySelector("[data-swarmlab-agent-composer] textarea[name='input']");
+      if (textarea instanceof HTMLTextAreaElement) {
+        textarea.focus({ preventScroll: true });
+        autosizeComposerInput(textarea);
+      }
+    }, 40);
+  }
+  root.__swarmlabCanvasPendingFocus = null;
+  return true;
+}
+
 function getVisibleBoardBounds(root, viewport) {
   const rect = root.getBoundingClientRect();
   const safeViewport = sanitizeViewport(viewport);
@@ -3955,10 +4017,29 @@ function getCanvasContentBounds(root) {
   return bounds;
 }
 
+function getCanvasCardContentBounds(root) {
+  const bounds = [];
+  const layout = root.__swarmlabCanvasLayout || {};
+  const renderCardIds = root.__swarmlabCanvasRenderCardIds instanceof Set
+    ? root.__swarmlabCanvasRenderCardIds
+    : null;
+  Object.entries(layout).forEach(([id, item]) => {
+    if (!item || item.hidden || (renderCardIds && !renderCardIds.has(id))) return;
+    const x = Number(item.x);
+    const y = Number(item.y);
+    const width = Number(item.width) || 260;
+    const height = Number(item.height) || 180;
+    if (!Number.isFinite(x) || !Number.isFinite(y)) return;
+    bounds.push({ minX: x, minY: y, maxX: x + width, maxY: y + height });
+  });
+  return bounds;
+}
+
 function viewportShowsCanvasContent(root, viewport) {
   const viewportBounds = getVisibleBoardBounds(root, viewport);
   if (!viewportBounds) return true;
-  const contentBounds = getCanvasContentBounds(root);
+  const cardBounds = getCanvasCardContentBounds(root);
+  const contentBounds = cardBounds.length ? cardBounds : getCanvasContentBounds(root);
   if (!contentBounds.length) return true;
   return contentBounds.some((bounds) => viewportIntersectsBounds(viewportBounds, bounds));
 }
@@ -4034,10 +4115,11 @@ function renderSnapshot(root, payload, { storage, remoteRecords = [] } = {}) {
     ${renderFloatingControls(viewport)}
     ${renderCanvasNotice()}
   `;
-  if (!viewportState.hasSavedViewport || !viewportShowsCanvasContent(root, viewport)) {
+  refreshRegionPresentation(root);
+  const appliedPendingFocus = applyPendingCanvasCardFocus(root, storage);
+  if (!appliedPendingFocus && (!viewportState.hasSavedViewport || !viewportShowsCanvasContent(root, viewport))) {
     setViewport(root, storage, fitViewportToCards(root, { machineId: localMachineId, initialFocus: true }));
   }
-  refreshRegionPresentation(root);
   if (root.__swarmlabCanvasPendingNotice) {
     const pendingNotice = String(root.__swarmlabCanvasPendingNotice || "");
     root.__swarmlabCanvasPendingNotice = "";
@@ -4659,6 +4741,7 @@ async function launchAgentCapsule(button, root, { fetchImpl, abortController, on
       button.textContent = "Copied";
       if (sessionId) {
         rememberOptimisticCanvasSession(root, storage, result.session || { id: sessionId, name: payload.name, providerId: payload.providerId });
+        queueCanvasCardFocus(root, `session:${sessionId}`, { focusComposer: true });
         showCanvasNotice(root, `${result.session?.name || payload.name || "Agent"} copied into this machine. The source agent keeps running.`);
       }
       if (typeof refresh === "function") {
@@ -4731,6 +4814,9 @@ function queueLaunchLifecycle(root, { storage, refresh }, lifecycle) {
   const key = root.dataset.swarmlabCanvasLaunchStorageKey || "";
   if (!key) return null;
   const stored = upsertLaunchLifecycle(storage, key, lifecycle);
+  if (stored?.lifecycleId && stored.operation === "session.create") {
+    queueCanvasCardFocus(root, `lifecycle:${stored.lifecycleId}`);
+  }
   if (stored && typeof refresh === "function") {
     refresh();
   }
@@ -4822,6 +4908,7 @@ async function launchCanvasLauncher(button, root, { fetchImpl, abortController, 
       button.textContent = "Started";
       if (sessionId) {
         rememberOptimisticCanvasSession(root, storage, result.session || { id: sessionId, name: payload.name, providerId: payload.providerId });
+        queueCanvasCardFocus(root, `session:${sessionId}`, { focusComposer: true });
         showCanvasNotice(root, `${result.session?.name || payload.name || card.title || "Agent"} started on the canvas.`);
       }
       if (typeof refresh === "function") {
@@ -5106,6 +5193,7 @@ function bindCanvasActions(root, options) {
         });
         if (payload?.session?.id) {
           rememberOptimisticCanvasSession(root, storage, payload.session);
+          queueCanvasCardFocus(root, `session:${payload.session.id}`, { focusComposer: true });
           showCanvasNotice(root, `${payload.session.name || "Agent"} started on the canvas.`);
         }
         if (typeof refresh === "function") {
