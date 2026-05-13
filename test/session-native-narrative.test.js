@@ -137,6 +137,55 @@ test("Codex native narrative hides harness prompts and surfaces tools plus assis
   assert.equal(narrative.entries[1].outputPreview, "Tests passed.");
 });
 
+test("Native narrative strips provider protocol lines from chat text and tool previews", () => {
+  const timestamp = "2026-05-13T09:00:00.000Z";
+  const protocolLine = `[stdout-maybe: ${JSON.stringify({
+    type: "thread.start",
+    session_id: "session-secret",
+    cwd: "/tmp/demo",
+    tools: ["Bash", "Read"],
+  })}]`;
+  const codexText = [
+    JSON.stringify({
+      timestamp,
+      type: "response_item",
+      payload: {
+        type: "function_call",
+        name: "exec_command",
+        call_id: "call_protocol",
+        arguments: JSON.stringify({ cmd: "npm test" }),
+      },
+    }),
+    JSON.stringify({
+      timestamp,
+      type: "response_item",
+      payload: {
+        type: "function_call_output",
+        call_id: "call_protocol",
+        output: `Chunk ID: abc\nProcess exited with code 0\nOutput:\n${protocolLine}\nTests passed.`,
+      },
+    }),
+  ].join("\n");
+  const codexNarrative = buildCodexNarrativeFromText(codexText, { providerId: "codex", providerLabel: "Codex" });
+  assert.equal(codexNarrative.entries[0].outputPreview, "Tests passed.");
+  assert.doesNotMatch(codexNarrative.entries[0].outputPreview, /stdout-maybe|session-secret/);
+
+  const claudeText = [
+    JSON.stringify({
+      type: "assistant",
+      timestamp,
+      message: {
+        id: "msg_protocol",
+        role: "assistant",
+        content: [{ type: "text", text: `${protocolLine}\nThe experiment is ready.` }],
+      },
+    }),
+  ].join("\n");
+  const claudeNarrative = buildClaudeNarrativeFromText(claudeText, { providerId: "claude", providerLabel: "Claude Code" });
+  assert.equal(claudeNarrative.entries[0].text, "The experiment is ready.");
+  assert.doesNotMatch(claudeNarrative.entries[0].text, /stdout-maybe|session-secret/);
+});
+
 test("Claude native narrative turns onboarding seed prompts into kickoff status and resolves tool results", () => {
   const text = [
     JSON.stringify({ type: "permission-mode", permissionMode: "bypassPermissions", timestamp: "2026-04-24T01:00:00.000Z" }),

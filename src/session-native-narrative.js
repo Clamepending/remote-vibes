@@ -67,8 +67,47 @@ function stripAnsiAndControlText(value) {
     .replace(/\u009b[0-9;?]*[ -/]*[@-~]/g, " ");
 }
 
-function truncateText(value, maxLength = MAX_TEXT_LENGTH) {
+function isProviderProtocolNoiseLine(line) {
+  const text = normalizeText(line).trim();
+  if (!text) {
+    return false;
+  }
+
+  const unwrapped = text
+    .replace(/^\[(?:std(?:out|err)-maybe|stdout|stderr|stream)[^\]:]*:\s*/iu, "")
+    .replace(/\]$/u, "")
+    .trim();
+  if (!/^\{.*\}$/u.test(unwrapped)) {
+    return false;
+  }
+
+  const payload = safeJsonParse(unwrapped);
+  if (!payload || typeof payload !== "object") {
+    return false;
+  }
+
+  const type = String(payload.type || "");
+  const source = String(payload.source || "");
+  return Boolean(
+    type === "thread.start"
+    || type === "session_meta"
+    || source === "startup"
+    || (payload.session_id && (payload.cwd || payload.transcript_path || payload.tools || payload.mcp_servers)),
+  );
+}
+
+function stripProviderProtocolNoise(value) {
   const text = normalizeText(value);
+  if (!text) {
+    return "";
+  }
+  const lines = text.split("\n");
+  const visible = lines.filter((line) => !isProviderProtocolNoiseLine(line));
+  return normalizeText(visible.join("\n"));
+}
+
+function truncateText(value, maxLength = MAX_TEXT_LENGTH) {
+  const text = stripProviderProtocolNoise(value);
   if (text.length <= maxLength) {
     return text;
   }
@@ -77,7 +116,7 @@ function truncateText(value, maxLength = MAX_TEXT_LENGTH) {
 }
 
 function truncateInline(value, maxLength = MAX_INLINE_LENGTH) {
-  const text = normalizeText(value).replace(/\s+/g, " ");
+  const text = stripProviderProtocolNoise(value).replace(/\s+/g, " ");
   if (text.length <= maxLength) {
     return text;
   }
@@ -276,7 +315,7 @@ function dedupePush(entries, nextEntry, maxEntries = DEFAULT_MAX_ENTRIES) {
   // transcript" footer. We compare lengths after the OSC strip + the
   // normalizeText() pass that truncateText runs internally — that's the
   // length that would appear unclipped, modulo the trailing ellipsis.
-  const wasTruncated = normalizeText(cleanedText).length > MAX_TEXT_LENGTH;
+  const wasTruncated = stripProviderProtocolNoise(cleanedText).length > MAX_TEXT_LENGTH;
 
   const previous = entries[entries.length - 1] || null;
   if (
@@ -458,6 +497,7 @@ function summarizeToolOutput(output) {
       && !/^Original token count:/iu.test(line)
       && !/^Output:$/iu.test(line)
       && !/^Total output lines:/iu.test(line)
+      && !isProviderProtocolNoiseLine(line)
     )) || "";
 
   return {
