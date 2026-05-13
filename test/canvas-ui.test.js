@@ -66,6 +66,11 @@ test("local canvas view renders node snapshot cards and persists drag layout", a
         "swarmlab.canvas.remoteNodes.v1",
         JSON.stringify(["https://gpu-node.example.test", "https://registry-node.example.test"]),
       );
+      window.__openedSwarmlabAccountUrls = [];
+      window.open = (url) => {
+        window.__openedSwarmlabAccountUrls.push(String(url || ""));
+        return { closed: false, focus() {} };
+      };
     });
     const postedInputs = [];
     const postedRemoteCommands = [];
@@ -84,6 +89,8 @@ test("local canvas view renders node snapshot cards and persists drag layout", a
     const directSnapshotHits = new Map();
     const extraRemoteSessions = new Map();
     const extraRemotePorts = new Map();
+    const accountPairStarts = [];
+    let accountConnected = false;
     const remoteSnapshots = new Map([
       ["https://gpu-node.example.test", {
         id: "gpu-cluster",
@@ -275,6 +282,37 @@ test("local canvas view renders node snapshot cards and persists drag layout", a
             },
           ],
           generatedAt: "2026-05-12T12:00:00.000Z",
+        }),
+      });
+    });
+    await page.route(`${baseUrl}/api/node/account/status`, async (route) => {
+      await route.fulfill({
+        status: 200,
+        contentType: "application/json",
+        body: JSON.stringify({
+          account: {
+            enabled: true,
+            connected: accountConnected,
+            configured: accountConnected,
+            running: accountConnected,
+            appBaseUrl: baseUrl,
+            account: accountConnected ? { login: "mark" } : null,
+            node: accountConnected ? { displayName: "Mac Main" } : null,
+          },
+        }),
+      });
+    });
+    await page.route(`${baseUrl}/api/node/account/pair/start`, async (route) => {
+      accountPairStarts.push(JSON.parse(route.request().postData() || "{}"));
+      await route.fulfill({
+        status: 201,
+        contentType: "application/json",
+        body: JSON.stringify({
+          pairing: {
+            pairingId: "pair_canvas_login",
+            pairingCode: "PAIR-CANVAS",
+            pairingUrl: `${baseUrl}/account/pair?pairingId=pair_canvas_login`,
+          },
         }),
       });
     });
@@ -1277,6 +1315,30 @@ test("local canvas view renders node snapshot cards and persists drag layout", a
       JSON.parse(window.localStorage.getItem("swarmlab.canvas.remoteNodes.v1") || "[]"),
     );
     assert.ok(!savedRemoteUrls.some((url) => /token=manual|\/secret/u.test(url)));
+
+    await page.locator("[data-swarmlab-canvas-account-login]").click();
+    await page.waitForFunction(() => window.__openedSwarmlabAccountUrls?.length === 1, null, { timeout: 10_000 });
+    assert.equal(accountPairStarts.length, 1);
+    assert.equal(accountPairStarts[0].label, "Swarmlab");
+    assert.match(accountPairStarts[0].redirectUri, /\/account\/auth\/complete$/);
+    assert.deepEqual(
+      await page.evaluate(() => window.__openedSwarmlabAccountUrls),
+      [`${baseUrl}/account/pair?pairingId=pair_canvas_login`],
+    );
+    await page.waitForSelector("text=Waiting...", { timeout: 10_000 });
+    accountConnected = true;
+    await page.evaluate(() => {
+      window.postMessage({
+        type: "swarmlab-account-pairing-result",
+        status: "success",
+        message: "Vibe account connected. Returning to Swarmlab.",
+      }, window.location.origin);
+    });
+    await page.waitForFunction(() =>
+      document.querySelector("[data-swarmlab-canvas-account-label]")?.textContent?.includes("Linked") ||
+        document.querySelector("[data-swarmlab-canvas-account-label]")?.textContent?.includes("@mark"),
+    null, { timeout: 10_000 });
+    assert.match(await page.locator("[data-swarmlab-canvas-notice]").innerText(), /Vibe account connected|Machines will appear/i);
   } finally {
     await browser?.close().catch(() => {});
     await app.close();

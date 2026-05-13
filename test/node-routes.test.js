@@ -313,6 +313,13 @@ test("/api/node/account routes pair, register, heartbeat, and never echo account
     assert.equal(completeBody.account.configured, true);
     assert.doesNotMatch(JSON.stringify(completeBody), /secret-account-token/);
 
+    const callbackResponse = await fetch(`${started.baseUrl}/account/auth/complete?grant=grant_2&pairingId=pair_1`);
+    assert.equal(callbackResponse.status, 200);
+    const callbackHtml = await callbackResponse.text();
+    assert.match(callbackHtml, /Vibe Account Connected/);
+    assert.match(callbackHtml, /swarmlab-account-pairing-result/);
+    assert.doesNotMatch(callbackHtml, /buildinghub-github-oauth-result|GitHub Connected/);
+
     const heartbeatResponse = await fetch(`${started.baseUrl}/api/node/account/heartbeat`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },

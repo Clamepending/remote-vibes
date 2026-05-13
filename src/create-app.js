@@ -160,6 +160,7 @@ const BUILDINGHUB_GITHUB_OAUTH_DISCONNECT_PATH = "/buildinghub/auth/github/disco
 const BUILDINGHUB_ACCOUNT_AUTH_COMPLETE_PATH = "/buildinghub/auth/complete";
 const ACCOUNT_AUTH_COMPLETE_PATH = "/account/auth/complete";
 const GITHUB_OAUTH_RESULT_MESSAGE_TYPE = "buildinghub-github-oauth-result";
+const ACCOUNT_PAIRING_RESULT_MESSAGE_TYPE = "swarmlab-account-pairing-result";
 const GITHUB_OAUTH_STATE_TTL_MS = 10 * 60 * 1000;
 const GITHUB_OAUTH_SCOPES = Object.freeze(["read:user"]);
 const GOOGLE_OAUTH_RESULT_MESSAGE_TYPE = "vibe-research-google-oauth-result";
@@ -782,6 +783,70 @@ function renderGitHubOAuthPopupPage({
         window.setTimeout(() => {
           window.close();
         }, 150);
+      }
+    })();
+  </script>
+</body>
+</html>`;
+}
+
+function renderAccountPairingPopupPage({
+  status = "error",
+  message = "",
+} = {}) {
+  const normalizedStatus = status === "success" ? "success" : "error";
+  const defaultMessage = normalizedStatus === "success"
+    ? "Vibe account connected. Returning to Swarmlab."
+    : "Vibe account login was not completed.";
+  const payload = {
+    type: ACCOUNT_PAIRING_RESULT_MESSAGE_TYPE,
+    status: normalizedStatus,
+    message: String(message || defaultMessage).trim() || defaultMessage,
+  };
+  const title = normalizedStatus === "success" ? "Vibe Account Connected" : "Vibe Account Not Connected";
+  const bodyMessage = escapeHtml(payload.message);
+  const statusClass = normalizedStatus === "success" ? "status-success" : "status-error";
+
+  return `<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>${escapeHtml(title)}</title>
+  <style>
+    :root { color-scheme: dark; font-family: Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif; background: #15140f; color: #f3eee5; }
+    body { margin: 0; min-height: 100vh; display: grid; place-items: center; background: radial-gradient(circle at top, rgba(249, 115, 22, 0.16), transparent 30rem), #15140f; }
+    main { width: min(460px, calc(100% - 32px)); border: 1px solid rgba(232, 222, 206, 0.14); border-radius: 10px; padding: 20px; background: rgba(35, 34, 31, 0.94); box-shadow: 0 24px 80px rgba(0, 0, 0, 0.34); }
+    h1 { margin: 0 0 10px; font-size: 1.05rem; letter-spacing: 0; }
+    p { margin: 0; font-size: 0.95rem; line-height: 1.4; color: #cfc4b9; }
+    .status-success { color: #90dacd; }
+    .status-error { color: #ffb2a2; }
+    .actions { margin-top: 14px; display: flex; gap: 10px; }
+    a { color: #ff9b55; text-decoration: none; font-weight: 650; }
+  </style>
+</head>
+<body>
+  <main>
+    <h1>${escapeHtml(title)}</h1>
+    <p class="${statusClass}" data-status>${bodyMessage}</p>
+    <div class="actions">
+      <a href="/">Return to Swarmlab</a>
+    </div>
+  </main>
+  <script>
+    (() => {
+      const payload = ${JSON.stringify(payload)};
+      try {
+        if (window.opener && !window.opener.closed) {
+          window.opener.postMessage(payload, window.location.origin);
+        }
+      } catch {
+        // Ignore cross-window access failures in fallback browser modes.
+      }
+      if (payload.status === "success") {
+        window.setTimeout(() => {
+          window.close();
+        }, 250);
       }
     })();
   </script>
@@ -4651,7 +4716,7 @@ export async function createVibeResearchApp({
     const callbackPort = exposedPort || port;
     const completionUrl = getAccountCompletionUrl(callbackPort);
     if ((!grant && !pairingId) || !completionUrl) {
-      response.status(400).send(renderGitHubOAuthPopupPage({
+      response.status(400).send(renderAccountPairingPopupPage({
         message: "Vibe account did not return a usable pairing grant.",
       }));
       return;
@@ -4675,12 +4740,12 @@ export async function createVibeResearchApp({
       }
 
       response.setHeader("Cache-Control", "no-store");
-      response.send(renderGitHubOAuthPopupPage({
+      response.send(renderAccountPairingPopupPage({
         status: "success",
         message: "Vibe account connected. Returning to Swarmlab.",
       }));
     } catch (error) {
-      response.status(Number(error?.statusCode) || 500).send(renderGitHubOAuthPopupPage({
+      response.status(Number(error?.statusCode) || 500).send(renderAccountPairingPopupPage({
         message: error?.message || "Could not complete Vibe account login.",
       }));
     }

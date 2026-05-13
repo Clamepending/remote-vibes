@@ -52,6 +52,10 @@ const BOARD_WIDTH = 4_800;
 const BOARD_HEIGHT = 5_200;
 const DEFAULT_VIEWPORT = { x: 28, y: 42, zoom: 0.74 };
 const MAX_VISIBLE_DOCK_LAUNCHERS = 6;
+const ACCOUNT_PAIRING_RESULT_MESSAGE_TYPE = "swarmlab-account-pairing-result";
+const LEGACY_ACCOUNT_PAIRING_RESULT_MESSAGE_TYPE = "buildinghub-github-oauth-result";
+const ACCOUNT_PAIRING_POLL_MS = 1_500;
+const ACCOUNT_PAIRING_TIMEOUT_MS = 3 * 60 * 1000;
 const {
   minWidth: REGION_RESIZE_MIN_WIDTH,
   minHeight: REGION_RESIZE_MIN_HEIGHT,
@@ -1563,7 +1567,12 @@ async function fetchJson(url, { fetchImpl = fetch, signal, method = "GET", body 
 }
 
 function canvasAccountStatus(payload = {}) {
-  const status = payload?.account && typeof payload.account === "object" ? payload.account : payload;
+  const hasStatusShape = typeof payload === "object" && payload !== null && (
+    Object.hasOwn(payload, "connected") ||
+    Object.hasOwn(payload, "configured") ||
+    Object.hasOwn(payload, "running")
+  );
+  const status = !hasStatusShape && payload?.account && typeof payload.account === "object" ? payload.account : payload;
   return status && typeof status === "object" ? status : {};
 }
 
@@ -1573,6 +1582,11 @@ function canvasAccountName(status = {}) {
     ? `@${account.login}`
     : account.name || account.email || "";
   return compactText(label, 22);
+}
+
+function canvasAccountConnected(payload = {}) {
+  const status = canvasAccountStatus(payload);
+  return Boolean(status.connected || status.configured);
 }
 
 function setCanvasAccountButtonState(button, { label = "", connected = false, busy = false, error = "" } = {}) {
@@ -1594,7 +1608,7 @@ function setCanvasAccountButtonState(button, { label = "", connected = false, bu
 
 function applyCanvasAccountStatus(documentRef, payload = {}) {
   const status = canvasAccountStatus(payload);
-  const connected = Boolean(status.connected || status.configured);
+  const connected = canvasAccountConnected(status);
   const name = canvasAccountName(status);
   documentRef.querySelectorAll("[data-swarmlab-canvas-account-login]").forEach((button) => {
     setCanvasAccountButtonState(button, {
@@ -1608,10 +1622,12 @@ async function refreshCanvasAccountStatus(documentRef, { fetchImpl = fetch, sign
   try {
     const payload = await fetchJson("/api/node/account/status", { fetchImpl, signal });
     applyCanvasAccountStatus(documentRef, payload);
+    return payload;
   } catch {
     documentRef.querySelectorAll("[data-swarmlab-canvas-account-login]").forEach((button) => {
       setCanvasAccountButtonState(button, { connected: false, label: "Log in" });
     });
+    return null;
   }
 }
 
@@ -1621,6 +1637,109 @@ function currentCanvasAccountBaseUrl() {
   } catch {
     return "";
   }
+}
+
+function startCanvasAccountPairingMonitor(root, {
+  button,
+  documentRef,
+  fetchImpl = fetch,
+  signal,
+  refresh,
+  windowRef = globalThis.window,
+  locationRef = globalThis.location,
+} = {}) {
+  if (!(button instanceof HTMLElement) || !windowRef) return;
+  if (root.__swarmlabCanvasAccountPairingCleanup) {
+    root.__swarmlabCanvasAccountPairingCleanup();
+  }
+  const startedAt = Date.now();
+  let timer = null;
+  let settled = false;
+
+  const cleanup = () => {
+    if (timer) {
+      windowRef.clearTimeout(timer);
+      timer = null;
+    }
+    windowRef.removeEventListener?.("message", handleMessage);
+    if (root.__swarmlabCanvasAccountPairingCleanup === cleanup) {
+      root.__swarmlabCanvasAccountPairingCleanup = null;
+    }
+  };
+
+  const finish = async ({ ok, message = "" } = {}) => {
+    if (settled) return;
+    settled = true;
+    cleanup();
+    if (ok) {
+      const payload = await refreshCanvasAccountStatus(documentRef, { fetchImpl, signal });
+      setCanvasAccountButtonState(button, {
+        connected: canvasAccountConnected(payload),
+        busy: false,
+        label: canvasAccountConnected(payload) ? "Linked" : "Syncing...",
+      });
+      root.__swarmlabCanvasPendingNotice = message || "Vibe account connected. Machines will appear here automatically as they check in.";
+      if (typeof refresh === "function") {
+        refresh();
+      } else {
+        showCanvasNotice(root, root.__swarmlabCanvasPendingNotice);
+        root.__swarmlabCanvasPendingNotice = "";
+      }
+      return;
+    }
+    setCanvasAccountButtonState(button, {
+      connected: false,
+      busy: false,
+      label: "Log in",
+      error: message || "Vibe account login was not completed.",
+    });
+    showCanvasNotice(root, message || "Vibe account login was not completed.");
+  };
+
+  const poll = async () => {
+    if (settled || signal?.aborted) {
+      cleanup();
+      return;
+    }
+    try {
+      const payload = await fetchJson("/api/node/account/status", { fetchImpl, signal });
+      if (canvasAccountConnected(payload)) {
+        await finish({ ok: true });
+        return;
+      }
+    } catch {
+      // Keep waiting; the popup callback is the authoritative signal.
+    }
+    if (Date.now() - startedAt > ACCOUNT_PAIRING_TIMEOUT_MS) {
+      await finish({
+        ok: false,
+        message: "Still waiting for Vibe Research login. Click Log in to try again.",
+      });
+      return;
+    }
+    setCanvasAccountButtonState(button, { connected: false, busy: true, label: "Waiting..." });
+    timer = windowRef.setTimeout(poll, ACCOUNT_PAIRING_POLL_MS);
+  };
+
+  function handleMessage(event) {
+    if (event.origin !== locationRef?.origin) {
+      return;
+    }
+    const payload = event.data && typeof event.data === "object" ? event.data : null;
+    const messageType = String(payload?.type || "");
+    if (messageType !== ACCOUNT_PAIRING_RESULT_MESSAGE_TYPE && messageType !== LEGACY_ACCOUNT_PAIRING_RESULT_MESSAGE_TYPE) {
+      return;
+    }
+    if (payload.status === "success") {
+      void finish({ ok: true, message: payload.message || "" });
+      return;
+    }
+    void finish({ ok: false, message: payload.message || "" });
+  }
+
+  root.__swarmlabCanvasAccountPairingCleanup = cleanup;
+  windowRef.addEventListener?.("message", handleMessage);
+  void poll();
 }
 
 function pairingGrantFromApproval(approval, accountBaseUrl) {
@@ -3750,6 +3869,11 @@ function renderSnapshot(root, payload, { storage, remoteRecords = [] } = {}) {
     setViewport(root, storage, fitViewportToCards(root, { machineId: localMachineId, initialFocus: true }));
   }
   refreshRegionPresentation(root);
+  if (root.__swarmlabCanvasPendingNotice) {
+    const pendingNotice = String(root.__swarmlabCanvasPendingNotice || "");
+    root.__swarmlabCanvasPendingNotice = "";
+    showCanvasNotice(root, pendingNotice);
+  }
 }
 
 function findRegionAtPoint(root, x, y) {
@@ -4926,6 +5050,7 @@ export function mountSwarmlabCanvasView({
 
   const refresh = () => {
     clearAgentNarrativePoll(root);
+    root.__swarmlabCanvasAccountPairingCleanup?.();
     currentController.abort();
     currentController = new AbortController();
     activeController = currentController;
@@ -4981,14 +5106,25 @@ export function mountSwarmlabCanvasView({
         if (!pairingUrl) {
           throw new Error("Vibe account did not return a login URL.");
         }
-        windowRef?.open?.(pairingUrl, "_blank", "noopener,noreferrer");
-        setCanvasAccountButtonState(button, { busy: true, label: "Check browser" });
+        const popup = windowRef?.open?.(pairingUrl, "_blank", "noopener,noreferrer");
+        popup?.focus?.();
+        setCanvasAccountButtonState(button, { connected: false, busy: true, label: "Waiting..." });
+        showCanvasNotice(root, "Finish Vibe Research login in the browser window. This machine will appear automatically after it checks in.");
+        startCanvasAccountPairingMonitor(root, {
+          button,
+          documentRef,
+          fetchImpl,
+          signal: currentController.signal,
+          refresh,
+          windowRef,
+          locationRef,
+        });
+        return;
       } catch (error) {
         setCanvasAccountButtonState(button, {
           label: "Login failed",
           error: error?.message || "Login failed",
         });
-      } finally {
         windowRef?.setTimeout?.(() => {
           button.removeAttribute("disabled");
           refresh();
