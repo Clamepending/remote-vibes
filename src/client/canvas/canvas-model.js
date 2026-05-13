@@ -7,6 +7,8 @@ const AGENT_CARD_WIDTH = 640;
 const AGENT_CARD_HEIGHT = 720;
 const BROWSER_CARD_WIDTH = 430;
 const BROWSER_CARD_HEIGHT = 300;
+const MONITOR_CARD_WIDTH = 430;
+const MONITOR_CARD_HEIGHT = 300;
 const APP_CARD_WIDTH = 410;
 const APP_CARD_HEIGHT = 270;
 const APP_SUMMARY_CARD_WIDTH = 320;
@@ -32,6 +34,7 @@ const MACHINE_REGION_ROW_GAP = 30;
 const MACHINE_REGION_LEFT_WIDTH = 370;
 const MAX_CANVAS_AGENT_CARDS = 4;
 const MAX_CANVAS_BROWSER_CARDS = 2;
+const MAX_CANVAS_MONITOR_CARDS = 4;
 const MAX_CANVAS_ARTIFACT_CARDS = 1;
 const MAX_CANVAS_APP_CARDS = 4;
 const ACTIVE_STATUSES = new Set(["active", "busy", "connected", "launching", "open", "pending", "queued", "resuming", "running", "starting", "streaming", "working"]);
@@ -42,6 +45,23 @@ const COMMON_UI_PORTS = new Set([
   7862, 7863, 8000, 8080, 8501, 8765, 8791,
 ]);
 const DEBUG_OR_INFRA_PORTS = new Set([9229, 9230, 9231]);
+const URL_SENSITIVE_PARAMS = new Set([
+  "access_token",
+  "api_key",
+  "auth",
+  "code",
+  "key",
+  "password",
+  "secret",
+  "state",
+  "token",
+]);
+const MONITOR_HOSTS = [
+  { kind: "wandb", label: "Weights & Biases", hostPattern: /(^|\.)wandb\.ai$/u },
+  { kind: "tensorboard", label: "TensorBoard", hostPattern: /(^|\.)tensorboard\.dev$/u },
+  { kind: "mlflow", label: "MLflow", hostPattern: /(^|\.)mlflow\./u },
+  { kind: "comet", label: "Comet", hostPattern: /(^|\.)comet\.com$/u },
+];
 
 function asObject(value) {
   return value && typeof value === "object" && !Array.isArray(value) ? value : {};
@@ -84,6 +104,59 @@ function pickFirst(...values) {
     }
   }
   return "";
+}
+
+function normalizeUrl(value) {
+  const raw = normalizeText(value)
+    .replace(/[),.;]+$/u, "");
+  if (!raw) {
+    return "";
+  }
+  try {
+    const url = new URL(raw);
+    if (url.protocol !== "http:" && url.protocol !== "https:") {
+      return "";
+    }
+    for (const key of [...url.searchParams.keys()]) {
+      if (URL_SENSITIVE_PARAMS.has(key.toLowerCase())) {
+        url.searchParams.delete(key);
+      }
+    }
+    url.hash = "";
+    return url.toString();
+  } catch {
+    return "";
+  }
+}
+
+function classifyMonitorUrl(value) {
+  const urlText = normalizeUrl(value);
+  if (!urlText) {
+    return null;
+  }
+  try {
+    const url = new URL(urlText);
+    const hostname = url.hostname.toLowerCase();
+    const match = MONITOR_HOSTS.find((candidate) => candidate.hostPattern.test(hostname));
+    if (!match) {
+      return null;
+    }
+    return { ...match, url: urlText, host: hostname, pathParts: url.pathname.split("/").filter(Boolean) };
+  } catch {
+    return null;
+  }
+}
+
+function isMonitorUrl(value) {
+  return Boolean(classifyMonitorUrl(value));
+}
+
+function safePathSegment(value) {
+  try {
+    return decodeURIComponent(String(value || ""));
+  } catch {
+    return String(value || "");
+  }
 }
 
 function compactTags(values) {
@@ -214,6 +287,7 @@ export function normalizeNodeSnapshot(payload) {
   const actionItems = asArray(snapshot.actionItems || snapshot.approvals || input.actionItems || input.approvals);
   const ports = asArray(snapshot.ports || snapshot.apps || input.ports);
   const canvases = asArray(snapshot.canvases || snapshot.artifacts || input.canvases || input.artifacts);
+  const resources = asArray(snapshot.resources || snapshot.monitors || snapshot.researchResources || input.resources || input.monitors);
   const projects = asArray(snapshot.projects || input.projects);
   const buildings = asArray(snapshot.buildings || input.buildings);
   const handoffJobs = asArray(snapshot.handoffJobs || snapshot.jobs || input.handoffJobs || input.jobs);
@@ -242,6 +316,7 @@ export function normalizeNodeSnapshot(payload) {
     browserSessions,
     actionItems,
     canvases,
+    resources,
     ports,
     projects,
     system,
@@ -254,6 +329,7 @@ export function normalizeNodeSnapshot(payload) {
       approvals: countFromSummary(snapshot, "approvals", actionItems.length),
       ports: countFromSummary(snapshot, "ports", ports.length),
       artifacts: countFromSummary(snapshot, "artifacts", canvases.length),
+      resources: countFromSummary(snapshot, "resources", resources.length),
       projects: countFromSummary(snapshot, "projects", projects.length),
       buildings: countFromSummary(snapshot, "buildings", buildings.length),
       handoffJobs: countFromSummary(snapshot, "handoffJobs", handoffJobs.length),
@@ -475,15 +551,26 @@ function sessionTitle(session, index) {
   return normalizeText(pickFirst(session.name, session.title, id), id);
 }
 
-function sessionSignalScore(session, index, { total = 0, redacted = false } = {}) {
+function sessionId(session, index = 0) {
+  return normalizeText(pickFirst(session?.id, session?.sessionId, session?.name), `session-${index + 1}`);
+}
+
+function sessionHasMonitorResource(session) {
+  return asArray(session?.resources).some((resource) => isMonitorUrl(resource?.url || resource?.href || resource));
+}
+
+function sessionSignalScore(session, index, { total = 0, redacted = false, linkedSessionIds = new Set() } = {}) {
   if (session?.canvasHidden === true || session?.hidden === true) {
     return -Infinity;
   }
+  const id = sessionId(session, index);
   const status = sessionStatus(session);
   const title = sessionTitle(session, index).toLowerCase();
   let score = 0;
   if (hasAnyStatus(status, ACTIVE_STATUSES)) score += 120;
   if (hasAnyStatus(status, PROBLEM_STATUSES)) score += 105;
+  if (linkedSessionIds.has(id)) score += 85;
+  if (sessionHasMonitorResource(session)) score += 80;
   if (title.includes("handoff")) score += 90;
   if (session?.lastMessage || session?.messageCount || session?.narrativeCount) score += 35;
   if (!normalizeStatus(status) && total <= 2 && !redacted) score += 55;
@@ -513,11 +600,11 @@ function sessionSummaryCard(sessions, machineId) {
   });
 }
 
-function buildSessionCards(sessions, machineId, { redacted = false } = {}) {
+function buildSessionCards(sessions, machineId, { redacted = false, linkedSessionIds = new Set() } = {}) {
   const entries = sessions.map((session, index) => ({
     session,
     index,
-    score: sessionSignalScore(session, index, { total: sessions.length, redacted }),
+    score: sessionSignalScore(session, index, { total: sessions.length, redacted, linkedSessionIds }),
   }));
   const visible = entries
     .filter((entry) => entry.score >= 50)
@@ -539,22 +626,175 @@ function buildSessionCards(sessions, machineId, { redacted = false } = {}) {
   return cards;
 }
 
+function browserSessionUrl(session) {
+  const snapshot = asObject(session?.latestSnapshot || session?.snapshot);
+  const tabs = asArray(snapshot.tabs);
+  const activeTab = tabs.find((tab) => tab?.active) || tabs[0] || {};
+  return normalizeUrl(pickFirst(
+    snapshot.url,
+    activeTab.url,
+    session?.latestUrl,
+    session?.url,
+    session?.latestOrigin,
+  ));
+}
+
+function browserSourceSessionId(session) {
+  return normalizeText(pickFirst(session?.callerSessionId, session?.sourceSessionId, session?.sessionId));
+}
+
+function sourceCardIdForSession(sourceSessionId) {
+  return sourceSessionId ? `session:${normalizeId(sourceSessionId, sourceSessionId)}` : "";
+}
+
+function monitorSubtitle(monitor) {
+  if (monitor?.kind === "wandb") {
+    const [entity, project, maybeRuns, runId] = monitor.pathParts || [];
+    const projectName = safePathSegment(project);
+    const runName = safePathSegment(runId);
+    if (maybeRuns === "runs" && projectName) {
+      return runName ? `${projectName} / run ${runName}` : `${projectName} / run`;
+    }
+    if (projectName) {
+      return `${projectName} / project`;
+    }
+    return safePathSegment(entity) || "wandb";
+  }
+  return monitor?.host || "monitor";
+}
+
+function monitorTitle(monitor, fallback = "") {
+  if (monitor?.kind === "wandb") return "Weights & Biases";
+  return normalizeText(fallback, monitor?.label || "Live monitor");
+}
+
 function browserCard(session, index, machineId) {
   const id = normalizeText(pickFirst(session.id, session.browserUseSessionId, session.taskId), `browser-${index + 1}`);
   const snapshot = asObject(session.latestSnapshot || session.snapshot);
+  const url = browserSessionUrl(session);
+  const sourceSessionId = browserSourceSessionId(session);
   return makeCard({
     id: `browser:${id}`,
     type: "browser",
     title: pickFirst(session.name, session.title, snapshot.title, id),
     subtitle: "browser",
     status: pickFirst(session.status, session.phase),
-    detail: pickFirst(snapshot.url, session.url, session.task, session.prompt),
+    detail: pickFirst(url, session.taskPreview, session.task, session.prompt),
     meta: normalizeOptionalDate(pickFirst(session.updatedAt, session.createdAt)),
     tags: [session.provider, session.model],
-    ref: { machineId, browserSessionId: id, sessionId: session.sessionId || "" },
+    href: url,
+    ref: {
+      machineId,
+      browserSessionId: id,
+      sessionId: session.sessionId || sourceSessionId || "",
+      sourceSessionId,
+      sourceCardId: sourceCardIdForSession(sourceSessionId),
+      actionLabel: "Open tab",
+    },
     width: BROWSER_CARD_WIDTH,
     height: BROWSER_CARD_HEIGHT,
   });
+}
+
+function isMonitorBrowserSession(session) {
+  return isMonitorUrl(browserSessionUrl(session));
+}
+
+function resourceCardId(resource, index) {
+  return normalizeId(
+    pickFirst(resource.id, resource.resourceId, resource.browserSessionId, resource.url, resource.href),
+    `monitor-${index + 1}`,
+  );
+}
+
+function monitorCard(resource, index, machineId) {
+  const url = normalizeUrl(pickFirst(resource.url, resource.href, resource.latestUrl));
+  const monitor = classifyMonitorUrl(url);
+  const sourceSessionId = normalizeText(pickFirst(resource.sourceSessionId, resource.callerSessionId, resource.sessionId));
+  return makeCard({
+    id: `monitor:${resourceCardId(resource, index)}`,
+    type: "monitor",
+    title: monitorTitle(monitor, resource.title || resource.name),
+    subtitle: monitorSubtitle(monitor),
+    status: pickFirst(resource.status, resource.phase, "linked"),
+    detail: url,
+    meta: normalizeOptionalDate(pickFirst(resource.updatedAt, resource.createdAt)),
+    tags: [monitor?.kind, resource.source, sourceSessionId ? "from agent" : ""],
+    href: url,
+    ref: {
+      machineId,
+      resourceId: resourceCardId(resource, index),
+      resourceKind: monitor?.kind || "monitor",
+      source: normalizeText(resource.source),
+      sourceSessionId,
+      sourceCardId: sourceCardIdForSession(sourceSessionId),
+      actionLabel: monitor?.kind === "wandb" ? "Open W&B" : "Open monitor",
+    },
+    width: MONITOR_CARD_WIDTH,
+    height: MONITOR_CARD_HEIGHT,
+  });
+}
+
+function collectMonitorResources({ sessions = [], browserSessions = [], resources = [] } = {}) {
+  const entries = [];
+  const seen = new Set();
+  const add = (resource, fallback = {}) => {
+    const url = normalizeUrl(pickFirst(resource?.url, resource?.href, resource?.latestUrl, fallback.url));
+    if (!url || !isMonitorUrl(url) || seen.has(url)) {
+      return;
+    }
+    seen.add(url);
+    entries.push({ ...fallback, ...resource, url });
+  };
+
+  resources.forEach((resource, index) => add(resource, { id: `resource-${index + 1}`, source: "resource" }));
+  sessions.forEach((session, sessionIndex) => {
+    const sourceSessionId = sessionId(session, sessionIndex);
+    asArray(session.resources).forEach((resource, resourceIndex) => add(resource, {
+      id: `${sourceSessionId}:resource-${resourceIndex + 1}`,
+      source: "agent",
+      sourceSessionId,
+      status: sessionStatus(session),
+      createdAt: session.createdAt,
+      updatedAt: pickFirst(session.updatedAt, session.lastOutputAt),
+    }));
+  });
+  browserSessions.forEach((session, index) => {
+    const url = browserSessionUrl(session);
+    if (!isMonitorUrl(url)) {
+      return;
+    }
+    add({
+      id: pickFirst(session.id, session.browserUseSessionId, `browser-${index + 1}`),
+      title: pickFirst(session.name, session.title),
+      url,
+      source: "browser",
+      sourceSessionId: browserSourceSessionId(session),
+      status: pickFirst(session.status, session.phase),
+      createdAt: session.createdAt,
+      updatedAt: session.updatedAt,
+    });
+  });
+  return entries;
+}
+
+function buildMonitorCards(snapshot, machineId) {
+  return collectMonitorResources(snapshot)
+    .slice(0, MAX_CANVAS_MONITOR_CARDS)
+    .map((resource, index) => monitorCard(resource, index, machineId));
+}
+
+function collectLinkedSessionIds(snapshot) {
+  const ids = new Set();
+  collectMonitorResources(snapshot).forEach((resource) => {
+    const sourceSessionId = normalizeText(pickFirst(resource.sourceSessionId, resource.callerSessionId, resource.sessionId));
+    if (sourceSessionId) ids.add(sourceSessionId);
+  });
+  asArray(snapshot.browserSessions).forEach((session) => {
+    const sourceSessionId = browserSourceSessionId(session);
+    if (sourceSessionId) ids.add(sourceSessionId);
+  });
+  return ids;
 }
 
 function browserSignalScore(session, index, { total = 0, redacted = false } = {}) {
@@ -566,6 +806,8 @@ function browserSignalScore(session, index, { total = 0, redacted = false } = {}
   if (hasAnyStatus(status, ACTIVE_STATUSES)) score += 110;
   if (hasAnyStatus(status, PROBLEM_STATUSES)) score += 100;
   if (session?.latestSnapshot || session?.snapshot) score += 25;
+  if (browserSourceSessionId(session)) score += 55;
+  if (browserSessionUrl(session)) score += 35;
   if (!normalizeStatus(status) && total <= 1 && !redacted) score += 45;
   if (hasAnyStatus(status, QUIET_STATUSES)) score -= redacted ? 70 : 30;
   score += Math.min(20, Math.max(0, timestampMs(session?.updatedAt, session?.createdAt) / 1_000_000_000_000));
@@ -593,11 +835,13 @@ function browserSummaryCard(sessions, machineId) {
 }
 
 function buildBrowserCards(sessions, machineId, { redacted = false } = {}) {
-  const entries = sessions.map((session, index) => ({
-    session,
-    index,
-    score: browserSignalScore(session, index, { total: sessions.length, redacted }),
-  }));
+  const entries = sessions
+    .filter((session) => !isMonitorBrowserSession(session))
+    .map((session, index) => ({
+      session,
+      index,
+      score: browserSignalScore(session, index, { total: sessions.length, redacted }),
+    }));
   const visible = entries
     .filter((entry) => entry.score >= 60)
     .sort((left, right) => right.score - left.score || left.index - right.index)
@@ -933,9 +1177,11 @@ export function buildCanvasCards(payload) {
   const snapshot = normalizeNodeSnapshot(payload);
   const machineId = snapshot.node.id;
   const isRedacted = snapshot.mode === "redacted";
+  const linkedSessionIds = collectLinkedSessionIds(snapshot);
   const portCards = buildPortCards(snapshot.ports, machineId);
   const approvalCards = buildApprovalCards(snapshot.actionItems, machineId);
-  const sessionCards = buildSessionCards(snapshot.sessions, machineId, { redacted: isRedacted });
+  const sessionCards = buildSessionCards(snapshot.sessions, machineId, { redacted: isRedacted, linkedSessionIds });
+  const monitorCards = buildMonitorCards(snapshot, machineId);
   const browserCards = buildBrowserCards(snapshot.browserSessions, machineId, { redacted: isRedacted });
   const artifactCards = buildArtifactCards(snapshot.canvases, machineId);
   const cards = [
@@ -944,6 +1190,7 @@ export function buildCanvasCards(payload) {
     ...approvalCards,
     ...snapshot.handoffJobs.map((job, index) => handoffCard(job, index, machineId)),
     ...sessionCards,
+    ...monitorCards,
     ...browserCards,
     ...portCards,
     ...artifactCards,
@@ -1033,7 +1280,12 @@ export function createFallbackCanvasLayout(cards) {
     const left = [];
     const right = [];
     entries.forEach((entry) => {
-      if (entry.card.type === "agent" || entry.card.type === "browser" || entry.card.type === "app") {
+      if (
+        entry.card.type === "agent" ||
+        entry.card.type === "monitor" ||
+        entry.card.type === "browser" ||
+        entry.card.type === "app"
+      ) {
         right.push(entry);
       } else {
         left.push(entry);

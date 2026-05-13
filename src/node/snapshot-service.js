@@ -4,6 +4,23 @@ import os from "node:os";
 const DEFAULT_DEPENDENCY_TIMEOUT_MS = 1_500;
 const REDACTED_NAME = "redacted";
 const SNAPSHOT_MODES = new Set(["redacted", "privileged"]);
+const URL_SENSITIVE_PARAMS = new Set([
+  "access_token",
+  "api_key",
+  "auth",
+  "code",
+  "key",
+  "password",
+  "secret",
+  "state",
+  "token",
+]);
+const MONITOR_URL_HOSTS = [
+  { kind: "wandb", label: "Weights & Biases", hostPattern: /(^|\.)wandb\.ai$/u },
+  { kind: "tensorboard", label: "TensorBoard", hostPattern: /(^|\.)tensorboard\.dev$/u },
+  { kind: "mlflow", label: "MLflow", hostPattern: /(^|\.)mlflow\./u },
+  { kind: "comet", label: "Comet", hostPattern: /(^|\.)comet\.com$/u },
+];
 const SECRET_TEXT_PATTERNS = [
   /\bsk-[A-Za-z0-9_-]{6,}\b/g,
   /\bgh[pousr]_[A-Za-z0-9_]{6,}\b/g,
@@ -46,6 +63,76 @@ function originOnly(value) {
   } catch {
     return "";
   }
+}
+
+function sanitizeUrlForSnapshot(value) {
+  const raw = String(value || "")
+    .trim()
+    .replace(/[),.;]+$/u, "");
+  if (!raw) return "";
+  try {
+    const url = new URL(raw);
+    if (url.protocol !== "http:" && url.protocol !== "https:") return "";
+    for (const key of [...url.searchParams.keys()]) {
+      if (URL_SENSITIVE_PARAMS.has(key.toLowerCase())) {
+        url.searchParams.delete(key);
+      }
+    }
+    url.hash = "";
+    return url.toString();
+  } catch {
+    return "";
+  }
+}
+
+function classifyMonitorUrl(value) {
+  const urlText = sanitizeUrlForSnapshot(value);
+  if (!urlText) return null;
+  try {
+    const url = new URL(urlText);
+    const hostname = url.hostname.toLowerCase();
+    const match = MONITOR_URL_HOSTS.find((candidate) => candidate.hostPattern.test(hostname));
+    return match ? { ...match, url: urlText, host: hostname } : null;
+  } catch {
+    return null;
+  }
+}
+
+function summarizeSessionResource(resource, index, session) {
+  const rawUrl = typeof resource === "string" ? resource : resource?.url || resource?.href;
+  const monitor = classifyMonitorUrl(rawUrl);
+  if (!monitor) return null;
+  return {
+    id: String(resource?.id || `${monitor.kind}:${stableHash(monitor.url)}:${index}`),
+    kind: String(resource?.kind || monitor.kind),
+    label: compactText(resource?.label || monitor.label, 80),
+    title: compactText(resource?.title || resource?.name || resource?.label || monitor.label, 120),
+    url: monitor.url,
+    host: monitor.host,
+    source: compactText(resource?.source || "session", 80),
+    sourceSessionId: String(resource?.sourceSessionId || session?.id || ""),
+    createdAt: resource?.createdAt || session?.createdAt || null,
+    updatedAt: resource?.updatedAt || session?.updatedAt || null,
+  };
+}
+
+function summarizeSessionResources(session) {
+  const rawResources = [
+    ...arrayOrEmpty(session?.resources),
+    ...arrayOrEmpty(session?.resourceUrls),
+    ...arrayOrEmpty(session?.monitorUrls),
+    session?.monitorUrl,
+    session?.wandbUrl,
+  ].filter(Boolean);
+  const seen = new Set();
+  return rawResources
+    .map((resource, index) => summarizeSessionResource(resource, index, session))
+    .filter((resource) => {
+      if (!resource || seen.has(resource.url)) return false;
+      seen.add(resource.url);
+      return true;
+    })
+    .slice(0, 8);
 }
 
 function countByStatus(entries = []) {
@@ -110,6 +197,7 @@ function summarizeSession(session, mode) {
     projectPath: session?.projectPath || "",
     lastPromptAt: session?.lastPromptAt || null,
     lastOutputAt: session?.lastOutputAt || null,
+    resources: summarizeSessionResources(session),
     subagents: arrayOrEmpty(session?.subagents).slice(0, 12).map((subagent) => ({
       id: String(subagent?.id || ""),
       name: compactText(subagent?.name || "Subagent", 100),
@@ -140,7 +228,10 @@ function summarizeBrowserSession(session, mode) {
   return {
     ...base,
     name: compactText(session?.name || "Browser task", 120),
+    taskPreview: compactText(session?.taskPrompt || "", 220),
     hasTaskPrompt: Boolean(String(session?.taskPrompt || "").trim()),
+    latestUrl: sanitizeUrlForSnapshot(session?.latestUrl || session?.url),
+    url: sanitizeUrlForSnapshot(session?.url || session?.latestUrl),
     latestOrigin: originOnly(session?.latestUrl || session?.url),
     callerSessionId: session?.callerSessionId || "",
     headless: Boolean(session?.headless),

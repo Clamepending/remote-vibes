@@ -82,6 +82,46 @@ test("buildCanvasCards renders machine, brain, handoff, session, browser, approv
   assert.equal(cards.find((card) => card.type === "artifact")?.detail, "Best run so far");
 });
 
+test("buildCanvasCards promotes W&B tabs to monitor cards linked to source agents", () => {
+  const cards = buildCanvasCards({
+    node: { id: "node-1", name: "GPU box", status: "online" },
+    sessions: [
+      { id: "agent-1", name: "Trainer", providerId: "codex", status: "idle" },
+      { id: "agent-2", name: "Quiet worker", providerId: "claude", status: "completed" },
+    ],
+    browserSessions: [
+      {
+        id: "wandb-browser",
+        name: "Loss monitor",
+        status: "running",
+        callerSessionId: "agent-1",
+        latestUrl: "https://wandb.ai/acme/semantic-autogaze/runs/run-42?token=secret#charts",
+      },
+      {
+        id: "docs-browser",
+        name: "Docs",
+        status: "running",
+        callerSessionId: "agent-1",
+        latestUrl: "https://example.test/docs",
+      },
+    ],
+  });
+
+  const agent = cards.find((card) => card.id === "session:agent-1");
+  const monitor = cards.find((card) => card.type === "monitor");
+  const browser = cards.find((card) => card.id === "browser:docs-browser");
+
+  assert.ok(agent, "linked idle agent should stay visible while a monitor is attached");
+  assert.equal(monitor?.title, "Weights & Biases");
+  assert.equal(monitor?.subtitle, "semantic-autogaze / run run-42");
+  assert.equal(monitor?.href, "https://wandb.ai/acme/semantic-autogaze/runs/run-42");
+  assert.equal(monitor?.ref.sourceSessionId, "agent-1");
+  assert.equal(monitor?.ref.sourceCardId, "session:agent-1");
+  assert.equal(monitor?.ref.actionLabel, "Open W&B");
+  assert.equal(browser?.ref.sourceCardId, "session:agent-1");
+  assert.equal(cards.some((card) => card.id === "browser:wandb-browser"), false);
+});
+
 test("buildCanvasCards promotes previewable app ports and folds the noisy remainder", () => {
   const cards = buildCanvasCards({
     node: { id: "node-1", name: "GPU box", status: "online" },

@@ -84,6 +84,43 @@ test("redacted node snapshot omits sensitive local detail", async () => {
   }
 });
 
+test("privileged node snapshot exposes sanitized monitor resources and browser URLs", async () => {
+  const { stateDir, store } = await createIdentityStore();
+  try {
+    const service = new NodeSnapshotService({
+      nodeIdentityStore: store,
+      metadataProvider: () => ({ version: "1.2.3" }),
+      sessionsProvider: () => [{
+        id: "sess_1",
+        name: "Train semantic autogaze",
+        status: "running",
+        providerId: "codex",
+        resources: [{
+          kind: "wandb",
+          url: "https://wandb.ai/mark/semantic-autogaze/runs/run-7?token=secret#workspace",
+          source: "session-output",
+        }],
+      }],
+      browserSessionsProvider: () => [{
+        id: "browser_1",
+        name: "W&B browser",
+        callerSessionId: "sess_1",
+        latestUrl: "https://wandb.ai/mark/semantic-autogaze/runs/run-7?token=secret#workspace",
+        status: "running",
+      }],
+    });
+
+    const snapshot = await service.getSnapshot({ mode: "privileged" });
+    assert.equal(snapshot.sessions[0].resources[0].url, "https://wandb.ai/mark/semantic-autogaze/runs/run-7");
+    assert.equal(snapshot.sessions[0].resources[0].sourceSessionId, "sess_1");
+    assert.equal(snapshot.browserSessions[0].latestUrl, "https://wandb.ai/mark/semantic-autogaze/runs/run-7");
+    assert.equal(snapshot.browserSessions[0].callerSessionId, "sess_1");
+    assert.doesNotMatch(JSON.stringify(snapshot), /token=secret|#workspace/);
+  } finally {
+    await rm(stateDir, { recursive: true, force: true });
+  }
+});
+
 test("node snapshot reports degraded dependencies instead of hanging", async () => {
   const { stateDir, store } = await createIdentityStore();
   try {
@@ -101,4 +138,3 @@ test("node snapshot reports degraded dependencies instead of hanging", async () 
     await rm(stateDir, { recursive: true, force: true });
   }
 });
-

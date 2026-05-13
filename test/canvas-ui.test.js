@@ -166,6 +166,13 @@ test("local canvas view renders node snapshot cards and persists drag layout", a
               status: "running",
               latestSnapshot: { url: "https://example.test/docs" },
             },
+            {
+              id: "wandb-1",
+              name: "W&B semantic autogaze",
+              status: "running",
+              callerSessionId: "session-1",
+              latestUrl: "https://wandb.ai/mark/semantic-autogaze/runs/run-7?token=secret#workspace",
+            },
           ],
           actionItems: [
             {
@@ -459,6 +466,9 @@ test("local canvas view renders node snapshot cards and persists drag layout", a
     assert.match(rendered, /Please inspect the dashboard/);
     assert.match(rendered, /native session feed/);
     assert.match(rendered, /Follow-up 10/);
+    assert.match(rendered, /Weights & Biases/);
+    assert.match(rendered, /semantic-autogaze \/ run run-7/);
+    assert.doesNotMatch(rendered, /token=secret/);
     assert.equal(await page.locator(".swarmlab-agent-chat-window").count(), 5);
     assert.equal(await page.locator('[data-swarmlab-canvas-card-id="session:session-1"] [data-swarmlab-agent-entry-id]').count(), 12);
     assert.match(
@@ -487,7 +497,17 @@ test("local canvas view renders node snapshot cards and persists drag layout", a
     assert.equal(await page.locator('[data-swarmlab-canvas-card-id="remote:gpu-cluster:session:gpu-cluster-agent-1"] [data-swarmlab-agent-composer]').count(), 0);
     assert.match(await page.locator('[data-swarmlab-canvas-card-id="remote:gpu-cluster:session:gpu-cluster-agent-1"]').innerText(), /Pair this machine for native chat/);
     assert.equal(await page.locator(".swarmlab-canvas-pipe.is-control").count(), 1);
+    assert.equal(await page.locator(".swarmlab-canvas-pipe.is-resource").count(), 1);
+    assert.equal(
+      await page.locator('[data-swarmlab-canvas-pipe-card-id="monitor:wandb-1"].is-resource').getAttribute("data-swarmlab-canvas-pipe-source-card-id"),
+      "session:session-1",
+    );
     assert.equal(await page.locator(".swarmlab-canvas-floating-controls").count(), 1);
+    assert.equal(await page.locator(".swarmlab-canvas-card.is-monitor:not(.is-remote)").count(), 1);
+    assert.equal(
+      await page.locator('[data-swarmlab-canvas-card-id="monitor:wandb-1"] a.swarmlab-canvas-open').getAttribute("href"),
+      "https://wandb.ai/mark/semantic-autogaze/runs/run-7",
+    );
     assert.equal(await page.locator(".swarmlab-canvas-card.is-app").count(), 9);
     assert.equal(await page.locator(".swarmlab-canvas-card.is-app:not(.is-remote)").count(), 5);
     assert.equal(await page.locator(".swarmlab-canvas-card.is-handoff:not(.is-remote)").count(), 1);

@@ -1165,6 +1165,40 @@ test("Claude sessions expose completed subagents from Claude sidechain transcrip
   }
 });
 
+test("sessions expose W&B monitor resources detected in terminal output", async () => {
+  const { manager, workspaceDir, userHomeDir } = await createManager();
+
+  try {
+    const session = manager.buildSessionRecord({
+      id: "wandb-session",
+      providerId: "codex",
+      providerLabel: "Codex",
+      name: "Train run",
+      cwd: workspaceDir,
+      status: "running",
+      buffer: "wandb: View run at https://wandb.ai/mark/semantic-autogaze/runs/run-7?token=secret#workspace\n",
+      nativeNarrativeEntries: [{
+        id: "entry-1",
+        kind: "assistant",
+        label: "Codex",
+        text: "Tracking the experiment in Weights & Biases.",
+        outputPreview: "https://wandb.ai/mark/semantic-autogaze/runs/run-7?token=secret#workspace",
+        timestamp: "2026-05-12T12:00:00.000Z",
+      }],
+    });
+
+    const serialized = manager.serializeSession(session);
+    assert.equal(serialized.resources.length, 1);
+    assert.equal(serialized.resources[0].kind, "wandb");
+    assert.equal(serialized.resources[0].label, "Weights & Biases");
+    assert.equal(serialized.resources[0].sourceSessionId, "wandb-session");
+    assert.equal(serialized.resources[0].url, "https://wandb.ai/mark/semantic-autogaze/runs/run-7");
+    assert.doesNotMatch(JSON.stringify(serialized.resources), /token=secret|#workspace/);
+  } finally {
+    await cleanupManager(manager, workspaceDir, userHomeDir);
+  }
+});
+
 test("Claude sessions expose active subagents when the session id is the provider id", async () => {
   const { manager, workspaceDir, userHomeDir } = await createManager();
 

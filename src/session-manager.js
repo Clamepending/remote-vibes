@@ -110,6 +110,25 @@ const CLAUDE_SUBAGENT_TRANSCRIPT_READ_LIMIT = 1_000_000;
 const CLAUDE_BACKGROUND_TASK_TAIL_BYTES = 900_000;
 const CLAUDE_BACKGROUND_TASK_STALE_MS = 24 * 60 * 60 * 1000;
 const CLAUDE_BACKGROUND_TASK_GRACE_MS = 30_000;
+const SESSION_RESOURCE_SCAN_LIMIT = 80_000;
+const SESSION_RESOURCE_URL_PATTERN = /\bhttps?:\/\/[^\s<>"'`)\]]+/gu;
+const SESSION_RESOURCE_SENSITIVE_PARAMS = new Set([
+  "access_token",
+  "api_key",
+  "auth",
+  "code",
+  "key",
+  "password",
+  "secret",
+  "state",
+  "token",
+]);
+const SESSION_RESOURCE_HOST_PATTERNS = [
+  { kind: "wandb", label: "Weights & Biases", hostPattern: /(^|\.)wandb\.ai$/u },
+  { kind: "tensorboard", label: "TensorBoard", hostPattern: /(^|\.)tensorboard\.dev$/u },
+  { kind: "mlflow", label: "MLflow", hostPattern: /(^|\.)mlflow\./u },
+  { kind: "comet", label: "Comet", hostPattern: /(^|\.)comet\.com$/u },
+];
 const CLAUDE_SKIP_PERMISSIONS_ARG = "--dangerously-skip-permissions";
 const CLAUDE_OLLAMA_PROVIDER_ID = "claude-ollama";
 const DEFAULT_CLAUDE_OLLAMA_BASE_URL = "http://localhost:11434";
@@ -125,6 +144,93 @@ const PERSISTENT_TERMINAL_PROVIDER_IDS = new Set([
   "opencode",
   "shell",
 ]);
+
+function sanitizeSessionResourceUrl(value) {
+  const raw = String(value || "")
+    .trim()
+    .replace(/[),.;]+$/u, "");
+  if (!raw) return "";
+  try {
+    const url = new URL(raw);
+    if (url.protocol !== "http:" && url.protocol !== "https:") return "";
+    for (const key of [...url.searchParams.keys()]) {
+      if (SESSION_RESOURCE_SENSITIVE_PARAMS.has(key.toLowerCase())) {
+        url.searchParams.delete(key);
+      }
+    }
+    url.hash = "";
+    return url.toString();
+  } catch {
+    return "";
+  }
+}
+
+function classifySessionResourceUrl(urlValue) {
+  const sanitizedUrl = sanitizeSessionResourceUrl(urlValue);
+  if (!sanitizedUrl) return null;
+  try {
+    const url = new URL(sanitizedUrl);
+    const hostname = url.hostname.toLowerCase();
+    const match = SESSION_RESOURCE_HOST_PATTERNS.find((candidate) => candidate.hostPattern.test(hostname));
+    if (!match) return null;
+    return {
+      kind: match.kind,
+      label: match.label,
+      url: sanitizedUrl,
+      host: hostname,
+    };
+  } catch {
+    return null;
+  }
+}
+
+function resourceTextFromSession(session) {
+  const entries = Array.isArray(session?.nativeNarrativeEntries) ? session.nativeNarrativeEntries.slice(-24) : [];
+  return [
+    session?.monitorUrl,
+    session?.wandbUrl,
+    session?.latestUrl,
+    session?.lastLine,
+    session?.buffer ? String(session.buffer).slice(-SESSION_RESOURCE_SCAN_LIMIT) : "",
+    ...entries.flatMap((entry) => [entry?.text, entry?.summary, entry?.outputPreview, entry?.statusText, entry?.meta]),
+  ].filter(Boolean).join("\n");
+}
+
+function extractSessionCanvasResources(session) {
+  const resources = new Map();
+  const addUrl = (value, source = "session") => {
+    const classified = classifySessionResourceUrl(value);
+    if (!classified || resources.has(classified.url)) return;
+    resources.set(classified.url, {
+      kind: classified.kind,
+      label: classified.label,
+      url: classified.url,
+      source,
+      sourceSessionId: session?.id || "",
+      createdAt: session?.createdAt || null,
+      updatedAt: session?.lastOutputAt || session?.updatedAt || null,
+    });
+  };
+
+  for (const value of [
+    session?.monitorUrl,
+    session?.monitor_url,
+    session?.wandbUrl,
+    session?.wandb_url,
+    ...(Array.isArray(session?.resourceUrls) ? session.resourceUrls : []),
+    ...(Array.isArray(session?.monitorUrls) ? session.monitorUrls : []),
+    ...(Array.isArray(session?.resources) ? session.resources.map((resource) => resource?.url || resource?.href || resource) : []),
+  ]) {
+    addUrl(value, "session-field");
+  }
+
+  const text = resourceTextFromSession(session);
+  for (const match of text.matchAll(SESSION_RESOURCE_URL_PATTERN)) {
+    addUrl(match[0], "session-output");
+  }
+
+  return [...resources.values()].slice(0, 8);
+}
 const IDLE_TERMINAL_COMMANDS = new Set(["bash", "csh", "dash", "fish", "ksh", "login", "sh", "tcsh", "zsh"]);
 const PROVIDER_CREDENTIAL_ENV_KEYS = [
   "ANTHROPIC_API_KEY",
@@ -4855,6 +4961,7 @@ export class SessionManager {
       subagents,
       streamMode: Boolean(session.streamMode),
       streamWorking: Boolean(session.streamWorking),
+      resources: extractSessionCanvasResources(session),
       claudePrompt: detectClaudePrompt(session),
       // Per-session slash command catalog. Empty today — the client falls
       // back to the built-in list. When per-session command sets land

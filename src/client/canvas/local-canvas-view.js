@@ -53,6 +53,7 @@ const CARD_TYPE_ICONS = {
   brain: MessageSquare,
   handoff: Send,
   machine: HardDrive,
+  monitor: Globe2,
   summary: Archive,
 };
 const REGION_COLORS = ["#f97316", "#74c7b8", "#7aa2f7", "#9ece6a", "#e879f9", "#f6c177"];
@@ -318,6 +319,11 @@ function injectCanvasStyles(documentRef = document) {
   stroke-width: 2.5;
   stroke-dasharray: none;
 }
+.swarmlab-canvas-pipe.is-resource {
+  stroke: rgba(246, 193, 119, 0.72);
+  stroke-width: 2.25;
+  stroke-dasharray: 4 7;
+}
 .swarmlab-canvas-card {
   position: absolute;
   display: grid;
@@ -398,6 +404,15 @@ function injectCanvasStyles(documentRef = document) {
 }
 .swarmlab-canvas-card.is-cross-region {
   border-color: rgba(249, 115, 22, 0.55);
+}
+.swarmlab-canvas-card.is-monitor {
+  border-color: rgba(246, 193, 119, 0.24);
+  background:
+    linear-gradient(180deg, rgba(246, 193, 119, 0.055), transparent 44%),
+    var(--canvas-panel);
+}
+.swarmlab-canvas-card.is-monitor .swarmlab-canvas-card-icon {
+  color: #f6c177;
 }
 .swarmlab-canvas-drag-grip {
   color: var(--canvas-faint);
@@ -646,11 +661,18 @@ function injectCanvasStyles(documentRef = document) {
 .swarmlab-canvas-browser-preview {
   display: grid;
   place-items: center;
+  align-content: center;
+  gap: 8px;
   min-height: 130px;
   border: 1px dashed rgba(232, 222, 206, 0.16);
   border-radius: 8px;
   background: rgba(255, 255, 255, 0.035);
   color: var(--canvas-faint);
+}
+.swarmlab-canvas-browser-preview strong {
+  color: #d9d0c4;
+  font-size: 12px;
+  font-weight: 650;
 }
 .swarmlab-canvas-app-preview {
   display: grid;
@@ -1335,6 +1357,7 @@ function pipePath(from, to) {
 
 function renderCanvasPipes(cards, layout, regions, localMachineId) {
   const regionsById = new Map(regions.map((region) => [region.id, region]));
+  const cardsById = new Map(cards.map((card) => [card.id, card]));
   const pipes = [];
   cards.forEach((card) => {
     const item = layout[card.id];
@@ -1355,6 +1378,22 @@ function renderCanvasPipes(cards, layout, regions, localMachineId) {
         });
       }
     }
+    const sourceCardId = String(card.ref?.sourceCardId || "").trim();
+    const sourceItem = sourceCardId ? layout[sourceCardId] : null;
+    if (sourceCardId && sourceItem && sourceCardId !== card.id) {
+      const sourceCard = cardsById.get(sourceCardId);
+      const sourceRegionId = sourceCard
+        ? getCanvasCardRegionId(sourceCard, sourceItem)
+        : getCanvasCardRegionId(card, sourceItem);
+      pipes.push({
+        kind: "resource",
+        cardId: card.id,
+        sourceCardId,
+        sourceRegionId,
+        targetRegionId: assignedRegionId,
+        path: pipePath(cardCenter(sourceItem), cardPoint),
+      });
+    }
     if (card.type === "agent" && card.ref?.remoteNodeId && card.ref?.remoteUrl && localMachineId && homeRegionId !== localMachineId) {
       const localRegion = regionsById.get(localMachineId);
       if (localRegion) {
@@ -1372,6 +1411,7 @@ function renderCanvasPipes(cards, layout, regions, localMachineId) {
     <path
       class="swarmlab-canvas-pipe is-${escapeHtml(pipe.kind)}"
       data-swarmlab-canvas-pipe-card-id="${escapeHtml(pipe.cardId)}"
+      data-swarmlab-canvas-pipe-source-card-id="${escapeHtml(pipe.sourceCardId || "")}"
       data-swarmlab-canvas-pipe-source-region-id="${escapeHtml(pipe.sourceRegionId)}"
       data-swarmlab-canvas-pipe-target-region-id="${escapeHtml(pipe.targetRegionId)}"
       d="${escapeHtml(pipe.path)}"
@@ -1646,6 +1686,10 @@ function refreshAgentNarratives(root, options) {
 
 function renderBrowserCard(card, layout) {
   const action = renderCardAction(card);
+  const isMonitor = card.type === "monitor";
+  const previewLabel = isMonitor
+    ? [card.title, card.subtitle].filter(Boolean).join(" / ")
+    : "";
   const body = `
     <div class="swarmlab-canvas-card-body swarmlab-canvas-browser-body">
       <div class="swarmlab-canvas-browser-bar">
@@ -1656,10 +1700,11 @@ function renderBrowserCard(card, layout) {
       </div>
       <div class="swarmlab-canvas-browser-preview">
         ${renderIcon(Globe2, { width: 28, height: 28 })}
+        ${previewLabel ? `<strong>${escapeHtml(previewLabel)}</strong>` : ""}
       </div>
     </div>
   `;
-  const footer = `<div class="swarmlab-canvas-card-footer"><span>${escapeHtml(card.meta || "browser window")}</span>${action}</div>`;
+  const footer = `<div class="swarmlab-canvas-card-footer"><span>${escapeHtml(card.meta || (isMonitor ? "monitor tab" : "browser window"))}</span>${action}</div>`;
   return cardFrame(card, layout, body, footer);
 }
 
@@ -1802,6 +1847,7 @@ function renderStandardCard(card, layout) {
 
 function renderCanvasCard(card, layout) {
   if (card.type === "agent") return renderAgentCard(card, layout);
+  if (card.type === "monitor") return renderBrowserCard(card, layout);
   if (card.type === "browser") return renderBrowserCard(card, layout);
   if (card.type === "app") return renderAppCard(card, layout);
   if (card.type === "handoff") return renderHandoffCard(card, layout);
@@ -1898,6 +1944,9 @@ function remoteCardsForRecord(record, remoteIndex) {
     const sourceId = card.id;
     const isMachine = card.type === "machine";
     const href = remoteCardHref(card, record.baseUrl);
+    const linkedSourceCardId = card.ref?.sourceCardId
+      ? `remote:${baseId}:${card.ref.sourceCardId}`
+      : "";
     return {
       ...card,
       id: `remote:${baseId}:${sourceId}`,
@@ -1907,7 +1956,8 @@ function remoteCardsForRecord(record, remoteIndex) {
       href,
       ref: {
         ...(card.ref || {}),
-        sourceCardId: sourceId,
+        remoteSourceCardId: sourceId,
+        ...(linkedSourceCardId ? { sourceCardId: linkedSourceCardId } : {}),
         remoteNodeId,
         remoteUrl: record.baseUrl,
         actionLabel: remoteCardActionLabel(card),
