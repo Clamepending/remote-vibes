@@ -76,6 +76,7 @@ test("local canvas view renders node snapshot cards and persists drag layout", a
     const postedRemoteCommands = [];
     const remoteCommandsById = new Map();
     const postedAppLaunches = [];
+    const postedSessions = [];
     let extraLocalPorts = [];
     const postedRemotePairs = [];
     const deletedSessions = [];
@@ -615,6 +616,24 @@ test("local canvas view renders node snapshot cards and persists drag layout", a
         body: JSON.stringify({ launched: true, launcher: { id: postedAppLaunches.at(-1).appId } }),
       });
     });
+    await page.route(`${baseUrl}/api/sessions`, async (route) => {
+      if (route.request().method() !== "POST") {
+        await route.fallback();
+        return;
+      }
+      postedSessions.push(JSON.parse(route.request().postData() || "{}"));
+      await route.fulfill({
+        status: 201,
+        contentType: "application/json",
+        body: JSON.stringify({
+          session: {
+            id: `canvas-session-${postedSessions.length}`,
+            providerId: postedSessions.at(-1).providerId,
+            name: postedSessions.at(-1).name,
+          },
+        }),
+      });
+    });
     await page.route(`${baseUrl}/api/sessions/session-1`, async (route) => {
       if (route.request().method() === "DELETE") {
         deletedSessions.push(route.request().url());
@@ -714,7 +733,7 @@ test("local canvas view renders node snapshot cards and persists drag layout", a
     assert.match(await page.locator(".swarmlab-canvas-launch-more").innerText(), /9 more/);
     const dockBox = await page.locator(".swarmlab-canvas-launch-dock").boundingBox();
     const controlsBox = await page.locator(".swarmlab-canvas-floating-controls").boundingBox();
-    assert.ok(dockBox && dockBox.height <= 58, "app launcher dock should stay compact");
+    assert.ok(dockBox && dockBox.height <= 64, "app launcher dock should stay compact");
     assert.ok(
       dockBox && controlsBox && controlsBox.y + controlsBox.height < dockBox.y,
       "zoom controls should sit above the app dock without overlap",
@@ -723,7 +742,7 @@ test("local canvas view renders node snapshot cards and persists drag layout", a
     await page.setViewportSize({ width: 669, height: 832 });
     const compactDockBox = await page.locator(".swarmlab-canvas-launch-dock").boundingBox();
     const compactControlsBox = await page.locator(".swarmlab-canvas-floating-controls").boundingBox();
-    assert.ok(compactDockBox && compactDockBox.height <= 58, "app launcher dock should stay one row in the in-app browser width");
+    assert.ok(compactDockBox && compactDockBox.height <= 64, "app launcher dock should stay one row in the in-app browser width");
     assert.ok(
       compactDockBox && compactControlsBox && compactControlsBox.y + compactControlsBox.height < compactDockBox.y,
       "zoom controls should stay above the app dock in the in-app browser width",
@@ -756,7 +775,9 @@ test("local canvas view renders node snapshot cards and persists drag layout", a
     await page.locator(".swarmlab-canvas-launch-more-button").click();
     await page.locator(".swarmlab-canvas-launch-more-panel").waitFor({ state: "hidden" });
     const dockText = await page.locator(".swarmlab-canvas-launch-dock").innerText();
-    assert.match(dockText, /Apps/);
+    assert.match(dockText, /Launch/);
+    assert.match(dockText, /Start in canvas/);
+    assert.match(dockText, /Open desktop/);
     assert.match(dockText, /Mac Main/i);
     assert.match(dockText, /Codex/);
     assert.match(dockText, /Cursor/);
@@ -950,6 +971,14 @@ test("local canvas view renders node snapshot cards and persists drag layout", a
     );
     await page.locator('[data-swarmlab-canvas-focus-region="mac-main"]').evaluate((button) => button.click());
     await page.waitForSelector('[data-swarmlab-canvas-card-id="session:session-1"]', { timeout: 10_000 });
+
+    await page.click('[data-swarmlab-canvas-launcher="launcher:provider:codex"]');
+    for (let attempt = 0; attempt < 20 && postedSessions.length === 0; attempt += 1) {
+      await page.waitForTimeout(50);
+    }
+    assert.equal(postedSessions.length, 1);
+    assert.equal(postedSessions[0].providerId, "codex");
+    assert.equal(postedSessions[0].name, "Codex");
 
     await page.click('[data-swarmlab-canvas-launcher="launcher:app:cursor"]');
     for (let attempt = 0; attempt < 20 && postedAppLaunches.length === 0; attempt += 1) {

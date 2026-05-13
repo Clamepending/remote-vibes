@@ -348,8 +348,8 @@ function injectCanvasStyles(documentRef = document) {
   grid-template-columns: auto minmax(0, 1fr);
   gap: 8px;
   width: max-content;
-  max-width: min(620px, calc(100% - 248px));
-  min-height: 38px;
+  max-width: min(680px, calc(100% - 248px));
+  min-height: 42px;
   padding: 4px;
   border: 1px solid rgba(232, 222, 206, 0.14);
   border-radius: 10px;
@@ -379,7 +379,7 @@ function injectCanvasStyles(documentRef = document) {
 }
 .swarmlab-canvas-launch-panel {
   display: flex;
-  gap: 6px;
+  gap: 7px;
   align-items: center;
   min-width: 0;
   overflow: visible;
@@ -413,7 +413,7 @@ function injectCanvasStyles(documentRef = document) {
   display: flex;
   align-items: center;
   flex: 1 1 auto;
-  gap: 5px;
+  gap: 6px;
   min-width: 0;
   overflow: visible;
   scrollbar-width: none;
@@ -423,13 +423,13 @@ function injectCanvasStyles(documentRef = document) {
 }
 .swarmlab-canvas-launch-item {
   display: grid;
-  flex: 0 0 54px;
-  grid-template-rows: 17px 1fr;
-  gap: 3px;
+  flex: 0 0 64px;
+  grid-template-rows: 15px 1fr;
+  gap: 2px;
   place-items: center;
   align-items: center;
-  width: 54px;
-  min-height: 36px;
+  width: 64px;
+  min-height: 42px;
   border: 1px solid rgba(232, 222, 206, 0.13);
   border-radius: 8px;
   background: rgba(255, 255, 255, 0.055);
@@ -438,6 +438,13 @@ function injectCanvasStyles(documentRef = document) {
   font: inherit;
   text-align: center;
   cursor: pointer;
+}
+.swarmlab-canvas-launch-item[data-swarmlab-launch-surface="agent"] {
+  border-color: rgba(116, 199, 184, 0.22);
+  background: rgba(116, 199, 184, 0.065);
+}
+.swarmlab-canvas-launch-item[data-swarmlab-launch-surface="desktop"] {
+  border-color: rgba(232, 222, 206, 0.1);
 }
 .swarmlab-canvas-launch-item:hover {
   border-color: rgba(116, 199, 184, 0.42);
@@ -461,10 +468,12 @@ function injectCanvasStyles(documentRef = document) {
 }
 .swarmlab-canvas-launch-item span {
   color: var(--canvas-faint);
-  font-size: 9px;
+  font-size: 8px;
 }
 .swarmlab-canvas-launch-item > span > span {
-  display: none;
+  display: block;
+  margin-top: 1px;
+  letter-spacing: 0;
 }
 .swarmlab-canvas-launch-more {
   position: relative;
@@ -482,7 +491,7 @@ function injectCanvasStyles(documentRef = document) {
   justify-content: center;
   gap: 5px;
   width: 58px;
-  min-height: 36px;
+  min-height: 42px;
   border: 1px solid rgba(232, 222, 206, 0.13);
   border-radius: 8px;
   background: rgba(255, 255, 255, 0.045);
@@ -498,7 +507,7 @@ function injectCanvasStyles(documentRef = document) {
   bottom: calc(100% + 62px);
   z-index: 45;
   display: grid;
-  grid-template-columns: repeat(3, 54px);
+  grid-template-columns: repeat(3, 64px);
   gap: 6px;
   width: max-content;
   max-width: calc(100vw - 52px);
@@ -511,8 +520,8 @@ function injectCanvasStyles(documentRef = document) {
   overflow: auto;
 }
 .swarmlab-canvas-launch-more-panel .swarmlab-canvas-launch-item {
-  width: 54px;
-  flex-basis: 54px;
+  width: 64px;
+  flex-basis: 64px;
 }
 .swarmlab-canvas-launch-empty {
   min-width: 190px;
@@ -1326,7 +1335,7 @@ function injectCanvasStyles(documentRef = document) {
 .swarmlab-canvas-floating-controls {
   position: absolute;
   right: 18px;
-  bottom: 72px;
+  bottom: 92px;
   z-index: 46;
   display: flex;
   align-items: center;
@@ -1433,7 +1442,7 @@ function injectCanvasStyles(documentRef = document) {
   }
   .swarmlab-canvas-floating-controls {
     right: 12px;
-    bottom: 72px;
+    bottom: 92px;
   }
 }
 @media (max-width: 760px) {
@@ -3444,9 +3453,7 @@ function combineCanvasCards(localPayload, remoteRecords) {
 }
 
 function launcherKindLabel(card) {
-  const isAgentProvider = String(card.ref?.launcherKind || "") === "agent-provider" || Boolean(card.ref?.providerId);
-  if (isAgentProvider) return "agent";
-  return card.ref?.category || "app";
+  return isAgentLauncher(card) ? "agent" : "desktop";
 }
 
 function launcherDockStorageKey(boardId) {
@@ -3500,22 +3507,60 @@ function launcherDockLabel(card) {
   const title = String(card.title || "Launcher").trim();
   const normalized = title.toLowerCase();
   if (normalized.includes("ollama")) return "Ollama";
-  if (normalized === "claude code" || normalized.startsWith("claude code ")) return "Claude";
+  if (normalized === "claude code" || normalized.startsWith("claude code ")) return "Claude Code";
   if (normalized === "visual studio code") return "VS Code";
-  return compactText(title, 12);
+  return compactText(title, 13);
+}
+
+function isAgentLauncher(card) {
+  return String(card?.ref?.launcherKind || "") === "agent-provider" || Boolean(card?.ref?.providerId);
+}
+
+function launcherDockActionText(card) {
+  return isAgentLauncher(card) ? "Start in canvas" : "Open desktop";
+}
+
+function launcherDockAriaLabel(card) {
+  const title = String(card.title || "launcher").trim() || "launcher";
+  if (isAgentLauncher(card)) {
+    return `Start ${title} as a canvas chat`;
+  }
+  return `Open ${title} on this machine`;
+}
+
+function launcherDockSortGroup(card) {
+  if (isAgentLauncher(card)) return 0;
+  const category = String(card?.ref?.category || "").trim().toLowerCase();
+  if (category === "agent" || category === "agent-app") return 2;
+  return 1;
+}
+
+function sortLauncherDockCards(cards = []) {
+  return [...cards]
+    .map((card, index) => ({ card, index }))
+    .sort((left, right) => {
+      const leftAvailable = left.card?.status === "unavailable" ? 1 : 0;
+      const rightAvailable = right.card?.status === "unavailable" ? 1 : 0;
+      return leftAvailable - rightAvailable
+        || launcherDockSortGroup(left.card) - launcherDockSortGroup(right.card)
+        || left.index - right.index;
+    })
+    .map((entry) => entry.card);
 }
 
 function renderLauncherDockItem(card) {
-  const isAgentProvider = String(card.ref?.launcherKind || "") === "agent-provider" || Boolean(card.ref?.providerId);
+  const isAgentProvider = isAgentLauncher(card);
   const icon = isAgentProvider ? Bot : AppWindow;
   const label = launcherDockLabel(card);
-  const meta = compactText([launcherKindLabel(card), card.status || ""].filter(Boolean).join(" / "), 34);
+  const meta = launcherDockActionText(card);
   return `
     <button
       class="swarmlab-canvas-launch-item"
       type="button"
       data-swarmlab-canvas-launcher="${escapeHtml(card.id)}"
-      title="${escapeHtml(`Launch ${card.title || "app"}`)}"
+      data-swarmlab-launch-surface="${isAgentProvider ? "agent" : "desktop"}"
+      aria-label="${escapeHtml(launcherDockAriaLabel(card))}"
+      title="${escapeHtml(launcherDockAriaLabel(card))}"
     >
       ${renderIcon(icon, { width: 17, height: 17 })}
       <span>
@@ -3527,12 +3572,12 @@ function renderLauncherDockItem(card) {
 }
 
 function renderLauncherDockItems(cards) {
-  const visible = cards.slice(0, MAX_VISIBLE_DOCK_LAUNCHERS);
+  const visible = sortLauncherDockCards(cards).slice(0, MAX_VISIBLE_DOCK_LAUNCHERS);
   return visible.map(renderLauncherDockItem).join("");
 }
 
 function renderLauncherDockMore(cards) {
-  const overflow = cards.slice(MAX_VISIBLE_DOCK_LAUNCHERS);
+  const overflow = sortLauncherDockCards(cards).slice(MAX_VISIBLE_DOCK_LAUNCHERS);
   if (!overflow.length) return "";
   return `
     <details class="swarmlab-canvas-launch-more">
@@ -3561,12 +3606,12 @@ function renderLauncherDock(launcherCards, regions = [], localMachineId = "", se
   const activeRegion = regionsById.get(activeMachineId);
   const activeTitle = regionDisplayName(activeRegion, activeMachineId) || activeMachineId;
   return `
-    <nav class="swarmlab-canvas-launch-dock" data-swarmlab-canvas-launch-dock aria-label="Launch apps on ${escapeHtml(activeTitle)}">
-      <div class="swarmlab-canvas-launch-title" title="${escapeHtml(`Apps on ${activeTitle}`)}">
+    <nav class="swarmlab-canvas-launch-dock" data-swarmlab-canvas-launch-dock aria-label="Launch agents and apps on ${escapeHtml(activeTitle)}">
+      <div class="swarmlab-canvas-launch-title" title="${escapeHtml(`Launch agents and apps on ${activeTitle}`)}">
         ${renderIcon(AppWindow, { width: 16, height: 16 })}
-        <span>Apps</span>
+        <span>Launch</span>
       </div>
-      <section class="swarmlab-canvas-launch-panel" aria-label="${escapeHtml(`Launch apps on ${activeTitle}`)}">
+      <section class="swarmlab-canvas-launch-panel" aria-label="${escapeHtml(`Launch agents and apps on ${activeTitle}`)}">
         <div class="swarmlab-canvas-launch-machine-label" title="${escapeHtml(activeTitle)}">
           <span class="swarmlab-canvas-launch-chip" aria-hidden="true" style="--machine-accent: ${escapeHtml(regionAccent(activeRegion))};"></span>
           <span>${escapeHtml(activeTitle)}</span>
