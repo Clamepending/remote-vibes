@@ -491,14 +491,14 @@ function injectCanvasStyles(documentRef = document) {
   position: absolute;
   left: auto;
   right: 0;
-  bottom: calc(100% + 9px);
+  bottom: calc(100% + 62px);
   z-index: 45;
   display: grid;
   grid-template-columns: repeat(3, 54px);
   gap: 6px;
   width: max-content;
   max-width: calc(100vw - 52px);
-  max-height: 240px;
+  max-height: min(168px, calc(100vh - 280px));
   padding: 8px;
   border: 1px solid rgba(232, 222, 206, 0.14);
   border-radius: 9px;
@@ -1323,7 +1323,7 @@ function injectCanvasStyles(documentRef = document) {
   position: absolute;
   right: 18px;
   bottom: 72px;
-  z-index: 25;
+  z-index: 46;
   display: flex;
   align-items: center;
   gap: 6px;
@@ -1509,9 +1509,9 @@ export function renderSwarmlabCanvasView() {
           </div>
         </div>
         <div class="swarmlab-canvas-actions">
-          <button class="swarmlab-canvas-button is-primary" type="button" data-swarmlab-canvas-account-login aria-label="Vibe account" title="Vibe account">
+          <button class="swarmlab-canvas-button is-primary" type="button" data-swarmlab-canvas-account-login aria-label="Log in to Vibe Research" title="Log in to Vibe Research">
             ${renderIcon(HardDrive)}
-            <span data-swarmlab-canvas-account-label>Vibe account</span>
+            <span data-swarmlab-canvas-account-label>Log in</span>
           </button>
           <button class="swarmlab-canvas-button" type="button" data-swarmlab-canvas-new-handoff aria-label="New handoff" title="New handoff">
             ${renderIcon(Send)}
@@ -1526,10 +1526,10 @@ export function renderSwarmlabCanvasView() {
               ${renderIcon(Plus)}
             </summary>
             <div class="swarmlab-canvas-advanced-panel">
-              <p>Machines normally appear after you log in to Vibe Research on each curl-installed node.</p>
+              <p>Machines appear automatically after the curl-installed node logs in to your Vibe Research account.</p>
               <button class="swarmlab-canvas-button" type="button" data-swarmlab-canvas-add-node>
                 ${renderIcon(HardDrive)}
-                <span>Manual URL fallback</span>
+                <span>URL fallback</span>
               </button>
             </div>
           </details>
@@ -1579,7 +1579,7 @@ function setCanvasAccountButtonState(button, { label = "", connected = false, bu
   if (!(button instanceof HTMLElement)) return;
   const labelElement = button.querySelector("[data-swarmlab-canvas-account-label]");
   if (labelElement) {
-    labelElement.textContent = label || (connected ? "Account linked" : "Vibe account");
+    labelElement.textContent = label || (connected ? "Linked" : "Log in");
   }
   button.classList.toggle("is-primary", !connected && !error);
   button.classList.toggle("is-connected", connected && !error);
@@ -1589,7 +1589,7 @@ function setCanvasAccountButtonState(button, { label = "", connected = false, bu
     ? error
     : connected
       ? "This machine is linked to your Vibe Research account. Other logged-in machines appear automatically."
-      : "Log in to Vibe Research to link this machine and sync the fleet canvas.";
+      : "Log in to Vibe Research. Curl-installed machines appear automatically after they authenticate.";
 }
 
 function applyCanvasAccountStatus(documentRef, payload = {}) {
@@ -1599,7 +1599,7 @@ function applyCanvasAccountStatus(documentRef, payload = {}) {
   documentRef.querySelectorAll("[data-swarmlab-canvas-account-login]").forEach((button) => {
     setCanvasAccountButtonState(button, {
       connected,
-      label: connected ? (name || "Account linked") : "Vibe account",
+      label: connected ? (name || "Linked") : "Log in",
     });
   });
 }
@@ -1610,7 +1610,7 @@ async function refreshCanvasAccountStatus(documentRef, { fetchImpl = fetch, sign
     applyCanvasAccountStatus(documentRef, payload);
   } catch {
     documentRef.querySelectorAll("[data-swarmlab-canvas-account-login]").forEach((button) => {
-      setCanvasAccountButtonState(button, { connected: false, label: "Vibe account" });
+      setCanvasAccountButtonState(button, { connected: false, label: "Log in" });
     });
   }
 }
@@ -3487,6 +3487,12 @@ function renderCanvasNotice() {
   return `<div class="swarmlab-canvas-notice" data-swarmlab-canvas-notice hidden></div>`;
 }
 
+function closeLauncherDockOverflows(root) {
+  root.querySelectorAll(".swarmlab-canvas-launch-more[open]").forEach((details) => {
+    details.removeAttribute("open");
+  });
+}
+
 function applyViewport(root, viewport) {
   const next = sanitizeViewport(viewport);
   root.__swarmlabCanvasViewport = next;
@@ -4717,6 +4723,22 @@ function bindCanvasActions(root, options) {
       event.preventDefault();
       event.stopPropagation();
       void launchCanvasLauncher(button, root, root.__swarmlabCanvasActionOptions || {});
+      closeLauncherDockOverflows(root);
+    });
+  }
+
+  if (!root.__swarmlabCanvasLaunchOverflowBound) {
+    root.__swarmlabCanvasLaunchOverflowBound = true;
+    root.addEventListener("click", (event) => {
+      if (event.target instanceof Element && event.target.closest(".swarmlab-canvas-launch-more")) {
+        return;
+      }
+      closeLauncherDockOverflows(root);
+    });
+    root.ownerDocument?.addEventListener("keydown", (event) => {
+      if (event.key === "Escape") {
+        closeLauncherDockOverflows(root);
+      }
     });
   }
 

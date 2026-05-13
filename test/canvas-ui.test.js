@@ -226,6 +226,13 @@ test("local canvas view renders node snapshot cards and persists drag layout", a
             { id: "app:chrome", label: "Chrome", kind: "desktop-app", category: "browser", appId: "chrome", available: true, platform: "darwin" },
             { id: "app:docker", label: "Docker", kind: "desktop-app", category: "runtime", appId: "docker", available: true, platform: "darwin" },
             { id: "app:xcode", label: "Xcode", kind: "desktop-app", category: "developer", appId: "xcode", available: true, platform: "darwin" },
+            { id: "app:opencode", label: "OpenCode", kind: "desktop-app", category: "agent", appId: "opencode", available: true, platform: "darwin" },
+            { id: "app:iterm", label: "iTerm", kind: "desktop-app", category: "terminal", appId: "iterm", available: true, platform: "darwin" },
+            { id: "app:safari", label: "Safari", kind: "desktop-app", category: "browser", appId: "safari", available: true, platform: "darwin" },
+            { id: "app:figma", label: "Figma", kind: "desktop-app", category: "design", appId: "figma", available: true, platform: "darwin" },
+            { id: "app:slack", label: "Slack", kind: "desktop-app", category: "communication", appId: "slack", available: true, platform: "darwin" },
+            { id: "app:zoom", label: "Zoom", kind: "desktop-app", category: "communication", appId: "zoom", available: true, platform: "darwin" },
+            { id: "app:notes", label: "Notes", kind: "desktop-app", category: "writing", appId: "notes", available: true, platform: "darwin" },
           ],
           handoffJobs: [
             {
@@ -636,7 +643,7 @@ test("local canvas view renders node snapshot cards and persists drag layout", a
     assert.match(rendered, /Result chart/);
     assert.match(rendered, /Cursor/);
     assert.match(rendered, /Handoff/);
-    assert.match(rendered, /Vibe account/);
+    assert.match(rendered, /Log in/);
     assert.doesNotMatch(rendered, /Add machine/);
     assert.match(rendered, /Please inspect the dashboard/);
     assert.match(rendered, /native session feed/);
@@ -664,9 +671,9 @@ test("local canvas view renders node snapshot cards and persists drag layout", a
     assert.equal(await page.locator(".swarmlab-canvas-card.is-launcher").count(), 0);
     assert.equal(await page.locator(".swarmlab-canvas-launch-dock").count(), 1);
     assert.equal(await page.locator("[data-swarmlab-canvas-launch-machine]").count(), 0);
-    assert.equal(await page.locator("[data-swarmlab-canvas-launcher]").count(), 8);
+    assert.equal(await page.locator("[data-swarmlab-canvas-launcher]").count(), 15);
     assert.equal(await page.locator(".swarmlab-canvas-launch-items > [data-swarmlab-canvas-launcher]").count(), 6);
-    assert.match(await page.locator(".swarmlab-canvas-launch-more").innerText(), /2 more/);
+    assert.match(await page.locator(".swarmlab-canvas-launch-more").innerText(), /9 more/);
     const dockBox = await page.locator(".swarmlab-canvas-launch-dock").boundingBox();
     const controlsBox = await page.locator(".swarmlab-canvas-floating-controls").boundingBox();
     assert.ok(dockBox && dockBox.height <= 58, "app launcher dock should stay compact");
@@ -688,7 +695,26 @@ test("local canvas view renders node snapshot cards and persists drag layout", a
     assert.ok(directLauncherBox && directLauncherBox.width <= 78, "dock launcher buttons should be icon-scale");
     await page.locator(".swarmlab-canvas-launch-more-button").click();
     await page.locator(".swarmlab-canvas-launch-more-panel").waitFor({ state: "visible" });
-    assert.equal(await page.locator(".swarmlab-canvas-launch-more-panel [data-swarmlab-canvas-launcher]").count(), 2);
+    assert.equal(await page.locator(".swarmlab-canvas-launch-more-panel [data-swarmlab-canvas-launcher]").count(), 9);
+    const morePanelBox = await page.locator(".swarmlab-canvas-launch-more-panel").boundingBox();
+    const openControlsBox = await page.locator(".swarmlab-canvas-floating-controls").boundingBox();
+    assert.ok(
+      morePanelBox && openControlsBox && (
+        morePanelBox.x + morePanelBox.width <= openControlsBox.x
+        || openControlsBox.x + openControlsBox.width <= morePanelBox.x
+        || morePanelBox.y + morePanelBox.height <= openControlsBox.y
+        || openControlsBox.y + openControlsBox.height <= morePanelBox.y
+      ),
+      "launcher overflow panel should not cover zoom controls or intercept their clicks",
+    );
+    await page.locator(".swarmlab-canvas-stage").click({ position: { x: 24, y: 122 } });
+    await page.locator(".swarmlab-canvas-launch-more-panel").waitFor({ state: "hidden" });
+    await page.locator(".swarmlab-canvas-launch-more-button").click();
+    await page.locator(".swarmlab-canvas-launch-more-panel").waitFor({ state: "visible" });
+    await page.keyboard.press("Escape");
+    await page.locator(".swarmlab-canvas-launch-more-panel").waitFor({ state: "hidden" });
+    await page.locator(".swarmlab-canvas-launch-more-button").click();
+    await page.locator(".swarmlab-canvas-launch-more-panel").waitFor({ state: "visible" });
     await page.locator(".swarmlab-canvas-launch-more-button").click();
     await page.locator(".swarmlab-canvas-launch-more-panel").waitFor({ state: "hidden" });
     const dockText = await page.locator(".swarmlab-canvas-launch-dock").innerText();
