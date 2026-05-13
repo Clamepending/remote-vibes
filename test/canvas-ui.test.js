@@ -69,6 +69,7 @@ test("local canvas view renders node snapshot cards and persists drag layout", a
     });
     const postedInputs = [];
     const postedRemoteCommands = [];
+    const remoteCommandsById = new Map();
     const postedAppLaunches = [];
     const postedRemotePairs = [];
     const deletedSessions = [];
@@ -271,18 +272,37 @@ test("local canvas view renders node snapshot cards and persists drag layout", a
         }),
       });
     });
-    await page.route("**/api/account/nodes/account-node/commands", async (route) => {
-      postedRemoteCommands.push(JSON.parse(route.request().postData() || "{}"));
+    await page.route("**/api/account/nodes/account-node/commands**", async (route) => {
+      const url = new URL(route.request().url());
+      if (route.request().method() === "GET") {
+        const commandId = decodeURIComponent(url.pathname.split("/").pop() || "");
+        const command = remoteCommandsById.get(commandId);
+        await route.fulfill({
+          status: command ? 200 : 404,
+          contentType: "application/json",
+          body: JSON.stringify(command ? { command } : { error: "not found" }),
+        });
+        return;
+      }
+      const body = JSON.parse(route.request().postData() || "{}");
+      postedRemoteCommands.push(body);
+      const commandId = `cmd_canvas_${postedRemoteCommands.length}`;
+      const command = {
+        id: commandId,
+        nodeId: "account-node",
+        operation: body.operation,
+        clientCommandId: body.clientCommandId || "",
+        status: "queued",
+        createdAt: "2026-05-12T12:02:00.000Z",
+        updatedAt: "2026-05-12T12:02:00.000Z",
+        result: {},
+      };
+      remoteCommandsById.set(commandId, command);
       await route.fulfill({
         status: 201,
         contentType: "application/json",
         body: JSON.stringify({
-          command: {
-            id: "cmd_canvas",
-            nodeId: "account-node",
-            operation: postedRemoteCommands.at(-1).operation,
-            status: "queued",
-          },
+          command,
         }),
       });
     });
@@ -764,6 +784,10 @@ test("local canvas view renders node snapshot cards and persists drag layout", a
     assert.match(postedRemoteCommands[1].payload.initialPrompt, /Target machine id: account-box/);
     assert.match(postedRemoteCommands[1].payload.initialPrompt, /source agent is still running/i);
     assert.doesNotMatch(postedRemoteCommands[1].payload.initialPrompt, /token=secret|private/u);
+    await page.waitForSelector(".swarmlab-canvas-card.is-lifecycle", { timeout: 10_000 });
+    let lifecycleText = await page.locator(".swarmlab-canvas-card.is-lifecycle").evaluateAll((cards) => cards.map((card) => card.textContent || "").join("\n"));
+    assert.match(lifecycleText, /Copy: Worker B/);
+    assert.match(lifecycleText, /source agent keeps running/i);
 
     await page.locator('[data-swarmlab-canvas-card-id="remote:account-box:launcher:provider:codex"] [data-swarmlab-canvas-launcher]').evaluate((button) => button.click());
     for (let attempt = 0; attempt < 20 && postedRemoteCommands.length < 3; attempt += 1) {
@@ -773,6 +797,9 @@ test("local canvas view renders node snapshot cards and persists drag layout", a
     assert.equal(postedRemoteCommands[2].operation, "session.create");
     assert.equal(postedRemoteCommands[2].payload.providerId, "codex");
     assert.equal(postedRemoteCommands[2].payload.name, "Codex");
+    await page.waitForFunction(() => document.querySelectorAll(".swarmlab-canvas-card.is-lifecycle").length >= 2);
+    lifecycleText = await page.locator(".swarmlab-canvas-card.is-lifecycle").evaluateAll((cards) => cards.map((card) => card.textContent || "").join("\n"));
+    assert.match(lifecycleText, /Starting Codex/);
 
     await page.locator('[data-swarmlab-canvas-card-id="remote:account-box:launcher:app:cursor"] [data-swarmlab-canvas-launcher]').evaluate((button) => button.click());
     for (let attempt = 0; attempt < 20 && postedRemoteCommands.length < 4; attempt += 1) {
@@ -781,6 +808,13 @@ test("local canvas view renders node snapshot cards and persists drag layout", a
     assert.equal(postedRemoteCommands.length, 4);
     assert.equal(postedRemoteCommands[3].operation, "app.launch");
     assert.equal(postedRemoteCommands[3].payload.appId, "cursor");
+    await page.waitForFunction(() => document.querySelectorAll(".swarmlab-canvas-card.is-lifecycle").length >= 3);
+    lifecycleText = await page.locator(".swarmlab-canvas-card.is-lifecycle").evaluateAll((cards) => cards.map((card) => card.textContent || "").join("\n"));
+    assert.match(lifecycleText, /Cursor/);
+    assert.ok(
+      await page.locator('[data-swarmlab-canvas-pipe-card-id^="lifecycle:"].is-resource').count() >= 3,
+      "remote lifecycle cards should stay connected to the agent or launcher that created them",
+    );
 
     await page.evaluate(() => {
       const root = document.querySelector("[data-swarmlab-canvas-root]");

@@ -41,6 +41,7 @@ const REMOTE_NODE_SNAPSHOT_PROXY_URL = "/api/node/remote-snapshot";
 const REMOTE_NODE_PAIR_URL = "/api/node/remote-pair";
 const NARRATIVE_POLL_MS = 4_000;
 const REMOTE_NODES_STORAGE_KEY = "swarmlab.canvas.remoteNodes.v1";
+const LAUNCH_LIFECYCLE_STORAGE_PREFIX = "swarmlab.canvas.launches.v1";
 const REMOTE_NODE_FETCH_TIMEOUT_MS = 4_500;
 const BOARD_WIDTH = 4_800;
 const BOARD_HEIGHT = 5_200;
@@ -59,6 +60,7 @@ const CARD_TYPE_ICONS = {
   summary: Archive,
 };
 const REGION_COLORS = ["#f97316", "#74c7b8", "#7aa2f7", "#9ece6a", "#e879f9", "#f6c177"];
+const TERMINAL_COMMAND_STATUSES = new Set(["completed", "failed", "expired", "cancelled", "canceled"]);
 
 let activeController = null;
 
@@ -436,6 +438,15 @@ function injectCanvasStyles(documentRef = document) {
 .swarmlab-canvas-card.is-cross-region {
   border-color: rgba(249, 115, 22, 0.55);
 }
+.swarmlab-canvas-card.is-lifecycle {
+  border-color: rgba(249, 115, 22, 0.38);
+  background:
+    linear-gradient(180deg, rgba(249, 115, 22, 0.07), transparent 46%),
+    var(--canvas-panel);
+}
+.swarmlab-canvas-card.is-lifecycle .swarmlab-canvas-card-icon {
+  color: var(--canvas-accent);
+}
 .swarmlab-canvas-card.is-monitor {
   border-color: rgba(246, 193, 119, 0.24);
   background:
@@ -465,6 +476,35 @@ function injectCanvasStyles(documentRef = document) {
   border-top: 1px solid rgba(232, 222, 206, 0.08);
   color: var(--canvas-faint);
   font-size: 11px;
+}
+.swarmlab-canvas-lifecycle-body {
+  display: grid;
+  align-content: start;
+  gap: 10px;
+}
+.swarmlab-canvas-lifecycle-status {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+}
+.swarmlab-canvas-lifecycle-status strong {
+  color: var(--canvas-text);
+  font-size: 12px;
+}
+.swarmlab-canvas-lifecycle-status span {
+  flex: 0 0 auto;
+  border: 1px solid rgba(249, 115, 22, 0.28);
+  border-radius: 5px;
+  padding: 3px 6px;
+  background: rgba(249, 115, 22, 0.09);
+  color: #f6d5be;
+  font-size: 10px;
+  text-transform: uppercase;
+}
+.swarmlab-canvas-lifecycle-detail {
+  color: #cfc6bb;
+  overflow-wrap: anywhere;
 }
 .swarmlab-canvas-tag-row {
   display: flex;
@@ -1467,6 +1507,179 @@ function writeRemoteNodeUrls(storage, urls) {
   }
 }
 
+function getLaunchLifecycleStorageKey(boardId) {
+  return `${LAUNCH_LIFECYCLE_STORAGE_PREFIX}:${slugPart(boardId, "machine:local")}`;
+}
+
+function normalizeLaunchLifecycleStatus(value) {
+  return String(value || "queued").trim().toLowerCase().replace(/\s+/g, "_") || "queued";
+}
+
+function normalizeLaunchLifecycle(item) {
+  if (!item || typeof item !== "object") return null;
+  const commandId = String(item.commandId || item.id || "").trim();
+  const clientCommandId = String(item.clientCommandId || item.client_command_id || "").trim();
+  const id = slugPart(item.lifecycleId || clientCommandId || commandId || `launch-${Date.now()}`, "launch");
+  const operation = String(item.operation || "").trim();
+  const remoteNodeId = String(item.remoteNodeId || item.nodeId || "").trim();
+  const machineId = slugPart(item.machineId || item.targetMachineId || remoteNodeId || item.remoteUrl, "remote-node");
+  if (!id || !operation || !machineId) return null;
+  return {
+    lifecycleId: id,
+    commandId,
+    clientCommandId,
+    operation,
+    remoteNodeId,
+    machineId,
+    remoteUrl: normalizeRemoteNodeUrl(item.remoteUrl || ""),
+    sourceCardId: String(item.sourceCardId || "").trim(),
+    title: compactText(item.title || "", 120),
+    subtitle: compactText(item.subtitle || "", 140),
+    targetTitle: compactText(item.targetTitle || "", 120),
+    providerId: compactText(item.providerId || "", 80),
+    appId: compactText(item.appId || "", 80),
+    status: normalizeLaunchLifecycleStatus(item.status),
+    detail: compactText(item.detail || "", 240),
+    error: compactText(item.error || "", 300),
+    createdAt: String(item.createdAt || new Date().toISOString()),
+    updatedAt: String(item.updatedAt || item.createdAt || new Date().toISOString()),
+    completedAt: String(item.completedAt || ""),
+    result: item.result && typeof item.result === "object" ? item.result : {},
+  };
+}
+
+function readLaunchLifecycles(storage, key) {
+  try {
+    const raw = JSON.parse(storage.getItem(key) || "[]");
+    const values = Array.isArray(raw) ? raw : [];
+    return values.map(normalizeLaunchLifecycle).filter(Boolean);
+  } catch {
+    return [];
+  }
+}
+
+function writeLaunchLifecycles(storage, key, lifecycles) {
+  try {
+    const byId = new Map();
+    (lifecycles || []).map(normalizeLaunchLifecycle).filter(Boolean).forEach((item) => {
+      byId.set(item.lifecycleId, item);
+    });
+    const kept = [...byId.values()]
+      .sort((left, right) => String(right.updatedAt || "").localeCompare(String(left.updatedAt || "")))
+      .slice(0, 40);
+    storage.setItem(key, JSON.stringify(kept));
+  } catch {
+    // Launch lifecycle cards are convenience UI state; relay commands remain authoritative.
+  }
+}
+
+function upsertLaunchLifecycle(storage, key, lifecycle) {
+  const normalized = normalizeLaunchLifecycle(lifecycle);
+  if (!normalized) return null;
+  const current = readLaunchLifecycles(storage, key);
+  const next = [
+    normalized,
+    ...current.filter((item) => item.lifecycleId !== normalized.lifecycleId),
+  ];
+  writeLaunchLifecycles(storage, key, next);
+  return normalized;
+}
+
+function isTerminalLaunchStatus(status) {
+  return TERMINAL_COMMAND_STATUSES.has(normalizeLaunchLifecycleStatus(status));
+}
+
+function sessionIdFromLifecycle(lifecycle) {
+  return String(
+    lifecycle?.result?.session?.id ||
+    lifecycle?.result?.sessionId ||
+    lifecycle?.result?.session_id ||
+    "",
+  ).trim();
+}
+
+function launchLifecycleDetail(lifecycle) {
+  if (lifecycle.error) return lifecycle.error;
+  const target = lifecycle.targetTitle || lifecycle.machineId || "remote machine";
+  const status = normalizeLaunchLifecycleStatus(lifecycle.status);
+  const sessionId = sessionIdFromLifecycle(lifecycle);
+  if (status === "completed" && lifecycle.operation === "session.create" && sessionId) {
+    return `Started session ${sessionId} on ${target}.`;
+  }
+  if (status === "completed" && lifecycle.operation === "app.launch") {
+    return `Launch completed on ${target}.`;
+  }
+  if (status === "running") {
+    return `Claimed by ${target}; waiting for completion.`;
+  }
+  if (status === "failed") {
+    return `Launch failed on ${target}.`;
+  }
+  return lifecycle.detail || `Waiting for ${target} to claim the command.`;
+}
+
+function launchLifecycleCard(lifecycle) {
+  const isAgent = lifecycle.operation === "session.create";
+  const sessionId = sessionIdFromLifecycle(lifecycle);
+  const title = lifecycle.title || (isAgent ? "Starting agent" : "Starting app");
+  const href = isAgent && sessionId && lifecycle.remoteUrl
+    ? absoluteRemoteHref(`/?view=shell&sessionId=${encodeURIComponent(sessionId)}`, lifecycle.remoteUrl)
+    : "";
+  return {
+    id: `lifecycle:${lifecycle.lifecycleId}`,
+    type: isAgent ? "agent" : "app",
+    title,
+    subtitle: lifecycle.subtitle || (isAgent ? "remote agent launch" : "remote app launch"),
+    status: normalizeLaunchLifecycleStatus(lifecycle.status).replace(/_/g, " "),
+    detail: launchLifecycleDetail(lifecycle),
+    meta: lifecycle.updatedAt || lifecycle.createdAt,
+    tags: ["remote", lifecycle.status, lifecycle.providerId || lifecycle.appId].filter(Boolean),
+    href,
+    ref: {
+      machineId: lifecycle.machineId,
+      remoteNodeId: lifecycle.remoteNodeId,
+      remoteUrl: lifecycle.remoteUrl,
+      sourceCardId: lifecycle.sourceCardId,
+      lifecycle: true,
+      commandId: lifecycle.commandId,
+      clientCommandId: lifecycle.clientCommandId,
+      sessionId,
+      actionLabel: href ? "Open agent" : "",
+    },
+    width: isAgent ? 420 : 360,
+    height: isAgent ? 260 : 190,
+  };
+}
+
+function mergeLaunchLifecycleCards(cards, lifecycles) {
+  const visibleSessions = new Set(cards
+    .map((card) => String(card?.ref?.sessionId || ""))
+    .filter(Boolean));
+  const lifecycleCards = lifecycles
+    .filter((lifecycle) => {
+      const sessionId = sessionIdFromLifecycle(lifecycle);
+      return !sessionId || !visibleSessions.has(sessionId);
+    })
+    .map(launchLifecycleCard);
+  return [...cards, ...lifecycleCards];
+}
+
+function launchLifecycleFromCommand(command, lifecycle) {
+  return normalizeLaunchLifecycle({
+    ...lifecycle,
+    commandId: command?.id || lifecycle.commandId,
+    nodeId: command?.nodeId || lifecycle.remoteNodeId,
+    operation: command?.operation || lifecycle.operation,
+    clientCommandId: command?.clientCommandId || lifecycle.clientCommandId,
+    status: command?.status || lifecycle.status,
+    createdAt: command?.createdAt || lifecycle.createdAt,
+    updatedAt: command?.updatedAt || lifecycle.updatedAt,
+    completedAt: command?.completedAt || lifecycle.completedAt,
+    result: command?.result || lifecycle.result,
+    error: command?.error || lifecycle.error,
+  });
+}
+
 function readRemoteNodeUrlParams(locationRef) {
   if (!locationRef?.search) return [];
   const params = new URLSearchParams(locationRef.search);
@@ -1726,12 +1939,13 @@ function cardFrame(card, layout, body, footer = "") {
   const sessionId = card.ref?.sessionId ? ` data-swarmlab-canvas-session-id="${escapeHtml(card.ref.sessionId)}"` : "";
   const remoteNodeId = card.ref?.remoteNodeId ? ` data-swarmlab-canvas-remote-node-id="${escapeHtml(card.ref.remoteNodeId)}"` : "";
   const remoteClass = card.ref?.remoteUrl ? " is-remote" : "";
+  const lifecycleClass = card.ref?.lifecycle ? " is-lifecycle" : "";
   const machineId = getCanvasCardMachineId(card);
   const regionId = getCanvasCardRegionId(card, layout);
   const crossRegionClass = machineId !== regionId ? " is-cross-region" : "";
   return `
     <article
-      class="swarmlab-canvas-card is-${escapeHtml(card.type)}${remoteClass}${crossRegionClass}"
+      class="swarmlab-canvas-card is-${escapeHtml(card.type)}${remoteClass}${crossRegionClass}${lifecycleClass}"
       data-swarmlab-canvas-card-id="${escapeHtml(card.id)}"
       data-swarmlab-canvas-card-type="${escapeHtml(card.type)}"
       data-swarmlab-canvas-machine-id="${escapeHtml(machineId)}"
@@ -1754,7 +1968,27 @@ function cardFrame(card, layout, body, footer = "") {
   `;
 }
 
+function renderLifecycleCard(card, layout) {
+  const action = renderCardAction(card);
+  const status = [card.subtitle, card.status].filter(Boolean).join(" / ") || "remote launch";
+  const body = `
+    <div class="swarmlab-canvas-card-body swarmlab-canvas-lifecycle-body">
+      <div class="swarmlab-canvas-lifecycle-status">
+        <strong>${escapeHtml(card.ref?.commandId || card.ref?.clientCommandId || "remote command")}</strong>
+        <span>${escapeHtml(card.status || "queued")}</span>
+      </div>
+      <div class="swarmlab-canvas-lifecycle-detail">${escapeHtml(card.detail || status)}</div>
+      ${renderTags(card, { limit: 4 })}
+    </div>
+  `;
+  const footer = `<div class="swarmlab-canvas-card-footer"><span>${escapeHtml(card.meta || status)}</span>${action}</div>`;
+  return cardFrame(card, layout, body, footer);
+}
+
 function renderAgentCard(card, layout) {
+  if (card.ref?.lifecycle) {
+    return renderLifecycleCard(card, layout);
+  }
   if (card.ref?.remoteUrl) {
     return renderRemoteAgentCard(card, layout);
   }
@@ -1918,6 +2152,39 @@ function refreshAgentNarratives(root, options) {
   root.querySelectorAll(".swarmlab-canvas-card.is-agent:not(.is-remote)[data-swarmlab-canvas-session-id]").forEach((card) => {
     void loadAgentNarrative(root, card, options);
   });
+}
+
+async function refreshLaunchLifecycles(root, { fetchImpl, abortController, storage, refresh }) {
+  const key = root.dataset.swarmlabCanvasLaunchStorageKey || "";
+  if (!key) return;
+  const lifecycles = readLaunchLifecycles(storage, key);
+  const active = lifecycles.filter((item) => item.remoteNodeId && item.commandId && !isTerminalLaunchStatus(item.status));
+  if (!active.length) return;
+  let changed = false;
+  const next = await Promise.all(lifecycles.map(async (item) => {
+    if (!active.some((candidate) => candidate.lifecycleId === item.lifecycleId)) {
+      return item;
+    }
+    try {
+      const payload = await fetchJson(`/api/account/nodes/${encodeURIComponent(item.remoteNodeId)}/commands/${encodeURIComponent(item.commandId)}`, {
+        fetchImpl,
+        signal: abortController.signal,
+      });
+      if (abortController.signal.aborted) return item;
+      const updated = launchLifecycleFromCommand(payload?.command || {}, item) || item;
+      if (JSON.stringify(updated) !== JSON.stringify(item)) {
+        changed = true;
+      }
+      return updated;
+    } catch {
+      return item;
+    }
+  }));
+  if (abortController.signal.aborted || !changed) return;
+  writeLaunchLifecycles(storage, key, next);
+  if (typeof refresh === "function") {
+    refresh();
+  }
 }
 
 function renderBrowserCard(card, layout) {
@@ -2094,6 +2361,7 @@ function renderStandardCard(card, layout) {
 }
 
 function renderCanvasCard(card, layout) {
+  if (card.ref?.lifecycle) return renderLifecycleCard(card, layout);
   if (card.type === "agent") return renderAgentCard(card, layout);
   if (card.type === "monitor") return renderBrowserCard(card, layout);
   if (card.type === "browser") return renderBrowserCard(card, layout);
@@ -2297,12 +2565,15 @@ function fitViewportToCards(root) {
 }
 
 function renderSnapshot(root, payload, { storage, remoteRecords = [] } = {}) {
-  const { snapshot, cards } = combineCanvasCards(payload, remoteRecords);
+  const { snapshot, cards: baseCards } = combineCanvasCards(payload, remoteRecords);
   const boardId = remoteRecords.length
     ? `fleet:${slugPart(snapshot.node.id, "local")}`
     : getCanvasBoardId(snapshot);
   const storageKey = getCanvasLayoutStorageKey(boardId);
   const viewportKey = getCanvasViewportStorageKey(boardId);
+  const launchStorageKey = getLaunchLifecycleStorageKey(boardId);
+  const launchLifecycles = readLaunchLifecycles(storage, launchStorageKey);
+  const cards = mergeLaunchLifecycleCards(baseCards, launchLifecycles);
   const savedLayout = readLayout(storage, storageKey);
   const viewport = readViewport(storage, viewportKey);
   const layout = mergeCanvasLayout(cards, savedLayout);
@@ -2323,6 +2594,7 @@ function renderSnapshot(root, payload, { storage, remoteRecords = [] } = {}) {
   root.dataset.swarmlabCanvasBoardId = boardId;
   root.dataset.swarmlabCanvasStorageKey = storageKey;
   root.dataset.swarmlabCanvasViewportStorageKey = viewportKey;
+  root.dataset.swarmlabCanvasLaunchStorageKey = launchStorageKey;
   root.__swarmlabCanvasLayout = layout;
   root.__swarmlabCanvasViewport = viewport;
   root.__swarmlabCanvasCards = cards;
@@ -2781,7 +3053,7 @@ function buildAgentCapsulePayload(card, { sourceRegion, targetRegion, targetIsLo
   };
 }
 
-async function launchAgentCapsule(button, root, { fetchImpl, abortController, onOpenSession, refresh }) {
+async function launchAgentCapsule(button, root, { fetchImpl, abortController, onOpenSession, refresh, storage }) {
   const cardId = button.getAttribute("data-swarmlab-canvas-agent-capsule") || "";
   const card = root.__swarmlabCanvasCardsById?.[cardId];
   const layout = root.__swarmlabCanvasLayout?.[cardId];
@@ -2822,7 +3094,7 @@ async function launchAgentCapsule(button, root, { fetchImpl, abortController, on
       return;
     }
     const clientCommandId = `capsule-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 8)}`;
-    await fetchJson(`/api/account/nodes/${encodeURIComponent(targetRegion.remoteNodeId)}/commands`, {
+    const commandPayload = await fetchJson(`/api/account/nodes/${encodeURIComponent(targetRegion.remoteNodeId)}/commands`, {
       fetchImpl,
       signal: abortController.signal,
       method: "POST",
@@ -2842,6 +3114,21 @@ async function launchAgentCapsule(button, root, { fetchImpl, abortController, on
         </div>
       `);
     }
+    queueLaunchLifecycle(root, { storage, refresh }, launchLifecycleFromCommand(commandPayload?.command || {}, {
+      lifecycleId: clientCommandId,
+      clientCommandId,
+      operation: "session.create",
+      remoteNodeId: targetRegion.remoteNodeId,
+      machineId: targetRegionId,
+      remoteUrl: targetRegion.remoteUrl,
+      sourceCardId: card.id,
+      title: `Copy: ${card.title || "Agent"}`,
+      subtitle: "remote agent copy",
+      targetTitle: lifecycleTargetTitle(root, targetRegionId),
+      providerId: payload.providerId || inferAgentProviderId(card),
+      status: "queued",
+      detail: "The source agent keeps running while this copy starts.",
+    }));
   } catch (error) {
     button.removeAttribute("disabled");
     button.textContent = error?.message || "Copy failed";
@@ -2862,7 +3149,22 @@ function launcherSessionPayload(card) {
   };
 }
 
-async function launchCanvasLauncher(button, root, { fetchImpl, abortController, onOpenSession, refresh }) {
+function lifecycleTargetTitle(root, machineId) {
+  const region = root.__swarmlabCanvasRegionsById?.[machineId] || null;
+  return regionDisplayName(region, machineId) || machineId;
+}
+
+function queueLaunchLifecycle(root, { storage, refresh }, lifecycle) {
+  const key = root.dataset.swarmlabCanvasLaunchStorageKey || "";
+  if (!key) return null;
+  const stored = upsertLaunchLifecycle(storage, key, lifecycle);
+  if (stored && typeof refresh === "function") {
+    refresh();
+  }
+  return stored;
+}
+
+async function launchCanvasLauncher(button, root, { fetchImpl, abortController, onOpenSession, refresh, storage }) {
   const cardId = button.getAttribute("data-swarmlab-canvas-launcher") || "";
   const card = root.__swarmlabCanvasCardsById?.[cardId];
   if (!card) return;
@@ -2882,7 +3184,7 @@ async function launchCanvasLauncher(button, root, { fetchImpl, abortController, 
       const payload = launcherSessionPayload(card);
       if (isRemote) {
         const clientCommandId = `launcher-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 8)}`;
-        await fetchJson(`/api/account/nodes/${encodeURIComponent(remoteNodeId)}/commands`, {
+        const commandPayload = await fetchJson(`/api/account/nodes/${encodeURIComponent(remoteNodeId)}/commands`, {
           fetchImpl,
           signal: abortController.signal,
           method: "POST",
@@ -2893,6 +3195,20 @@ async function launchCanvasLauncher(button, root, { fetchImpl, abortController, 
           },
         });
         button.textContent = "Queued";
+        queueLaunchLifecycle(root, { storage, refresh }, launchLifecycleFromCommand(commandPayload?.command || {}, {
+          lifecycleId: clientCommandId,
+          clientCommandId,
+          operation: "session.create",
+          remoteNodeId,
+          machineId: getCanvasCardMachineId(card),
+          remoteUrl: card.ref?.remoteUrl || "",
+          sourceCardId: card.id,
+          title: `Starting ${payload.name || card.title || "agent"}`,
+          subtitle: "remote agent launch",
+          targetTitle: lifecycleTargetTitle(root, getCanvasCardMachineId(card)),
+          providerId: payload.providerId || card.ref?.providerId || "",
+          status: "queued",
+        }));
         return;
       }
       const result = await fetchJson("/api/sessions", {
@@ -2917,7 +3233,7 @@ async function launchCanvasLauncher(button, root, { fetchImpl, abortController, 
     }
     if (isRemote) {
       const clientCommandId = `app-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 8)}`;
-      await fetchJson(`/api/account/nodes/${encodeURIComponent(remoteNodeId)}/commands`, {
+      const commandPayload = await fetchJson(`/api/account/nodes/${encodeURIComponent(remoteNodeId)}/commands`, {
         fetchImpl,
         signal: abortController.signal,
         method: "POST",
@@ -2928,6 +3244,20 @@ async function launchCanvasLauncher(button, root, { fetchImpl, abortController, 
         },
       });
       button.textContent = "Queued";
+      queueLaunchLifecycle(root, { storage, refresh }, launchLifecycleFromCommand(commandPayload?.command || {}, {
+        lifecycleId: clientCommandId,
+        clientCommandId,
+        operation: "app.launch",
+        remoteNodeId,
+        machineId: getCanvasCardMachineId(card),
+        remoteUrl: card.ref?.remoteUrl || "",
+        sourceCardId: card.id,
+        title: card.title || appId,
+        subtitle: "remote app launch",
+        targetTitle: lifecycleTargetTitle(root, getCanvasCardMachineId(card)),
+        appId,
+        status: "queued",
+      }));
       return;
     }
     await fetchJson("/api/node/apps/launch", {
@@ -3161,10 +3491,12 @@ async function loadCanvas(root, options) {
     renderSnapshot(root, payload, { storage, remoteRecords });
     bindCanvasActions(root, options);
     refreshAgentNarratives(root, options);
+    void refreshLaunchLifecycles(root, options);
     const windowRef = root.ownerDocument?.defaultView || globalThis.window;
     root.__swarmlabCanvasNarrativePoll = windowRef.setInterval(() => {
       if (!abortController.signal.aborted) {
         refreshAgentNarratives(root, options);
+        void refreshLaunchLifecycles(root, options);
       }
     }, NARRATIVE_POLL_MS);
   } catch (error) {
