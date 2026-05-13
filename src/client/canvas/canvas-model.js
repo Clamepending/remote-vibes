@@ -1224,17 +1224,22 @@ function launcherSummaryCard(launchers, machineId) {
   });
 }
 
-function buildLauncherCards(launchers, machineId) {
+function buildLauncherCards(launchers, machineId, { limit = MAX_CANVAS_LAUNCHER_CARDS, includeSummary = true } = {}) {
   const entries = launchers
     .map((launcher, index) => ({ launcher, index }))
     .filter((entry) => entry.launcher?.available !== false)
     .sort((left, right) => normalizeNumber(right.launcher?.priority, 0) - normalizeNumber(left.launcher?.priority, 0) || left.index - right.index);
-  const visible = entries.slice(0, MAX_CANVAS_LAUNCHER_CARDS);
+  const visible = Number.isFinite(limit) ? entries.slice(0, Math.max(0, limit)) : entries;
   const cards = visible.map((entry) => launcherCard(entry.launcher, entry.index, machineId));
-  if (entries.length > visible.length) {
+  if (includeSummary && entries.length > visible.length) {
     cards.push(launcherSummaryCard(entries.slice(visible.length), machineId));
   }
   return cards;
+}
+
+export function buildCanvasLauncherCards(payload) {
+  const snapshot = normalizeNodeSnapshot(payload);
+  return buildLauncherCards(snapshot.launchers, snapshot.node.id, { limit: Infinity, includeSummary: false });
 }
 
 function machineCard(snapshot) {
@@ -1273,14 +1278,12 @@ export function buildCanvasCards(payload) {
   const linkedSessionIds = collectLinkedSessionIds(snapshot);
   const portCards = buildPortCards(snapshot.ports, machineId);
   const approvalCards = buildApprovalCards(snapshot.actionItems, machineId);
-  const launcherCards = buildLauncherCards(snapshot.launchers, machineId);
   const sessionCards = buildSessionCards(snapshot.sessions, machineId, { redacted: isRedacted, linkedSessionIds });
   const monitorCards = buildMonitorCards(snapshot, machineId);
   const browserCards = buildBrowserCards(snapshot.browserSessions, machineId, { redacted: isRedacted });
   const artifactCards = buildArtifactCards(snapshot.canvases, machineId);
   const cards = [
     machineCard(snapshot),
-    ...launcherCards,
     brainCard(snapshot.brain, machineId),
     ...approvalCards,
     ...snapshot.handoffJobs.map((job, index) => handoffCard(job, index, machineId)),
@@ -1308,7 +1311,6 @@ export function createFallbackCanvasLayout(cards) {
   const layout = {};
   const lanePriority = (card) => {
     if (card.type === "machine") return -1;
-    if (card.type === "launcher") return 0;
     if (card.type === "handoff") return 0;
     if (card.type === "approval") return 1;
     if (card.type === "brain") return 2;

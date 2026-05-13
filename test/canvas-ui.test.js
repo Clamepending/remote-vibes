@@ -641,10 +641,15 @@ test("local canvas view renders node snapshot cards and persists drag layout", a
     const composerBox = await page.locator('[data-swarmlab-canvas-card-id="session:session-1"] [data-swarmlab-agent-composer]').boundingBox();
     assert.ok(composerBox && composerBox.height <= 62, "canvas chat composer should stay compact on a large agent card");
     assert.equal(await page.locator(".swarmlab-canvas-card.is-summary:not(.is-remote)").count(), 2);
-    assert.equal(await page.locator(".swarmlab-canvas-card.is-remote").count(), 15);
-    assert.equal(await page.locator(".swarmlab-canvas-card.is-launcher").count(), 4);
-    assert.equal(await page.locator(".swarmlab-canvas-card.is-launcher:not(.is-remote)").count(), 2);
-    assert.equal(await page.locator(".swarmlab-canvas-card.is-launcher.is-remote").count(), 2);
+    assert.equal(await page.locator(".swarmlab-canvas-card.is-remote").count(), 13);
+    assert.equal(await page.locator(".swarmlab-canvas-card.is-launcher").count(), 0);
+    assert.equal(await page.locator(".swarmlab-canvas-launch-dock").count(), 1);
+    assert.equal(await page.locator("[data-swarmlab-canvas-launcher]").count(), 4);
+    const dockText = await page.locator(".swarmlab-canvas-launch-dock").innerText();
+    assert.match(dockText, /MAC MAIN/);
+    assert.match(dockText, /ACCOUNT WORKSTATION/);
+    assert.match(dockText, /Codex/);
+    assert.match(dockText, /Cursor/);
     const regionIds = await page.locator(".swarmlab-canvas-region").evaluateAll((regions) =>
       regions.map((region) => region.getAttribute("data-swarmlab-canvas-region-id")).filter(Boolean),
     );
@@ -710,7 +715,7 @@ test("local canvas view renders node snapshot cards and persists drag layout", a
       "hidden",
     );
 
-    await page.click('[data-swarmlab-canvas-card-id="launcher:app:cursor"] [data-swarmlab-canvas-launcher]');
+    await page.click('[data-swarmlab-canvas-launcher="launcher:app:cursor"]');
     for (let attempt = 0; attempt < 20 && postedAppLaunches.length === 0; attempt += 1) {
       await page.waitForTimeout(50);
     }
@@ -807,7 +812,7 @@ test("local canvas view renders node snapshot cards and persists drag layout", a
     assert.match(lifecycleText, /Copy: Worker B/);
     assert.match(lifecycleText, /source agent keeps running/i);
 
-    await page.locator('[data-swarmlab-canvas-card-id="remote:account-box:launcher:provider:codex"] [data-swarmlab-canvas-launcher]').evaluate((button) => button.click());
+    await page.locator('[data-swarmlab-canvas-launcher="remote:account-box:launcher:provider:codex"]').evaluate((button) => button.click());
     for (let attempt = 0; attempt < 20 && postedRemoteCommands.length < 3; attempt += 1) {
       await page.waitForTimeout(50);
     }
@@ -819,7 +824,7 @@ test("local canvas view renders node snapshot cards and persists drag layout", a
     lifecycleText = await page.locator(".swarmlab-canvas-card.is-lifecycle").evaluateAll((cards) => cards.map((card) => card.textContent || "").join("\n"));
     assert.match(lifecycleText, /Starting Codex/);
 
-    await page.locator('[data-swarmlab-canvas-card-id="remote:account-box:launcher:app:cursor"] [data-swarmlab-canvas-launcher]').evaluate((button) => button.click());
+    await page.locator('[data-swarmlab-canvas-launcher="remote:account-box:launcher:app:cursor"]').evaluate((button) => button.click());
     for (let attempt = 0; attempt < 20 && postedRemoteCommands.length < 4; attempt += 1) {
       await page.waitForTimeout(50);
     }
@@ -830,8 +835,13 @@ test("local canvas view renders node snapshot cards and persists drag layout", a
     lifecycleText = await page.locator(".swarmlab-canvas-card.is-lifecycle").evaluateAll((cards) => cards.map((card) => card.textContent || "").join("\n"));
     assert.match(lifecycleText, /Cursor/);
     assert.ok(
-      await page.locator('[data-swarmlab-canvas-pipe-card-id^="lifecycle:"].is-resource').count() >= 3,
-      "remote lifecycle cards should stay connected to the agent or launcher that created them",
+      await page.locator('[data-swarmlab-canvas-pipe-card-id^="lifecycle:"].is-resource').count() >= 1,
+      "agent-copy lifecycle cards should stay connected to the source agent",
+    );
+    assert.equal(
+      await page.locator('[data-swarmlab-canvas-pipe-source-card-id="remote:account-box:launcher:provider:codex"]').count(),
+      0,
+      "dock launchers are commands, not canvas nodes that own resource pipes",
     );
 
     extraRemoteSessions.set("https://account-node.example.test", [
@@ -888,14 +898,10 @@ test("local canvas view renders node snapshot cards and persists drag layout", a
       await page.locator('[data-swarmlab-canvas-pipe-card-id="remote:account-box:session:account-box-agent-copy"].is-resource').getAttribute("data-swarmlab-canvas-pipe-source-card-id"),
       "session:session-1",
     );
-    assert.equal(
-      await page.locator('[data-swarmlab-canvas-pipe-card-id="remote:account-box:session:account-box-agent-codex"].is-resource').getAttribute("data-swarmlab-canvas-pipe-source-card-id"),
-      "remote:account-box:launcher:provider:codex",
-    );
-    assert.equal(
-      await page.locator('[data-swarmlab-canvas-pipe-card-id="remote:account-box:port:9123"].is-resource').getAttribute("data-swarmlab-canvas-pipe-source-card-id"),
-      "remote:account-box:launcher:app:cursor",
-    );
+    assert.match(await page.locator('[data-swarmlab-canvas-card-id="remote:account-box:session:account-box-agent-codex"]').innerText(), /launched/);
+    assert.match(await page.locator('[data-swarmlab-canvas-card-id="remote:account-box:port:9123"]').innerText(), /launched/);
+    assert.equal(await page.locator('[data-swarmlab-canvas-pipe-card-id="remote:account-box:session:account-box-agent-codex"].is-resource').count(), 0);
+    assert.equal(await page.locator('[data-swarmlab-canvas-pipe-card-id="remote:account-box:port:9123"].is-resource').count(), 0);
 
     await page.evaluate(() => {
       const root = document.querySelector("[data-swarmlab-canvas-root]");

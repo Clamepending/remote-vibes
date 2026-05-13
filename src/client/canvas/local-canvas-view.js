@@ -20,6 +20,7 @@ import {
 } from "lucide";
 import {
   buildCanvasCards,
+  buildCanvasLauncherCards,
   buildCanvasRegions,
   getCanvasCardMachineId,
   getCanvasCardRegionId,
@@ -251,10 +252,112 @@ function injectCanvasStyles(documentRef = document) {
   border-color: rgba(224, 122, 63, 0.55);
   background: rgba(224, 122, 63, 0.16);
 }
+.swarmlab-canvas-launch-dock {
+  position: absolute;
+  left: 18px;
+  right: 300px;
+  bottom: 18px;
+  z-index: 26;
+  display: flex;
+  align-items: stretch;
+  gap: 12px;
+  min-height: 68px;
+  max-height: 128px;
+  padding: 9px;
+  border: 1px solid rgba(232, 222, 206, 0.14);
+  border-radius: 9px;
+  background: rgba(31, 30, 27, 0.92);
+  box-shadow: 0 18px 48px rgba(0, 0, 0, 0.34);
+  backdrop-filter: blur(14px);
+  cursor: default;
+  overflow-x: auto;
+  overflow-y: hidden;
+  pointer-events: auto;
+  touch-action: pan-x;
+}
+.swarmlab-canvas-launch-machine {
+  display: grid;
+  grid-template-rows: auto minmax(0, 1fr);
+  gap: 7px;
+  min-width: max-content;
+  padding-right: 12px;
+  border-right: 1px solid rgba(232, 222, 206, 0.08);
+}
+.swarmlab-canvas-launch-machine:last-child {
+  border-right: 0;
+  padding-right: 0;
+}
+.swarmlab-canvas-launch-machine-label {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  max-width: 230px;
+  color: var(--canvas-muted);
+  font-size: 10px;
+  font-weight: 680;
+  text-transform: uppercase;
+  white-space: nowrap;
+}
+.swarmlab-canvas-launch-machine-label span:last-child {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.swarmlab-canvas-launch-chip {
+  width: 8px;
+  height: 8px;
+  flex: 0 0 auto;
+  border-radius: 3px;
+  background: var(--machine-accent, var(--canvas-accent));
+  box-shadow: 0 0 14px color-mix(in srgb, var(--machine-accent, var(--canvas-accent)) 48%, transparent);
+}
+.swarmlab-canvas-launch-items {
+  display: flex;
+  gap: 7px;
+}
+.swarmlab-canvas-launch-item {
+  display: grid;
+  grid-template-columns: 18px minmax(0, 1fr);
+  gap: 8px;
+  align-items: center;
+  width: 132px;
+  min-height: 42px;
+  border: 1px solid rgba(232, 222, 206, 0.13);
+  border-radius: 8px;
+  background: rgba(255, 255, 255, 0.055);
+  color: var(--canvas-text);
+  padding: 7px 9px;
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+}
+.swarmlab-canvas-launch-item:hover {
+  border-color: rgba(116, 199, 184, 0.42);
+  background: rgba(116, 199, 184, 0.08);
+}
+.swarmlab-canvas-launch-item svg {
+  color: var(--canvas-accent-2);
+}
+.swarmlab-canvas-launch-item strong,
+.swarmlab-canvas-launch-item span {
+  display: block;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.swarmlab-canvas-launch-item strong {
+  font-size: 12px;
+  font-weight: 720;
+}
+.swarmlab-canvas-launch-item span {
+  color: var(--canvas-faint);
+  font-size: 10px;
+}
 .swarmlab-canvas-stage {
   position: relative;
-  height: calc(100vh - 65px);
-  min-height: 560px;
+  height: calc(100vh - 132px);
+  min-height: 520px;
   overflow: hidden;
   cursor: grab;
   touch-action: none;
@@ -903,13 +1006,12 @@ function injectCanvasStyles(documentRef = document) {
 }
 .swarmlab-canvas-floating-controls {
   position: absolute;
-  left: 50%;
+  right: 18px;
   bottom: 18px;
   z-index: 25;
   display: flex;
   align-items: center;
   gap: 8px;
-  transform: translateX(-50%);
   padding: 8px;
   border: 1px solid var(--canvas-line);
   border-radius: 8px;
@@ -932,7 +1034,7 @@ function injectCanvasStyles(documentRef = document) {
 .swarmlab-canvas-hint {
   position: absolute;
   left: 18px;
-  bottom: 20px;
+  bottom: 100px;
   z-index: 24;
   color: var(--canvas-faint);
   font-size: 11px;
@@ -969,6 +1071,14 @@ function injectCanvasStyles(documentRef = document) {
   }
   .swarmlab-canvas-hint {
     display: none;
+  }
+  .swarmlab-canvas-launch-dock {
+    right: 18px;
+    bottom: 72px;
+    max-height: 112px;
+  }
+  .swarmlab-canvas-launch-item {
+    width: 116px;
   }
 }
 `;
@@ -1700,16 +1810,15 @@ function materializeLaunchLifecycleLinks(cards, lifecycles) {
   const updates = new Map();
   lifecycles.forEach((lifecycle) => {
     const sourceCardId = String(lifecycle.sourceCardId || "").trim();
-    if (!sourceCardId) return;
     const target = findMaterializedLaunchCard(cards, lifecycle);
     if (!target) return;
     const previous = updates.get(target.id) || target;
     updates.set(target.id, {
       ...previous,
-      tags: [...new Set([...(previous.tags || []), "launched"])].slice(0, 5),
+      tags: [...new Set(["launched", ...(previous.tags || []).filter(Boolean)])].slice(0, 5),
       ref: {
         ...(previous.ref || {}),
-        sourceCardId: previous.ref?.sourceCardId || sourceCardId,
+        ...(sourceCardId ? { sourceCardId: previous.ref?.sourceCardId || sourceCardId } : {}),
         launchLifecycleId: lifecycle.lifecycleId,
         launchCommandId: lifecycle.commandId || previous.ref?.launchCommandId || "",
         clientCommandId: lifecycle.clientCommandId || previous.ref?.clientCommandId || "",
@@ -2373,6 +2482,7 @@ function renderAppCard(card, layout) {
           <span class="swarmlab-canvas-browser-dot"></span>
           <span class="swarmlab-canvas-browser-url">${escapeHtml(embedUrl)}</span>
         </div>
+        ${renderTags(card, { limit: 5 })}
         <div class="swarmlab-canvas-app-frame-shell">
           ${previewTrusted
             ? `<iframe
@@ -2588,49 +2698,129 @@ function remoteCardActionLabel(card) {
   return card.ref?.actionLabel || "Open";
 }
 
-function remoteCardsForRecord(record, remoteIndex) {
-  if (!record.snapshot) {
-    return [makeRemoteOfflineCard(record)];
-  }
+function withRemoteCardContext(card, record, remoteIndex) {
   const baseId = slugPart(record.snapshot.node.id || record.host, `remote-${remoteIndex + 1}`);
   const remoteNodeId = record.registryNode?.commandable
     ? (record.registryNode?.nodeId || record.snapshot.node.id || record.registryNode?.id || "")
     : "";
-  return buildCanvasCards(record.snapshot).map((card) => {
-    const sourceId = card.id;
-    const isMachine = card.type === "machine";
-    const href = remoteCardHref(card, record.baseUrl);
-    const linkedSourceCardId = card.ref?.sourceCardId
-      ? `remote:${baseId}:${card.ref.sourceCardId}`
-      : "";
-    return {
-      ...card,
-      id: `remote:${baseId}:${sourceId}`,
-      title: isMachine ? `${card.title} (${record.host})` : card.title,
-      subtitle: [card.subtitle, isMachine ? "remote canvas" : "remote"].filter(Boolean).join(" / "),
-      tags: ["remote", ...card.tags],
-      href,
-      ref: {
-        ...(card.ref || {}),
-        remoteSourceCardId: sourceId,
-        ...(linkedSourceCardId ? { sourceCardId: linkedSourceCardId } : {}),
-        remoteNodeId,
-        remoteUrl: record.baseUrl,
-        actionLabel: remoteCardActionLabel(card),
-      },
-    };
-  });
+  const sourceId = card.id;
+  const isMachine = card.type === "machine";
+  const href = remoteCardHref(card, record.baseUrl);
+  const linkedSourceCardId = card.ref?.sourceCardId
+    ? `remote:${baseId}:${card.ref.sourceCardId}`
+    : "";
+  return {
+    ...card,
+    id: `remote:${baseId}:${sourceId}`,
+    title: isMachine ? `${card.title} (${record.host})` : card.title,
+    subtitle: [card.subtitle, isMachine ? "remote canvas" : "remote"].filter(Boolean).join(" / "),
+    tags: ["remote", ...card.tags],
+    href,
+    ref: {
+      ...(card.ref || {}),
+      remoteSourceCardId: sourceId,
+      ...(linkedSourceCardId ? { sourceCardId: linkedSourceCardId } : {}),
+      remoteNodeId,
+      remoteUrl: record.baseUrl,
+      actionLabel: remoteCardActionLabel(card),
+    },
+  };
+}
+
+function remoteCardsForRecord(record, remoteIndex) {
+  if (!record.snapshot) {
+    return [makeRemoteOfflineCard(record)];
+  }
+  return buildCanvasCards(record.snapshot).map((card) => withRemoteCardContext(card, record, remoteIndex));
+}
+
+function remoteLauncherCardsForRecord(record, remoteIndex) {
+  if (!record.snapshot) {
+    return [];
+  }
+  return buildCanvasLauncherCards(record.snapshot).map((card) => withRemoteCardContext(card, record, remoteIndex));
 }
 
 function combineCanvasCards(localPayload, remoteRecords) {
   const snapshot = normalizeNodeSnapshot(localPayload);
   const cards = buildCanvasCards(snapshot);
+  const launcherCards = [
+    ...buildCanvasLauncherCards(snapshot),
+    ...remoteRecords.flatMap((record, index) => remoteLauncherCardsForRecord(record, index)),
+  ];
   const remoteCards = remoteRecords.flatMap((record, index) => remoteCardsForRecord(record, index));
   return {
     snapshot,
     cards: [...cards, ...remoteCards],
+    launcherCards,
     remoteRecords,
   };
+}
+
+function launcherKindLabel(card) {
+  const isAgentProvider = String(card.ref?.launcherKind || "") === "agent-provider" || Boolean(card.ref?.providerId);
+  if (isAgentProvider) return "agent";
+  return card.ref?.category || "app";
+}
+
+function renderLauncherDockItem(card) {
+  const isAgentProvider = String(card.ref?.launcherKind || "") === "agent-provider" || Boolean(card.ref?.providerId);
+  const icon = isAgentProvider ? Bot : AppWindow;
+  const label = compactText(card.title || "Launcher", 28);
+  const meta = compactText([launcherKindLabel(card), card.status || ""].filter(Boolean).join(" / "), 34);
+  return `
+    <button
+      class="swarmlab-canvas-launch-item"
+      type="button"
+      data-swarmlab-canvas-launcher="${escapeHtml(card.id)}"
+      title="${escapeHtml(`Launch ${card.title || "app"}`)}"
+    >
+      ${renderIcon(icon, { width: 17, height: 17 })}
+      <span>
+        <strong>${escapeHtml(label)}</strong>
+        <span>${escapeHtml(meta)}</span>
+      </span>
+    </button>
+  `;
+}
+
+function renderLauncherDock(launcherCards, regions = [], localMachineId = "") {
+  if (!launcherCards.length) return "";
+  const regionsById = new Map(regions.map((region) => [region.id, region]));
+  const regionOrder = new Map(regions.map((region, index) => [region.id, index]));
+  const groups = new Map();
+  launcherCards.forEach((card) => {
+    const machineId = getCanvasCardMachineId(card);
+    if (!groups.has(machineId)) {
+      groups.set(machineId, []);
+    }
+    groups.get(machineId).push(card);
+  });
+  const sortedGroups = [...groups.entries()].sort(([leftId], [rightId]) => {
+    if (leftId === localMachineId) return -1;
+    if (rightId === localMachineId) return 1;
+    return (regionOrder.get(leftId) ?? 10_000) - (regionOrder.get(rightId) ?? 10_000) || leftId.localeCompare(rightId);
+  });
+  return `
+    <nav class="swarmlab-canvas-launch-dock" data-swarmlab-canvas-launch-dock aria-label="Launch apps">
+      ${sortedGroups.map(([machineId, cards]) => {
+        const region = regionsById.get(machineId);
+        const accent = region ? regionAccent(region) : REGION_COLORS[0];
+        const title = regionDisplayName(region, machineId) || machineId;
+        return `
+          <section class="swarmlab-canvas-launch-machine" style="--machine-accent: ${escapeHtml(accent)};">
+            <div class="swarmlab-canvas-launch-machine-label">
+              <span class="swarmlab-canvas-launch-chip" aria-hidden="true"></span>
+              <span>${escapeHtml(title)}</span>
+            </div>
+            <div class="swarmlab-canvas-launch-items">
+              ${cards.map(renderLauncherDockItem).join("")}
+            </div>
+          </section>
+        `;
+      }).join("")}
+    </nav>
+  `;
 }
 
 function renderFloatingControls(viewport) {
@@ -2700,7 +2890,7 @@ function fitViewportToCards(root) {
 }
 
 function renderSnapshot(root, payload, { storage, remoteRecords = [] } = {}) {
-  const { snapshot, cards: baseCards } = combineCanvasCards(payload, remoteRecords);
+  const { snapshot, cards: baseCards, launcherCards } = combineCanvasCards(payload, remoteRecords);
   const boardId = remoteRecords.length
     ? `fleet:${slugPart(snapshot.node.id, "local")}`
     : getCanvasBoardId(snapshot);
@@ -2714,7 +2904,7 @@ function renderSnapshot(root, payload, { storage, remoteRecords = [] } = {}) {
   const layout = mergeCanvasLayout(cards, savedLayout);
   const regions = buildCanvasRegions(cards, layout);
   const regionsById = Object.fromEntries(regions.map((region) => [region.id, region]));
-  const cardsById = Object.fromEntries(cards.map((card) => [card.id, card]));
+  const cardsById = Object.fromEntries([...cards, ...launcherCards].map((card) => [card.id, card]));
   const localMachineId = snapshot.node.id;
   const meta = root.closest(".swarmlab-canvas-view")?.querySelector("[data-swarmlab-canvas-meta]");
   if (meta) {
@@ -2733,6 +2923,7 @@ function renderSnapshot(root, payload, { storage, remoteRecords = [] } = {}) {
   root.__swarmlabCanvasLayout = layout;
   root.__swarmlabCanvasViewport = viewport;
   root.__swarmlabCanvasCards = cards;
+  root.__swarmlabCanvasLaunchers = launcherCards;
   root.__swarmlabCanvasCardsById = cardsById;
   root.__swarmlabCanvasRegions = regions;
   root.__swarmlabCanvasRegionsById = regionsById;
@@ -2753,6 +2944,7 @@ function renderSnapshot(root, payload, { storage, remoteRecords = [] } = {}) {
       ${renderCanvasPipeLayer(cards, layout, regions, localMachineId)}
       ${cards.map((card) => renderCanvasCard(card, layout[card.id])).join("")}
     </div>
+    ${renderLauncherDock(launcherCards, regions, localMachineId)}
     ${renderFloatingControls(viewport)}
   `;
   refreshRegionPresentation(root);
@@ -2998,7 +3190,7 @@ function bindViewportPanAndZoom(root, { storage }) {
     if (!(event.target instanceof Element)) {
       return;
     }
-    if (event.target.closest("[data-swarmlab-canvas-card-id], [data-swarmlab-canvas-controls], a, button, input, textarea, select")) {
+    if (event.target.closest("[data-swarmlab-canvas-card-id], [data-swarmlab-canvas-controls], [data-swarmlab-canvas-launch-dock], a, button, input, textarea, select")) {
       return;
     }
     const viewport = sanitizeViewport(root.__swarmlabCanvasViewport || DEFAULT_VIEWPORT);

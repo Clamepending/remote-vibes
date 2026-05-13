@@ -3,6 +3,7 @@ import test from "node:test";
 
 import {
   buildCanvasCards,
+  buildCanvasLauncherCards,
   buildCanvasRegions,
   createFallbackCanvasLayout,
   getCanvasCardMachineId,
@@ -82,17 +83,20 @@ test("buildCanvasCards renders machine, brain, handoff, session, browser, approv
   assert.equal(cards.find((card) => card.type === "artifact")?.detail, "Best run so far");
 });
 
-test("buildCanvasCards renders available app and agent launchers as first-class canvas cards", () => {
-  const cards = buildCanvasCards({
+test("buildCanvasCards excludes launchers while buildCanvasLauncherCards returns dock actions", () => {
+  const payload = {
     node: { id: "node-1", name: "Mac", status: "online" },
     launchers: [
       { id: "app:cursor", label: "Cursor", kind: "desktop-app", category: "editor", priority: 90, description: "Open Cursor from the canvas.", appId: "cursor", available: true, platform: "darwin" },
       { id: "provider:codex", label: "Codex", kind: "agent-provider", priority: 100, providerId: "codex", defaultName: "Codex", available: true },
       { id: "app:missing", label: "Missing", kind: "desktop-app", appId: "missing", available: false },
     ],
-  });
+  };
 
-  const launchers = cards.filter((card) => card.type === "launcher");
+  const cards = buildCanvasCards(payload);
+  assert.equal(cards.some((card) => card.type === "launcher"), false);
+
+  const launchers = buildCanvasLauncherCards(payload);
   assert.deepEqual(launchers.map((card) => card.title), ["Codex", "Cursor"]);
   assert.equal(launchers[0].ref.providerId, "codex");
   assert.equal(launchers[0].ref.actionLabel, "Launch");
