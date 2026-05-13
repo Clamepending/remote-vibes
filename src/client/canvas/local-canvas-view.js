@@ -2315,7 +2315,8 @@ function lifecycleResultAppInfo(lifecycle) {
   const result = lifecycle?.result && typeof lifecycle.result === "object" ? lifecycle.result : {};
   const app = result.app && typeof result.app === "object" ? result.app : {};
   const launcher = result.launcher && typeof result.launcher === "object" ? result.launcher : {};
-  const url = normalizeRemoteNodeUrl(result.url || result.href || app.url || app.href || result.appUrl || "");
+  const rawUrl = String(result.url || result.href || app.url || app.href || result.appUrl || "").trim();
+  const url = normalizeRemoteNodeUrl(rawUrl);
   let port = Number(result.port || app.port || result.localPort || app.localPort || 0);
   if (!Number.isInteger(port) && url) {
     try {
@@ -2338,8 +2339,24 @@ function lifecycleResultAppInfo(lifecycle) {
     appId: rawAppId,
     port: Number.isInteger(port) && port > 0 ? port : null,
     url,
+    rawUrl,
     commandId: String(result.commandId || result.clientCommandId || lifecycle.commandId || lifecycle.clientCommandId || "").trim(),
   };
+}
+
+function launchLifecycleAppHref(lifecycle) {
+  const info = lifecycleResultAppInfo(lifecycle);
+  if (info.rawUrl) {
+    if (/^https?:\/\//iu.test(info.rawUrl)) return info.rawUrl;
+    if (info.rawUrl.startsWith("/")) {
+      return lifecycle.remoteUrl ? absoluteRemoteHref(info.rawUrl, lifecycle.remoteUrl) : info.rawUrl;
+    }
+  }
+  if (info.port) {
+    const path = `/proxy/${encodeURIComponent(String(info.port))}/`;
+    return lifecycle.remoteUrl ? absoluteRemoteHref(path, lifecycle.remoteUrl) : path;
+  }
+  return "";
 }
 
 function sameLaunchMachine(card, lifecycle) {
@@ -2442,19 +2459,22 @@ function launchLifecycleCard(lifecycle) {
   const isAgent = lifecycle.operation === "session.create";
   const isCompletedApp = lifecycle.operation === "app.launch" && normalizeLaunchLifecycleStatus(lifecycle.status) === "completed";
   const sessionId = sessionIdFromLifecycle(lifecycle);
+  const appInfo = lifecycleResultAppInfo(lifecycle);
   const title = lifecycle.title || (isAgent ? "Starting agent" : "Starting app");
   const href = isAgent && sessionId && lifecycle.remoteUrl
     ? absoluteRemoteHref(`/?view=shell&sessionId=${encodeURIComponent(sessionId)}`, lifecycle.remoteUrl)
-    : "";
+    : isCompletedApp
+      ? launchLifecycleAppHref(lifecycle)
+      : "";
   return {
     id: `lifecycle:${lifecycle.lifecycleId}`,
     type: isAgent ? "agent" : "app",
     title,
-    subtitle: lifecycle.subtitle || (isAgent ? "remote agent launch" : isCompletedApp ? "desktop app / launched" : "remote app launch"),
+    subtitle: lifecycle.subtitle || (isAgent ? "remote agent launch" : isCompletedApp ? "app instance / launched" : "remote app launch"),
     status: normalizeLaunchLifecycleStatus(lifecycle.status).replace(/_/g, " "),
     detail: launchLifecycleDetail(lifecycle),
     meta: lifecycle.updatedAt || lifecycle.createdAt,
-    tags: [lifecycle.remoteUrl ? "remote" : "", isCompletedApp ? "launched" : lifecycle.status, lifecycle.providerId || lifecycle.appId].filter(Boolean),
+    tags: [lifecycle.remoteUrl ? "remote" : "", isCompletedApp ? "instance" : lifecycle.status, isCompletedApp ? "launched" : "", lifecycle.providerId || lifecycle.appId].filter(Boolean),
     href,
     ref: {
       machineId: lifecycle.machineId,
@@ -2462,13 +2482,15 @@ function launchLifecycleCard(lifecycle) {
       remoteUrl: lifecycle.remoteUrl,
       sourceCardId: lifecycle.sourceCardId,
       lifecycle: !isCompletedApp,
+      appInstance: isCompletedApp,
       launchedApp: isCompletedApp,
       launchLifecycleId: lifecycle.lifecycleId,
       commandId: lifecycle.commandId,
       clientCommandId: lifecycle.clientCommandId,
       sessionId,
-      appId: lifecycle.appId || lifecycleResultAppInfo(lifecycle).appId || "",
-      actionLabel: href ? "Open agent" : "",
+      appId: lifecycle.appId || appInfo.appId || "",
+      port: appInfo.port || 0,
+      actionLabel: href ? (isAgent ? "Open agent" : "Open app") : "",
     },
     width: isAgent ? 420 : 360,
     height: isAgent ? 260 : 190,
@@ -2833,12 +2855,13 @@ function cardFrame(card, layout, body, footer = "") {
   const remoteClass = card.ref?.remoteUrl ? " is-remote" : "";
   const lifecycleClass = card.ref?.lifecycle ? " is-lifecycle" : "";
   const launchedAppClass = card.ref?.launchedApp ? " is-launched-app" : "";
+  const appInstanceClass = card.ref?.appInstance ? " is-app-instance" : "";
   const machineId = getCanvasCardMachineId(card);
   const regionId = getCanvasCardRegionId(card, layout);
   const crossRegionClass = machineId !== regionId ? " is-cross-region" : "";
   return `
     <article
-      class="swarmlab-canvas-card is-${escapeHtml(card.type)}${remoteClass}${crossRegionClass}${lifecycleClass}${launchedAppClass}"
+      class="swarmlab-canvas-card is-${escapeHtml(card.type)}${remoteClass}${crossRegionClass}${lifecycleClass}${launchedAppClass}${appInstanceClass}"
       data-swarmlab-canvas-card-id="${escapeHtml(card.id)}"
       data-swarmlab-canvas-card-type="${escapeHtml(card.type)}"
       data-swarmlab-canvas-machine-id="${escapeHtml(machineId)}"

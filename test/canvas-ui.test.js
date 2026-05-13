@@ -965,6 +965,15 @@ test("local canvas view renders node snapshot cards and persists drag layout", a
       await page.locator('.swarmlab-canvas-card.is-app:not(.is-lifecycle)').filter({ hasText: "Cursor" }).count(),
       1,
     );
+    assert.equal(
+      await page.locator(".swarmlab-canvas-card.is-app-instance.is-launched-app").count(),
+      1,
+      "launching a desktop app should create a tracked app instance card",
+    );
+    assert.match(
+      await page.locator(".swarmlab-canvas-card.is-app-instance.is-launched-app").innerText(),
+      /instance|launched/i,
+    );
     const dismissLaunchedApp = page.locator('.swarmlab-canvas-card.is-launched-app [data-swarmlab-canvas-dismiss-launch]');
     assert.equal(await dismissLaunchedApp.count(), 1);
     await dismissLaunchedApp.click();
