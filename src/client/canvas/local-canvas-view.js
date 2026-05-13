@@ -1556,31 +1556,32 @@ function regionDisplayName(region, fallback = "") {
     .trim() || String(fallback || "");
 }
 
-function renderAgentTransferBarContent(card, layout, region, localMachineId) {
-  if (!region) return "";
+function renderAgentTransferBarContent(card, layout, targetRegion, localMachineId, sourceRegion = null) {
+  if (!targetRegion) return "";
   const homeRegionId = getCanvasCardMachineId(card);
   const targetRegionId = getCanvasCardRegionId(card, layout);
   if (homeRegionId === targetRegionId) return "";
-  const targetName = regionDisplayName(region, targetRegionId);
-  if (!isRegionCommandable(region, localMachineId)) {
-    const pairAction = region.remoteUrl
+  const targetName = regionDisplayName(targetRegion, targetRegionId);
+  const sourceName = regionDisplayName(sourceRegion, homeRegionId);
+  if (!isRegionCommandable(targetRegion, localMachineId)) {
+    const pairAction = targetRegion.remoteUrl
       ? `
-        <button class="swarmlab-canvas-button" type="button" data-swarmlab-canvas-pair-region="${escapeHtml(region.id)}">
+        <button class="swarmlab-canvas-button" type="button" data-swarmlab-canvas-pair-region="${escapeHtml(targetRegion.id)}">
           ${renderIcon(HardDrive)}
           <span>Pair</span>
         </button>
       `
       : "";
     return `
-      <span>Visual placement only. Pair ${escapeHtml(targetName)} to launch this agent there.</span>
+      <span>View relocated to ${escapeHtml(targetName)}. Agent keeps running on ${escapeHtml(sourceName)}. Pair this machine to start a copy there.</span>
       ${pairAction}
     `;
   }
   return `
-    <span>Capsule ready for ${escapeHtml(targetName)}</span>
+    <span>View relocated to ${escapeHtml(targetName)}. Agent keeps running on ${escapeHtml(sourceName)}.</span>
     <button class="swarmlab-canvas-button" type="button" data-swarmlab-canvas-agent-capsule="${escapeHtml(card.id)}">
       ${renderIcon(Send)}
-      <span>Move</span>
+      <span>Start copy</span>
     </button>
   `;
 }
@@ -2268,8 +2269,15 @@ function refreshCardRegionState(root, cardElement) {
   cardElement.classList.toggle("is-cross-region", machineId !== regionId);
   const transferBar = cardElement.querySelector("[data-swarmlab-agent-transfer-bar]");
   if (transferBar instanceof HTMLElement) {
-    const region = root.__swarmlabCanvasRegionsById?.[regionId] || null;
-    transferBar.innerHTML = renderAgentTransferBarContent(model, layout, region, root.__swarmlabCanvasLocalMachineId || "");
+    const targetRegion = root.__swarmlabCanvasRegionsById?.[regionId] || null;
+    const sourceRegion = root.__swarmlabCanvasRegionsById?.[machineId] || null;
+    transferBar.innerHTML = renderAgentTransferBarContent(
+      model,
+      layout,
+      targetRegion,
+      root.__swarmlabCanvasLocalMachineId || "",
+      sourceRegion,
+    );
   }
 }
 
@@ -2303,6 +2311,8 @@ function clearRegionDropTargets(root) {
 function assignCardRegionFromPosition(root, cardId, cardElement) {
   const layout = root.__swarmlabCanvasLayout?.[cardId];
   if (!layout) return;
+  const model = root.__swarmlabCanvasCardsById?.[cardId];
+  const previousRegionId = getCanvasCardRegionId(model, layout);
   const center = cardCenter(layout);
   const region = findRegionAtPoint(root, center.x, center.y);
   if (region) {
@@ -2310,6 +2320,18 @@ function assignCardRegionFromPosition(root, cardId, cardElement) {
   }
   refreshCardRegionState(root, cardElement);
   refreshCanvasPipes(root);
+  const nextRegionId = getCanvasCardRegionId(model, layout);
+  if (model?.type === "agent" && previousRegionId !== nextRegionId) {
+    const sourceRegionId = getCanvasCardMachineId(model);
+    const sourceRegion = root.__swarmlabCanvasRegionsById?.[sourceRegionId] || null;
+    const targetRegion = root.__swarmlabCanvasRegionsById?.[nextRegionId] || null;
+    updateAgentFeed(cardElement, `
+      <div class="swarmlab-agent-message is-loading">
+        <span>Relocated view</span>
+        <div class="swarmlab-agent-message-text">This card is displayed in ${escapeHtml(regionDisplayName(targetRegion, nextRegionId))}. The agent keeps running on ${escapeHtml(regionDisplayName(sourceRegion, sourceRegionId))}; no session was stopped or restarted.</div>
+      </div>
+    `);
+  }
 }
 
 function isInteractiveDragTarget(target, card) {
@@ -2610,7 +2632,8 @@ function buildAgentCapsulePrompt(card, { sourceRegion, targetRegion, targetIsLoc
   const targetName = targetRegion?.title || targetMachineId;
   const tags = Array.isArray(card.tags) && card.tags.length ? card.tags.join(", ") : "none";
   return [
-    "You are a Swarmlab agent capsule moved across the fleet canvas.",
+    "You are a Swarmlab agent capsule started from a relocated fleet-canvas card.",
+    "The source agent is still running; this is a copy, not a transfer.",
     "",
     `Source agent: ${card.title || "agent"}`,
     `Source session id: ${card.ref?.sessionId || "unknown"}`,
@@ -2625,7 +2648,7 @@ function buildAgentCapsulePrompt(card, { sourceRegion, targetRegion, targetIsLoc
     `Workspace hint: ${card.ref?.cwd || card.detail || "default workspace"}`,
     `Tags: ${tags}`,
     "",
-    "Continue the work from the source agent as faithfully as possible. First reconstruct the likely state from this capsule, then inspect local files or services on this machine before making changes. If an artifact or model must move from another machine, ask for or use the available handoff path instead of pretending the bytes are already present.",
+    "Continue the work from the source agent as faithfully as possible without assuming the source session stopped. First reconstruct the likely state from this capsule, then inspect local files or services on this machine before making changes. If an artifact or model must move from another machine, ask for or use the available handoff path instead of pretending the bytes are already present.",
   ].join("\n");
 }
 
@@ -2635,7 +2658,7 @@ function buildAgentCapsulePayload(card, { sourceRegion, targetRegion, targetIsLo
   const canReuseWorkspace = targetRegion?.id === sourceMachineId || targetIsLocal;
   return {
     ...(providerId ? { providerId } : {}),
-    name: `Moved: ${card.title || "Agent"}`,
+    name: `Copy: ${card.title || "Agent"}`,
     cwd: canReuseWorkspace ? String(card.ref?.cwd || card.detail || "").trim() : "",
     initialPrompt: buildAgentCapsulePrompt(card, { sourceRegion, targetRegion, targetIsLocal }),
     initialPromptDelayMs: 800,
@@ -2674,7 +2697,7 @@ async function launchAgentCapsule(button, root, { fetchImpl, abortController, on
         body: payload,
       });
       const sessionId = result?.session?.id || "";
-      button.textContent = "Moved";
+      button.textContent = "Copied";
       if (sessionId && typeof onOpenSession === "function") {
         onOpenSession(sessionId);
       } else if (typeof refresh === "function") {
@@ -2693,19 +2716,19 @@ async function launchAgentCapsule(button, root, { fetchImpl, abortController, on
         payload,
       },
     });
-    button.textContent = "Queued";
+    button.textContent = "Queued copy";
     const cardElement = root.querySelector(`[data-swarmlab-canvas-card-id="${CSS.escape(cardId)}"]`);
     if (cardElement) {
       updateAgentFeed(cardElement, `
         <div class="swarmlab-agent-message is-loading">
-          <span>Capsule queued</span>
-          Starting ${escapeHtml(card.title || "agent")} on ${escapeHtml(targetRegion.title || targetRegion.id)}.
+          <span>Copy queued</span>
+          Starting a copy of ${escapeHtml(card.title || "agent")} on ${escapeHtml(targetRegion.title || targetRegion.id)}. The source agent keeps running.
         </div>
       `);
     }
   } catch (error) {
     button.removeAttribute("disabled");
-    button.textContent = error?.message || "Move failed";
+    button.textContent = error?.message || "Copy failed";
   }
 }
 

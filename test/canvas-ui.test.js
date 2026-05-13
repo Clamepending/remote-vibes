@@ -70,6 +70,7 @@ test("local canvas view renders node snapshot cards and persists drag layout", a
     const postedInputs = [];
     const postedRemoteCommands = [];
     const postedRemotePairs = [];
+    const deletedSessions = [];
     const directPairStarts = [];
     const directPairCompletes = [];
     const directPairHeartbeats = [];
@@ -507,6 +508,18 @@ test("local canvas view renders node snapshot cards and persists drag layout", a
         body: JSON.stringify({ ok: true, session: { id: "session-1" } }),
       });
     });
+    await page.route(`${baseUrl}/api/sessions/session-1`, async (route) => {
+      if (route.request().method() === "DELETE") {
+        deletedSessions.push(route.request().url());
+        await route.fulfill({
+          status: 200,
+          contentType: "application/json",
+          body: JSON.stringify({ ok: true }),
+        });
+        return;
+      }
+      await route.fallback();
+    });
     await page.route(`${baseUrl}/api/handoff/jobs`, async (route) => {
       postedHandoffJobs.push(JSON.parse(route.request().postData() || "{}"));
       await route.fulfill({
@@ -699,6 +712,13 @@ test("local canvas view renders node snapshot cards and persists drag layout", a
     assert.equal(await page.locator('[data-swarmlab-canvas-pipe-card-id="session:session-1"].is-transfer').getAttribute("data-swarmlab-canvas-pipe-target-region-id"), "account-box");
     const capsuleButton = page.locator('[data-swarmlab-canvas-card-id="session:session-1"] [data-swarmlab-canvas-agent-capsule]');
     await capsuleButton.waitFor({ timeout: 10_000 });
+    assert.equal(await capsuleButton.innerText(), "Start copy");
+    assert.match(
+      await page.locator('[data-swarmlab-canvas-card-id="session:session-1"] [data-swarmlab-agent-transfer-bar]').innerText(),
+      /View relocated to Account Workstation\. Agent keeps running on Mac Main\./,
+    );
+    assert.equal(postedRemoteCommands.length, 1, "relocating a card must not enqueue a remote command");
+    assert.equal(deletedSessions.length, 0, "relocating a card must not delete the source session");
     await capsuleButton.click();
     for (let attempt = 0; attempt < 20 && postedRemoteCommands.length < 2; attempt += 1) {
       await page.waitForTimeout(50);
@@ -706,11 +726,11 @@ test("local canvas view renders node snapshot cards and persists drag layout", a
     assert.equal(postedRemoteCommands.length, 2);
     assert.equal(postedRemoteCommands[1].operation, "session.create");
     assert.equal(postedRemoteCommands[1].payload.providerId, "codex");
-    assert.match(postedRemoteCommands[1].payload.name, /Moved: Worker B/);
+    assert.match(postedRemoteCommands[1].payload.name, /Copy: Worker B/);
     assert.match(postedRemoteCommands[1].payload.initialPrompt, /Source session id: session-1/);
     assert.match(postedRemoteCommands[1].payload.initialPrompt, /Source machine id: mac-main/);
     assert.match(postedRemoteCommands[1].payload.initialPrompt, /Target machine id: account-box/);
-    assert.match(postedRemoteCommands[1].payload.initialPrompt, /agent capsule moved across the fleet canvas/);
+    assert.match(postedRemoteCommands[1].payload.initialPrompt, /source agent is still running/i);
     assert.doesNotMatch(postedRemoteCommands[1].payload.initialPrompt, /token=secret|private/u);
 
     await page.evaluate(() => {
@@ -734,7 +754,7 @@ test("local canvas view renders node snapshot cards and persists drag layout", a
     assert.equal(await page.locator('[data-swarmlab-canvas-card-id="session:session-1"] [data-swarmlab-canvas-agent-capsule]').count(), 0);
     assert.match(
       await page.locator('[data-swarmlab-canvas-card-id="session:session-1"] [data-swarmlab-agent-transfer-bar]').innerText(),
-      /Visual placement only\. Pair GPU Cluster to launch this agent there/,
+      /View relocated to GPU Cluster\. Agent keeps running on Mac Main\. Pair this machine to start a copy there\./,
     );
     const pairButton = page.locator('[data-swarmlab-canvas-card-id="session:session-1"] [data-swarmlab-canvas-pair-region="gpu-cluster"]');
     await pairButton.waitFor({ timeout: 10_000 });
