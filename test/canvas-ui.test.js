@@ -70,6 +70,10 @@ test("local canvas view renders node snapshot cards and persists drag layout", a
     const postedInputs = [];
     const postedRemoteCommands = [];
     const postedRemotePairs = [];
+    const directPairStarts = [];
+    const directPairCompletes = [];
+    const directPairHeartbeats = [];
+    const approvedPairings = [];
     const postedFleetNodes = [];
     const postedHandoffJobs = [];
     const remoteSnapshotHits = new Map();
@@ -273,13 +277,92 @@ test("local canvas view renders node snapshot cards and persists drag layout", a
     await page.route(`${baseUrl}/api/node/remote-pair`, async (route) => {
       postedRemotePairs.push(JSON.parse(route.request().postData() || "{}"));
       await route.fulfill({
+        status: 502,
+        contentType: "application/json",
+        body: JSON.stringify({ error: "controller cannot reach gpu in test" }),
+      });
+    });
+    await page.route(`${baseUrl}/api/account/nodes/pairing/approve`, async (route) => {
+      const body = JSON.parse(route.request().postData() || "{}");
+      approvedPairings.push(body);
+      await route.fulfill({
         status: 200,
         contentType: "application/json",
         body: JSON.stringify({
           ok: true,
-          baseUrl: postedRemotePairs.at(-1).baseUrl,
-          pairing: { status: "approved" },
+          pairingId: body.pairingId,
+          redirectUri: `${baseUrl}/account/auth/complete?grant=grant_canvas_pair&pairingId=${encodeURIComponent(body.pairingId || "")}`,
         }),
+      });
+    });
+    await page.route("https://gpu-node.example.test/api/node/account/pair/start", async (route) => {
+      if (route.request().method() === "OPTIONS") {
+        await route.fulfill({
+          status: 204,
+          headers: {
+            "Access-Control-Allow-Origin": "*",
+            "Access-Control-Allow-Methods": "POST, OPTIONS",
+            "Access-Control-Allow-Headers": "Content-Type, X-Vibe-Research-API",
+          },
+        });
+        return;
+      }
+      directPairStarts.push(JSON.parse(route.request().postData() || "{}"));
+      await route.fulfill({
+        status: 201,
+        contentType: "application/json",
+        headers: { "Access-Control-Allow-Origin": "*" },
+        body: JSON.stringify({
+          pairing: {
+            pairingId: "pair_canvas_gpu",
+            pairingCode: "PAIR-GPU",
+          },
+        }),
+      });
+    });
+    await page.route("https://gpu-node.example.test/api/node/account/pair/complete", async (route) => {
+      if (route.request().method() === "OPTIONS") {
+        await route.fulfill({
+          status: 204,
+          headers: {
+            "Access-Control-Allow-Origin": "*",
+            "Access-Control-Allow-Methods": "POST, OPTIONS",
+            "Access-Control-Allow-Headers": "Content-Type, X-Vibe-Research-API",
+          },
+        });
+        return;
+      }
+      directPairCompletes.push(JSON.parse(route.request().postData() || "{}"));
+      await route.fulfill({
+        status: 200,
+        contentType: "application/json",
+        headers: { "Access-Control-Allow-Origin": "*" },
+        body: JSON.stringify({
+          record: {
+            appBaseUrl: directPairCompletes.at(-1).accountBaseUrl,
+            node: { nodeId: "gpu-cluster", displayName: "GPU Cluster" },
+          },
+        }),
+      });
+    });
+    await page.route("https://gpu-node.example.test/api/node/account/heartbeat", async (route) => {
+      if (route.request().method() === "OPTIONS") {
+        await route.fulfill({
+          status: 204,
+          headers: {
+            "Access-Control-Allow-Origin": "*",
+            "Access-Control-Allow-Methods": "POST, OPTIONS",
+            "Access-Control-Allow-Headers": "Content-Type, X-Vibe-Research-API",
+          },
+        });
+        return;
+      }
+      directPairHeartbeats.push(JSON.parse(route.request().postData() || "{}"));
+      await route.fulfill({
+        status: 200,
+        contentType: "application/json",
+        headers: { "Access-Control-Allow-Origin": "*" },
+        body: JSON.stringify({ heartbeat: { ok: true } }),
       });
     });
     await page.route(`${baseUrl}/api/fleet/nodes`, async (route) => {
@@ -662,6 +745,22 @@ test("local canvas view renders node snapshot cards and persists drag layout", a
     assert.equal(postedRemotePairs.length, 1);
     assert.equal(postedRemotePairs[0].baseUrl, "https://gpu-node.example.test");
     assert.equal(postedRemotePairs[0].label, "GPU Cluster");
+    for (let attempt = 0; attempt < 20 && directPairCompletes.length === 0; attempt += 1) {
+      await page.waitForTimeout(50);
+    }
+    assert.equal(directPairStarts.length, 1);
+    assert.equal(directPairStarts[0].accountBaseUrl, baseUrl);
+    assert.equal(directPairStarts[0].label, "GPU Cluster");
+    assert.deepEqual(approvedPairings[0], {
+      pairingId: "pair_canvas_gpu",
+      pairingCode: "PAIR-GPU",
+    });
+    assert.equal(directPairCompletes.length, 1);
+    assert.equal(directPairCompletes[0].accountBaseUrl, baseUrl);
+    assert.equal(directPairCompletes[0].grant, "grant_canvas_pair");
+    assert.equal(directPairCompletes[0].pairingId, "pair_canvas_gpu");
+    assert.equal(directPairHeartbeats.length, 1);
+    assert.equal(directPairHeartbeats[0].reason, "browser-remote-pair");
 
     await page.evaluate(() => {
       const answers = [

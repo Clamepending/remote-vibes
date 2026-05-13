@@ -158,6 +158,17 @@ test("/api/node manifest, status, and snapshot routes expose the local node foun
     });
     assert.equal(preflightResponse.status, 204);
     assert.equal(preflightResponse.headers.get("access-control-allow-origin"), "*");
+    assert.match(preflightResponse.headers.get("access-control-allow-methods") || "", /POST/);
+
+    const pairStartCorsResponse = await fetch(`${started.baseUrl}/api/node/account/pair/start`, {
+      method: "POST",
+      headers: {
+        Origin: "https://cthulhu1.tailnet.test",
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify({ label: "CORS pair", accountBaseUrl: started.baseUrl, redirectUri: "" }),
+    });
+    assert.equal(pairStartCorsResponse.headers.get("access-control-allow-origin"), "*");
 
     const securityResponse = await fetch(`${started.baseUrl}/api/node/security/routes`);
     assert.equal(securityResponse.status, 200);

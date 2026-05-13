@@ -967,6 +967,119 @@ async function fetchJson(url, { fetchImpl = fetch, signal, method = "GET", body 
   return payload;
 }
 
+function currentCanvasAccountBaseUrl() {
+  try {
+    return globalThis.location?.origin || "";
+  } catch {
+    return "";
+  }
+}
+
+function pairingGrantFromApproval(approval, accountBaseUrl) {
+  const directGrant = String(approval?.grant || approval?.vibe_grant || "").trim();
+  if (directGrant) return directGrant;
+  const redirectUri = String(approval?.redirectUri || approval?.redirect_uri || "").trim();
+  if (!redirectUri) return "";
+  try {
+    const parsed = new URL(redirectUri, accountBaseUrl || currentCanvasAccountBaseUrl() || undefined);
+    return parsed.searchParams.get("grant") || parsed.searchParams.get("vibe_grant") || "";
+  } catch {
+    return "";
+  }
+}
+
+async function postRemoteNodeJson(baseUrl, remotePath, { fetchImpl, signal, body = {} } = {}) {
+  const remote = String(baseUrl || "").trim();
+  if (!remote) {
+    throw new Error("Remote node URL is required.");
+  }
+  const url = new URL(remotePath, remote).toString();
+  return fetchJson(url, {
+    fetchImpl,
+    signal,
+    method: "POST",
+    body,
+  });
+}
+
+async function pairCanvasRegionFromBrowser(region, { fetchImpl, signal } = {}) {
+  const remoteUrl = String(region?.remoteUrl || "").trim();
+  const label = regionDisplayName(region, region?.id || "") || "Swarmlab node";
+  const accountBaseUrl = currentCanvasAccountBaseUrl();
+  if (!accountBaseUrl) {
+    throw new Error("Account URL is required to pair this machine.");
+  }
+
+  const startPayload = await postRemoteNodeJson(remoteUrl, "/api/node/account/pair/start", {
+    fetchImpl,
+    signal,
+    body: {
+      accountBaseUrl,
+      appBaseUrl: accountBaseUrl,
+      label,
+      redirectUri: "",
+    },
+  });
+  const pairing = startPayload?.pairing || startPayload || {};
+  const pairingId = String(pairing?.pairingId || pairing?.id || "").trim();
+  const pairingCode = String(pairing?.pairingCode || pairing?.code || "").trim();
+  if (!pairingId) {
+    throw new Error("Remote node did not create a pairing request.");
+  }
+
+  const approval = await fetchJson("/api/account/nodes/pairing/approve", {
+    fetchImpl,
+    signal,
+    method: "POST",
+    body: {
+      pairingId,
+      pairingCode,
+    },
+  });
+  const grant = pairingGrantFromApproval(approval, accountBaseUrl);
+  if (!grant) {
+    throw new Error("Account did not approve a pairing grant.");
+  }
+
+  const completePayload = await postRemoteNodeJson(remoteUrl, "/api/node/account/pair/complete", {
+    fetchImpl,
+    signal,
+    body: {
+      accountBaseUrl,
+      appBaseUrl: accountBaseUrl,
+      grant,
+      pairingId,
+      label,
+      redirectUri: "",
+    },
+  });
+
+  let heartbeatPayload = null;
+  try {
+    heartbeatPayload = await postRemoteNodeJson(remoteUrl, "/api/node/account/heartbeat", {
+      fetchImpl,
+      signal,
+      body: {
+        reason: "browser-remote-pair",
+        forceRegister: true,
+      },
+    });
+  } catch {
+    heartbeatPayload = null;
+  }
+
+  return {
+    ok: true,
+    baseUrl: remoteUrl,
+    accountBaseUrl,
+    pairing: { pairingId, status: "approved" },
+    remote: {
+      record: completePayload?.record || null,
+      heartbeat: heartbeatPayload?.heartbeat || heartbeatPayload || null,
+    },
+  };
+}
+
 function timeoutSignal(parentSignal, timeoutMs) {
   const controller = new AbortController();
   const timer = setTimeout(() => controller.abort(), timeoutMs);
@@ -2608,15 +2721,29 @@ async function pairCanvasRegion(button, root, { fetchImpl, abortController, refr
   const previousHtml = button.innerHTML;
   button.textContent = "Pairing...";
   try {
-    await fetchJson(REMOTE_NODE_PAIR_URL, {
-      fetchImpl,
-      signal: abortController.signal,
-      method: "POST",
-      body: {
-        baseUrl: remoteUrl,
-        label: regionDisplayName(region, regionId) || "Swarmlab node",
-      },
-    });
+    try {
+      await fetchJson(REMOTE_NODE_PAIR_URL, {
+        fetchImpl,
+        signal: abortController.signal,
+        method: "POST",
+        body: {
+          baseUrl: remoteUrl,
+          label: regionDisplayName(region, regionId) || "Swarmlab node",
+        },
+      });
+    } catch (serverError) {
+      button.textContent = "Pairing from here...";
+      try {
+        await pairCanvasRegionFromBrowser(region, {
+          fetchImpl,
+          signal: abortController.signal,
+        });
+      } catch (browserError) {
+        const error = new Error(browserError?.message || serverError?.message || "Could not pair this machine.");
+        error.cause = browserError || serverError;
+        throw error;
+      }
+    }
     button.textContent = "Paired";
     if (typeof refresh === "function") {
       refresh();

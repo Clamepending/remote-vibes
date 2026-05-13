@@ -4227,9 +4227,13 @@ export async function createVibeResearchApp({
   });
 
   app.use("/api/node", (request, response, next) => {
-    if (request.method === "GET" || request.method === "HEAD" || request.method === "OPTIONS") {
+    const nodeCorsPath = `${request.path || ""} ${request.originalUrl || ""}`;
+    const isBrowserPairPost =
+      request.method === "POST" &&
+      /(?:^|\s)(?:\/api\/node)?\/account\/(?:pair\/start|pair\/complete|heartbeat)\/?(?:\?|$|\s)/u.test(nodeCorsPath);
+    if (request.method === "GET" || request.method === "HEAD" || request.method === "OPTIONS" || isBrowserPairPost) {
       response.setHeader("Access-Control-Allow-Origin", "*");
-      response.setHeader("Access-Control-Allow-Methods", "GET, HEAD, OPTIONS");
+      response.setHeader("Access-Control-Allow-Methods", "GET, HEAD, POST, OPTIONS");
       response.setHeader("Access-Control-Allow-Headers", "Content-Type, X-Vibe-Research-API, X-Swarmlab-Node-Token, Authorization");
     }
     if (request.method === "OPTIONS") {
