@@ -38,6 +38,7 @@ const FLEET_NODES_URL = "/api/fleet/nodes";
 const NODE_ACCOUNT_NODES_URL = "/api/node/account/nodes";
 const ACCOUNT_NODES_URL = "/api/account/nodes";
 const REMOTE_NODE_SNAPSHOT_PROXY_URL = "/api/node/remote-snapshot";
+const REMOTE_NODE_PAIR_URL = "/api/node/remote-pair";
 const NARRATIVE_POLL_MS = 4_000;
 const REMOTE_NODES_STORAGE_KEY = "swarmlab.canvas.remoteNodes.v1";
 const REMOTE_NODE_FETCH_TIMEOUT_MS = 4_500;
@@ -1436,14 +1437,31 @@ function isRegionCommandable(region, localMachineId) {
   return Boolean(region && (region.id === localMachineId || region.remoteNodeId));
 }
 
+function regionDisplayName(region, fallback = "") {
+  return String(region?.title || fallback || "")
+    .replace(/\s+\([^)]*\)\s*$/u, "")
+    .trim() || String(fallback || "");
+}
+
 function renderAgentTransferBarContent(card, layout, region, localMachineId) {
   if (!region) return "";
   const homeRegionId = getCanvasCardMachineId(card);
   const targetRegionId = getCanvasCardRegionId(card, layout);
   if (homeRegionId === targetRegionId) return "";
-  const targetName = region.title || targetRegionId;
+  const targetName = regionDisplayName(region, targetRegionId);
   if (!isRegionCommandable(region, localMachineId)) {
-    return `<span>Visual placement only. Pair ${escapeHtml(targetName)} to launch this agent there.</span>`;
+    const pairAction = region.remoteUrl
+      ? `
+        <button class="swarmlab-canvas-button" type="button" data-swarmlab-canvas-pair-region="${escapeHtml(region.id)}">
+          ${renderIcon(HardDrive)}
+          <span>Pair</span>
+        </button>
+      `
+      : "";
+    return `
+      <span>Visual placement only. Pair ${escapeHtml(targetName)} to launch this agent there.</span>
+      ${pairAction}
+    `;
   }
   return `
     <span>Capsule ready for ${escapeHtml(targetName)}</span>
@@ -2578,6 +2596,46 @@ async function launchAgentCapsule(button, root, { fetchImpl, abortController, on
   }
 }
 
+async function pairCanvasRegion(button, root, { fetchImpl, abortController, refresh }) {
+  const regionId = button.getAttribute("data-swarmlab-canvas-pair-region") || "";
+  const region = root.__swarmlabCanvasRegionsById?.[regionId] || null;
+  const remoteUrl = String(region?.remoteUrl || "").trim();
+  if (!remoteUrl) {
+    button.textContent = "No node URL";
+    return;
+  }
+  button.setAttribute("disabled", "true");
+  const previousHtml = button.innerHTML;
+  button.textContent = "Pairing...";
+  try {
+    await fetchJson(REMOTE_NODE_PAIR_URL, {
+      fetchImpl,
+      signal: abortController.signal,
+      method: "POST",
+      body: {
+        baseUrl: remoteUrl,
+        label: regionDisplayName(region, regionId) || "Swarmlab node",
+      },
+    });
+    button.textContent = "Paired";
+    if (typeof refresh === "function") {
+      refresh();
+    }
+  } catch (error) {
+    button.removeAttribute("disabled");
+    button.innerHTML = previousHtml;
+    const card = button.closest(".swarmlab-canvas-card.is-agent");
+    if (card) {
+      updateAgentFeed(card, `
+        <div class="swarmlab-agent-message is-error">
+          <span>Pair failed</span>
+          ${escapeHtml(error?.message || "Could not pair this machine.")}
+        </div>
+      `);
+    }
+  }
+}
+
 function bindAgentComposers(root, options) {
   root.querySelectorAll("[data-swarmlab-agent-composer]").forEach((form) => {
     if (!(form instanceof HTMLFormElement)) return;
@@ -2619,6 +2677,19 @@ function bindCanvasActions(root, options) {
       event.preventDefault();
       event.stopPropagation();
       void launchAgentCapsule(button, root, root.__swarmlabCanvasActionOptions || {});
+    });
+  }
+
+  if (!root.__swarmlabCanvasPairRegionBound) {
+    root.__swarmlabCanvasPairRegionBound = true;
+    root.addEventListener("click", (event) => {
+      const button = event.target instanceof Element
+        ? event.target.closest("[data-swarmlab-canvas-pair-region]")
+        : null;
+      if (!(button instanceof HTMLButtonElement)) return;
+      event.preventDefault();
+      event.stopPropagation();
+      void pairCanvasRegion(button, root, root.__swarmlabCanvasActionOptions || {});
     });
   }
 

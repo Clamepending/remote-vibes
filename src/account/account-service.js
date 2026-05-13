@@ -305,11 +305,12 @@ export class AccountService {
 
   async startPairing({
     settings = {},
+    appBaseUrl: requestedAppBaseUrl = "",
     redirectUri = "",
     label = "Swarmlab",
     connectionHints = [],
   } = {}) {
-    const appBaseUrl = this.getAppBaseUrl(settings);
+    const appBaseUrl = normalizeBaseUrl(requestedAppBaseUrl || this.getAppBaseUrl(settings));
     if (!appBaseUrl) {
       throw buildHttpError("Vibe account URL is not configured.", 400);
     }
@@ -346,13 +347,14 @@ export class AccountService {
 
   async completePairing({
     settings = {},
+    appBaseUrl: requestedAppBaseUrl = "",
     grant = "",
     pairingId = "",
     redirectUri = "",
     label = "Swarmlab",
     connectionHints = [],
   } = {}) {
-    const appBaseUrl = this.getAppBaseUrl(settings);
+    const appBaseUrl = normalizeBaseUrl(requestedAppBaseUrl || this.getAppBaseUrl(settings));
     const normalizedGrant = String(grant || "").trim();
     const normalizedPairingId = String(pairingId || "").trim();
     if (!normalizedGrant && !normalizedPairingId) {

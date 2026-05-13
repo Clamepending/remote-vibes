@@ -69,6 +69,7 @@ test("local canvas view renders node snapshot cards and persists drag layout", a
     });
     const postedInputs = [];
     const postedRemoteCommands = [];
+    const postedRemotePairs = [];
     const postedFleetNodes = [];
     const postedHandoffJobs = [];
     const remoteSnapshotHits = new Map();
@@ -266,6 +267,18 @@ test("local canvas view renders node snapshot cards and persists drag layout", a
             operation: postedRemoteCommands.at(-1).operation,
             status: "queued",
           },
+        }),
+      });
+    });
+    await page.route(`${baseUrl}/api/node/remote-pair`, async (route) => {
+      postedRemotePairs.push(JSON.parse(route.request().postData() || "{}"));
+      await route.fulfill({
+        status: 200,
+        contentType: "application/json",
+        body: JSON.stringify({
+          ok: true,
+          baseUrl: postedRemotePairs.at(-1).baseUrl,
+          pairing: { status: "approved" },
         }),
       });
     });
@@ -638,8 +651,17 @@ test("local canvas view renders node snapshot cards and persists drag layout", a
     assert.equal(await page.locator('[data-swarmlab-canvas-card-id="session:session-1"] [data-swarmlab-canvas-agent-capsule]').count(), 0);
     assert.match(
       await page.locator('[data-swarmlab-canvas-card-id="session:session-1"] [data-swarmlab-agent-transfer-bar]').innerText(),
-      /Visual placement only\. Pair GPU Cluster .* to launch this agent there/,
+      /Visual placement only\. Pair GPU Cluster to launch this agent there/,
     );
+    const pairButton = page.locator('[data-swarmlab-canvas-card-id="session:session-1"] [data-swarmlab-canvas-pair-region="gpu-cluster"]');
+    await pairButton.waitFor({ timeout: 10_000 });
+    await pairButton.click();
+    for (let attempt = 0; attempt < 20 && postedRemotePairs.length === 0; attempt += 1) {
+      await page.waitForTimeout(50);
+    }
+    assert.equal(postedRemotePairs.length, 1);
+    assert.equal(postedRemotePairs[0].baseUrl, "https://gpu-node.example.test");
+    assert.equal(postedRemotePairs[0].label, "GPU Cluster");
 
     await page.evaluate(() => {
       const answers = [

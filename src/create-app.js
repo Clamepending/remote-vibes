@@ -433,6 +433,57 @@ async function fetchRemoteNodeSnapshotForCanvas({
   }
 }
 
+async function postRemoteNodeJson({
+  baseUrl,
+  path: remotePath,
+  body = {},
+  fetchImpl = globalThis.fetch,
+  timeoutMs = 30_000,
+} = {}) {
+  const normalizedBaseUrl = normalizeFleetNodeUrl(baseUrl);
+  if (!normalizedBaseUrl) {
+    throw buildHttpError("Remote node URL is required.", 400);
+  }
+  if (typeof fetchImpl !== "function") {
+    throw buildHttpError("Remote node fetch is not available.", 500);
+  }
+
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), timeoutMs);
+  try {
+    const upstream = await fetchImpl(new URL(remotePath, normalizedBaseUrl).toString(), {
+      method: "POST",
+      headers: {
+        Accept: "application/json",
+        "Content-Type": "application/json",
+        "User-Agent": "swarmlab",
+      },
+      body: JSON.stringify(body || {}),
+      signal: controller.signal,
+    });
+    let payload = null;
+    try {
+      payload = await upstream.json();
+    } catch {
+      payload = null;
+    }
+    if (!upstream.ok) {
+      throw buildHttpError(payload?.error || `Remote node request failed with status ${upstream.status}.`, 502);
+    }
+    return payload || {};
+  } catch (error) {
+    if (error?.statusCode) {
+      throw error;
+    }
+    const message = error?.name === "AbortError"
+      ? "Remote node request timed out."
+      : "Could not reach remote node.";
+    throw buildHttpError(message, 502);
+  } finally {
+    clearTimeout(timer);
+  }
+}
+
 function pushUniqueAbsolutePath(out, seen, value) {
   const raw = String(value || "").trim();
   if (!raw || !path.isAbsolute(raw)) {
@@ -2196,6 +2247,12 @@ export async function createVibeResearchApp({
     }),
     buildRouteClass({
       method: "POST",
+      path: "/api/node/remote-pair",
+      classification: "local-auth",
+      description: "Pairs a reachable Swarmlab node into the local account command relay.",
+    }),
+    buildRouteClass({
+      method: "POST",
       path: "/api/terminate",
       classification: "local-auth",
       description: "Stops the local node process.",
@@ -3478,6 +3535,22 @@ export async function createVibeResearchApp({
     }
   }
 
+  function accountBaseUrlOverrideFromRequest(request) {
+    return normalizeFleetNodeUrl(
+      request.body?.accountBaseUrl ||
+        request.body?.appBaseUrl,
+    );
+  }
+
+  function controllerAccountBaseUrlForRequest(request) {
+    return accountBaseUrlOverrideFromRequest(request) || normalizeFleetNodeUrl(
+      getRequestOrigin(request) ||
+        publicBaseUrl ||
+        preferredUrl ||
+        helperBaseUrl,
+    );
+  }
+
   function renderAccountMachinesPage({ nodes = [], owner = "local" } = {}) {
     const cards = nodes.length
       ? nodes.map((node) => {
@@ -4235,6 +4308,91 @@ export async function createVibeResearchApp({
     }
   });
 
+  app.post("/api/node/remote-pair", requireLocalOrNodeToken, async (request, response) => {
+    const baseUrl = normalizeFleetNodeUrl(request.body?.baseUrl || request.body?.url || request.body?.href);
+    const accountBaseUrl = controllerAccountBaseUrlForRequest(request);
+    const label = String(request.body?.label || request.body?.name || "Swarmlab node").trim().slice(0, 120) || "Swarmlab node";
+    try {
+      if (!baseUrl) {
+        throw buildHttpError("Remote node URL is required.", 400);
+      }
+      if (!accountBaseUrl) {
+        throw buildHttpError("Account URL is required to pair a remote node.", 400);
+      }
+
+      const owner = accountOwnerIdFromRequest(request);
+      const startPayload = await postRemoteNodeJson({
+        baseUrl,
+        path: "/api/node/account/pair/start",
+        fetchImpl: remoteNodeFetchImpl,
+        body: {
+          accountBaseUrl,
+          appBaseUrl: accountBaseUrl,
+          label,
+          redirectUri: "",
+        },
+      });
+      const pairingId = String(startPayload?.pairing?.pairingId || startPayload?.pairingId || "").trim();
+      const pairingCode = String(startPayload?.pairing?.pairingCode || startPayload?.pairingCode || "").trim();
+      if (!pairingId) {
+        throw buildHttpError("Remote node did not create a pairing request.", 502);
+      }
+
+      const approval = await accountNodeRegistryService.approvePairing({
+        pairingId,
+        pairingCode,
+        ownerAccountId: owner,
+      });
+
+      const completePayload = await postRemoteNodeJson({
+        baseUrl,
+        path: "/api/node/account/pair/complete",
+        fetchImpl: remoteNodeFetchImpl,
+        body: {
+          accountBaseUrl,
+          appBaseUrl: accountBaseUrl,
+          grant: approval.grant,
+          pairingId,
+          label,
+          redirectUri: "",
+        },
+      });
+
+      let heartbeatPayload = null;
+      try {
+        heartbeatPayload = await postRemoteNodeJson({
+          baseUrl,
+          path: "/api/node/account/heartbeat",
+          fetchImpl: remoteNodeFetchImpl,
+          body: {
+            reason: "remote-pair",
+            forceRegister: true,
+          },
+          timeoutMs: 20_000,
+        });
+      } catch {
+        heartbeatPayload = null;
+      }
+
+      response.json({
+        ok: true,
+        baseUrl,
+        accountBaseUrl,
+        pairing: {
+          pairingId,
+          status: approval.pairing?.status || "approved",
+        },
+        remote: {
+          record: completePayload?.record || null,
+          heartbeat: heartbeatPayload?.heartbeat || heartbeatPayload || null,
+        },
+        nodes: accountNodeRegistryService.listNodesForOwner(owner),
+      });
+    } catch (error) {
+      response.status(error.statusCode || 400).json({ error: error.message || "Could not pair remote node." });
+    }
+  });
+
   app.get("/api/node/security/routes", (request, response) => {
     response.setHeader("Cache-Control", "no-store");
     response.json({
@@ -4373,8 +4531,10 @@ export async function createVibeResearchApp({
   app.post("/api/node/account/pair/start", requireLocalOrNodeToken, async (request, response) => {
     try {
       const callbackPort = exposedPort || port;
+      const accountBaseUrl = accountBaseUrlOverrideFromRequest(request) || undefined;
       const pairing = await accountService.startPairing({
         settings: settingsStore.settings,
+        appBaseUrl: accountBaseUrl,
         redirectUri: request.body?.redirectUri || getAccountCompletionUrl(callbackPort),
         label: request.body?.label || "Swarmlab",
         connectionHints: buildNodeConnectionHints(),
@@ -4388,8 +4548,10 @@ export async function createVibeResearchApp({
   app.post("/api/node/account/pair/complete", requireLocalOrNodeToken, async (request, response) => {
     try {
       const callbackPort = exposedPort || port;
+      const accountBaseUrl = accountBaseUrlOverrideFromRequest(request) || undefined;
       const record = await accountService.completePairing({
         settings: settingsStore.settings,
+        appBaseUrl: accountBaseUrl,
         grant: request.body?.grant || request.body?.vibe_grant,
         pairingId: request.body?.pairingId || request.body?.pairing_id,
         redirectUri: request.body?.redirectUri || getAccountCompletionUrl(callbackPort),

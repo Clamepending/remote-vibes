@@ -509,6 +509,119 @@ test("hosted /api/account node registry routes power machine discovery without l
   }
 });
 
+test("/api/node/remote-pair pairs a reachable fleet URL into the command relay", async () => {
+  const remoteIdentityStore = new NodeIdentityStore({ stateDir: await mkdtemp(path.join(os.tmpdir(), "swarmlab-remote-pair-node-")) });
+  await remoteIdentityStore.initialize();
+  const remoteIdentity = remoteIdentityStore.getPublicIdentity({ includeHostname: false });
+  let remoteAccessToken = "";
+  let remoteAccountBaseUrl = "";
+  const remoteFetchImpl = async (url, init = {}) => {
+    const requestUrl = new URL(url);
+    const body = init.body ? JSON.parse(init.body) : {};
+    if (requestUrl.origin !== "https://remote-gpu.tailnet.test") {
+      return new Response(JSON.stringify({ error: "unexpected remote host" }), { status: 404 });
+    }
+    if (requestUrl.pathname === "/api/node/account/pair/start") {
+      const accountBaseUrl = body.accountBaseUrl;
+      const response = await fetch(new URL("/api/account/nodes/pairing", accountBaseUrl).toString(), {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          label: body.label,
+          identity: remoteIdentity,
+          connectionHints: [{ kind: "tailscale", url: "https://remote-gpu.tailnet.test/private?token=pair-secret" }],
+        }),
+      });
+      const payload = await response.json();
+      return new Response(JSON.stringify({ pairing: payload }), { status: response.status });
+    }
+    if (requestUrl.pathname === "/api/node/account/pair/complete") {
+      const accountBaseUrl = body.accountBaseUrl;
+      remoteAccountBaseUrl = accountBaseUrl;
+      const response = await fetch(new URL("/api/account/nodes/pairing/complete", accountBaseUrl).toString(), {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          grant: body.grant,
+          pairingId: body.pairingId,
+          label: body.label,
+          identity: remoteIdentity,
+          connectionHints: [{ kind: "tailscale", url: "https://remote-gpu.tailnet.test/complete?token=pair-secret" }],
+        }),
+      });
+      const payload = await response.json();
+      remoteAccessToken = payload.accessToken || "";
+      return new Response(JSON.stringify({ record: { account: payload.account, node: payload.node } }), { status: response.status });
+    }
+    if (requestUrl.pathname === "/api/node/account/heartbeat") {
+      const snapshot = {
+        node: {
+          nodeId: remoteIdentity.nodeId,
+          installId: remoteIdentity.installId,
+          displayName: "Remote GPU",
+          swarmlabVersion: "1.0.19",
+          os: "linux",
+          arch: "x64",
+        },
+        counts: { sessions: 2, runningSessions: 1, ports: 1 },
+        capabilities: { gpuCount: 8, providerCount: 2, roles: ["agent-host", "gpu-worker"] },
+        system: { platform: "linux", arch: "x64", gpuCount: 8 },
+        generatedAt: "2026-05-12T21:00:00.000Z",
+      };
+      const heartbeatUnsigned = buildNodeHeartbeatPayload({
+        identity: remoteIdentity,
+        snapshot,
+        connectionHints: [{ kind: "tailscale", url: "https://remote-gpu.tailnet.test/heartbeat?token=pair-secret" }],
+      });
+      const response = await fetch(new URL(`/api/account/nodes/${encodeURIComponent(remoteIdentity.nodeId)}/heartbeat`, remoteAccountBaseUrl).toString(), {
+        method: "POST",
+        headers: {
+          Authorization: `Bearer ${remoteAccessToken}`,
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify({
+          heartbeat: {
+            ...heartbeatUnsigned,
+            signature: remoteIdentityStore.signPayload({ type: "node.heartbeat", heartbeat: heartbeatUnsigned }),
+          },
+        }),
+      });
+      const payload = await response.json();
+      return new Response(JSON.stringify({ heartbeat: payload }), { status: response.status });
+    }
+    return new Response(JSON.stringify({ error: "unexpected remote route" }), { status: 404 });
+  };
+
+  const started = await startNodeRoutesApp({ remoteNodeFetchImpl: remoteFetchImpl });
+  try {
+    const pairResponse = await fetch(`${started.baseUrl}/api/node/remote-pair`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        baseUrl: "https://remote-gpu.tailnet.test/private?token=pair-secret",
+        label: "Remote GPU",
+      }),
+    });
+    assert.equal(pairResponse.status, 200);
+    const pairBody = await pairResponse.json();
+    assert.equal(pairBody.ok, true);
+    assert.equal(pairBody.baseUrl, "https://remote-gpu.tailnet.test");
+    assert.doesNotMatch(JSON.stringify(pairBody), /pair-secret|slnode_|grant_/);
+
+    const nodesResponse = await fetch(`${started.baseUrl}/api/account/nodes`);
+    assert.equal(nodesResponse.status, 200);
+    const nodesBody = await nodesResponse.json();
+    const remoteNode = nodesBody.nodes.find((node) => node.nodeId === remoteIdentity.nodeId);
+    assert.equal(remoteNode.displayName, "Remote GPU");
+    assert.equal(remoteNode.baseUrl, "https://remote-gpu.tailnet.test");
+    assert.equal(remoteNode.capabilities.gpuCount, 8);
+    assert.doesNotMatch(JSON.stringify(nodesBody), /pair-secret|slnode_|grant_|\/private|\/complete|\/heartbeat/);
+  } finally {
+    await started.cleanup();
+    await rm(remoteIdentityStore.stateDir, { recursive: true, force: true });
+  }
+});
+
 test("/api/fleet/nodes persists normalized machine URLs without exposing query secrets", async () => {
   const started = await startNodeRoutesApp();
   try {
