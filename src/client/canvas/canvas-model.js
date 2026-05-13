@@ -1,4 +1,4 @@
-export const CANVAS_LAYOUT_STORAGE_PREFIX = "swarmlab.canvas.layout.v4";
+export const CANVAS_LAYOUT_STORAGE_PREFIX = "swarmlab.canvas.layout.v5";
 export const CANVAS_VIEWPORT_STORAGE_PREFIX = "swarmlab.canvas.viewport.v1";
 
 const DEFAULT_CARD_WIDTH = 270;
@@ -17,6 +17,19 @@ const BRAIN_CARD_WIDTH = 360;
 const BRAIN_CARD_HEIGHT = 260;
 const SUMMARY_CARD_WIDTH = 320;
 const SUMMARY_CARD_HEIGHT = 170;
+const MACHINE_REGION_COLUMNS = 2;
+const MACHINE_REGION_WIDTH = 980;
+const MACHINE_REGION_MIN_HEIGHT = 860;
+const MACHINE_REGION_MARGIN_X = 96;
+const MACHINE_REGION_MARGIN_Y = 96;
+const MACHINE_REGION_GAP_X = 150;
+const MACHINE_REGION_GAP_Y = 140;
+const MACHINE_REGION_PADDING_X = 32;
+const MACHINE_REGION_HEADER_HEIGHT = 78;
+const MACHINE_REGION_BOTTOM_PADDING = 38;
+const MACHINE_REGION_COLUMN_GAP = 34;
+const MACHINE_REGION_ROW_GAP = 30;
+const MACHINE_REGION_LEFT_WIDTH = 360;
 const MAX_CANVAS_AGENT_CARDS = 4;
 const MAX_CANVAS_BROWSER_CARDS = 2;
 const MAX_CANVAS_ARTIFACT_CARDS = 1;
@@ -241,6 +254,117 @@ export function normalizeNodeSnapshot(payload) {
   };
 }
 
+export function getCanvasCardMachineId(card) {
+  return normalizeId(card?.ref?.machineId || card?.ref?.remoteMachineId || card?.ref?.remoteUrl || card?.id || "local", "local");
+}
+
+export function getCanvasCardRegionId(card, layout = {}) {
+  const fallback = getCanvasCardMachineId(card);
+  return normalizeId(layout?.regionId || fallback, fallback);
+}
+
+export function buildCanvasRegions(cards, layout = {}) {
+  const regionMap = new Map();
+
+  const ensureRegion = (id) => {
+    const regionId = normalizeId(id, "local");
+    if (!regionMap.has(regionId)) {
+      regionMap.set(regionId, {
+        id: regionId,
+        title: regionId,
+        subtitle: "",
+        status: "",
+        detail: "",
+        meta: "",
+        tags: [],
+        remoteNodeId: "",
+        remoteUrl: "",
+        x: Infinity,
+        y: Infinity,
+        maxX: -Infinity,
+        maxY: -Infinity,
+        index: regionMap.size,
+      });
+    }
+    return regionMap.get(regionId);
+  };
+  const finiteNumber = (value) => {
+    const number = Number(value);
+    return Number.isFinite(number) ? number : null;
+  };
+  const extendRegion = (region, x, y, width, height) => {
+    if (![x, y, width, height].every((value) => Number.isFinite(value))) return;
+    region.x = Math.min(region.x, x);
+    region.y = Math.min(region.y, y);
+    region.maxX = Math.max(region.maxX, x + width);
+    region.maxY = Math.max(region.maxY, y + height);
+  };
+
+  cards.forEach((card) => {
+    const machineId = getCanvasCardMachineId(card);
+    const region = ensureRegion(machineId);
+    if (card.type === "machine") {
+      region.title = card.title || region.title;
+      region.subtitle = card.subtitle || region.subtitle;
+      region.status = card.status || region.status;
+      region.detail = card.detail || region.detail;
+      region.meta = card.meta || region.meta;
+      region.tags = card.tags || region.tags;
+      region.remoteNodeId = card.ref?.remoteNodeId || region.remoteNodeId;
+      region.remoteUrl = card.ref?.remoteUrl || region.remoteUrl;
+    } else {
+      region.remoteNodeId = region.remoteNodeId || card.ref?.remoteNodeId || "";
+      region.remoteUrl = region.remoteUrl || card.ref?.remoteUrl || "";
+    }
+  });
+
+  cards.forEach((card) => {
+    const item = layout?.[card.id] || {};
+    const machineId = getCanvasCardMachineId(card);
+    const regionId = getCanvasCardRegionId(card, item);
+    const region = ensureRegion(regionId);
+    const regionX = finiteNumber(item.regionX);
+    const regionY = finiteNumber(item.regionY);
+    const regionWidth = finiteNumber(item.regionWidth);
+    const regionHeight = finiteNumber(item.regionHeight);
+    if (regionId === machineId && regionX != null && regionY != null && regionWidth != null && regionHeight != null) {
+      extendRegion(region, regionX, regionY, regionWidth, regionHeight);
+    }
+    const cardX = finiteNumber(item.x);
+    const cardY = finiteNumber(item.y);
+    const cardWidth = finiteNumber(item.width) || card.width || DEFAULT_CARD_WIDTH;
+    const cardHeight = finiteNumber(item.height) || card.height || DEFAULT_CARD_HEIGHT;
+    if (cardX != null && cardY != null) {
+      extendRegion(region, cardX - 34, cardY - 62, cardWidth + 68, cardHeight + 108);
+    }
+  });
+
+  return [...regionMap.values()]
+    .sort((left, right) => left.index - right.index)
+    .map((region, index) => {
+      const fallbackX = MACHINE_REGION_MARGIN_X + (index % MACHINE_REGION_COLUMNS) * (MACHINE_REGION_WIDTH + MACHINE_REGION_GAP_X);
+      const fallbackY = MACHINE_REGION_MARGIN_Y + Math.floor(index / MACHINE_REGION_COLUMNS) * (MACHINE_REGION_MIN_HEIGHT + MACHINE_REGION_GAP_Y);
+      const x = Number.isFinite(region.x) ? Math.round(region.x) : fallbackX;
+      const y = Number.isFinite(region.y) ? Math.round(region.y) : fallbackY;
+      return {
+        id: region.id,
+        title: region.title,
+        subtitle: region.subtitle,
+        status: region.status,
+        detail: region.detail,
+        meta: region.meta,
+        tags: region.tags,
+        remoteNodeId: region.remoteNodeId,
+        remoteUrl: region.remoteUrl,
+        x,
+        y,
+        width: Math.round(Math.max(MACHINE_REGION_WIDTH, (Number.isFinite(region.maxX) ? region.maxX - x : MACHINE_REGION_WIDTH))),
+        height: Math.round(Math.max(MACHINE_REGION_MIN_HEIGHT, (Number.isFinite(region.maxY) ? region.maxY - y : MACHINE_REGION_MIN_HEIGHT))),
+        colorIndex: index % 6,
+      };
+    });
+}
+
 function makeCard({
   id,
   type,
@@ -319,7 +443,15 @@ function sessionCard(session, index, machineId) {
     detail: cwd,
     meta: normalizeOptionalDate(pickFirst(session.updatedAt, session.lastActivityAt, session.createdAt)),
     tags: [session.model, session.branch, session.providerId],
-    ref: { machineId, sessionId: id },
+    ref: {
+      machineId,
+      sessionId: id,
+      providerId: normalizeText(session.providerId),
+      providerLabel: normalizeText(session.providerLabel),
+      cwd,
+      name: normalizeText(pickFirst(session.name, session.title, id), id),
+      status: activity,
+    },
     width: AGENT_CARD_WIDTH,
     height: AGENT_CARD_HEIGHT,
   });
@@ -807,7 +939,7 @@ export function createFallbackCanvasLayout(cards) {
   const machineGroups = new Map();
   const machineOrder = [];
   cards.forEach((card, index) => {
-    const machineId = normalizeId(card.ref?.machineId || card.ref?.remoteUrl || card.id || `machine-${index + 1}`, "local");
+    const machineId = getCanvasCardMachineId(card);
     if (!machineGroups.has(machineId)) {
       machineGroups.set(machineId, []);
       machineOrder.push(machineId);
@@ -815,24 +947,9 @@ export function createFallbackCanvasLayout(cards) {
     machineGroups.get(machineId).push({ card, index });
   });
 
-  const leftLaneX = 120;
-  const orchestrationLaneX = 500;
-  const agentLaneX = 900;
-  const appLaneX = 1780;
-  const laneGap = 34;
-  const groupGap = 140;
-  const minGroupHeight = 360;
   const layout = {};
-  let groupY = 96;
-  let appY = 96;
-
-  const laneForCard = (card) => {
-    if (card.type === "machine") return "machine";
-    if (card.type === "agent") return "agent";
-    if (card.type === "app" || card.type === "browser") return "app";
-    return "orchestration";
-  };
   const lanePriority = (card) => {
+    if (card.type === "machine") return -1;
     if (card.type === "handoff") return 0;
     if (card.type === "approval") return 1;
     if (card.type === "brain") return 2;
@@ -840,67 +957,97 @@ export function createFallbackCanvasLayout(cards) {
     if (card.type === "summary") return 4;
     return 5;
   };
-  const placeStack = (entries, x, y, laneWidth) => {
+  const applyRegionMeta = (ids, region) => {
+    ids.forEach((id) => {
+      if (!layout[id]) return;
+      layout[id].regionId = region.id;
+      layout[id].regionX = region.x;
+      layout[id].regionY = region.y;
+      layout[id].regionWidth = MACHINE_REGION_WIDTH;
+      layout[id].regionHeight = region.height;
+    });
+  };
+  const placeStack = (entries, x, y, laneWidth, region) => {
     let cursor = y;
+    const ids = [];
     entries
       .sort((left, right) => lanePriority(left.card) - lanePriority(right.card) || left.index - right.index)
       .forEach(({ card, index }) => {
+        const width = card.width || laneWidth;
+        const height = card.height || DEFAULT_CARD_HEIGHT;
         layout[card.id] = {
           x,
           y: cursor,
-          width: card.width || laneWidth,
-          height: card.height || DEFAULT_CARD_HEIGHT,
-          z: index + 1,
-        };
-        cursor += (card.height || DEFAULT_CARD_HEIGHT) + laneGap;
-      });
-    return cursor - y;
-  };
-  const placeGrid = (entries, x, y, { columns = 1, columnGap = 36, rowGap = 40 } = {}) => {
-    let maxBottom = y;
-    entries
-      .sort((left, right) => left.index - right.index)
-      .forEach(({ card, index }, laneIndex) => {
-        const column = laneIndex % columns;
-        const row = Math.floor(laneIndex / columns);
-        const width = card.width || DEFAULT_CARD_WIDTH;
-        const height = card.height || DEFAULT_CARD_HEIGHT;
-        const cellHeight = Math.max(height, card.type === "agent" ? AGENT_CARD_HEIGHT : APP_CARD_HEIGHT);
-        const px = x + column * (width + columnGap);
-        const py = y + row * (cellHeight + rowGap) + (card.type === "browser" ? 28 : 0);
-        layout[card.id] = {
-          x: px,
-          y: py,
           width,
           height,
           z: index + 1,
         };
-        maxBottom = Math.max(maxBottom, py + height);
+        ids.push(card.id);
+        cursor += height + MACHINE_REGION_ROW_GAP;
       });
-    return maxBottom - y;
+    return { height: Math.max(0, cursor - y - MACHINE_REGION_ROW_GAP), ids };
   };
+  const placeColumn = (entries, x, y, region) => {
+    let cursor = y;
+    const ids = [];
+    entries
+      .sort((left, right) => left.index - right.index)
+      .forEach(({ card, index }) => {
+        const width = card.width || DEFAULT_CARD_WIDTH;
+        const height = card.height || DEFAULT_CARD_HEIGHT;
+        layout[card.id] = {
+          x,
+          y: cursor,
+          width,
+          height,
+          z: index + 1,
+        };
+        ids.push(card.id);
+        cursor += height + (card.type === "agent" ? 46 : MACHINE_REGION_ROW_GAP);
+      });
+    return { height: Math.max(0, cursor - y - MACHINE_REGION_ROW_GAP), ids };
+  };
+
+  let column = 0;
+  let rowY = MACHINE_REGION_MARGIN_Y;
+  let rowHeight = 0;
 
   machineOrder.forEach((machineId) => {
     const entries = machineGroups.get(machineId) || [];
-    const lanes = {
-      machine: [],
-      orchestration: [],
-      agent: [],
-      app: [],
-    };
+    const left = [];
+    const right = [];
     entries.forEach((entry) => {
-      lanes[laneForCard(entry.card)].push(entry);
+      if (entry.card.type === "agent" || entry.card.type === "browser" || entry.card.type === "app") {
+        right.push(entry);
+      } else {
+        left.push(entry);
+      }
     });
 
-    const machineHeight = placeStack(lanes.machine, leftLaneX, groupY, 320);
-    const orchestrationHeight = placeStack(lanes.orchestration, orchestrationLaneX, groupY, 360);
-    const agentHeight = placeGrid(lanes.agent, agentLaneX, groupY, { columns: 2, columnGap: 46, rowGap: 46 });
-    const appHeight = placeGrid(lanes.app, appLaneX, appY, { columns: 1, rowGap: 36 });
-    if (appHeight) {
-      appY += appHeight + groupGap;
+    const region = {
+      id: machineId,
+      x: MACHINE_REGION_MARGIN_X + column * (MACHINE_REGION_WIDTH + MACHINE_REGION_GAP_X),
+      y: rowY,
+      height: MACHINE_REGION_MIN_HEIGHT,
+    };
+    const contentY = region.y + MACHINE_REGION_HEADER_HEIGHT;
+    const leftX = region.x + MACHINE_REGION_PADDING_X;
+    const rightX = leftX + MACHINE_REGION_LEFT_WIDTH + MACHINE_REGION_COLUMN_GAP;
+    const leftResult = placeStack(left, leftX, contentY, MACHINE_REGION_LEFT_WIDTH, region);
+    const rightResult = placeColumn(right, rightX, contentY + (left.length && right.length ? 22 : 0), region);
+    region.height = Math.max(
+      MACHINE_REGION_MIN_HEIGHT,
+      MACHINE_REGION_HEADER_HEIGHT + MACHINE_REGION_BOTTOM_PADDING + leftResult.height,
+      MACHINE_REGION_HEADER_HEIGHT + MACHINE_REGION_BOTTOM_PADDING + (left.length && right.length ? 22 : 0) + rightResult.height,
+    );
+    applyRegionMeta([...leftResult.ids, ...rightResult.ids], region);
+    rowHeight = Math.max(rowHeight, region.height);
+    column += 1;
+    if (column >= MACHINE_REGION_COLUMNS) {
+      rowY += rowHeight + MACHINE_REGION_GAP_Y;
+      rowHeight = 0;
+      column = 0;
     }
-    const groupHeight = Math.max(minGroupHeight, machineHeight, orchestrationHeight, agentHeight);
-    groupY += groupHeight + groupGap;
   });
 
   return layout;
@@ -917,19 +1064,27 @@ export function sanitizeCanvasLayout(value) {
         const width = normalizeNumber(item.width, DEFAULT_CARD_WIDTH);
         const height = normalizeNumber(item.height, DEFAULT_CARD_HEIGHT);
         const z = normalizeNumber(item.z, 0);
+        const regionId = normalizeText(item.regionId) ? normalizeId(item.regionId, "") : "";
+        const regionX = normalizeNumber(item.regionX, NaN);
+        const regionY = normalizeNumber(item.regionY, NaN);
+        const regionWidth = normalizeNumber(item.regionWidth, NaN);
+        const regionHeight = normalizeNumber(item.regionHeight, NaN);
         if (!id) {
           return null;
         }
-        return [
-          id,
-          {
-            x: Math.round(Math.max(-2_000, Math.min(20_000, x))),
-            y: Math.round(Math.max(-2_000, Math.min(20_000, y))),
-            width: Math.round(Math.max(180, Math.min(720, width))),
-            height: Math.round(Math.max(120, Math.min(540, height))),
-            z: Math.round(Math.max(0, Math.min(100_000, z))),
-          },
-        ];
+        const sanitized = {
+          x: Math.round(Math.max(-2_000, Math.min(20_000, x))),
+          y: Math.round(Math.max(-2_000, Math.min(20_000, y))),
+          width: Math.round(Math.max(180, Math.min(720, width))),
+          height: Math.round(Math.max(120, Math.min(540, height))),
+          z: Math.round(Math.max(0, Math.min(100_000, z))),
+        };
+        if (regionId) sanitized.regionId = regionId;
+        if (Number.isFinite(regionX)) sanitized.regionX = Math.round(Math.max(-2_000, Math.min(20_000, regionX)));
+        if (Number.isFinite(regionY)) sanitized.regionY = Math.round(Math.max(-2_000, Math.min(20_000, regionY)));
+        if (Number.isFinite(regionWidth)) sanitized.regionWidth = Math.round(Math.max(420, Math.min(4_000, regionWidth)));
+        if (Number.isFinite(regionHeight)) sanitized.regionHeight = Math.round(Math.max(320, Math.min(5_000, regionHeight)));
+        return [id, sanitized];
       })
       .filter(Boolean),
   );
@@ -941,11 +1096,17 @@ export function mergeCanvasLayout(cards, savedLayout = {}) {
   return Object.fromEntries(cards.map((card, index) => {
     const base = fallback[card.id] || { x: 32, y: 32, width: card.width, height: card.height, z: index + 1 };
     const override = saved[card.id] || {};
+    const homeRegionId = getCanvasCardMachineId(card);
     return [
       card.id,
       {
         ...base,
         ...override,
+        regionId: override.regionId || base.regionId || homeRegionId,
+        regionX: base.regionX,
+        regionY: base.regionY,
+        regionWidth: base.regionWidth,
+        regionHeight: base.regionHeight,
         width: override.width || card.width || base.width,
         height: override.height || card.height || base.height,
         z: override.z || base.z,

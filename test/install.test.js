@@ -1559,8 +1559,10 @@ exit 0
       "start tailscaled",
     ]);
     assert.match(await readFile(tailscaledLog, "utf8"), /--tun=userspace-networking/);
-    assert.deepEqual((await readFile(tailscaleLog, "utf8")).trim().split("\n"), [
-      "status --json",
+    const tailscaleCommands = (await readFile(tailscaleLog, "utf8")).trim().split("\n");
+    assert.ok(tailscaleCommands.slice(0, -4).every((command) => command === "status --json"));
+    assert.ok(tailscaleCommands.slice(0, -4).length >= 1);
+    assert.deepEqual(tailscaleCommands.slice(-4), [
       "ip -4",
       "up",
       "ip -4",

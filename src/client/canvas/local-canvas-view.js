@@ -20,6 +20,9 @@ import {
 } from "lucide";
 import {
   buildCanvasCards,
+  buildCanvasRegions,
+  getCanvasCardMachineId,
+  getCanvasCardRegionId,
   getCanvasBoardId,
   getCanvasLayoutStorageKey,
   getCanvasViewportStorageKey,
@@ -38,7 +41,7 @@ const NARRATIVE_POLL_MS = 4_000;
 const REMOTE_NODES_STORAGE_KEY = "swarmlab.canvas.remoteNodes.v1";
 const REMOTE_NODE_FETCH_TIMEOUT_MS = 4_500;
 const BOARD_WIDTH = 4_800;
-const BOARD_HEIGHT = 3_200;
+const BOARD_HEIGHT = 5_200;
 const DEFAULT_VIEWPORT = { x: 64, y: 48, zoom: 0.92 };
 const CARD_TYPE_ICONS = {
   agent: Bot,
@@ -51,6 +54,7 @@ const CARD_TYPE_ICONS = {
   machine: HardDrive,
   summary: Archive,
 };
+const REGION_COLORS = ["#f97316", "#74c7b8", "#7aa2f7", "#9ece6a", "#e879f9", "#f6c177"];
 
 let activeController = null;
 
@@ -236,6 +240,83 @@ function injectCanvasStyles(documentRef = document) {
   transform-origin: 0 0;
   will-change: transform;
 }
+.swarmlab-canvas-region {
+  position: absolute;
+  transform: translate3d(var(--region-x), var(--region-y), 0);
+  width: var(--region-width);
+  height: var(--region-height);
+  border: 1px solid color-mix(in srgb, var(--region-accent) 42%, transparent);
+  border-radius: 10px;
+  background:
+    linear-gradient(180deg, color-mix(in srgb, var(--region-accent) 10%, transparent), transparent 34%),
+    color-mix(in srgb, var(--region-accent) 4%, transparent);
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.035);
+  pointer-events: none;
+}
+.swarmlab-canvas-region.is-drop-target {
+  border-color: color-mix(in srgb, var(--region-accent) 76%, white 8%);
+  background:
+    linear-gradient(180deg, color-mix(in srgb, var(--region-accent) 16%, transparent), transparent 38%),
+    color-mix(in srgb, var(--region-accent) 8%, transparent);
+}
+.swarmlab-canvas-region-label {
+  position: absolute;
+  left: 18px;
+  top: 15px;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  max-width: calc(100% - 36px);
+  color: var(--canvas-text);
+}
+.swarmlab-canvas-region-chip {
+  width: 13px;
+  height: 13px;
+  flex: 0 0 auto;
+  border-radius: 4px;
+  background: var(--region-accent);
+  box-shadow: 0 0 18px color-mix(in srgb, var(--region-accent) 42%, transparent);
+}
+.swarmlab-canvas-region-title {
+  min-width: 0;
+}
+.swarmlab-canvas-region-title strong,
+.swarmlab-canvas-region-title span {
+  display: block;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.swarmlab-canvas-region-title strong {
+  font-size: 12px;
+  font-weight: 760;
+}
+.swarmlab-canvas-region-title span {
+  margin-top: 2px;
+  color: var(--canvas-muted);
+  font-size: 10px;
+}
+.swarmlab-canvas-pipe-layer {
+  position: absolute;
+  inset: 0;
+  width: ${BOARD_WIDTH}px;
+  height: ${BOARD_HEIGHT}px;
+  overflow: visible;
+  pointer-events: none;
+}
+.swarmlab-canvas-pipe {
+  fill: none;
+  stroke: rgba(116, 199, 184, 0.46);
+  stroke-width: 2;
+  stroke-linecap: round;
+  stroke-dasharray: 9 9;
+}
+.swarmlab-canvas-pipe.is-transfer {
+  stroke: rgba(249, 115, 22, 0.72);
+  stroke-width: 2.5;
+  stroke-dasharray: none;
+}
 .swarmlab-canvas-card {
   position: absolute;
   display: grid;
@@ -299,6 +380,9 @@ function injectCanvasStyles(documentRef = document) {
 .swarmlab-canvas-card.is-remote {
   border-color: rgba(116, 199, 184, 0.24);
 }
+.swarmlab-canvas-card.is-cross-region {
+  border-color: rgba(249, 115, 22, 0.55);
+}
 .swarmlab-canvas-drag-grip {
   color: var(--canvas-faint);
 }
@@ -354,6 +438,38 @@ function injectCanvasStyles(documentRef = document) {
   display: grid;
   grid-template-rows: minmax(0, 1fr) auto;
   min-height: 0;
+}
+.swarmlab-agent-transfer-bar {
+  display: none;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  margin: 12px 12px 0;
+  padding: 8px 9px;
+  border: 1px solid rgba(249, 115, 22, 0.35);
+  border-radius: 8px;
+  background: rgba(249, 115, 22, 0.12);
+  color: #f6d5be;
+  font-size: 11px;
+}
+.swarmlab-canvas-card.is-cross-region .swarmlab-agent-transfer-bar {
+  display: flex;
+}
+.swarmlab-canvas-agent-body {
+  display: grid;
+  grid-template-rows: auto minmax(0, 1fr);
+  min-height: 0;
+  overflow: hidden;
+}
+.swarmlab-agent-transfer-bar span {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.swarmlab-agent-transfer-bar button {
+  min-height: 28px;
+  padding: 0 9px;
 }
 .swarmlab-agent-chat-feed {
   display: flex;
@@ -442,6 +558,10 @@ function injectCanvasStyles(documentRef = document) {
 .swarmlab-agent-composer.is-sending button {
   opacity: 0.6;
   pointer-events: none;
+}
+.swarmlab-agent-composer.is-disabled {
+  grid-template-columns: minmax(0, 1fr);
+  color: var(--canvas-faint);
 }
 .swarmlab-canvas-browser-body {
   display: grid;
@@ -837,6 +957,8 @@ function normalizeRegistryFleetNode(node) {
   return {
     id: String(node?.id || node?.nodeId || "").trim(),
     nodeId,
+    source: String(node?.source || "").trim(),
+    commandable: Boolean(node?.commandable),
     baseUrl: baseUrl || fallbackUrl,
     url: baseUrl || fallbackUrl,
     label: String(node?.label || "").trim(),
@@ -865,7 +987,11 @@ async function fetchRegistryNodes({ fetchImpl, signal }) {
     fetchJson(NODE_ACCOUNT_NODES_URL, { fetchImpl, signal }).catch(() => null),
     fetchJson(ACCOUNT_NODES_URL, { fetchImpl, signal }).catch(() => null),
   ]);
-  return payloads.flatMap((payload) => normalizeFleetNodes(payload));
+  return [
+    ...normalizeFleetNodes(payloads[0]).map((node) => ({ ...node, source: node.source || "fleet" })),
+    ...normalizeFleetNodes(payloads[1]).map((node) => ({ ...node, source: node.source || "node-account", commandable: true })),
+    ...normalizeFleetNodes(payloads[2]).map((node) => ({ ...node, source: node.source || "account", commandable: true })),
+  ];
 }
 
 async function registerFleetNodeUrl(url, { fetchImpl, signal, source = "manual", snapshot = null, label = "", lastError = "" } = {}) {
@@ -914,6 +1040,8 @@ async function fetchRemoteNodeRecords({ fetchImpl, signal, storage, currentOrigi
       id: normalized.id || existing.id || "",
       label: normalized.label || existing.label || "",
       displayName: normalized.displayName || existing.displayName || "",
+      source: normalized.source || existing.source || "",
+      commandable: Boolean(normalized.commandable || existing.commandable),
       status: normalized.status || existing.status || "",
       lastSeenAt: normalized.lastSeenAt || existing.lastSeenAt || "",
       os: normalized.os || existing.os || "",
@@ -1058,6 +1186,129 @@ function shortPath(value) {
   return `.../${parts.slice(-3).join("/")}`;
 }
 
+function regionAccent(region) {
+  return REGION_COLORS[Math.abs(Number(region?.colorIndex) || 0) % REGION_COLORS.length];
+}
+
+function regionSummary(region) {
+  return [region.subtitle, region.status].filter(Boolean).join(" / ") || region.detail || "machine region";
+}
+
+function renderCanvasRegion(region) {
+  return `
+    <section
+      class="swarmlab-canvas-region"
+      data-swarmlab-canvas-region-id="${escapeHtml(region.id)}"
+      ${region.remoteNodeId ? `data-swarmlab-canvas-region-remote-node-id="${escapeHtml(region.remoteNodeId)}"` : ""}
+      ${region.remoteUrl ? `data-swarmlab-canvas-region-remote-url="${escapeHtml(region.remoteUrl)}"` : ""}
+      style="--region-x: ${region.x}px; --region-y: ${region.y}px; --region-width: ${region.width}px; --region-height: ${region.height}px; --region-accent: ${regionAccent(region)};"
+    >
+      <div class="swarmlab-canvas-region-label">
+        <span class="swarmlab-canvas-region-chip" aria-hidden="true"></span>
+        <span class="swarmlab-canvas-region-title">
+          <strong>${escapeHtml(region.title || region.id)}</strong>
+          <span>${escapeHtml(regionSummary(region))}</span>
+        </span>
+      </div>
+    </section>
+  `;
+}
+
+function cardCenter(layout = {}) {
+  return {
+    x: (Number(layout.x) || 0) + (Number(layout.width) || 0) / 2,
+    y: (Number(layout.y) || 0) + (Number(layout.height) || 0) / 2,
+  };
+}
+
+function regionControlPoint(region = {}) {
+  return {
+    x: (Number(region.x) || 0) + Math.min(260, Math.max(80, (Number(region.width) || 0) * 0.25)),
+    y: (Number(region.y) || 0) + 40,
+  };
+}
+
+function pipePath(from, to) {
+  const midX = Math.round((from.x + to.x) / 2);
+  return `M ${Math.round(from.x)} ${Math.round(from.y)} C ${midX} ${Math.round(from.y)}, ${midX} ${Math.round(to.y)}, ${Math.round(to.x)} ${Math.round(to.y)}`;
+}
+
+function renderCanvasPipes(cards, layout, regions, localMachineId) {
+  const regionsById = new Map(regions.map((region) => [region.id, region]));
+  const pipes = [];
+  cards.forEach((card) => {
+    const item = layout[card.id];
+    if (!item) return;
+    const homeRegionId = getCanvasCardMachineId(card);
+    const assignedRegionId = getCanvasCardRegionId(card, item);
+    const assignedRegion = regionsById.get(assignedRegionId);
+    const cardPoint = cardCenter(item);
+    if (homeRegionId !== assignedRegionId && assignedRegion) {
+      const sourceRegion = regionsById.get(homeRegionId);
+      if (sourceRegion) {
+        pipes.push({
+          kind: "transfer",
+          cardId: card.id,
+          sourceRegionId: homeRegionId,
+          targetRegionId: assignedRegionId,
+          path: pipePath(regionControlPoint(sourceRegion), cardPoint),
+        });
+      }
+    }
+    if (card.type === "agent" && card.ref?.remoteNodeId && card.ref?.remoteUrl && localMachineId && homeRegionId !== localMachineId) {
+      const localRegion = regionsById.get(localMachineId);
+      if (localRegion) {
+        pipes.push({
+          kind: "control",
+          cardId: card.id,
+          sourceRegionId: localMachineId,
+          targetRegionId: homeRegionId,
+          path: pipePath(regionControlPoint(localRegion), cardPoint),
+        });
+      }
+    }
+  });
+  return pipes.map((pipe) => `
+    <path
+      class="swarmlab-canvas-pipe is-${escapeHtml(pipe.kind)}"
+      data-swarmlab-canvas-pipe-card-id="${escapeHtml(pipe.cardId)}"
+      data-swarmlab-canvas-pipe-source-region-id="${escapeHtml(pipe.sourceRegionId)}"
+      data-swarmlab-canvas-pipe-target-region-id="${escapeHtml(pipe.targetRegionId)}"
+      d="${escapeHtml(pipe.path)}"
+    ></path>
+  `).join("");
+}
+
+function renderCanvasPipeLayer(cards, layout, regions, localMachineId) {
+  return `
+    <svg class="swarmlab-canvas-pipe-layer" data-swarmlab-canvas-pipe-layer aria-hidden="true">
+      ${renderCanvasPipes(cards, layout, regions, localMachineId)}
+    </svg>
+  `;
+}
+
+function isRegionCommandable(region, localMachineId) {
+  return Boolean(region && (region.id === localMachineId || region.remoteNodeId));
+}
+
+function renderAgentTransferBarContent(card, layout, region, localMachineId) {
+  if (!region) return "";
+  const homeRegionId = getCanvasCardMachineId(card);
+  const targetRegionId = getCanvasCardRegionId(card, layout);
+  if (homeRegionId === targetRegionId) return "";
+  const targetName = region.title || targetRegionId;
+  if (!isRegionCommandable(region, localMachineId)) {
+    return `<span>Pair ${escapeHtml(targetName)} before moving this agent there.</span>`;
+  }
+  return `
+    <span>Capsule ready for ${escapeHtml(targetName)}</span>
+    <button class="swarmlab-canvas-button" type="button" data-swarmlab-canvas-agent-capsule="${escapeHtml(card.id)}">
+      ${renderIcon(Send)}
+      <span>Move</span>
+    </button>
+  `;
+}
+
 function renderCardAction(card) {
   if (card.type === "handoff" && card.ref?.launchedSessionId && !card.ref?.remoteUrl) {
     return `
@@ -1099,11 +1350,16 @@ function cardFrame(card, layout, body, footer = "") {
   const sessionId = card.ref?.sessionId ? ` data-swarmlab-canvas-session-id="${escapeHtml(card.ref.sessionId)}"` : "";
   const remoteNodeId = card.ref?.remoteNodeId ? ` data-swarmlab-canvas-remote-node-id="${escapeHtml(card.ref.remoteNodeId)}"` : "";
   const remoteClass = card.ref?.remoteUrl ? " is-remote" : "";
+  const machineId = getCanvasCardMachineId(card);
+  const regionId = getCanvasCardRegionId(card, layout);
+  const crossRegionClass = machineId !== regionId ? " is-cross-region" : "";
   return `
     <article
-      class="swarmlab-canvas-card is-${escapeHtml(card.type)}${remoteClass}"
+      class="swarmlab-canvas-card is-${escapeHtml(card.type)}${remoteClass}${crossRegionClass}"
       data-swarmlab-canvas-card-id="${escapeHtml(card.id)}"
       data-swarmlab-canvas-card-type="${escapeHtml(card.type)}"
+      data-swarmlab-canvas-machine-id="${escapeHtml(machineId)}"
+      data-swarmlab-canvas-region-id="${escapeHtml(regionId)}"
       ${sessionId}
       ${remoteNodeId}
       style="--card-x: ${layout.x}px; --card-y: ${layout.y}px; width: ${layout.width}px; height: ${layout.height}px; z-index: ${layout.z};"
@@ -1129,22 +1385,25 @@ function renderAgentCard(card, layout) {
   const cwd = shortPath(card.detail);
   const status = [card.subtitle, card.status].filter(Boolean).join(" / ") || "agent session";
   const body = `
-    <div class="swarmlab-agent-chat-window">
-      <div class="swarmlab-agent-chat-feed" data-swarmlab-agent-chat-feed data-swarmlab-agent-session-id="${escapeHtml(card.ref?.sessionId || "")}">
-        <div class="swarmlab-agent-message is-user">
-          <span>Workspace</span>
-          ${escapeHtml(cwd || "default project")}
+    <div class="swarmlab-canvas-agent-body">
+      <div class="swarmlab-agent-transfer-bar" data-swarmlab-agent-transfer-bar></div>
+      <div class="swarmlab-agent-chat-window">
+        <div class="swarmlab-agent-chat-feed" data-swarmlab-agent-chat-feed data-swarmlab-agent-session-id="${escapeHtml(card.ref?.sessionId || "")}">
+          <div class="swarmlab-agent-message is-user">
+            <span>Workspace</span>
+            ${escapeHtml(cwd || "default project")}
+          </div>
+          <div class="swarmlab-agent-message is-agent">
+            <span>${escapeHtml(status)}</span>
+            ${escapeHtml(card.meta ? `Last activity ${card.meta}` : "Ready on this machine.")}
+          </div>
+          ${renderTags(card, { limit: 3 })}
         </div>
-        <div class="swarmlab-agent-message is-agent">
-          <span>${escapeHtml(status)}</span>
-          ${escapeHtml(card.meta ? `Last activity ${card.meta}` : "Ready on this machine.")}
-        </div>
-        ${renderTags(card, { limit: 3 })}
+        <form class="swarmlab-agent-composer" data-swarmlab-agent-composer data-swarmlab-agent-session-id="${escapeHtml(card.ref?.sessionId || "")}">
+          <textarea rows="1" name="input" placeholder="Message agent, @ for context, / for commands"></textarea>
+          <button class="swarmlab-canvas-button" type="submit" title="Send">${renderIcon(Send)}</button>
+        </form>
       </div>
-      <form class="swarmlab-agent-composer" data-swarmlab-agent-composer data-swarmlab-agent-session-id="${escapeHtml(card.ref?.sessionId || "")}">
-        <textarea rows="1" name="input" placeholder="Message agent, @ for context, / for commands"></textarea>
-        <button class="swarmlab-canvas-button" type="submit" title="Send">${renderIcon(Send)}</button>
-      </form>
     </div>
   `;
   return cardFrame(card, layout, body);
@@ -1154,19 +1413,31 @@ function renderRemoteAgentCard(card, layout) {
   const sessionId = card.ref?.sessionId || "";
   const remoteNodeId = card.ref?.remoteNodeId || "";
   const action = renderCardAction(card);
-  const body = `
-    <div class="swarmlab-agent-chat-window">
-      <div class="swarmlab-agent-chat-feed" data-swarmlab-agent-chat-feed data-swarmlab-agent-session-id="${escapeHtml(sessionId)}" data-swarmlab-agent-remote-node-id="${escapeHtml(remoteNodeId)}">
-        <div class="swarmlab-agent-message is-agent">
-          <span>${escapeHtml([card.subtitle, card.status].filter(Boolean).join(" / ") || "Remote agent")}</span>
-          ${escapeHtml(card.meta || card.ref?.remoteUrl || "Ready")}
+  const composer = remoteNodeId
+    ? `
+        <form class="swarmlab-agent-composer" data-swarmlab-agent-composer data-swarmlab-agent-session-id="${escapeHtml(sessionId)}" data-swarmlab-agent-remote-node-id="${escapeHtml(remoteNodeId)}">
+          <textarea rows="1" name="input" placeholder="Message agent, @ for context, / for commands"></textarea>
+          <button class="swarmlab-canvas-button" type="submit" title="Send">${renderIcon(Send)}</button>
+        </form>
+      `
+    : `
+        <div class="swarmlab-agent-composer is-disabled">
+          <span>Pair this machine for native chat.</span>
         </div>
-        ${renderTags(card, { limit: 3 })}
+      `;
+  const body = `
+    <div class="swarmlab-canvas-agent-body">
+      <div class="swarmlab-agent-transfer-bar" data-swarmlab-agent-transfer-bar></div>
+      <div class="swarmlab-agent-chat-window">
+        <div class="swarmlab-agent-chat-feed" data-swarmlab-agent-chat-feed data-swarmlab-agent-session-id="${escapeHtml(sessionId)}" data-swarmlab-agent-remote-node-id="${escapeHtml(remoteNodeId)}">
+          <div class="swarmlab-agent-message is-agent">
+            <span>${escapeHtml([card.subtitle, card.status].filter(Boolean).join(" / ") || "Remote agent")}</span>
+            ${escapeHtml(card.meta || card.ref?.remoteUrl || "Ready")}
+          </div>
+          ${renderTags(card, { limit: 3 })}
+        </div>
+        ${composer}
       </div>
-      <form class="swarmlab-agent-composer" data-swarmlab-agent-composer data-swarmlab-agent-session-id="${escapeHtml(sessionId)}" data-swarmlab-agent-remote-node-id="${escapeHtml(remoteNodeId)}">
-        <textarea rows="1" name="input" placeholder="Message agent, @ for context, / for commands"></textarea>
-        <button class="swarmlab-canvas-button" type="submit" title="Send">${renderIcon(Send)}</button>
-      </form>
     </div>
   `;
   const footer = `<div class="swarmlab-canvas-card-footer"><span>${escapeHtml(card.meta || "")}</span>${action}</div>`;
@@ -1458,6 +1729,7 @@ function makeRemoteOfflineCard(record) {
   const host = record.host || remoteNodeHost(record.baseUrl);
   const title = registryNode.displayName || registryNode.label || host;
   const detail = machineDetailFromRegistryNode(registryNode) || record.error || registryNode.lastError || "Could not fetch redacted node snapshot.";
+  const machineId = slugPart(registryNode.nodeId || registryNode.id || host, "remote-node");
   return {
     id: `remote:${slugPart(host)}`,
     type: "machine",
@@ -1469,7 +1741,8 @@ function makeRemoteOfflineCard(record) {
     tags: machineTagsFromRegistryNode(registryNode).length ? machineTagsFromRegistryNode(registryNode) : ["remote", "unreachable"],
     href: absoluteRemoteHref("/?view=canvas", record.baseUrl),
     ref: {
-      remoteNodeId: registryNode.nodeId || registryNode.id || "",
+      machineId,
+      remoteNodeId: registryNode.commandable ? (registryNode.nodeId || registryNode.id || "") : "",
       remoteUrl: record.baseUrl,
       actionLabel: "Open canvas",
     },
@@ -1507,7 +1780,9 @@ function remoteCardsForRecord(record, remoteIndex) {
     return [makeRemoteOfflineCard(record)];
   }
   const baseId = slugPart(record.snapshot.node.id || record.host, `remote-${remoteIndex + 1}`);
-  const remoteNodeId = record.registryNode?.nodeId || record.snapshot.node.id || record.registryNode?.id || "";
+  const remoteNodeId = record.registryNode?.commandable
+    ? (record.registryNode?.nodeId || record.snapshot.node.id || record.registryNode?.id || "")
+    : "";
   return buildCanvasCards(record.snapshot).map((card) => {
     const sourceId = card.id;
     const isMachine = card.type === "machine";
@@ -1617,6 +1892,10 @@ function renderSnapshot(root, payload, { storage, remoteRecords = [] } = {}) {
   const savedLayout = readLayout(storage, storageKey);
   const viewport = readViewport(storage, viewportKey);
   const layout = mergeCanvasLayout(cards, savedLayout);
+  const regions = buildCanvasRegions(cards, layout);
+  const regionsById = Object.fromEntries(regions.map((region) => [region.id, region]));
+  const cardsById = Object.fromEntries(cards.map((card) => [card.id, card]));
+  const localMachineId = snapshot.node.id;
   const meta = root.closest(".swarmlab-canvas-view")?.querySelector("[data-swarmlab-canvas-meta]");
   if (meta) {
     const onlineRemotes = remoteRecords.filter((record) => record.snapshot).length;
@@ -1632,6 +1911,11 @@ function renderSnapshot(root, payload, { storage, remoteRecords = [] } = {}) {
   root.dataset.swarmlabCanvasViewportStorageKey = viewportKey;
   root.__swarmlabCanvasLayout = layout;
   root.__swarmlabCanvasViewport = viewport;
+  root.__swarmlabCanvasCards = cards;
+  root.__swarmlabCanvasCardsById = cardsById;
+  root.__swarmlabCanvasRegions = regions;
+  root.__swarmlabCanvasRegionsById = regionsById;
+  root.__swarmlabCanvasLocalMachineId = localMachineId;
 
   if (!cards.length) {
     root.innerHTML = renderCanvasShell({ status: "empty" });
@@ -1644,10 +1928,91 @@ function renderSnapshot(root, payload, { storage, remoteRecords = [] } = {}) {
       data-swarmlab-canvas-plane
       style="--canvas-pan-x: ${viewport.x}px; --canvas-pan-y: ${viewport.y}px; --canvas-zoom: ${viewport.zoom};"
     >
+      ${regions.map((region) => renderCanvasRegion(region)).join("")}
+      ${renderCanvasPipeLayer(cards, layout, regions, localMachineId)}
       ${cards.map((card) => renderCanvasCard(card, layout[card.id])).join("")}
     </div>
     ${renderFloatingControls(viewport)}
   `;
+  refreshRegionPresentation(root);
+}
+
+function findRegionAtPoint(root, x, y) {
+  const regions = Array.isArray(root.__swarmlabCanvasRegions) ? root.__swarmlabCanvasRegions : [];
+  return regions.find((region) =>
+    x >= region.x
+      && x <= region.x + region.width
+      && y >= region.y
+      && y <= region.y + region.height,
+  ) || null;
+}
+
+function refreshCanvasPipes(root) {
+  const layer = root.querySelector("[data-swarmlab-canvas-pipe-layer]");
+  if (!layer) return;
+  layer.innerHTML = renderCanvasPipes(
+    root.__swarmlabCanvasCards || [],
+    root.__swarmlabCanvasLayout || {},
+    root.__swarmlabCanvasRegions || [],
+    root.__swarmlabCanvasLocalMachineId || "",
+  );
+}
+
+function refreshCardRegionState(root, cardElement) {
+  if (!(cardElement instanceof HTMLElement)) return;
+  const id = cardElement.dataset.swarmlabCanvasCardId || "";
+  const model = root.__swarmlabCanvasCardsById?.[id];
+  const layout = root.__swarmlabCanvasLayout?.[id];
+  if (!model || !layout) return;
+  const machineId = getCanvasCardMachineId(model);
+  const regionId = getCanvasCardRegionId(model, layout);
+  cardElement.dataset.swarmlabCanvasMachineId = machineId;
+  cardElement.dataset.swarmlabCanvasRegionId = regionId;
+  cardElement.classList.toggle("is-cross-region", machineId !== regionId);
+  const transferBar = cardElement.querySelector("[data-swarmlab-agent-transfer-bar]");
+  if (transferBar instanceof HTMLElement) {
+    const region = root.__swarmlabCanvasRegionsById?.[regionId] || null;
+    transferBar.innerHTML = renderAgentTransferBarContent(model, layout, region, root.__swarmlabCanvasLocalMachineId || "");
+  }
+}
+
+function refreshRegionPresentation(root) {
+  root.querySelectorAll("[data-swarmlab-canvas-card-id]").forEach((cardElement) => {
+    refreshCardRegionState(root, cardElement);
+  });
+  refreshCanvasPipes(root);
+}
+
+function updateRegionDropTarget(root, cardId) {
+  const layout = root.__swarmlabCanvasLayout?.[cardId];
+  if (!layout) return null;
+  const center = cardCenter(layout);
+  const region = findRegionAtPoint(root, center.x, center.y);
+  root.querySelectorAll("[data-swarmlab-canvas-region-id]").forEach((regionElement) => {
+    regionElement.classList.toggle(
+      "is-drop-target",
+      Boolean(region && regionElement.getAttribute("data-swarmlab-canvas-region-id") === region.id),
+    );
+  });
+  return region;
+}
+
+function clearRegionDropTargets(root) {
+  root.querySelectorAll("[data-swarmlab-canvas-region-id]").forEach((regionElement) => {
+    regionElement.classList.remove("is-drop-target");
+  });
+}
+
+function assignCardRegionFromPosition(root, cardId, cardElement) {
+  const layout = root.__swarmlabCanvasLayout?.[cardId];
+  if (!layout) return;
+  const center = cardCenter(layout);
+  const region = findRegionAtPoint(root, center.x, center.y);
+  if (region) {
+    layout.regionId = region.id;
+  }
+  refreshCardRegionState(root, cardElement);
+  refreshCanvasPipes(root);
 }
 
 function isInteractiveDragTarget(target, card) {
@@ -1723,6 +2088,8 @@ function bindCardDrag(root, { storage }) {
       }
       card.style.setProperty("--card-x", `${x}px`);
       card.style.setProperty("--card-y", `${y}px`);
+      updateRegionDropTarget(root, active.id);
+      refreshCanvasPipes(root);
     });
 
     const finish = (event) => {
@@ -1735,6 +2102,8 @@ function bindCardDrag(root, { storage }) {
       } else if (event?.pointerId != null) {
         card.releasePointerCapture?.(event.pointerId);
       }
+      assignCardRegionFromPosition(root, active.id, card);
+      clearRegionDropTargets(root);
       const storageKey = root.dataset.swarmlabCanvasStorageKey || "";
       if (storageKey) {
         writeLayout(storage, storageKey, root.__swarmlabCanvasLayout || {});
@@ -1927,6 +2296,122 @@ async function sendAgentComposerInput(form, { fetchImpl, abortController }) {
   }
 }
 
+function inferAgentProviderId(card) {
+  const explicit = String(card?.ref?.providerId || "").trim();
+  if (explicit) return explicit;
+  const candidates = [
+    card?.subtitle,
+    ...(Array.isArray(card?.tags) ? card.tags : []),
+  ].map((value) => String(value || "").trim().toLowerCase());
+  return candidates.find((value) => ["codex", "claude", "openswarm", "shell"].includes(value)) || "";
+}
+
+function buildAgentCapsulePrompt(card, { sourceRegion, targetRegion, targetIsLocal }) {
+  const sourceMachineId = getCanvasCardMachineId(card);
+  const sourceName = sourceRegion?.title || sourceMachineId;
+  const targetMachineId = targetRegion?.id || "";
+  const targetName = targetRegion?.title || targetMachineId;
+  const tags = Array.isArray(card.tags) && card.tags.length ? card.tags.join(", ") : "none";
+  return [
+    "You are a Swarmlab agent capsule moved across the fleet canvas.",
+    "",
+    `Source agent: ${card.title || "agent"}`,
+    `Source session id: ${card.ref?.sessionId || "unknown"}`,
+    `Source machine id: ${sourceMachineId}`,
+    `Source machine: ${sourceName}`,
+    `Target machine id: ${targetMachineId}`,
+    `Target machine: ${targetName}`,
+    `Target location: ${targetIsLocal ? "local Swarmlab node" : "remote paired Swarmlab node"}`,
+    `Provider hint: ${inferAgentProviderId(card) || "default"}`,
+    `Source status: ${[card.subtitle, card.status].filter(Boolean).join(" / ") || "unknown"}`,
+    `Last activity: ${card.meta || "unknown"}`,
+    `Workspace hint: ${card.ref?.cwd || card.detail || "default workspace"}`,
+    `Tags: ${tags}`,
+    "",
+    "Continue the work from the source agent as faithfully as possible. First reconstruct the likely state from this capsule, then inspect local files or services on this machine before making changes. If an artifact or model must move from another machine, ask for or use the available handoff path instead of pretending the bytes are already present.",
+  ].join("\n");
+}
+
+function buildAgentCapsulePayload(card, { sourceRegion, targetRegion, targetIsLocal }) {
+  const sourceMachineId = getCanvasCardMachineId(card);
+  const providerId = inferAgentProviderId(card);
+  const canReuseWorkspace = targetRegion?.id === sourceMachineId || targetIsLocal;
+  return {
+    ...(providerId ? { providerId } : {}),
+    name: `Moved: ${card.title || "Agent"}`,
+    cwd: canReuseWorkspace ? String(card.ref?.cwd || card.detail || "").trim() : "",
+    initialPrompt: buildAgentCapsulePrompt(card, { sourceRegion, targetRegion, targetIsLocal }),
+    initialPromptDelayMs: 800,
+  };
+}
+
+async function launchAgentCapsule(button, root, { fetchImpl, abortController, onOpenSession, refresh }) {
+  const cardId = button.getAttribute("data-swarmlab-canvas-agent-capsule") || "";
+  const card = root.__swarmlabCanvasCardsById?.[cardId];
+  const layout = root.__swarmlabCanvasLayout?.[cardId];
+  if (!card || !layout) {
+    return;
+  }
+  const sourceRegionId = getCanvasCardMachineId(card);
+  const targetRegionId = getCanvasCardRegionId(card, layout);
+  const regionsById = root.__swarmlabCanvasRegionsById || {};
+  const sourceRegion = regionsById[sourceRegionId] || null;
+  const targetRegion = regionsById[targetRegionId] || null;
+  const localMachineId = root.__swarmlabCanvasLocalMachineId || "";
+  const targetIsLocal = targetRegionId === localMachineId;
+  if (!targetRegion || sourceRegionId === targetRegionId) {
+    return;
+  }
+  if (!targetIsLocal && !targetRegion.remoteNodeId) {
+    button.textContent = "Pair target first";
+    return;
+  }
+  const payload = buildAgentCapsulePayload(card, { sourceRegion, targetRegion, targetIsLocal });
+  button.setAttribute("disabled", "true");
+  try {
+    if (targetIsLocal) {
+      const result = await fetchJson("/api/sessions", {
+        fetchImpl,
+        signal: abortController.signal,
+        method: "POST",
+        body: payload,
+      });
+      const sessionId = result?.session?.id || "";
+      button.textContent = "Moved";
+      if (sessionId && typeof onOpenSession === "function") {
+        onOpenSession(sessionId);
+      } else if (typeof refresh === "function") {
+        refresh();
+      }
+      return;
+    }
+    const clientCommandId = `capsule-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 8)}`;
+    await fetchJson(`/api/account/nodes/${encodeURIComponent(targetRegion.remoteNodeId)}/commands`, {
+      fetchImpl,
+      signal: abortController.signal,
+      method: "POST",
+      body: {
+        operation: "session.create",
+        clientCommandId,
+        payload,
+      },
+    });
+    button.textContent = "Queued";
+    const cardElement = root.querySelector(`[data-swarmlab-canvas-card-id="${CSS.escape(cardId)}"]`);
+    if (cardElement) {
+      updateAgentFeed(cardElement, `
+        <div class="swarmlab-agent-message is-loading">
+          <span>Capsule queued</span>
+          Starting ${escapeHtml(card.title || "agent")} on ${escapeHtml(targetRegion.title || targetRegion.id)}.
+        </div>
+      `);
+    }
+  } catch (error) {
+    button.removeAttribute("disabled");
+    button.textContent = error?.message || "Move failed";
+  }
+}
+
 function bindAgentComposers(root, options) {
   root.querySelectorAll("[data-swarmlab-agent-composer]").forEach((form) => {
     if (!(form instanceof HTMLFormElement)) return;
@@ -1953,9 +2438,23 @@ function bindAgentComposers(root, options) {
 
 function bindCanvasActions(root, options) {
   const { onOpenSession, storage, fetchImpl, abortController, refresh } = options;
+  root.__swarmlabCanvasActionOptions = options;
   bindViewportPanAndZoom(root, { storage });
   bindCardDrag(root, { storage });
   bindAgentComposers(root, options);
+
+  if (!root.__swarmlabCanvasCapsuleBound) {
+    root.__swarmlabCanvasCapsuleBound = true;
+    root.addEventListener("click", (event) => {
+      const button = event.target instanceof Element
+        ? event.target.closest("[data-swarmlab-canvas-agent-capsule]")
+        : null;
+      if (!(button instanceof HTMLButtonElement)) return;
+      event.preventDefault();
+      event.stopPropagation();
+      void launchAgentCapsule(button, root, root.__swarmlabCanvasActionOptions || {});
+    });
+  }
 
   root.querySelectorAll("[data-swarmlab-canvas-open-session]").forEach((button) => {
     button.addEventListener("click", (event) => {

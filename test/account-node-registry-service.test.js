@@ -223,6 +223,70 @@ test("AccountNodeRegistryService signs, leases, and acknowledges scoped node com
   }
 });
 
+test("AccountNodeRegistryService queues sanitized session create capsule commands", async () => {
+  const stateDir = await mkdtemp(path.join(os.tmpdir(), "swarmlab-account-create-command-"));
+  try {
+    const nodeIdentityStore = new NodeIdentityStore({ stateDir: path.join(stateDir, "node") });
+    await nodeIdentityStore.initialize();
+    const identity = nodeIdentityStore.getPublicIdentity({ includeHostname: false });
+    const service = new AccountNodeRegistryService({ stateDir: path.join(stateDir, "account") });
+    await service.initialize();
+    const pairing = await service.createPairing({ identity, label: "Remote worker" });
+    const approval = await service.approvePairing({ pairingId: pairing.id, ownerAccountId: "acct_mark" });
+    const completed = await service.completePairing({ grant: approval.grant, identity });
+    const registration = buildNodeRegistrationPayload({
+      identity,
+      snapshot: sampleSnapshot(identity.nodeId, identity.installId),
+    });
+    await service.registerNode({
+      authorization: `Bearer ${completed.accessToken}`,
+      body: {
+        type: "node.registration",
+        registration,
+        signature: nodeIdentityStore.signPayload({ type: "node.registration", registration }),
+      },
+    });
+
+    const queued = await service.enqueueCommandForOwner({
+      ownerAccountId: "acct_mark",
+      nodeId: identity.nodeId,
+      body: {
+        operation: "session.create",
+        clientCommandId: "capsule-1",
+        payload: {
+          providerId: "codex",
+          name: "Moved: trainer",
+          cwd: "/workspace/model",
+          initialPrompt: "Source session id: session-1\nTarget machine id: gpu-box",
+          initialPromptDelayMs: 900,
+          ignoredField: "drop",
+        },
+      },
+    });
+
+    assert.equal(queued.operation, "session.create");
+    assert.equal(queued.status, "queued");
+    assert.equal(queued.payload, undefined);
+    assert.equal(queued.target.providerId, "codex");
+    assert.match(queued.target.cwdHint, /^[a-f0-9]{16}$/u);
+
+    const leased = await service.leaseCommandsForNode({
+      authorization: `Bearer ${completed.accessToken}`,
+      nodeId: identity.nodeId,
+    });
+    assert.equal(leased.length, 1);
+    assert.equal(leased[0].payload.providerId, "codex");
+    assert.equal(leased[0].payload.name, "Moved: trainer");
+    assert.equal(leased[0].payload.cwd, "/workspace/model");
+    assert.match(leased[0].payload.initialPrompt, /Source session id: session-1/);
+    assert.equal(leased[0].payload.initialPromptDelayMs, 900);
+    assert.equal(leased[0].payload.ignoredField, undefined);
+    assert.equal(verifyCommandSignature(leased[0], completed.commandPublicKey), true);
+  } finally {
+    await rm(stateDir, { recursive: true, force: true });
+  }
+});
+
 test("AccountNodeRegistryService rejects forged registration and heartbeat signatures", async () => {
   const stateDir = await mkdtemp(path.join(os.tmpdir(), "swarmlab-account-registry-forged-"));
   try {

@@ -421,6 +421,20 @@ test("local canvas view renders node snapshot cards and persists drag layout", a
     assert.equal(await page.locator(".swarmlab-agent-chat-window").count(), 5);
     assert.equal(await page.locator(".swarmlab-canvas-card.is-summary:not(.is-remote)").count(), 2);
     assert.equal(await page.locator(".swarmlab-canvas-card.is-remote").count(), 13);
+    const regionIds = await page.locator(".swarmlab-canvas-region").evaluateAll((regions) =>
+      regions.map((region) => region.getAttribute("data-swarmlab-canvas-region-id")).filter(Boolean),
+    );
+    assert.deepEqual(regionIds, ["mac-main", "registry-box", "offline-gpu", "account-box", "gpu-cluster", "query-box"]);
+    assert.equal(await page.locator('.swarmlab-canvas-region[data-swarmlab-canvas-region-id="mac-main"]').count(), 1);
+    assert.equal(await page.locator('.swarmlab-canvas-region[data-swarmlab-canvas-region-id="account-box"]').getAttribute("data-swarmlab-canvas-region-remote-node-id"), "account-node");
+    assert.equal(await page.locator('.swarmlab-canvas-region[data-swarmlab-canvas-region-id="gpu-cluster"]').getAttribute("data-swarmlab-canvas-region-remote-node-id"), null);
+    assert.equal(await page.locator('[data-swarmlab-canvas-card-id="session:session-1"]').getAttribute("data-swarmlab-canvas-machine-id"), "mac-main");
+    assert.equal(await page.locator('[data-swarmlab-canvas-card-id="session:session-1"]').getAttribute("data-swarmlab-canvas-region-id"), "mac-main");
+    assert.equal(await page.locator('[data-swarmlab-canvas-card-id="remote:account-box:session:account-box-agent-1"]').getAttribute("data-swarmlab-canvas-machine-id"), "account-box");
+    assert.equal(await page.locator('[data-swarmlab-canvas-card-id="remote:account-box:session:account-box-agent-1"]').getAttribute("data-swarmlab-canvas-region-id"), "account-box");
+    assert.equal(await page.locator('[data-swarmlab-canvas-card-id="remote:gpu-cluster:session:gpu-cluster-agent-1"] [data-swarmlab-agent-composer]').count(), 0);
+    assert.match(await page.locator('[data-swarmlab-canvas-card-id="remote:gpu-cluster:session:gpu-cluster-agent-1"]').innerText(), /Pair this machine for native chat/);
+    assert.equal(await page.locator(".swarmlab-canvas-pipe.is-control").count(), 1);
     assert.equal(await page.locator(".swarmlab-canvas-floating-controls").count(), 1);
     assert.equal(await page.locator(".swarmlab-canvas-card.is-app").count(), 9);
     assert.equal(await page.locator(".swarmlab-canvas-card.is-app:not(.is-remote)").count(), 5);
@@ -456,7 +470,7 @@ test("local canvas view renders node snapshot cards and persists drag layout", a
     await page.mouse.up();
 
     const saved = await page.evaluate(() =>
-      JSON.parse(window.localStorage.getItem("swarmlab.canvas.layout.v4:fleet:mac-main") || "{}"),
+      JSON.parse(window.localStorage.getItem("swarmlab.canvas.layout.v5:fleet:mac-main") || "{}"),
     );
     assert.ok(saved["session:session-1"], "drag should persist session layout");
     assert.ok(saved["session:session-1"].x > 0);
@@ -468,16 +482,18 @@ test("local canvas view renders node snapshot cards and persists drag layout", a
     );
     assert.ok(viewport.zoom > 0.92, "zoom controls should persist a zoomed viewport");
 
-    await page.locator('[data-swarmlab-canvas-card-id="session:session-1"] [data-swarmlab-agent-composer] textarea[name="input"]').fill("continue from canvas");
-    await page.keyboard.press("Enter");
+    const localComposer = page.locator('[data-swarmlab-canvas-card-id="session:session-1"] [data-swarmlab-agent-composer] textarea[name="input"]');
+    await localComposer.fill("continue from canvas");
+    await localComposer.press("Enter");
     for (let attempt = 0; attempt < 20 && postedInputs.length === 0; attempt += 1) {
       await page.waitForTimeout(50);
     }
     assert.equal(postedInputs.length, 1);
     assert.equal(postedInputs[0].input, "continue from canvas");
 
-    await page.locator('[data-swarmlab-canvas-card-id="remote:account-box:session:account-box-agent-1"] [data-swarmlab-agent-composer] textarea[name="input"]').fill("continue remote from canvas");
-    await page.keyboard.press("Enter");
+    const remoteComposer = page.locator('[data-swarmlab-canvas-card-id="remote:account-box:session:account-box-agent-1"] [data-swarmlab-agent-composer] textarea[name="input"]');
+    await remoteComposer.fill("continue remote from canvas");
+    await remoteComposer.press("Enter");
     for (let attempt = 0; attempt < 20 && postedRemoteCommands.length === 0; attempt += 1) {
       await page.waitForTimeout(50);
     }
@@ -485,6 +501,66 @@ test("local canvas view renders node snapshot cards and persists drag layout", a
     assert.equal(postedRemoteCommands[0].operation, "session.input.write");
     assert.equal(postedRemoteCommands[0].payload.sessionId, "account-box-agent-1");
     assert.equal(postedRemoteCommands[0].payload.input, "continue remote from canvas");
+
+    await page.evaluate(() => {
+      const root = document.querySelector("[data-swarmlab-canvas-root]");
+      const region = root.__swarmlabCanvasRegionsById["account-box"];
+      const layout = root.__swarmlabCanvasLayout;
+      layout["session:session-1"] = {
+        ...layout["session:session-1"],
+        x: region.x + 82,
+        y: region.y + 140,
+        regionId: "account-box",
+      };
+      window.localStorage.setItem(root.dataset.swarmlabCanvasStorageKey, JSON.stringify(layout));
+      window.localStorage.setItem(
+        root.dataset.swarmlabCanvasViewportStorageKey,
+        JSON.stringify({ x: 120 - region.x * 0.52, y: 96 - region.y * 0.52, zoom: 0.52 }),
+      );
+    });
+    await page.reload({ waitUntil: "domcontentloaded" });
+    await page.waitForSelector('[data-swarmlab-canvas-card-id="session:session-1"].is-cross-region', { timeout: 10_000 });
+    assert.equal(await page.locator('[data-swarmlab-canvas-card-id="session:session-1"]').getAttribute("data-swarmlab-canvas-region-id"), "account-box");
+    assert.equal(await page.locator('[data-swarmlab-canvas-pipe-card-id="session:session-1"].is-transfer').getAttribute("data-swarmlab-canvas-pipe-target-region-id"), "account-box");
+    const capsuleButton = page.locator('[data-swarmlab-canvas-card-id="session:session-1"] [data-swarmlab-canvas-agent-capsule]');
+    await capsuleButton.waitFor({ timeout: 10_000 });
+    await capsuleButton.click();
+    for (let attempt = 0; attempt < 20 && postedRemoteCommands.length < 2; attempt += 1) {
+      await page.waitForTimeout(50);
+    }
+    assert.equal(postedRemoteCommands.length, 2);
+    assert.equal(postedRemoteCommands[1].operation, "session.create");
+    assert.equal(postedRemoteCommands[1].payload.providerId, "codex");
+    assert.match(postedRemoteCommands[1].payload.name, /Moved: Worker B/);
+    assert.match(postedRemoteCommands[1].payload.initialPrompt, /Source session id: session-1/);
+    assert.match(postedRemoteCommands[1].payload.initialPrompt, /Source machine id: mac-main/);
+    assert.match(postedRemoteCommands[1].payload.initialPrompt, /Target machine id: account-box/);
+    assert.match(postedRemoteCommands[1].payload.initialPrompt, /agent capsule moved across the fleet canvas/);
+    assert.doesNotMatch(postedRemoteCommands[1].payload.initialPrompt, /token=secret|private/u);
+
+    await page.evaluate(() => {
+      const root = document.querySelector("[data-swarmlab-canvas-root]");
+      const region = root.__swarmlabCanvasRegionsById["gpu-cluster"];
+      const layout = root.__swarmlabCanvasLayout;
+      layout["session:session-1"] = {
+        ...layout["session:session-1"],
+        x: region.x + 82,
+        y: region.y + 140,
+        regionId: "gpu-cluster",
+      };
+      window.localStorage.setItem(root.dataset.swarmlabCanvasStorageKey, JSON.stringify(layout));
+      window.localStorage.setItem(
+        root.dataset.swarmlabCanvasViewportStorageKey,
+        JSON.stringify({ x: 120 - region.x * 0.52, y: 96 - region.y * 0.52, zoom: 0.52 }),
+      );
+    });
+    await page.reload({ waitUntil: "domcontentloaded" });
+    await page.waitForSelector('[data-swarmlab-canvas-card-id="session:session-1"].is-cross-region', { timeout: 10_000 });
+    assert.equal(await page.locator('[data-swarmlab-canvas-card-id="session:session-1"] [data-swarmlab-canvas-agent-capsule]').count(), 0);
+    assert.match(
+      await page.locator('[data-swarmlab-canvas-card-id="session:session-1"] [data-swarmlab-agent-transfer-bar]').innerText(),
+      /Pair GPU Cluster .* before moving this agent there/,
+    );
 
     await page.evaluate(() => {
       const answers = [
@@ -502,8 +578,7 @@ test("local canvas view renders node snapshot cards and persists drag layout", a
     assert.equal(postedHandoffJobs[0].target.sshTarget, "pi@home-raspi");
 
     const queryFleetPosts = postedFleetNodes.filter((node) => node.source === "query");
-    assert.equal(queryFleetPosts.length, 1);
-    assert.equal(queryFleetPosts[0].url, "https://query-node.example.test");
+    assert.ok(queryFleetPosts.some((node) => node.url === "https://query-node.example.test"));
     const snapshotFleetPosts = postedFleetNodes.filter((node) => node.source === "snapshot");
     assert.ok(snapshotFleetPosts.some((node) => node.url === "https://gpu-node.example.test" && node.snapshot?.node?.name === "GPU Cluster"));
     assert.ok(snapshotFleetPosts.some((node) => node.url === "https://registry-node.example.test" && node.snapshot?.node?.name === "Registry Box"));

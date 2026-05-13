@@ -3,7 +3,10 @@ import test from "node:test";
 
 import {
   buildCanvasCards,
+  buildCanvasRegions,
   createFallbackCanvasLayout,
+  getCanvasCardMachineId,
+  getCanvasCardRegionId,
   getCanvasBoardId,
   getCanvasLayoutStorageKey,
   getCanvasViewportStorageKey,
@@ -73,6 +76,8 @@ test("buildCanvasCards renders machine, brain, handoff, session, browser, approv
   assert.equal(cards.find((card) => card.type === "brain")?.ref.noteCount, 2);
   assert.equal(cards.find((card) => card.type === "handoff")?.ref.target.sshTarget, "pi@home");
   assert.equal(cards.find((card) => card.type === "agent")?.ref.sessionId, "agent-1");
+  assert.equal(cards.find((card) => card.type === "agent")?.ref.providerId, "codex");
+  assert.equal(cards.find((card) => card.type === "agent")?.ref.cwd, "/models");
   assert.equal(cards.find((card) => card.type === "app")?.href, "/proxy/6006/");
   assert.equal(cards.find((card) => card.type === "artifact")?.detail, "Best run so far");
 });
@@ -151,17 +156,21 @@ test("mergeCanvasLayout preserves saved positions and creates defaults for new c
     sessions: [{ id: "s1", name: "One" }, { id: "s2", name: "Two" }],
   });
   const layout = mergeCanvasLayout(cards, {
-    "session:s1": { x: 444, y: 222, width: 300, height: 190, z: 99 },
+    "session:s1": { x: 444, y: 222, width: 300, height: 190, z: 99, regionId: "gpu-box" },
   });
 
   assert.equal(layout["session:s1"].x, 444);
   assert.equal(layout["session:s1"].y, 222);
   assert.equal(layout["session:s1"].z, 99);
+  assert.equal(layout["session:s1"].regionId, "gpu-box");
+  assert.equal(getCanvasCardMachineId(cards.find((card) => card.id === "session:s1")), "node-1");
+  assert.equal(getCanvasCardRegionId(cards.find((card) => card.id === "session:s1"), layout["session:s1"]), "gpu-box");
+  assert.equal(layout["session:s2"].regionId, "node-1");
   assert.ok(Number.isFinite(layout["session:s2"].x));
   assert.ok(Number.isFinite(layout["machine:node-1"].y));
 });
 
-test("createFallbackCanvasLayout separates machine and orchestration lanes", () => {
+test("createFallbackCanvasLayout creates machine regions without overlapping cards", () => {
   const overlaps = (a, b) =>
     a.x < b.x + b.width
       && a.x + a.width > b.x
@@ -180,26 +189,36 @@ test("createFallbackCanvasLayout separates machine and orchestration lanes", () 
     ...buildCanvasCards({
       node: { id: "remote", name: "GPU box" },
       mode: "redacted",
-      brain: { noteCount: 3, notes: [{ relativePath: "README.md", title: "Remote brain" }] },
       sessions: [
         { id: "remote-agent", name: "Trainer", status: "running" },
-        { id: "remote-idle", name: "redacted", status: "idle" },
       ],
-      actionItems: [
-        { id: "remote-open-1", title: "Remote open", status: "open" },
-        { id: "remote-done-1", title: "Remote done", status: "completed" },
-      ],
+      actionItems: [{ id: "remote-open-1", title: "Remote open", status: "open" }],
     }),
   ];
   const layout = createFallbackCanvasLayout(cards);
+  const regions = buildCanvasRegions(cards, layout);
+  const regionsById = new Map(regions.map((region) => [region.id, region]));
   const entries = Object.entries(layout);
 
-  assert.ok(layout["machine:local"].x < layout["handoff:handoff-1"].x);
-  assert.ok(layout["machine:remote"].x < layout["handoff:handoff-1"].x);
-  assert.ok(layout["session:remote-agent"].x > layout["handoff:handoff-1"].x);
-  assert.equal(overlaps(layout["machine:remote"], layout["handoff:handoff-1"]), false);
+  assert.deepEqual(regions.map((region) => region.id), ["local", "remote"]);
+  assert.equal(regions[0].title, "Mac");
+  assert.equal(regions[1].title, "GPU box");
+  assert.equal(layout["machine:local"].regionId, "local");
+  assert.equal(layout["handoff:handoff-1"].regionId, "local");
+  assert.equal(layout["session:remote-agent"].regionId, "remote");
+  assert.ok(layout["machine:remote"].x > layout["machine:local"].x);
+  for (const card of cards) {
+    const item = layout[card.id];
+    const region = regionsById.get(item.regionId);
+    assert.ok(region, `${card.id} should have a region`);
+    const centerX = item.x + item.width / 2;
+    const centerY = item.y + item.height / 2;
+    assert.ok(centerX >= region.x && centerX <= region.x + region.width, `${card.id} center x should be in region`);
+    assert.ok(centerY >= region.y && centerY <= region.y + region.height, `${card.id} center y should be in region`);
+  }
   for (let outer = 0; outer < entries.length; outer += 1) {
     for (let inner = outer + 1; inner < entries.length; inner += 1) {
+      if (entries[outer][1].regionId !== entries[inner][1].regionId) continue;
       assert.equal(
         overlaps(entries[outer][1], entries[inner][1]),
         false,
@@ -211,7 +230,19 @@ test("createFallbackCanvasLayout separates machine and orchestration lanes", () 
 
 test("sanitizeCanvasLayout clamps invalid layout values before persistence", () => {
   const layout = sanitizeCanvasLayout({
-    card: { x: 999_999, y: -999_999, width: 1, height: 10_000, z: 999_999 },
+    card: {
+      x: 999_999,
+      y: -999_999,
+      width: 1,
+      height: 10_000,
+      z: 999_999,
+      regionId: "GPU Box!!",
+      regionX: 999_999,
+      regionY: -999_999,
+      regionWidth: 10,
+      regionHeight: 99_999,
+      unsafe: "drop me",
+    },
   });
 
   assert.equal(layout.card.x, 20_000);
@@ -219,6 +250,12 @@ test("sanitizeCanvasLayout clamps invalid layout values before persistence", () 
   assert.equal(layout.card.width, 180);
   assert.equal(layout.card.height, 540);
   assert.equal(layout.card.z, 100_000);
+  assert.equal(layout.card.regionId, "GPU-Box");
+  assert.equal(layout.card.regionX, 20_000);
+  assert.equal(layout.card.regionY, -2_000);
+  assert.equal(layout.card.regionWidth, 420);
+  assert.equal(layout.card.regionHeight, 5_000);
+  assert.equal(layout.card.unsafe, undefined);
 });
 
 test("canvas board id and storage key are stable per node", () => {
@@ -226,7 +263,7 @@ test("canvas board id and storage key are stable per node", () => {
   assert.equal(boardId, "machine:mac-main");
   assert.equal(
     getCanvasLayoutStorageKey(boardId),
-    "swarmlab.canvas.layout.v4:machine:mac-main",
+    "swarmlab.canvas.layout.v5:machine:mac-main",
   );
   assert.equal(
     getCanvasViewportStorageKey(boardId),
