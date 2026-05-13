@@ -90,6 +90,23 @@ function normalizeNodeCapabilities(value = {}) {
   };
 }
 
+function isLocalConnectionHint(hint = {}) {
+  try {
+    const host = new URL(String(hint.url || "")).hostname.toLowerCase();
+    return host === "localhost" || host === "127.0.0.1" || host === "::1";
+  } catch {
+    return false;
+  }
+}
+
+function preferredConnectionHint(hints = []) {
+  const entries = Array.isArray(hints) ? hints.filter((hint) => hint?.url) : [];
+  return entries.find((hint) => ["tailscale", "public"].includes(String(hint.kind || "").toLowerCase()) && !isLocalConnectionHint(hint))
+    || entries.find((hint) => !isLocalConnectionHint(hint))
+    || entries[0]
+    || {};
+}
+
 function normalizeAccountFleetNode(node = {}) {
   if (!node || typeof node !== "object" || Array.isArray(node)) {
     return null;
@@ -109,7 +126,7 @@ function normalizeAccountFleetNode(node = {}) {
       summary.urls ||
       [],
   );
-  const baseUrl = connectionHints[0]?.url || "";
+  const baseUrl = preferredConnectionHint(connectionHints).url || "";
   if (!id && !nodeId && !displayName && !baseUrl) {
     return null;
   }

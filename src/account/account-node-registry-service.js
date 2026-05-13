@@ -147,6 +147,23 @@ function normalizePublicIdentity(value = {}) {
   };
 }
 
+function isLocalConnectionHint(hint = {}) {
+  try {
+    const host = new URL(String(hint.url || "")).hostname.toLowerCase();
+    return host === "localhost" || host === "127.0.0.1" || host === "::1";
+  } catch {
+    return false;
+  }
+}
+
+function preferredConnectionHint(hints = []) {
+  const entries = Array.isArray(hints) ? hints.filter((hint) => hint?.url) : [];
+  return entries.find((hint) => ["tailscale", "public"].includes(String(hint.kind || "").toLowerCase()) && !isLocalConnectionHint(hint))
+    || entries.find((hint) => !isLocalConnectionHint(hint))
+    || entries[0]
+    || {};
+}
+
 function normalizeSummary(value = {}) {
   const source = value && typeof value === "object" && !Array.isArray(value) ? value : {};
   const summary = buildNodeSummaryFromSnapshot({
@@ -599,6 +616,7 @@ export class AccountNodeRegistryService {
 
   presentNode(node) {
     const cloned = cloneNode(node);
+    const preferredHint = preferredConnectionHint(cloned.connectionHints);
     const lastSeenMs = Date.parse(cloned.lastSeenAt || "");
     const ageMs = Number.isFinite(lastSeenMs) ? this.getNowMs() - lastSeenMs : Infinity;
     const status = cloned.disconnectedAt
@@ -622,8 +640,8 @@ export class AccountNodeRegistryService {
       commit: cloned.commit,
       branch: cloned.branch,
       hostnameHash: cloned.hostnameHash,
-      baseUrl: cloned.connectionHints[0]?.url || "",
-      url: cloned.connectionHints[0]?.url || "",
+      baseUrl: preferredHint.url || "",
+      url: preferredHint.url || "",
       connectionHints: cloned.connectionHints,
       counts: cloned.counts,
       capabilities: cloned.capabilities,

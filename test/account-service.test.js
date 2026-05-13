@@ -38,7 +38,10 @@ async function withAccountService(fn) {
             displayName: "GPU Cluster",
             status: "busy",
             lastSeenAt: "2026-05-12T10:00:00.000Z",
-            connectionHints: [{ kind: "tailscale", url: "https://gpu.tailnet.test/private?token=secret" }],
+            connectionHints: [
+              { kind: "local", url: "http://127.0.0.1:4826" },
+              { kind: "tailscale", url: "https://gpu.tailnet.test/private?token=secret" },
+            ],
             summary: {
               counts: { sessions: 4, runningSessions: 2, ports: 1, handoffJobs: 1 },
               capabilities: { gpuCount: 6, providerCount: 2, roles: ["agent-host", "gpu-worker"] },

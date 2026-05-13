@@ -571,7 +571,10 @@ test("/api/node/remote-pair pairs a reachable fleet URL into the command relay",
       const heartbeatUnsigned = buildNodeHeartbeatPayload({
         identity: remoteIdentity,
         snapshot,
-        connectionHints: [{ kind: "tailscale", url: "https://remote-gpu.tailnet.test/heartbeat?token=pair-secret" }],
+        connectionHints: [
+          { kind: "local", url: "http://127.0.0.1:4826" },
+          { kind: "tailscale", url: "https://remote-gpu.tailnet.test/heartbeat?token=pair-secret" },
+        ],
       });
       const response = await fetch(new URL(`/api/account/nodes/${encodeURIComponent(remoteIdentity.nodeId)}/heartbeat`, remoteAccountBaseUrl).toString(), {
         method: "POST",
