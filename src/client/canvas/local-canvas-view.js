@@ -501,6 +501,9 @@ function injectCanvasStyles(documentRef = document) {
 .swarmlab-canvas-stage.is-panning {
   cursor: grabbing;
 }
+.swarmlab-canvas-stage.is-card-dragging {
+  cursor: grabbing;
+}
 .swarmlab-canvas-plane {
   position: absolute;
   inset: 0 auto auto 0;
@@ -528,6 +531,36 @@ function injectCanvasStyles(documentRef = document) {
   background:
     linear-gradient(180deg, color-mix(in srgb, var(--region-accent) 16%, transparent), transparent 38%),
     color-mix(in srgb, var(--region-accent) 8%, transparent);
+}
+.swarmlab-canvas-region-drop-label {
+  position: absolute;
+  right: 18px;
+  top: 15px;
+  display: inline-flex;
+  align-items: center;
+  min-height: 24px;
+  padding: 0 9px;
+  border: 1px solid color-mix(in srgb, var(--region-accent) 32%, rgba(232, 222, 206, 0.2));
+  border-radius: 7px;
+  background: rgba(18, 17, 15, 0.62);
+  color: var(--canvas-muted);
+  font-size: 10px;
+  font-weight: 720;
+  opacity: 0;
+  pointer-events: none;
+  text-transform: uppercase;
+  transform: translateY(-3px);
+  transition: opacity 120ms ease, transform 120ms ease, border-color 120ms ease, background 120ms ease;
+}
+.swarmlab-canvas-stage.is-card-dragging .swarmlab-canvas-region-drop-label {
+  opacity: 0.72;
+  transform: translateY(0);
+}
+.swarmlab-canvas-region.is-drop-target .swarmlab-canvas-region-drop-label {
+  border-color: color-mix(in srgb, var(--region-accent) 76%, white 8%);
+  background: color-mix(in srgb, var(--region-accent) 16%, rgba(18, 17, 15, 0.88));
+  color: var(--canvas-text);
+  opacity: 1;
 }
 .swarmlab-canvas-region-label {
   position: absolute;
@@ -1171,6 +1204,25 @@ function injectCanvasStyles(documentRef = document) {
   color: var(--canvas-faint);
   font-size: 11px;
   pointer-events: none;
+}
+.swarmlab-canvas-notice {
+  position: absolute;
+  top: 18px;
+  right: 18px;
+  z-index: 27;
+  max-width: min(440px, calc(100% - 36px));
+  padding: 9px 11px;
+  border: 1px solid rgba(249, 115, 22, 0.36);
+  border-radius: 8px;
+  background: rgba(31, 24, 19, 0.94);
+  color: #f6d5be;
+  font-size: 12px;
+  line-height: 1.35;
+  box-shadow: 0 16px 44px rgba(0, 0, 0, 0.34);
+  pointer-events: none;
+}
+.swarmlab-canvas-notice[hidden] {
+  display: none;
 }
 .swarmlab-canvas-loading,
 .swarmlab-canvas-empty,
@@ -2121,6 +2173,13 @@ function regionConnectionBadges(region) {
   return ["local"];
 }
 
+function regionDropLabel(region, localMachineId = "") {
+  if (region?.id === localMachineId) return "Move here";
+  if (region?.remoteNodeId) return "Copy here";
+  if (region?.remoteUrl) return "Pair first";
+  return "Move here";
+}
+
 function renderRegionBadges(region) {
   const badges = regionConnectionBadges(region);
   return `
@@ -2130,7 +2189,7 @@ function renderRegionBadges(region) {
   `;
 }
 
-function renderCanvasRegion(region) {
+function renderCanvasRegion(region, localMachineId = "") {
   return `
     <section
       class="swarmlab-canvas-region"
@@ -2149,6 +2208,7 @@ function renderCanvasRegion(region) {
           <span class="swarmlab-canvas-region-summary">${escapeHtml(regionSummary(region))}</span>
         </span>
       </div>
+      <span class="swarmlab-canvas-region-drop-label">${escapeHtml(regionDropLabel(region, localMachineId))}</span>
     </section>
   `;
 }
@@ -2517,6 +2577,20 @@ function updateAgentFeed(card, html) {
   if (!(feed instanceof HTMLElement)) return;
   feed.innerHTML = html;
   feed.scrollTop = feed.scrollHeight;
+}
+
+function showCanvasNotice(root, message) {
+  const notice = root.querySelector("[data-swarmlab-canvas-notice]");
+  if (!(notice instanceof HTMLElement)) return;
+  notice.textContent = message;
+  notice.hidden = false;
+  if (root.__swarmlabCanvasNoticeTimer) {
+    clearTimeout(root.__swarmlabCanvasNoticeTimer);
+  }
+  root.__swarmlabCanvasNoticeTimer = setTimeout(() => {
+    notice.hidden = true;
+    root.__swarmlabCanvasNoticeTimer = null;
+  }, 5_500);
 }
 
 async function loadAgentNarrative(root, card, { fetchImpl, abortController }) {
@@ -3081,6 +3155,10 @@ function renderFloatingControls(viewport) {
   `;
 }
 
+function renderCanvasNotice() {
+  return `<div class="swarmlab-canvas-notice" data-swarmlab-canvas-notice hidden></div>`;
+}
+
 function applyViewport(root, viewport) {
   const next = sanitizeViewport(viewport);
   root.__swarmlabCanvasViewport = next;
@@ -3230,12 +3308,13 @@ function renderSnapshot(root, payload, { storage, remoteRecords = [] } = {}) {
       data-swarmlab-canvas-plane
       style="--canvas-pan-x: ${viewport.x}px; --canvas-pan-y: ${viewport.y}px; --canvas-zoom: ${viewport.zoom};"
     >
-      ${regions.map((region) => renderCanvasRegion(region)).join("")}
+      ${regions.map((region) => renderCanvasRegion(region, localMachineId)).join("")}
       ${renderCanvasPipeLayer(cards, layout, regions, localMachineId)}
       ${cards.map((card) => renderCanvasCard(card, layout[card.id])).join("")}
     </div>
     ${renderLauncherDock(launcherCards, regions, localMachineId, selectedLauncherMachineId)}
     ${renderFloatingControls(viewport)}
+    ${renderCanvasNotice()}
   `;
   if (!viewportState.hasSavedViewport) {
     setViewport(root, storage, fitViewportToCards(root, { machineId: localMachineId, initialFocus: true }));
@@ -3333,12 +3412,15 @@ function assignCardRegionFromPosition(root, cardId, cardElement) {
     const sourceRegionId = getCanvasCardMachineId(model);
     const sourceRegion = root.__swarmlabCanvasRegionsById?.[sourceRegionId] || null;
     const targetRegion = root.__swarmlabCanvasRegionsById?.[nextRegionId] || null;
+    const targetName = regionDisplayName(targetRegion, nextRegionId);
+    const sourceName = regionDisplayName(sourceRegion, sourceRegionId);
     updateAgentFeed(cardElement, `
       <div class="swarmlab-agent-message is-loading">
         <span>Relocated view</span>
-        <div class="swarmlab-agent-message-text">This card is displayed in ${escapeHtml(regionDisplayName(targetRegion, nextRegionId))}. The agent keeps running on ${escapeHtml(regionDisplayName(sourceRegion, sourceRegionId))}; no session was stopped or restarted.</div>
+        <div class="swarmlab-agent-message-text">This card is displayed in ${escapeHtml(targetName)}. The agent keeps running on ${escapeHtml(sourceName)}; no session was stopped or restarted.</div>
       </div>
     `);
+    showCanvasNotice(root, `${model.title || "Agent"} view moved to ${targetName}. Source keeps running on ${sourceName}.`);
   }
 }
 
@@ -3395,6 +3477,7 @@ function bindCardDrag(root, { storage }) {
       active.startX = Number(layout.x) || 0;
       active.startY = Number(layout.y) || 0;
       bringCardToFront(root, id, card);
+      root.classList.add("is-card-dragging");
       card.classList.add("is-dragging");
       card.setPointerCapture?.(event.pointerId);
     });
@@ -3424,6 +3507,7 @@ function bindCardDrag(root, { storage }) {
         return;
       }
       card.classList.remove("is-dragging");
+      root.classList.remove("is-card-dragging");
       if (active.pointerId != null) {
         card.releasePointerCapture?.(active.pointerId);
       } else if (event?.pointerId != null) {

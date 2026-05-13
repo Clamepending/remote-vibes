@@ -692,6 +692,18 @@ test("local canvas view renders node snapshot cards and persists drag layout", a
       await page.locator('.swarmlab-canvas-region[data-swarmlab-canvas-region-id="gpu-cluster"] .swarmlab-canvas-region-badges').innerText(),
       /view only/i,
     );
+    assert.match(
+      await page.locator('.swarmlab-canvas-region[data-swarmlab-canvas-region-id="mac-main"] .swarmlab-canvas-region-drop-label').innerText(),
+      /Move here/i,
+    );
+    assert.match(
+      await page.locator('.swarmlab-canvas-region[data-swarmlab-canvas-region-id="account-box"] .swarmlab-canvas-region-drop-label').innerText(),
+      /Copy here/i,
+    );
+    assert.match(
+      await page.locator('.swarmlab-canvas-region[data-swarmlab-canvas-region-id="gpu-cluster"] .swarmlab-canvas-region-drop-label').innerText(),
+      /Pair first/i,
+    );
     assert.equal(await page.locator('[data-swarmlab-canvas-card-id="session:session-1"]').getAttribute("data-swarmlab-canvas-machine-id"), "mac-main");
     assert.equal(await page.locator('[data-swarmlab-canvas-card-id="session:session-1"]').getAttribute("data-swarmlab-canvas-region-id"), "mac-main");
     assert.equal(await page.locator('[data-swarmlab-canvas-card-id="remote:account-box:session:account-box-agent-1"]').getAttribute("data-swarmlab-canvas-machine-id"), "account-box");
@@ -766,8 +778,10 @@ test("local canvas view renders node snapshot cards and persists drag layout", a
     assert.ok(before, "session card should be visible before drag");
     await page.mouse.move(before.x, before.y);
     await page.mouse.down();
+    assert.equal(await page.locator(".swarmlab-canvas-stage.is-card-dragging").count(), 1);
     await page.mouse.move(before.x + 110, before.y + 72, { steps: 8 });
     await page.mouse.up();
+    assert.equal(await page.locator(".swarmlab-canvas-stage.is-card-dragging").count(), 0);
 
     const saved = await page.evaluate(() =>
       JSON.parse(window.localStorage.getItem("swarmlab.canvas.layout.v6:fleet:mac-main") || "{}"),
