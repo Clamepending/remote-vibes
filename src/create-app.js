@@ -82,7 +82,7 @@ import { loadVideoMemoryRuntime } from "./videomemory-service-loader.js";
 import { runVideoMemoryGitPull, startPeriodicVideoMemoryGitPull } from "./videomemory-server-update.js";
 import { WalletService } from "./wallet-service.js";
 import { WikiBackupService } from "./wiki-backup.js";
-import { FleetRegistryStore } from "./node/fleet-registry.js";
+import { FleetRegistryStore, normalizeFleetNodeUrl } from "./node/fleet-registry.js";
 import { HandoffJobStore, buildHandoffLaunchPrompt } from "./node/handoff-job-store.js";
 import { NodeIdentityStore } from "./node/identity-store.js";
 import { buildRouteClass, createLocalOrNodeTokenMiddleware, isLocalRequest } from "./node/security.js";
@@ -322,6 +322,7 @@ const ATTACHMENT_IMAGE_EXTENSIONS_BY_MIME_TYPE = new Map([
   ["image/tiff", ".tiff"],
   ["image/webp", ".webp"],
 ]);
+const REMOTE_NODE_SNAPSHOT_FETCH_TIMEOUT_MS = 6_000;
 const AGENT_CANVAS_IMAGE_MIME_TYPES_BY_EXTENSION = new Map([
   [".apng", "image/apng"],
   [".avif", "image/avif"],
@@ -382,6 +383,54 @@ function buildHttpError(message, statusCode = 400) {
   const error = new Error(message);
   error.statusCode = statusCode;
   return error;
+}
+
+async function fetchRemoteNodeSnapshotForCanvas({
+  baseUrl,
+  fetchImpl = globalThis.fetch,
+  timeoutMs = REMOTE_NODE_SNAPSHOT_FETCH_TIMEOUT_MS,
+} = {}) {
+  const normalizedBaseUrl = normalizeFleetNodeUrl(baseUrl);
+  if (!normalizedBaseUrl) {
+    throw buildHttpError("Remote node URL is required.", 400);
+  }
+  if (typeof fetchImpl !== "function") {
+    throw buildHttpError("Remote node fetch is not available.", 500);
+  }
+
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), timeoutMs);
+  try {
+    const snapshotUrl = new URL("/api/node/snapshot?mode=redacted", normalizedBaseUrl).toString();
+    const upstream = await fetchImpl(snapshotUrl, {
+      headers: { Accept: "application/json" },
+      signal: controller.signal,
+    });
+    let payload = null;
+    try {
+      payload = await upstream.json();
+    } catch {
+      payload = null;
+    }
+    if (!upstream.ok) {
+      throw buildHttpError(payload?.error || `Remote node snapshot failed with status ${upstream.status}.`, 502);
+    }
+    const snapshot = payload?.snapshot || payload;
+    if (!snapshot || typeof snapshot !== "object" || Array.isArray(snapshot)) {
+      throw buildHttpError("Remote node returned an invalid snapshot.", 502);
+    }
+    return { baseUrl: normalizedBaseUrl, snapshot };
+  } catch (error) {
+    if (error?.statusCode) {
+      throw error;
+    }
+    const message = error?.name === "AbortError"
+      ? "Remote node snapshot timed out."
+      : "Could not fetch remote node snapshot.";
+    throw buildHttpError(message, 502);
+  } finally {
+    clearTimeout(timer);
+  }
 }
 
 function pushUniqueAbsolutePath(out, seen, value) {
@@ -1605,6 +1654,7 @@ export async function createVibeResearchApp({
   accountNodeRegistryServiceFactory = null,
   nodeHeartbeatServiceFactory = null,
   nodeCommandRelayServiceFactory = null,
+  remoteNodeFetchImpl = globalThis.fetch,
   buildingHubFetchImpl = globalThis.fetch,
   buildingHubAccountTokenStoreFactory = null,
   buildingHubAccountServiceFactory = null,
@@ -2137,6 +2187,12 @@ export async function createVibeResearchApp({
       path: "/api/handoff/jobs*",
       classification: "local-auth",
       description: "Creates and launches machine-to-machine agent handoffs.",
+    }),
+    buildRouteClass({
+      method: "GET",
+      path: "/api/node/remote-snapshot",
+      classification: "local-auth",
+      description: "Fetches a redacted snapshot from another Swarmlab node through this node.",
     }),
     buildRouteClass({
       method: "POST",
@@ -4151,6 +4207,19 @@ export async function createVibeResearchApp({
       response.json({ snapshot: await nodeSnapshotService.getSnapshot({ mode: "redacted" }) });
     } catch (error) {
       response.status(error.statusCode || 500).json({ error: error.message || "Could not read node snapshot." });
+    }
+  });
+
+  app.get("/api/node/remote-snapshot", requireLocalOrNodeToken, async (request, response) => {
+    try {
+      response.setHeader("Cache-Control", "no-store");
+      const result = await fetchRemoteNodeSnapshotForCanvas({
+        baseUrl: request.query.baseUrl || request.query.url,
+        fetchImpl: remoteNodeFetchImpl,
+      });
+      response.json(result);
+    } catch (error) {
+      response.status(error.statusCode || 500).json({ error: error.message || "Could not fetch remote node snapshot." });
     }
   });
 

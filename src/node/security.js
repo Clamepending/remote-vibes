@@ -9,6 +9,7 @@ const CONTROL_ROUTE_PATTERNS = [
   { method: "DELETE", pattern: /^\/api\/fleet\/nodes\/[^/]+\/?$/ },
   { method: "GET", pattern: /^\/api\/node\/account\/status\/?$/ },
   { method: "GET", pattern: /^\/api\/node\/account\/nodes\/?$/ },
+  { method: "GET", pattern: /^\/api\/node\/remote-snapshot\/?$/ },
   { method: "POST", pattern: /^\/api\/node\/account\/(?:pair\/start|pair\/complete|heartbeat|disconnect|commands\/poll)\/?$/ },
   { method: "POST", pattern: /^\/api\/files\/(?:upload|folder|file)\/?$/ },
   { method: "PATCH", pattern: /^\/api\/files\/?$/ },

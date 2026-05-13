@@ -171,6 +171,46 @@ test("/api/node manifest, status, and snapshot routes expose the local node foun
   }
 });
 
+test("/api/node/remote-snapshot proxies redacted machine snapshots without leaking URL secrets", async () => {
+  const remoteRequests = [];
+  const started = await startNodeRoutesApp({
+    remoteNodeFetchImpl: async (url, init = {}) => {
+      remoteRequests.push({ url, init });
+      if (url === "https://remote-node.example.test/api/node/snapshot?mode=redacted") {
+        return new Response(JSON.stringify({
+          snapshot: {
+            schemaVersion: 1,
+            mode: "redacted",
+            node: { id: "remote-node", name: "Remote Node", os: "linux" },
+            counts: { sessions: 2, ports: 1 },
+            capabilities: { gpuCount: 4 },
+          },
+        }), { status: 200, headers: { "Content-Type": "application/json" } });
+      }
+      return new Response(JSON.stringify({ error: "unexpected remote" }), { status: 404 });
+    },
+  });
+  try {
+    const response = await fetch(
+      `${started.baseUrl}/api/node/remote-snapshot?baseUrl=${encodeURIComponent("https://remote-node.example.test/private?token=secret")}`,
+    );
+    assert.equal(response.status, 200);
+    const body = await response.json();
+    assert.equal(body.baseUrl, "https://remote-node.example.test");
+    assert.equal(body.snapshot.mode, "redacted");
+    assert.equal(body.snapshot.node.name, "Remote Node");
+    assert.equal(remoteRequests.length, 1);
+    assert.equal(remoteRequests[0].url, "https://remote-node.example.test/api/node/snapshot?mode=redacted");
+    assert.doesNotMatch(JSON.stringify(remoteRequests), /private|token=secret/);
+    assert.doesNotMatch(JSON.stringify(body), /private|token=secret/);
+
+    const invalidResponse = await fetch(`${started.baseUrl}/api/node/remote-snapshot?baseUrl=file:///etc/passwd`);
+    assert.equal(invalidResponse.status, 400);
+  } finally {
+    await started.cleanup();
+  }
+});
+
 test("/api/node/account routes pair, register, heartbeat, and never echo account tokens", async () => {
   const accountRequests = [];
   const accountFetchImpl = async (url, init = {}) => {

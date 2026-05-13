@@ -37,6 +37,7 @@ const SNAPSHOT_URL = "/api/node/snapshot?mode=privileged";
 const FLEET_NODES_URL = "/api/fleet/nodes";
 const NODE_ACCOUNT_NODES_URL = "/api/node/account/nodes";
 const ACCOUNT_NODES_URL = "/api/account/nodes";
+const REMOTE_NODE_SNAPSHOT_PROXY_URL = "/api/node/remote-snapshot";
 const NARRATIVE_POLL_MS = 4_000;
 const REMOTE_NODES_STORAGE_KEY = "swarmlab.canvas.remoteNodes.v1";
 const REMOTE_NODE_FETCH_TIMEOUT_MS = 4_500;
@@ -925,10 +926,21 @@ async function fetchRemoteNodeRecord(baseUrl, { fetchImpl, signal }) {
   const normalizedBaseUrl = registryNode.baseUrl || registryNode.url;
   const timeout = timeoutSignal(signal, REMOTE_NODE_FETCH_TIMEOUT_MS);
   try {
-    const payload = await fetchJson(`${normalizedBaseUrl}/api/node/snapshot?mode=redacted`, {
-      fetchImpl,
-      signal: timeout.signal,
-    });
+    let payload = null;
+    try {
+      payload = await fetchRemoteNodeSnapshotViaProxy(normalizedBaseUrl, {
+        fetchImpl,
+        signal: timeout.signal,
+      });
+    } catch (proxyError) {
+      if (!proxyError?.proxyUnavailable) {
+        throw proxyError;
+      }
+      payload = await fetchJson(`${normalizedBaseUrl}/api/node/snapshot?mode=redacted`, {
+        fetchImpl,
+        signal: timeout.signal,
+      });
+    }
     return {
       baseUrl: normalizedBaseUrl,
       host: remoteNodeHost(normalizedBaseUrl),
@@ -947,6 +959,28 @@ async function fetchRemoteNodeRecord(baseUrl, { fetchImpl, signal }) {
   } finally {
     timeout.clear();
   }
+}
+
+async function fetchRemoteNodeSnapshotViaProxy(normalizedBaseUrl, { fetchImpl, signal }) {
+  const response = await fetchImpl(`${REMOTE_NODE_SNAPSHOT_PROXY_URL}?baseUrl=${encodeURIComponent(normalizedBaseUrl)}`, {
+    headers: { Accept: "application/json" },
+    signal,
+  });
+  let payload = null;
+  try {
+    payload = await response.json();
+  } catch {
+    payload = null;
+  }
+  if (response.status === 404 || response.status === 405) {
+    const error = new Error("remote snapshot proxy unavailable");
+    error.proxyUnavailable = true;
+    throw error;
+  }
+  if (!response.ok) {
+    throw new Error(payload?.error || `Remote snapshot proxy failed with status ${response.status}`);
+  }
+  return payload;
 }
 
 function normalizeRegistryFleetNode(node) {

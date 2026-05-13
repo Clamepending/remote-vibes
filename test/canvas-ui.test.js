@@ -221,7 +221,7 @@ test("local canvas view renders node snapshot cards and persists drag layout", a
         }),
       });
     });
-    await page.route(`${baseUrl}/api/account/nodes/account-node/commands`, async (route) => {
+    await page.route("**/api/account/nodes/account-node/commands", async (route) => {
       postedRemoteCommands.push(JSON.parse(route.request().postData() || "{}"));
       await route.fulfill({
         status: 201,
@@ -282,24 +282,24 @@ test("local canvas view renders node snapshot cards and persists drag layout", a
         }),
       });
     });
-    await page.route("https://offline-node.example.test/api/node/snapshot?mode=redacted", async (route) => {
-      remoteSnapshotHits.set("https://offline-node.example.test", (remoteSnapshotHits.get("https://offline-node.example.test") || 0) + 1);
-      await route.fulfill({
-        status: 503,
-        contentType: "application/json",
-        headers: { "Access-Control-Allow-Origin": "*" },
-        body: JSON.stringify({ error: "offline in test" }),
-      });
-    });
-    await page.route(/https:\/\/(?:gpu-node|registry-node|query-node|account-node|manual-node)\.example\.test\/api\/node\/snapshot\?mode=redacted/u, async (route) => {
-      const origin = new URL(route.request().url()).origin;
-      const remote = remoteSnapshots.get(origin);
+    await page.route("**/api/node/remote-snapshot**", async (route) => {
+      const requestUrl = new URL(route.request().url());
+      const origin = new URL(requestUrl.searchParams.get("baseUrl") || "").origin;
       remoteSnapshotHits.set(origin, (remoteSnapshotHits.get(origin) || 0) + 1);
+      if (origin === "https://offline-node.example.test") {
+        await route.fulfill({
+          status: 502,
+          contentType: "application/json",
+          body: JSON.stringify({ error: "offline in test" }),
+        });
+        return;
+      }
+      const remote = remoteSnapshots.get(origin);
       await route.fulfill({
         status: 200,
         contentType: "application/json",
-        headers: { "Access-Control-Allow-Origin": "*" },
         body: JSON.stringify({
+          baseUrl: origin,
           snapshot: {
             schemaVersion: 1,
             mode: "redacted",
@@ -491,9 +491,11 @@ test("local canvas view renders node snapshot cards and persists drag layout", a
     assert.equal(postedInputs.length, 1);
     assert.equal(postedInputs[0].input, "continue from canvas");
 
-    const remoteComposer = page.locator('[data-swarmlab-canvas-card-id="remote:account-box:session:account-box-agent-1"] [data-swarmlab-agent-composer] textarea[name="input"]');
+    const remoteComposerForm = page.locator('[data-swarmlab-canvas-card-id="remote:account-box:session:account-box-agent-1"] [data-swarmlab-agent-composer]');
+    assert.equal(await remoteComposerForm.getAttribute("data-swarmlab-agent-remote-node-id"), "account-node");
+    const remoteComposer = remoteComposerForm.locator('textarea[name="input"]');
     await remoteComposer.fill("continue remote from canvas");
-    await remoteComposer.press("Enter");
+    await remoteComposerForm.evaluate((form) => form.requestSubmit());
     for (let attempt = 0; attempt < 20 && postedRemoteCommands.length === 0; attempt += 1) {
       await page.waitForTimeout(50);
     }
