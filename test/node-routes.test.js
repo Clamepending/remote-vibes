@@ -204,6 +204,15 @@ test("/api/node/remote-snapshot proxies redacted machine snapshots without leaki
     assert.doesNotMatch(JSON.stringify(remoteRequests), /private|token=secret/);
     assert.doesNotMatch(JSON.stringify(body), /private|token=secret/);
 
+    const fallbackResponse = await fetch(
+      `${started.baseUrl}/api/node/remote-snapshot?allowDirectFallback=1&baseUrl=${encodeURIComponent("https://unreachable-node.example.test/private?token=secret")}`,
+    );
+    assert.equal(fallbackResponse.status, 200);
+    const fallbackBody = await fallbackResponse.json();
+    assert.equal(fallbackBody.baseUrl, "https://unreachable-node.example.test");
+    assert.equal(fallbackBody.directFallbackAllowed, true);
+    assert.doesNotMatch(JSON.stringify(fallbackBody), /private|token=secret/);
+
     const invalidResponse = await fetch(`${started.baseUrl}/api/node/remote-snapshot?baseUrl=file:///etc/passwd`);
     assert.equal(invalidResponse.status, 400);
   } finally {

@@ -313,6 +313,18 @@ test("local canvas view renders node snapshot cards and persists drag layout", a
       const origin = new URL(requestUrl.searchParams.get("baseUrl") || "").origin;
       remoteSnapshotHits.set(origin, (remoteSnapshotHits.get(origin) || 0) + 1);
       if (origin === "https://offline-node.example.test" || origin === "https://registry-node.example.test") {
+        if (requestUrl.searchParams.get("allowDirectFallback") === "1") {
+          await route.fulfill({
+            status: 200,
+            contentType: "application/json",
+            body: JSON.stringify({
+              baseUrl: origin,
+              directFallbackAllowed: true,
+              error: "Remote node proxy could not reach node.",
+            }),
+          });
+          return;
+        }
         await route.fulfill({
           status: 502,
           contentType: "application/json",

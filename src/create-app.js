@@ -4211,14 +4211,26 @@ export async function createVibeResearchApp({
   });
 
   app.get("/api/node/remote-snapshot", requireLocalOrNodeToken, async (request, response) => {
+    const baseUrl = request.query.baseUrl || request.query.url;
+    const allowDirectFallback = request.query.allowDirectFallback === "1"
+      || request.query.allowDirectFallback === "true";
     try {
       response.setHeader("Cache-Control", "no-store");
       const result = await fetchRemoteNodeSnapshotForCanvas({
-        baseUrl: request.query.baseUrl || request.query.url,
+        baseUrl,
         fetchImpl: remoteNodeFetchImpl,
       });
       response.json(result);
     } catch (error) {
+      if (allowDirectFallback && (error.statusCode === 502 || error.statusCode === 503 || error.statusCode === 504)) {
+        response.setHeader("Cache-Control", "no-store");
+        response.json({
+          baseUrl: normalizeFleetNodeUrl(baseUrl),
+          directFallbackAllowed: true,
+          error: "Remote node proxy could not reach node.",
+        });
+        return;
+      }
       response.status(error.statusCode || 500).json({ error: error.message || "Could not fetch remote node snapshot." });
     }
   });
