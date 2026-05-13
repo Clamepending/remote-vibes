@@ -481,6 +481,8 @@ test("local canvas view renders node snapshot cards and persists drag layout", a
     }));
     assert.ok(localAgentSize.width >= 620, "local agent canvas card should be a large work surface");
     assert.ok(localAgentSize.height >= 700, "local agent canvas card should preserve visible chat history");
+    const composerBox = await page.locator('[data-swarmlab-canvas-card-id="session:session-1"] [data-swarmlab-agent-composer]').boundingBox();
+    assert.ok(composerBox && composerBox.height <= 62, "canvas chat composer should stay compact on a large agent card");
     assert.equal(await page.locator(".swarmlab-canvas-card.is-summary:not(.is-remote)").count(), 2);
     assert.equal(await page.locator(".swarmlab-canvas-card.is-remote").count(), 13);
     const regionIds = await page.locator(".swarmlab-canvas-region").evaluateAll((regions) =>
@@ -636,7 +638,7 @@ test("local canvas view renders node snapshot cards and persists drag layout", a
     assert.equal(await page.locator('[data-swarmlab-canvas-card-id="session:session-1"] [data-swarmlab-canvas-agent-capsule]').count(), 0);
     assert.match(
       await page.locator('[data-swarmlab-canvas-card-id="session:session-1"] [data-swarmlab-agent-transfer-bar]').innerText(),
-      /Pair GPU Cluster .* before moving this agent there/,
+      /Visual placement only\. Pair GPU Cluster .* to launch this agent there/,
     );
 
     await page.evaluate(() => {

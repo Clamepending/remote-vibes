@@ -590,17 +590,22 @@ function injectCanvasStyles(documentRef = document) {
   grid-template-columns: minmax(0, 1fr) auto;
   gap: 8px;
   align-items: center;
+  align-self: end;
   margin: 0 16px 16px;
-  padding: 10px 11px;
+  min-height: 44px;
+  max-height: 112px;
+  padding: 7px 8px 7px 12px;
   border: 1px solid rgba(232, 222, 206, 0.16);
   border-radius: 8px;
-  background: rgba(9, 9, 8, 0.92);
+  background: rgba(13, 13, 12, 0.94);
   color: var(--canvas-muted);
-  font-size: 13px;
+  font-size: 12px;
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.035);
 }
 .swarmlab-agent-composer textarea {
   width: 100%;
   min-width: 0;
+  min-height: 24px;
   max-height: 86px;
   border: 0;
   outline: 0;
@@ -614,8 +619,8 @@ function injectCanvasStyles(documentRef = document) {
   color: var(--canvas-muted);
 }
 .swarmlab-agent-composer button {
-  min-width: 34px;
-  height: 30px;
+  min-width: 32px;
+  height: 32px;
   padding: 0;
 }
 .swarmlab-agent-composer.is-sending button {
@@ -1438,7 +1443,7 @@ function renderAgentTransferBarContent(card, layout, region, localMachineId) {
   if (homeRegionId === targetRegionId) return "";
   const targetName = region.title || targetRegionId;
   if (!isRegionCommandable(region, localMachineId)) {
-    return `<span>Pair ${escapeHtml(targetName)} before moving this agent there.</span>`;
+    return `<span>Visual placement only. Pair ${escapeHtml(targetName)} to launch this agent there.</span>`;
   }
   return `
     <span>Capsule ready for ${escapeHtml(targetName)}</span>
