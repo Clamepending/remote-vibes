@@ -3580,6 +3580,67 @@ function fitViewportToMachine(root, machineId) {
   });
 }
 
+function getVisibleBoardBounds(root, viewport) {
+  const rect = root.getBoundingClientRect();
+  const safeViewport = sanitizeViewport(viewport);
+  if (rect.width <= 0 || rect.height <= 0 || safeViewport.zoom <= 0) {
+    return null;
+  }
+  const insets = getViewportSafeInsets(root);
+  const left = insets.left;
+  const top = insets.top;
+  const right = Math.max(left, rect.width - insets.right);
+  const bottom = Math.max(top, rect.height - insets.bottom);
+  return {
+    minX: (left - safeViewport.x) / safeViewport.zoom,
+    minY: (top - safeViewport.y) / safeViewport.zoom,
+    maxX: (right - safeViewport.x) / safeViewport.zoom,
+    maxY: (bottom - safeViewport.y) / safeViewport.zoom,
+    minVisibleBoardSize: 80 / safeViewport.zoom,
+  };
+}
+
+function viewportIntersectsBounds(viewportBounds, contentBounds) {
+  const visibleWidth = Math.min(viewportBounds.maxX, contentBounds.maxX) - Math.max(viewportBounds.minX, contentBounds.minX);
+  const visibleHeight = Math.min(viewportBounds.maxY, contentBounds.maxY) - Math.max(viewportBounds.minY, contentBounds.minY);
+  return visibleWidth >= viewportBounds.minVisibleBoardSize && visibleHeight >= viewportBounds.minVisibleBoardSize;
+}
+
+function getCanvasContentBounds(root) {
+  const bounds = [];
+  const layout = root.__swarmlabCanvasLayout || {};
+  const renderCardIds = root.__swarmlabCanvasRenderCardIds instanceof Set
+    ? root.__swarmlabCanvasRenderCardIds
+    : null;
+  Object.entries(layout).forEach(([id, item]) => {
+    if (!item || item.hidden || (renderCardIds && !renderCardIds.has(id))) return;
+    const x = Number(item.x);
+    const y = Number(item.y);
+    const width = Number(item.width) || 260;
+    const height = Number(item.height) || 180;
+    if (!Number.isFinite(x) || !Number.isFinite(y)) return;
+    bounds.push({ minX: x, minY: y, maxX: x + width, maxY: y + height });
+  });
+  const regions = Array.isArray(root.__swarmlabCanvasRegions) ? root.__swarmlabCanvasRegions : [];
+  regions.forEach((region) => {
+    const x = Number(region?.x);
+    const y = Number(region?.y);
+    const width = Number(region?.width);
+    const height = Number(region?.height);
+    if (!Number.isFinite(x) || !Number.isFinite(y) || !Number.isFinite(width) || !Number.isFinite(height)) return;
+    bounds.push({ minX: x, minY: y, maxX: x + width, maxY: y + height });
+  });
+  return bounds;
+}
+
+function viewportShowsCanvasContent(root, viewport) {
+  const viewportBounds = getVisibleBoardBounds(root, viewport);
+  if (!viewportBounds) return true;
+  const contentBounds = getCanvasContentBounds(root);
+  if (!contentBounds.length) return true;
+  return contentBounds.some((bounds) => viewportIntersectsBounds(viewportBounds, bounds));
+}
+
 function renderSnapshot(root, payload, { storage, remoteRecords = [] } = {}) {
   const { snapshot, cards: baseCards, launcherCards } = combineCanvasCards(payload, remoteRecords);
   const boardId = remoteRecords.length
@@ -3648,7 +3709,7 @@ function renderSnapshot(root, payload, { storage, remoteRecords = [] } = {}) {
     ${renderFloatingControls(viewport)}
     ${renderCanvasNotice()}
   `;
-  if (!viewportState.hasSavedViewport) {
+  if (!viewportState.hasSavedViewport || !viewportShowsCanvasContent(root, viewport)) {
     setViewport(root, storage, fitViewportToCards(root, { machineId: localMachineId, initialFocus: true }));
   }
   refreshRegionPresentation(root);

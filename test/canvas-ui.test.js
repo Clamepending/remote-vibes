@@ -778,6 +778,30 @@ test("local canvas view renders node snapshot cards and persists drag layout", a
       JSON.parse(window.localStorage.getItem("swarmlab.canvas.viewport.v4:fleet:mac-main") || "{}"),
     );
     assert.ok(initialViewport.zoom >= 0.42, "initial safe fit should persist a usable zoom");
+    await page.evaluate(() => {
+      const root = document.querySelector("[data-swarmlab-canvas-root]");
+      window.localStorage.setItem(root.dataset.swarmlabCanvasViewportStorageKey, JSON.stringify({ x: -7200, y: -5200, zoom: 0.62 }));
+    });
+    await page.reload({ waitUntil: "domcontentloaded" });
+    await page.waitForSelector('[data-swarmlab-canvas-card-id="session:session-1"]', { timeout: 10_000 });
+    const recoveredViewport = await page.evaluate(() =>
+      JSON.parse(window.localStorage.getItem("swarmlab.canvas.viewport.v4:fleet:mac-main") || "{}"),
+    );
+    assert.notEqual(recoveredViewport.x, -7200, "blank saved canvas viewports should refit to active local work");
+    const recoveredBox = await page.locator('[data-swarmlab-canvas-card-id="session:session-1"]').boundingBox();
+    const recoveredStage = await page.locator(".swarmlab-canvas-stage").boundingBox();
+    const recoveredVisibleWidth = recoveredBox && recoveredStage
+      ? Math.min(recoveredBox.x + recoveredBox.width, recoveredStage.x + recoveredStage.width)
+        - Math.max(recoveredBox.x, recoveredStage.x)
+      : 0;
+    const recoveredVisibleHeight = recoveredBox && recoveredStage
+      ? Math.min(recoveredBox.y + recoveredBox.height, recoveredStage.y + recoveredStage.height)
+        - Math.max(recoveredBox.y, recoveredStage.y)
+      : 0;
+    assert.ok(
+      recoveredVisibleWidth > 120 && recoveredVisibleHeight > 120,
+      "viewport recovery should put the active local agent back on screen",
+    );
 
     assert.equal(
       await page.locator('[data-swarmlab-canvas-region-id="mac-main"] [data-swarmlab-canvas-region-resize="mac-main"].is-header').count(),
