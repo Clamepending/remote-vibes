@@ -658,7 +658,7 @@ test("local canvas view renders node snapshot cards and persists drag layout", a
     assert.equal(await page.locator(".swarmlab-canvas-card.is-remote").count(), 13);
     assert.equal(await page.locator(".swarmlab-canvas-card.is-launcher").count(), 0);
     assert.equal(await page.locator(".swarmlab-canvas-launch-dock").count(), 1);
-    assert.equal(await page.locator("[data-swarmlab-canvas-launch-machine]").count(), 2);
+    assert.equal(await page.locator("[data-swarmlab-canvas-launch-machine]").count(), 6);
     assert.equal(await page.locator("[data-swarmlab-canvas-launcher]").count(), 8);
     assert.equal(await page.locator(".swarmlab-canvas-launch-items > [data-swarmlab-canvas-launcher]").count(), 6);
     assert.match(await page.locator(".swarmlab-canvas-launch-more").innerText(), /2 more/);
@@ -679,6 +679,7 @@ test("local canvas view renders node snapshot cards and persists drag layout", a
     const dockText = await page.locator(".swarmlab-canvas-launch-dock").innerText();
     assert.match(dockText, /Mac Main/);
     assert.match(dockText, /Account Workstation/);
+    assert.match(dockText, /GPU Cluster/);
     assert.match(dockText, /Codex/);
     assert.match(dockText, /Cursor/);
     const regionIds = await page.locator(".swarmlab-canvas-region").evaluateAll((regions) =>
@@ -873,6 +874,25 @@ test("local canvas view renders node snapshot cards and persists drag layout", a
     let lifecycleText = await page.locator(".swarmlab-canvas-card.is-lifecycle").evaluateAll((cards) => cards.map((card) => card.textContent || "").join("\n"));
     assert.match(lifecycleText, /Copy: Worker B/);
     assert.match(lifecycleText, /source agent keeps running/i);
+
+    await page.locator('[data-swarmlab-canvas-launch-machine="gpu-cluster"]').evaluate((button) => button.click());
+    await page.waitForFunction(() =>
+      document.querySelector('[data-swarmlab-canvas-launch-machine="gpu-cluster"]')?.getAttribute("aria-selected") === "true",
+    );
+    const gpuMachineBox = await page.locator('[data-swarmlab-canvas-card-id="remote:gpu-cluster:session:gpu-cluster-agent-1"]').boundingBox();
+    const stageAfterGpuFocus = await page.locator(".swarmlab-canvas-stage").boundingBox();
+    const gpuVisibleWidth = gpuMachineBox && stageAfterGpuFocus
+      ? Math.min(gpuMachineBox.x + gpuMachineBox.width, stageAfterGpuFocus.x + stageAfterGpuFocus.width)
+        - Math.max(gpuMachineBox.x, stageAfterGpuFocus.x)
+      : 0;
+    const gpuVisibleHeight = gpuMachineBox && stageAfterGpuFocus
+      ? Math.min(gpuMachineBox.y + gpuMachineBox.height, stageAfterGpuFocus.y + stageAfterGpuFocus.height)
+        - Math.max(gpuMachineBox.y, stageAfterGpuFocus.y)
+      : 0;
+    assert.ok(
+      gpuVisibleWidth > 80 && gpuVisibleHeight > 80,
+      "view-only machine regions should be focusable from the dock even without launchers",
+    );
 
     await page.click('[data-swarmlab-canvas-launch-machine="mac-main"]');
     await page.waitForSelector('[data-swarmlab-canvas-launcher="launcher:app:cursor"]', { timeout: 10_000 });

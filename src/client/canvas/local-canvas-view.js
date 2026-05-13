@@ -3020,7 +3020,7 @@ function launcherMachineId(card) {
   return getCanvasCardMachineId(card);
 }
 
-function groupLauncherCards(launcherCards) {
+function groupLauncherCards(launcherCards, regions = []) {
   const groups = new Map();
   launcherCards.forEach((card) => {
     const machineId = launcherMachineId(card);
@@ -3028,6 +3028,11 @@ function groupLauncherCards(launcherCards) {
       groups.set(machineId, []);
     }
     groups.get(machineId).push(card);
+  });
+  regions.forEach((region) => {
+    if (region?.id && !groups.has(region.id)) {
+      groups.set(region.id, []);
+    }
   });
   return groups;
 }
@@ -3108,7 +3113,7 @@ function renderLauncherDockMore(cards) {
 function renderLauncherDock(launcherCards, regions = [], localMachineId = "", selectedMachineId = "") {
   if (!launcherCards.length) return "";
   const regionsById = new Map(regions.map((region) => [region.id, region]));
-  const groups = groupLauncherCards(launcherCards);
+  const groups = groupLauncherCards(launcherCards, regions);
   const machineIds = sortedLauncherMachineIds(groups, regions, localMachineId);
   const activeMachineId = groups.has(selectedMachineId) ? selectedMachineId : machineIds[0];
   const activeCards = groups.get(activeMachineId) || [];
@@ -3310,7 +3315,7 @@ function renderSnapshot(root, payload, { storage, remoteRecords = [] } = {}) {
   const regionsById = Object.fromEntries(regions.map((region) => [region.id, region]));
   const cardsById = Object.fromEntries([...cards, ...launcherCards].map((card) => [card.id, card]));
   const localMachineId = snapshot.node.id;
-  const launcherGroups = groupLauncherCards(launcherCards);
+  const launcherGroups = groupLauncherCards(launcherCards, regions);
   const selectedLauncherMachineId = readLauncherDockMachineId(storage, dockStorageKey, launcherGroups, regions, localMachineId);
   const meta = root.closest(".swarmlab-canvas-view")?.querySelector("[data-swarmlab-canvas-meta]");
   if (meta) {
