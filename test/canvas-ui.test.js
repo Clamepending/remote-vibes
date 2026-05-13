@@ -81,6 +81,8 @@ test("local canvas view renders node snapshot cards and persists drag layout", a
     const postedHandoffJobs = [];
     const remoteSnapshotHits = new Map();
     const directSnapshotHits = new Map();
+    const extraRemoteSessions = new Map();
+    const extraRemotePorts = new Map();
     const remoteSnapshots = new Map([
       ["https://gpu-node.example.test", {
         id: "gpu-cluster",
@@ -132,8 +134,12 @@ test("local canvas view renders node snapshot cards and persists drag layout", a
             providerId: "codex",
             status: "running",
           },
+          ...(extraRemoteSessions.get(origin) || []),
         ],
-        ports: [{ port: remote.port, name: `${remote.name} app`, preferredAccess: "proxy" }],
+        ports: [
+          { port: remote.port, name: `${remote.name} app`, preferredAccess: "proxy" },
+          ...(extraRemotePorts.get(origin) || []),
+        ],
         launchers: origin === "https://account-node.example.test"
           ? [
               { id: "provider:codex", label: "Codex", kind: "agent-provider", providerId: "codex", defaultName: "Codex", available: true },
@@ -814,6 +820,69 @@ test("local canvas view renders node snapshot cards and persists drag layout", a
     assert.ok(
       await page.locator('[data-swarmlab-canvas-pipe-card-id^="lifecycle:"].is-resource').count() >= 3,
       "remote lifecycle cards should stay connected to the agent or launcher that created them",
+    );
+
+    extraRemoteSessions.set("https://account-node.example.test", [
+      {
+        id: "account-box-agent-copy",
+        name: "Copy: Worker B",
+        providerId: "codex",
+        status: "running",
+      },
+      {
+        id: "account-box-agent-codex",
+        name: "Codex remote",
+        providerId: "codex",
+        status: "running",
+      },
+    ]);
+    extraRemotePorts.set("https://account-node.example.test", [
+      {
+        port: 9123,
+        name: "Cursor workspace",
+        customName: "Cursor workspace",
+        preferredAccess: "proxy",
+        appId: "cursor",
+        launchCommandId: "cmd_canvas_4",
+        canvasVisible: true,
+      },
+    ]);
+    remoteCommandsById.set("cmd_canvas_2", {
+      ...remoteCommandsById.get("cmd_canvas_2"),
+      status: "completed",
+      updatedAt: "2026-05-12T12:03:00.000Z",
+      completedAt: "2026-05-12T12:03:00.000Z",
+      result: { session: { id: "account-box-agent-copy" } },
+    });
+    remoteCommandsById.set("cmd_canvas_3", {
+      ...remoteCommandsById.get("cmd_canvas_3"),
+      status: "completed",
+      updatedAt: "2026-05-12T12:03:01.000Z",
+      completedAt: "2026-05-12T12:03:01.000Z",
+      result: { session: { id: "account-box-agent-codex" } },
+    });
+    remoteCommandsById.set("cmd_canvas_4", {
+      ...remoteCommandsById.get("cmd_canvas_4"),
+      status: "completed",
+      updatedAt: "2026-05-12T12:03:02.000Z",
+      completedAt: "2026-05-12T12:03:02.000Z",
+      result: { appId: "cursor", port: 9123, url: "/proxy/9123/" },
+    });
+    await page.waitForSelector('[data-swarmlab-canvas-card-id="remote:account-box:session:account-box-agent-copy"]', { timeout: 10_000 });
+    await page.waitForSelector('[data-swarmlab-canvas-card-id="remote:account-box:session:account-box-agent-codex"]', { timeout: 10_000 });
+    await page.waitForSelector('[data-swarmlab-canvas-card-id="remote:account-box:port:9123"]', { timeout: 10_000 });
+    assert.equal(await page.locator(".swarmlab-canvas-card.is-lifecycle").count(), 0);
+    assert.equal(
+      await page.locator('[data-swarmlab-canvas-pipe-card-id="remote:account-box:session:account-box-agent-copy"].is-resource').getAttribute("data-swarmlab-canvas-pipe-source-card-id"),
+      "session:session-1",
+    );
+    assert.equal(
+      await page.locator('[data-swarmlab-canvas-pipe-card-id="remote:account-box:session:account-box-agent-codex"].is-resource').getAttribute("data-swarmlab-canvas-pipe-source-card-id"),
+      "remote:account-box:launcher:provider:codex",
+    );
+    assert.equal(
+      await page.locator('[data-swarmlab-canvas-pipe-card-id="remote:account-box:port:9123"].is-resource').getAttribute("data-swarmlab-canvas-pipe-source-card-id"),
+      "remote:account-box:launcher:app:cursor",
     );
 
     await page.evaluate(() => {

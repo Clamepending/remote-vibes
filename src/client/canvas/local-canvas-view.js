@@ -1598,6 +1598,104 @@ function sessionIdFromLifecycle(lifecycle) {
   ).trim();
 }
 
+function lifecycleResultAppInfo(lifecycle) {
+  const result = lifecycle?.result && typeof lifecycle.result === "object" ? lifecycle.result : {};
+  const app = result.app && typeof result.app === "object" ? result.app : {};
+  const launcher = result.launcher && typeof result.launcher === "object" ? result.launcher : {};
+  const url = normalizeRemoteNodeUrl(result.url || result.href || app.url || app.href || result.appUrl || "");
+  let port = Number(result.port || app.port || result.localPort || app.localPort || 0);
+  if (!Number.isInteger(port) && url) {
+    try {
+      port = Number(new URL(url).port || 0);
+    } catch {
+      port = 0;
+    }
+  }
+  const rawAppId = String(
+    lifecycle.appId ||
+    result.appId ||
+    result.applicationId ||
+    app.appId ||
+    app.id ||
+    launcher.appId ||
+    launcher.id ||
+    "",
+  ).trim().replace(/^app:/u, "");
+  return {
+    appId: rawAppId,
+    port: Number.isInteger(port) && port > 0 ? port : null,
+    url,
+    commandId: String(result.commandId || lifecycle.commandId || "").trim(),
+  };
+}
+
+function sameLaunchMachine(card, lifecycle) {
+  const cardMachineId = getCanvasCardMachineId(card);
+  return cardMachineId === lifecycle.machineId ||
+    Boolean(lifecycle.remoteNodeId && card.ref?.remoteNodeId === lifecycle.remoteNodeId) ||
+    Boolean(lifecycle.remoteUrl && card.ref?.remoteUrl === lifecycle.remoteUrl);
+}
+
+function cardUrlForLaunchMatch(card) {
+  return normalizeRemoteNodeUrl(card.href || card.ref?.embedUrl || card.detail || "");
+}
+
+function findMaterializedLaunchCard(cards, lifecycle) {
+  if (!lifecycle) return null;
+  if (lifecycle.operation === "session.create") {
+    const sessionId = sessionIdFromLifecycle(lifecycle);
+    if (!sessionId) return null;
+    return cards.find((card) =>
+      card.type === "agent" &&
+      sameLaunchMachine(card, lifecycle) &&
+      String(card.ref?.sessionId || "") === sessionId,
+    ) || null;
+  }
+  if (lifecycle.operation === "app.launch") {
+    const info = lifecycleResultAppInfo(lifecycle);
+    if (!info.appId && !info.port && !info.url && !info.commandId) return null;
+    return cards.find((card) => {
+      if (!sameLaunchMachine(card, lifecycle)) return false;
+      if (card.type !== "app" && card.type !== "browser" && card.type !== "monitor") return false;
+      const cardAppId = String(card.ref?.appId || card.ref?.launcherId || "").trim().replace(/^app:/u, "");
+      const cardPort = Number(card.ref?.port || 0);
+      const cardCommandId = String(card.ref?.launchCommandId || card.ref?.commandId || "").trim();
+      const cardUrl = cardUrlForLaunchMatch(card);
+      if (info.commandId && cardCommandId && info.commandId === cardCommandId) return true;
+      if (info.appId && cardAppId && info.appId === cardAppId) return true;
+      if (info.port && Number.isInteger(cardPort) && cardPort === info.port) return true;
+      if (info.url && cardUrl && cardUrl === info.url) return true;
+      return false;
+    }) || null;
+  }
+  return null;
+}
+
+function materializeLaunchLifecycleLinks(cards, lifecycles) {
+  if (!lifecycles?.length) return cards;
+  const updates = new Map();
+  lifecycles.forEach((lifecycle) => {
+    const sourceCardId = String(lifecycle.sourceCardId || "").trim();
+    if (!sourceCardId) return;
+    const target = findMaterializedLaunchCard(cards, lifecycle);
+    if (!target) return;
+    const previous = updates.get(target.id) || target;
+    updates.set(target.id, {
+      ...previous,
+      tags: [...new Set([...(previous.tags || []), "launched"])].slice(0, 5),
+      ref: {
+        ...(previous.ref || {}),
+        sourceCardId: previous.ref?.sourceCardId || sourceCardId,
+        launchLifecycleId: lifecycle.lifecycleId,
+        launchCommandId: lifecycle.commandId || previous.ref?.launchCommandId || "",
+        clientCommandId: lifecycle.clientCommandId || previous.ref?.clientCommandId || "",
+      },
+    });
+  });
+  if (!updates.size) return cards;
+  return cards.map((card) => updates.get(card.id) || card);
+}
+
 function launchLifecycleDetail(lifecycle) {
   if (lifecycle.error) return lifecycle.error;
   const target = lifecycle.targetTitle || lifecycle.machineId || "remote machine";
@@ -1652,16 +1750,11 @@ function launchLifecycleCard(lifecycle) {
 }
 
 function mergeLaunchLifecycleCards(cards, lifecycles) {
-  const visibleSessions = new Set(cards
-    .map((card) => String(card?.ref?.sessionId || ""))
-    .filter(Boolean));
+  const linkedCards = materializeLaunchLifecycleLinks(cards, lifecycles);
   const lifecycleCards = lifecycles
-    .filter((lifecycle) => {
-      const sessionId = sessionIdFromLifecycle(lifecycle);
-      return !sessionId || !visibleSessions.has(sessionId);
-    })
+    .filter((lifecycle) => !findMaterializedLaunchCard(linkedCards, lifecycle))
     .map(launchLifecycleCard);
-  return [...cards, ...lifecycleCards];
+  return [...linkedCards, ...lifecycleCards];
 }
 
 function launchLifecycleFromCommand(command, lifecycle) {

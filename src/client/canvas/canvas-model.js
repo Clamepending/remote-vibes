@@ -952,6 +952,7 @@ function portCard(port, index, machineId) {
   const portLabel = rawPort ? String(rawPort) : `port-${index + 1}`;
   const href = portHref(port);
   const name = portDisplayName(port, portLabel);
+  const appId = normalizeText(pickFirst(port.appId, port.applicationId, port.desktopAppId));
   const previewTrusted = Boolean(
     port?.customName ||
       port?.canvasVisible === true ||
@@ -966,11 +967,13 @@ function portCard(port, index, machineId) {
     status: pickFirst(port.preferredAccess, port.status, port.protocol),
     detail: "Live app preview",
     meta: href,
-    tags: [port.localOnly ? "local only" : "", port.exposedWithTailscale ? "tailscale" : "", port.customName ? "named" : ""],
+    tags: [port.localOnly ? "local only" : "", port.exposedWithTailscale ? "tailscale" : "", port.customName ? "named" : "", appId],
     href,
     ref: {
       machineId,
       port: Number.isInteger(rawPort) ? rawPort : undefined,
+      appId,
+      launchCommandId: normalizeText(pickFirst(port.launchCommandId, port.commandId, port.sourceCommandId)),
       embedUrl: href,
       previewTrusted,
       actionLabel: "Open app",
