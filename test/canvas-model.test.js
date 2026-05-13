@@ -85,20 +85,26 @@ test("buildCanvasCards renders machine, brain, handoff, session, browser, approv
 test("buildCanvasCards promotes previewable app ports and folds the noisy remainder", () => {
   const cards = buildCanvasCards({
     node: { id: "node-1", name: "GPU box", status: "online" },
-    ports: Array.from({ length: 7 }, (_, index) => ({
-      port: 5000 + index,
-      name: `App ${index + 1}`,
-      preferredAccess: index % 2 ? "direct" : "proxy",
-    })),
+    ports: [
+      ...Array.from({ length: 7 }, (_, index) => ({
+        port: 5000 + index,
+        name: `App ${index + 1}`,
+        preferredAccess: index % 2 ? "direct" : "proxy",
+      })),
+      { port: 8765, name: "8765", preferredAccess: "direct", hasDirectUrl: true },
+      { port: 9091, preferredAccess: "proxy", hasDirectUrl: true },
+    ],
   });
 
   const appCards = cards.filter((card) => card.type === "app");
   assert.equal(appCards.length, 5);
   assert.equal(appCards.filter((card) => card.ref.embedUrl).length, 4);
+  assert.equal(appCards.some((card) => card.id === "port:8765"), false);
+  assert.equal(appCards.some((card) => card.id === "port:9091"), false);
   assert.equal(appCards.at(-1).id, "app:local-ports");
   assert.equal(appCards.at(-1).title, "More local apps");
-  assert.equal(appCards.at(-1).subtitle, "3 more ports");
-  assert.equal(appCards.at(-1).ref.ports.length, 7);
+  assert.equal(appCards.at(-1).subtitle, "5 more ports");
+  assert.equal(appCards.at(-1).ref.ports.length, 9);
 });
 
 test("buildCanvasCards keeps active work visible and collapses quiet board noise", () => {

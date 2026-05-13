@@ -138,10 +138,7 @@ function isLikelyVisibleAppPort(port) {
     port?.customName ||
       port?.canvasVisible === true ||
       port?.previewKind === "preview" ||
-      hasIntentionalPortName(port) ||
-      port?.hasDirectUrl ||
-      port?.hasTailscaleUrl ||
-      (COMMON_UI_PORTS.has(rawPort) && rawPort !== 8765),
+      hasIntentionalPortName(port),
   );
 }
 
@@ -696,10 +693,7 @@ function portCard(port, index, machineId) {
     port?.customName ||
       port?.canvasVisible === true ||
       port?.previewKind === "preview" ||
-      hasIntentionalPortName(port) ||
-      port?.hasDirectUrl ||
-      port?.hasTailscaleUrl ||
-      (rawPort && COMMON_UI_PORTS.has(rawPort) && rawPort !== 8765),
+      hasIntentionalPortName(port),
   );
   return makeCard({
     id: `port:${portLabel}`,
