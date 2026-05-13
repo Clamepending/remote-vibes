@@ -933,7 +933,7 @@ async function fetchRemoteNodeRecord(baseUrl, { fetchImpl, signal }) {
         signal: timeout.signal,
       });
     } catch (proxyError) {
-      if (!proxyError?.proxyUnavailable) {
+      if (!proxyError?.proxyUnavailable && !proxyError?.directFallbackAllowed) {
         throw proxyError;
       }
       payload = await fetchJson(`${normalizedBaseUrl}/api/node/snapshot?mode=redacted`, {
@@ -975,6 +975,11 @@ async function fetchRemoteNodeSnapshotViaProxy(normalizedBaseUrl, { fetchImpl, s
   if (response.status === 404 || response.status === 405) {
     const error = new Error("remote snapshot proxy unavailable");
     error.proxyUnavailable = true;
+    throw error;
+  }
+  if (response.status === 502 || response.status === 503 || response.status === 504) {
+    const error = new Error(payload?.error || "remote snapshot proxy could not reach node");
+    error.directFallbackAllowed = true;
     throw error;
   }
   if (!response.ok) {

@@ -72,6 +72,7 @@ test("local canvas view renders node snapshot cards and persists drag layout", a
     const postedFleetNodes = [];
     const postedHandoffJobs = [];
     const remoteSnapshotHits = new Map();
+    const directSnapshotHits = new Map();
     const remoteSnapshots = new Map([
       ["https://gpu-node.example.test", {
         id: "gpu-cluster",
@@ -104,6 +105,31 @@ test("local canvas view renders node snapshot cards and persists drag layout", a
         port: 9009,
       }],
     ]);
+    const buildRemoteSnapshotPayload = (origin) => {
+      const remote = remoteSnapshots.get(origin);
+      return {
+        schemaVersion: 1,
+        mode: "redacted",
+        node: {
+          id: remote.id,
+          name: remote.name,
+          status: "online",
+          os: "linux",
+          version: "1.0.20",
+        },
+        sessions: [
+          {
+            id: `${remote.id}-agent-1`,
+            name: remote.sessionName,
+            providerId: "codex",
+            status: "running",
+          },
+        ],
+        ports: [{ port: remote.port, name: `${remote.name} app`, preferredAccess: "proxy" }],
+        counts: { sessions: 1, ports: 1, approvals: 0, artifacts: 0 },
+        generatedAt: "2026-05-12T12:00:10.000Z",
+      };
+    };
     await page.route(`${baseUrl}/api/node/snapshot**`, async (route) => {
       await route.fulfill({
         status: 200,
@@ -286,6 +312,26 @@ test("local canvas view renders node snapshot cards and persists drag layout", a
       const requestUrl = new URL(route.request().url());
       const origin = new URL(requestUrl.searchParams.get("baseUrl") || "").origin;
       remoteSnapshotHits.set(origin, (remoteSnapshotHits.get(origin) || 0) + 1);
+      if (origin === "https://offline-node.example.test" || origin === "https://registry-node.example.test") {
+        await route.fulfill({
+          status: 502,
+          contentType: "application/json",
+          body: JSON.stringify({ error: origin === "https://offline-node.example.test" ? "offline in test" : "proxy cannot reach registry in test" }),
+        });
+        return;
+      }
+      await route.fulfill({
+        status: 200,
+        contentType: "application/json",
+        body: JSON.stringify({
+          baseUrl: origin,
+          snapshot: buildRemoteSnapshotPayload(origin),
+        }),
+      });
+    });
+    await page.route("https://*.example.test/api/node/snapshot**", async (route) => {
+      const origin = new URL(route.request().url()).origin;
+      directSnapshotHits.set(origin, (directSnapshotHits.get(origin) || 0) + 1);
       if (origin === "https://offline-node.example.test") {
         await route.fulfill({
           status: 502,
@@ -294,35 +340,10 @@ test("local canvas view renders node snapshot cards and persists drag layout", a
         });
         return;
       }
-      const remote = remoteSnapshots.get(origin);
       await route.fulfill({
         status: 200,
         contentType: "application/json",
-        body: JSON.stringify({
-          baseUrl: origin,
-          snapshot: {
-            schemaVersion: 1,
-            mode: "redacted",
-            node: {
-              id: remote.id,
-              name: remote.name,
-              status: "online",
-              os: "linux",
-              version: "1.0.20",
-            },
-            sessions: [
-              {
-                id: `${remote.id}-agent-1`,
-                name: remote.sessionName,
-                providerId: "codex",
-                status: "running",
-              },
-            ],
-            ports: [{ port: remote.port, name: `${remote.name} app`, preferredAccess: "proxy" }],
-            counts: { sessions: 1, ports: 1, approvals: 0, artifacts: 0 },
-            generatedAt: "2026-05-12T12:00:10.000Z",
-          },
-        }),
+        body: JSON.stringify(buildRemoteSnapshotPayload(origin)),
       });
     });
     await page.route("**/api/sessions/session-1/narrative", async (route) => {
@@ -448,6 +469,9 @@ test("local canvas view renders node snapshot cards and persists drag layout", a
     assert.equal(remoteSnapshotHits.get("https://registry-node.example.test"), 1);
     assert.equal(remoteSnapshotHits.get("https://account-node.example.test"), 1);
     assert.equal(remoteSnapshotHits.get("https://offline-node.example.test"), 1);
+    assert.equal(directSnapshotHits.get("https://registry-node.example.test"), 1);
+    assert.equal(directSnapshotHits.get("https://offline-node.example.test"), 1);
+    assert.equal(directSnapshotHits.get("https://gpu-node.example.test"), undefined);
     assert.equal(
       await page.locator('[data-swarmlab-canvas-card-id="remote:gpu-cluster:session:gpu-cluster-agent-1"] a.swarmlab-canvas-open').getAttribute("href"),
       "https://gpu-node.example.test/?view=shell&sessionId=gpu-cluster-agent-1",
