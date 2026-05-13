@@ -663,7 +663,7 @@ test("local canvas view renders node snapshot cards and persists drag layout", a
     assert.equal(await page.locator(".swarmlab-canvas-card.is-remote").count(), 8);
     assert.equal(await page.locator(".swarmlab-canvas-card.is-launcher").count(), 0);
     assert.equal(await page.locator(".swarmlab-canvas-launch-dock").count(), 1);
-    assert.equal(await page.locator("[data-swarmlab-canvas-launch-machine]").count(), 6);
+    assert.equal(await page.locator("[data-swarmlab-canvas-launch-machine]").count(), 0);
     assert.equal(await page.locator("[data-swarmlab-canvas-launcher]").count(), 8);
     assert.equal(await page.locator(".swarmlab-canvas-launch-items > [data-swarmlab-canvas-launcher]").count(), 6);
     assert.match(await page.locator(".swarmlab-canvas-launch-more").innerText(), /2 more/);
@@ -674,6 +674,16 @@ test("local canvas view renders node snapshot cards and persists drag layout", a
       dockBox && controlsBox && controlsBox.y + controlsBox.height < dockBox.y,
       "zoom controls should sit above the app dock without overlap",
     );
+    const originalViewport = page.viewportSize() || { width: 1280, height: 720 };
+    await page.setViewportSize({ width: 669, height: 832 });
+    const compactDockBox = await page.locator(".swarmlab-canvas-launch-dock").boundingBox();
+    const compactControlsBox = await page.locator(".swarmlab-canvas-floating-controls").boundingBox();
+    assert.ok(compactDockBox && compactDockBox.height <= 58, "app launcher dock should stay one row in the in-app browser width");
+    assert.ok(
+      compactDockBox && compactControlsBox && compactControlsBox.y + compactControlsBox.height < compactDockBox.y,
+      "zoom controls should stay above the app dock in the in-app browser width",
+    );
+    await page.setViewportSize(originalViewport);
     const directLauncherBox = await page.locator(".swarmlab-canvas-launch-items > [data-swarmlab-canvas-launcher]").first().boundingBox();
     assert.ok(directLauncherBox && directLauncherBox.width <= 78, "dock launcher buttons should be icon-scale");
     await page.locator(".swarmlab-canvas-launch-more-button").click();
@@ -682,11 +692,12 @@ test("local canvas view renders node snapshot cards and persists drag layout", a
     await page.locator(".swarmlab-canvas-launch-more-button").click();
     await page.locator(".swarmlab-canvas-launch-more-panel").waitFor({ state: "hidden" });
     const dockText = await page.locator(".swarmlab-canvas-launch-dock").innerText();
-    assert.match(dockText, /Mac Main/);
-    assert.match(dockText, /Account Workstation/);
-    assert.match(dockText, /GPU Cluster/);
+    assert.match(dockText, /Apps/);
+    assert.match(dockText, /Mac Main/i);
     assert.match(dockText, /Codex/);
     assert.match(dockText, /Cursor/);
+    assert.doesNotMatch(dockText, /Account Workstation/);
+    assert.doesNotMatch(dockText, /GPU Cluster/);
     assert.doesNotMatch(dockText, /\b\d+\s+apps?\b/i, "machine app counts should stay in labels, not visible dock chrome");
     assert.equal(await page.locator(".swarmlab-canvas-machine-rail").count(), 1);
     assert.equal(await page.locator("[data-swarmlab-canvas-focus-region]").count(), 6);
@@ -789,7 +800,7 @@ test("local canvas view renders node snapshot cards and persists drag layout", a
     await page.waitForFunction(() =>
       document.querySelector('[data-swarmlab-canvas-focus-region="gpu-cluster"]')?.getAttribute("aria-current") === "true",
     );
-    assert.equal(await page.locator('[data-swarmlab-canvas-launch-machine="gpu-cluster"]').getAttribute("aria-selected"), "true");
+    assert.match(await page.locator(".swarmlab-canvas-launch-dock").innerText(), /GPU Cluster/);
     const railViewport = await page.evaluate(() =>
       JSON.parse(window.localStorage.getItem("swarmlab.canvas.viewport.v4:fleet:mac-main") || "{}"),
     );
@@ -873,7 +884,7 @@ test("local canvas view renders node snapshot cards and persists drag layout", a
       new RegExp(`${resizedLayout["machine:mac-main"].regionWidth} x ${resizedLayout["machine:mac-main"].regionHeight}`),
       "region resize readout should track the saved region bounds",
     );
-    await page.locator('[data-swarmlab-canvas-launch-machine="mac-main"]').evaluate((button) => button.click());
+    await page.locator('[data-swarmlab-canvas-focus-region="mac-main"]').evaluate((button) => button.click());
     await page.waitForSelector('[data-swarmlab-canvas-card-id="session:session-1"]', { timeout: 10_000 });
 
     await page.click('[data-swarmlab-canvas-launcher="launcher:app:cursor"]');
@@ -1024,9 +1035,9 @@ test("local canvas view renders node snapshot cards and persists drag layout", a
     assert.match(lifecycleText, /Copy: Worker B/);
     assert.match(lifecycleText, /source agent keeps running/i);
 
-    await page.locator('[data-swarmlab-canvas-launch-machine="gpu-cluster"]').evaluate((button) => button.click());
+    await page.locator('[data-swarmlab-canvas-focus-region="gpu-cluster"]').evaluate((button) => button.click());
     await page.waitForFunction(() =>
-      document.querySelector('[data-swarmlab-canvas-launch-machine="gpu-cluster"]')?.getAttribute("aria-selected") === "true",
+      document.querySelector('[data-swarmlab-canvas-focus-region="gpu-cluster"]')?.getAttribute("aria-current") === "true",
     );
     const gpuMachineBox = await page.locator('[data-swarmlab-canvas-card-id="remote:gpu-cluster:session:gpu-cluster-agent-1"]').boundingBox();
     const stageAfterGpuFocus = await page.locator(".swarmlab-canvas-stage").boundingBox();
@@ -1040,17 +1051,17 @@ test("local canvas view renders node snapshot cards and persists drag layout", a
       : 0;
     assert.ok(
       gpuVisibleWidth > 80 && gpuVisibleHeight > 80,
-      "view-only machine regions should be focusable from the dock even without launchers",
+      "view-only machine regions should be focusable from the machine rail even without launchers",
     );
 
-    await page.click('[data-swarmlab-canvas-launch-machine="mac-main"]');
+    await page.click('[data-swarmlab-canvas-focus-region="mac-main"]');
     await page.waitForSelector('[data-swarmlab-canvas-launcher="launcher:app:cursor"]', { timeout: 10_000 });
     const localMachineViewport = await page.evaluate(() => document.querySelector("[data-swarmlab-canvas-root]")?.__swarmlabCanvasViewport || null);
-    await page.click('[data-swarmlab-canvas-launch-machine="account-box"]');
+    await page.click('[data-swarmlab-canvas-focus-region="account-box"]');
     await page.waitForSelector('[data-swarmlab-canvas-launcher="remote:account-box:launcher:provider:codex"]', { timeout: 10_000 });
-    assert.equal(await page.locator('[data-swarmlab-canvas-launch-machine="account-box"]').getAttribute("aria-selected"), "true");
+    assert.equal(await page.locator('[data-swarmlab-canvas-focus-region="account-box"]').getAttribute("aria-current"), "true");
     const accountMachineViewport = await page.evaluate(() => document.querySelector("[data-swarmlab-canvas-root]")?.__swarmlabCanvasViewport || null);
-    assert.notDeepEqual(accountMachineViewport, localMachineViewport, "selecting a launcher machine should also focus that machine region");
+    assert.notDeepEqual(accountMachineViewport, localMachineViewport, "selecting a machine region should also retarget the app dock");
     const accountMachineBox = await page.locator('[data-swarmlab-canvas-card-id="remote:account-box:session:account-box-agent-1"]').boundingBox();
     const stageAfterMachineFocus = await page.locator(".swarmlab-canvas-stage").boundingBox();
     const machineVisibleWidth = accountMachineBox && stageAfterMachineFocus
@@ -1063,7 +1074,7 @@ test("local canvas view renders node snapshot cards and persists drag layout", a
       : 0;
     assert.ok(
       machineVisibleWidth > 80 && machineVisibleHeight > 80,
-      "selected machine region should be visible after dock machine selection",
+      "selected machine region should be visible after rail machine selection",
     );
     await page.locator('[data-swarmlab-canvas-launcher="remote:account-box:launcher:provider:codex"]').evaluate((button) => button.click());
     for (let attempt = 0; attempt < 20 && postedRemoteCommands.length < 3; attempt += 1) {
