@@ -258,11 +258,11 @@ function injectCanvasStyles(documentRef = document) {
   right: 300px;
   bottom: 18px;
   z-index: 26;
-  display: flex;
-  align-items: stretch;
-  gap: 12px;
-  min-height: 68px;
-  max-height: 128px;
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr);
+  gap: 10px;
+  min-height: 58px;
+  max-height: 82px;
   padding: 9px;
   border: 1px solid rgba(232, 222, 206, 0.14);
   border-radius: 9px;
@@ -275,23 +275,82 @@ function injectCanvasStyles(documentRef = document) {
   pointer-events: auto;
   touch-action: pan-x;
 }
-.swarmlab-canvas-launch-machine {
-  display: grid;
-  grid-template-rows: auto minmax(0, 1fr);
-  gap: 7px;
-  min-width: max-content;
-  padding-right: 12px;
-  border-right: 1px solid rgba(232, 222, 206, 0.08);
+.swarmlab-canvas-launch-dock.is-single-machine {
+  grid-template-columns: auto minmax(0, 1fr);
 }
-.swarmlab-canvas-launch-machine:last-child {
-  border-right: 0;
-  padding-right: 0;
+.swarmlab-canvas-launch-machines {
+  display: flex;
+  align-items: stretch;
+  gap: 6px;
+  min-width: 0;
+  max-width: 280px;
+  overflow-x: auto;
+}
+.swarmlab-canvas-launch-title,
+.swarmlab-canvas-launch-machine {
+  display: inline-flex;
+  align-items: center;
+  min-height: 48px;
+  border: 1px solid rgba(232, 222, 206, 0.1);
+  border-radius: 8px;
+  background: rgba(255, 255, 255, 0.035);
+}
+.swarmlab-canvas-launch-title {
+  gap: 7px;
+  padding: 0 10px;
+  color: var(--canvas-muted);
+  font-size: 11px;
+  font-weight: 760;
+}
+.swarmlab-canvas-launch-machine {
+  gap: 7px;
+  max-width: 172px;
+  padding: 0 10px;
+  color: var(--canvas-muted);
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+}
+.swarmlab-canvas-launch-machine.is-active {
+  border-color: color-mix(in srgb, var(--machine-accent, var(--canvas-accent)) 42%, rgba(232, 222, 206, 0.18));
+  background: color-mix(in srgb, var(--machine-accent, var(--canvas-accent)) 14%, rgba(255, 255, 255, 0.035));
+  color: var(--canvas-text);
+}
+.swarmlab-canvas-launch-machine:hover {
+  border-color: color-mix(in srgb, var(--machine-accent, var(--canvas-accent)) 52%, rgba(232, 222, 206, 0.18));
+}
+.swarmlab-canvas-launch-machine-text {
+  min-width: 0;
+}
+.swarmlab-canvas-launch-machine-text strong,
+.swarmlab-canvas-launch-machine-text span {
+  display: block;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.swarmlab-canvas-launch-machine-text strong {
+  font-size: 11px;
+  font-weight: 720;
+  line-height: 1.15;
+}
+.swarmlab-canvas-launch-machine-text span {
+  margin-top: 3px;
+  color: var(--canvas-faint);
+  font-size: 10px;
+}
+.swarmlab-canvas-launch-panel {
+  display: flex;
+  align-items: center;
+  min-width: 0;
+  overflow: hidden;
 }
 .swarmlab-canvas-launch-machine-label {
   display: flex;
   align-items: center;
   gap: 6px;
-  max-width: 230px;
+  max-width: 100%;
   color: var(--canvas-muted);
   font-size: 10px;
   font-weight: 680;
@@ -313,10 +372,14 @@ function injectCanvasStyles(documentRef = document) {
 }
 .swarmlab-canvas-launch-items {
   display: flex;
+  align-items: center;
   gap: 7px;
+  min-width: 0;
+  overflow-x: auto;
 }
 .swarmlab-canvas-launch-item {
   display: grid;
+  flex: 0 0 132px;
   grid-template-columns: 18px minmax(0, 1fr);
   gap: 8px;
   align-items: center;
@@ -1075,9 +1138,17 @@ function injectCanvasStyles(documentRef = document) {
   .swarmlab-canvas-launch-dock {
     right: 18px;
     bottom: 72px;
-    max-height: 112px;
+    grid-template-columns: minmax(0, 1fr);
+    max-height: 116px;
+  }
+  .swarmlab-canvas-launch-dock.is-single-machine {
+    grid-template-columns: auto minmax(0, 1fr);
+  }
+  .swarmlab-canvas-launch-machines {
+    max-width: none;
   }
   .swarmlab-canvas-launch-item {
+    flex-basis: 116px;
     width: 116px;
   }
 }
@@ -2763,6 +2834,48 @@ function launcherKindLabel(card) {
   return card.ref?.category || "app";
 }
 
+function launcherDockStorageKey(boardId) {
+  return `swarmlab.canvas.launchDock.v1:${boardId}`;
+}
+
+function launcherMachineId(card) {
+  return getCanvasCardMachineId(card);
+}
+
+function groupLauncherCards(launcherCards) {
+  const groups = new Map();
+  launcherCards.forEach((card) => {
+    const machineId = launcherMachineId(card);
+    if (!groups.has(machineId)) {
+      groups.set(machineId, []);
+    }
+    groups.get(machineId).push(card);
+  });
+  return groups;
+}
+
+function sortedLauncherMachineIds(groups, regions = [], localMachineId = "") {
+  const regionOrder = new Map(regions.map((region, index) => [region.id, index]));
+  return [...groups.keys()].sort((leftId, rightId) => {
+    if (leftId === localMachineId) return -1;
+    if (rightId === localMachineId) return 1;
+    return (regionOrder.get(leftId) ?? 10_000) - (regionOrder.get(rightId) ?? 10_000) || leftId.localeCompare(rightId);
+  });
+}
+
+function readLauncherDockMachineId(storage, key, groups, regions = [], localMachineId = "") {
+  const machineIds = sortedLauncherMachineIds(groups, regions, localMachineId);
+  if (!machineIds.length) return "";
+  try {
+    const stored = String(storage.getItem(key) || "").trim();
+    if (stored && groups.has(stored)) return stored;
+  } catch {
+    // Dock selection is ephemeral UI state.
+  }
+  if (localMachineId && groups.has(localMachineId)) return localMachineId;
+  return machineIds[0];
+}
+
 function renderLauncherDockItem(card) {
   const isAgentProvider = String(card.ref?.launcherKind || "") === "agent-provider" || Boolean(card.ref?.providerId);
   const icon = isAgentProvider ? Bot : AppWindow;
@@ -2784,41 +2897,54 @@ function renderLauncherDockItem(card) {
   `;
 }
 
-function renderLauncherDock(launcherCards, regions = [], localMachineId = "") {
+function renderLauncherDock(launcherCards, regions = [], localMachineId = "", selectedMachineId = "") {
   if (!launcherCards.length) return "";
   const regionsById = new Map(regions.map((region) => [region.id, region]));
-  const regionOrder = new Map(regions.map((region, index) => [region.id, index]));
-  const groups = new Map();
-  launcherCards.forEach((card) => {
-    const machineId = getCanvasCardMachineId(card);
-    if (!groups.has(machineId)) {
-      groups.set(machineId, []);
-    }
-    groups.get(machineId).push(card);
-  });
-  const sortedGroups = [...groups.entries()].sort(([leftId], [rightId]) => {
-    if (leftId === localMachineId) return -1;
-    if (rightId === localMachineId) return 1;
-    return (regionOrder.get(leftId) ?? 10_000) - (regionOrder.get(rightId) ?? 10_000) || leftId.localeCompare(rightId);
-  });
+  const groups = groupLauncherCards(launcherCards);
+  const machineIds = sortedLauncherMachineIds(groups, regions, localMachineId);
+  const activeMachineId = groups.has(selectedMachineId) ? selectedMachineId : machineIds[0];
+  const activeCards = groups.get(activeMachineId) || [];
+  const activeRegion = regionsById.get(activeMachineId);
+  const activeTitle = regionDisplayName(activeRegion, activeMachineId) || activeMachineId;
+  const singleMachine = machineIds.length <= 1;
   return `
-    <nav class="swarmlab-canvas-launch-dock" data-swarmlab-canvas-launch-dock aria-label="Launch apps">
-      ${sortedGroups.map(([machineId, cards]) => {
-        const region = regionsById.get(machineId);
-        const accent = region ? regionAccent(region) : REGION_COLORS[0];
-        const title = regionDisplayName(region, machineId) || machineId;
-        return `
-          <section class="swarmlab-canvas-launch-machine" style="--machine-accent: ${escapeHtml(accent)};">
-            <div class="swarmlab-canvas-launch-machine-label">
-              <span class="swarmlab-canvas-launch-chip" aria-hidden="true"></span>
-              <span>${escapeHtml(title)}</span>
-            </div>
-            <div class="swarmlab-canvas-launch-items">
-              ${cards.map(renderLauncherDockItem).join("")}
-            </div>
-          </section>
-        `;
-      }).join("")}
+    <nav class="swarmlab-canvas-launch-dock${singleMachine ? " is-single-machine" : ""}" data-swarmlab-canvas-launch-dock aria-label="Launch apps">
+      ${singleMachine
+        ? `<div class="swarmlab-canvas-launch-title">${renderIcon(AppWindow, { width: 16, height: 16 })}<span>Apps</span></div>`
+        : `
+          <div class="swarmlab-canvas-launch-machines" role="tablist" aria-label="Launch target machine">
+            <div class="swarmlab-canvas-launch-title">${renderIcon(AppWindow, { width: 16, height: 16 })}<span>Apps</span></div>
+            ${machineIds.map((machineId) => {
+              const region = regionsById.get(machineId);
+              const accent = region ? regionAccent(region) : REGION_COLORS[0];
+              const title = regionDisplayName(region, machineId) || machineId;
+              const count = groups.get(machineId)?.length || 0;
+              const active = machineId === activeMachineId;
+              return `
+                <button
+                  class="swarmlab-canvas-launch-machine${active ? " is-active" : ""}"
+                  type="button"
+                  role="tab"
+                  aria-selected="${active ? "true" : "false"}"
+                  data-swarmlab-canvas-launch-machine="${escapeHtml(machineId)}"
+                  style="--machine-accent: ${escapeHtml(accent)};"
+                  title="${escapeHtml(title)}"
+                >
+                  <span class="swarmlab-canvas-launch-chip" aria-hidden="true"></span>
+                  <span class="swarmlab-canvas-launch-machine-text">
+                    <strong>${escapeHtml(title)}</strong>
+                    <span>${escapeHtml(`${count} app${count === 1 ? "" : "s"}`)}</span>
+                  </span>
+                </button>
+              `;
+            }).join("")}
+          </div>
+        `}
+      <section class="swarmlab-canvas-launch-panel" aria-label="${escapeHtml(`Launch apps on ${activeTitle}`)}">
+        <div class="swarmlab-canvas-launch-items">
+          ${activeCards.map(renderLauncherDockItem).join("")}
+        </div>
+      </section>
     </nav>
   `;
 }
@@ -2897,6 +3023,7 @@ function renderSnapshot(root, payload, { storage, remoteRecords = [] } = {}) {
   const storageKey = getCanvasLayoutStorageKey(boardId);
   const viewportKey = getCanvasViewportStorageKey(boardId);
   const launchStorageKey = getLaunchLifecycleStorageKey(boardId);
+  const dockStorageKey = launcherDockStorageKey(boardId);
   const launchLifecycles = readLaunchLifecycles(storage, launchStorageKey);
   const cards = mergeLaunchLifecycleCards(baseCards, launchLifecycles);
   const savedLayout = readLayout(storage, storageKey);
@@ -2906,6 +3033,8 @@ function renderSnapshot(root, payload, { storage, remoteRecords = [] } = {}) {
   const regionsById = Object.fromEntries(regions.map((region) => [region.id, region]));
   const cardsById = Object.fromEntries([...cards, ...launcherCards].map((card) => [card.id, card]));
   const localMachineId = snapshot.node.id;
+  const launcherGroups = groupLauncherCards(launcherCards);
+  const selectedLauncherMachineId = readLauncherDockMachineId(storage, dockStorageKey, launcherGroups, regions, localMachineId);
   const meta = root.closest(".swarmlab-canvas-view")?.querySelector("[data-swarmlab-canvas-meta]");
   if (meta) {
     const onlineRemotes = remoteRecords.filter((record) => record.snapshot).length;
@@ -2920,6 +3049,7 @@ function renderSnapshot(root, payload, { storage, remoteRecords = [] } = {}) {
   root.dataset.swarmlabCanvasStorageKey = storageKey;
   root.dataset.swarmlabCanvasViewportStorageKey = viewportKey;
   root.dataset.swarmlabCanvasLaunchStorageKey = launchStorageKey;
+  root.dataset.swarmlabCanvasLaunchDockStorageKey = dockStorageKey;
   root.__swarmlabCanvasLayout = layout;
   root.__swarmlabCanvasViewport = viewport;
   root.__swarmlabCanvasCards = cards;
@@ -2944,7 +3074,7 @@ function renderSnapshot(root, payload, { storage, remoteRecords = [] } = {}) {
       ${renderCanvasPipeLayer(cards, layout, regions, localMachineId)}
       ${cards.map((card) => renderCanvasCard(card, layout[card.id])).join("")}
     </div>
-    ${renderLauncherDock(launcherCards, regions, localMachineId)}
+    ${renderLauncherDock(launcherCards, regions, localMachineId, selectedLauncherMachineId)}
     ${renderFloatingControls(viewport)}
   `;
   refreshRegionPresentation(root);
@@ -3721,6 +3851,30 @@ function bindCanvasActions(root, options) {
       event.preventDefault();
       event.stopPropagation();
       void launchCanvasLauncher(button, root, root.__swarmlabCanvasActionOptions || {});
+    });
+  }
+
+  if (!root.__swarmlabCanvasLaunchMachineBound) {
+    root.__swarmlabCanvasLaunchMachineBound = true;
+    root.addEventListener("click", (event) => {
+      const button = event.target instanceof Element
+        ? event.target.closest("[data-swarmlab-canvas-launch-machine]")
+        : null;
+      if (!(button instanceof HTMLButtonElement)) return;
+      event.preventDefault();
+      event.stopPropagation();
+      const machineId = button.getAttribute("data-swarmlab-canvas-launch-machine") || "";
+      const key = root.dataset.swarmlabCanvasLaunchDockStorageKey || "";
+      if (machineId && key) {
+        try {
+          storage.setItem(key, machineId);
+        } catch {
+          // Dock machine selection is convenience UI state.
+        }
+      }
+      if (typeof refresh === "function") {
+        refresh();
+      }
     });
   }
 
