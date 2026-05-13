@@ -831,6 +831,12 @@ test("local canvas view renders node snapshot cards and persists drag layout", a
       await page.locator('.swarmlab-canvas-card.is-app:not(.is-lifecycle)').filter({ hasText: "Cursor" }).count(),
       1,
     );
+    const dismissLaunchedApp = page.locator('.swarmlab-canvas-card.is-launched-app [data-swarmlab-canvas-dismiss-launch]');
+    assert.equal(await dismissLaunchedApp.count(), 1);
+    await dismissLaunchedApp.click();
+    await page.waitForFunction(() => document.querySelectorAll(".swarmlab-canvas-card.is-launched-app").length === 0);
+    assert.equal(postedAppLaunches.length, 1, "dismissing a launched app window should not relaunch or kill the app");
+    assert.equal(deletedSessions.length, 0, "dismissing a launched app window must not delete agent sessions");
 
     const sessionCard = page.locator('[data-swarmlab-canvas-card-id="session:session-1"]');
     const before = await sessionCard.locator("[data-swarmlab-card-drag-handle]").evaluate((handle) => {

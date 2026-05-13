@@ -17,6 +17,7 @@ import {
   RefreshCw,
   RotateCcw,
   Send,
+  X,
 } from "lucide";
 import {
   buildCanvasCards,
@@ -783,6 +784,11 @@ function injectCanvasStyles(documentRef = document) {
 .swarmlab-canvas-card.is-agent .swarmlab-canvas-card-title span {
   font-size: 12px;
 }
+.swarmlab-canvas-card-tools {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+}
 .swarmlab-canvas-card.is-remote {
   border-color: rgba(116, 199, 184, 0.24);
 }
@@ -809,6 +815,26 @@ function injectCanvasStyles(documentRef = document) {
 }
 .swarmlab-canvas-drag-grip {
   color: var(--canvas-faint);
+}
+.swarmlab-canvas-card-control {
+  display: grid;
+  place-items: center;
+  width: 23px;
+  height: 23px;
+  min-height: 23px;
+  padding: 0;
+  border: 1px solid transparent;
+  border-radius: 6px;
+  background: transparent;
+  color: var(--canvas-muted);
+  cursor: pointer;
+  opacity: 0.72;
+}
+.swarmlab-canvas-card-control:hover {
+  border-color: rgba(232, 222, 206, 0.16);
+  background: rgba(255, 255, 255, 0.06);
+  color: var(--canvas-text);
+  opacity: 1;
 }
 .swarmlab-canvas-card-body {
   min-height: 0;
@@ -2213,6 +2239,7 @@ function launchLifecycleCard(lifecycle) {
       sourceCardId: lifecycle.sourceCardId,
       lifecycle: !isCompletedApp,
       launchedApp: isCompletedApp,
+      launchLifecycleId: lifecycle.lifecycleId,
       commandId: lifecycle.commandId,
       clientCommandId: lifecycle.clientCommandId,
       sessionId,
@@ -2548,18 +2575,42 @@ function renderCardAction(card) {
   return "";
 }
 
+function renderCardTools(card) {
+  const launchLifecycleId = String(card.ref?.launchLifecycleId || "").trim();
+  const dismissLaunch = card.ref?.launchedApp && launchLifecycleId
+    ? `
+      <button
+        class="swarmlab-canvas-card-control"
+        type="button"
+        title="Dismiss from canvas"
+        aria-label="Dismiss ${escapeHtml(card.title || "app")} from canvas"
+        data-swarmlab-canvas-dismiss-launch="${escapeHtml(launchLifecycleId)}"
+      >
+        ${renderIcon(X, { width: 13, height: 13 })}
+      </button>
+    `
+    : "";
+  return `
+    <span class="swarmlab-canvas-card-tools">
+      ${dismissLaunch}
+      <span class="swarmlab-canvas-drag-grip" aria-hidden="true">${renderIcon(Grip, { width: 16, height: 16 })}</span>
+    </span>
+  `;
+}
+
 function cardFrame(card, layout, body, footer = "") {
   const icon = CARD_TYPE_ICONS[card.type] || Box;
   const sessionId = card.ref?.sessionId ? ` data-swarmlab-canvas-session-id="${escapeHtml(card.ref.sessionId)}"` : "";
   const remoteNodeId = card.ref?.remoteNodeId ? ` data-swarmlab-canvas-remote-node-id="${escapeHtml(card.ref.remoteNodeId)}"` : "";
   const remoteClass = card.ref?.remoteUrl ? " is-remote" : "";
   const lifecycleClass = card.ref?.lifecycle ? " is-lifecycle" : "";
+  const launchedAppClass = card.ref?.launchedApp ? " is-launched-app" : "";
   const machineId = getCanvasCardMachineId(card);
   const regionId = getCanvasCardRegionId(card, layout);
   const crossRegionClass = machineId !== regionId ? " is-cross-region" : "";
   return `
     <article
-      class="swarmlab-canvas-card is-${escapeHtml(card.type)}${remoteClass}${crossRegionClass}${lifecycleClass}"
+      class="swarmlab-canvas-card is-${escapeHtml(card.type)}${remoteClass}${crossRegionClass}${lifecycleClass}${launchedAppClass}"
       data-swarmlab-canvas-card-id="${escapeHtml(card.id)}"
       data-swarmlab-canvas-card-type="${escapeHtml(card.type)}"
       data-swarmlab-canvas-machine-id="${escapeHtml(machineId)}"
@@ -2574,7 +2625,7 @@ function cardFrame(card, layout, body, footer = "") {
           <strong>${escapeHtml(card.title)}</strong>
           <span>${escapeHtml([card.subtitle, card.status].filter(Boolean).join(" / "))}</span>
         </div>
-        <span class="swarmlab-canvas-drag-grip" aria-hidden="true">${renderIcon(Grip, { width: 16, height: 16 })}</span>
+        ${renderCardTools(card)}
       </div>
       ${body}
       ${footer}
@@ -4191,6 +4242,24 @@ function queueLaunchLifecycle(root, { storage, refresh }, lifecycle) {
   return stored;
 }
 
+function dismissLaunchLifecycle(button, root, { storage, refresh } = {}) {
+  const lifecycleId = String(button?.getAttribute("data-swarmlab-canvas-dismiss-launch") || "").trim();
+  const key = root?.dataset?.swarmlabCanvasLaunchStorageKey || "";
+  if (!lifecycleId || !key) return;
+  const current = readLaunchLifecycles(storage, key);
+  const next = current.filter((item) => item.lifecycleId !== lifecycleId);
+  writeLaunchLifecycles(storage, key, next);
+  const layoutKey = root.dataset.swarmlabCanvasStorageKey || "";
+  if (layoutKey) {
+    const layout = readLayout(storage, layoutKey);
+    delete layout[`lifecycle:${lifecycleId}`];
+    writeLayout(storage, layoutKey, layout);
+  }
+  if (typeof refresh === "function") {
+    refresh();
+  }
+}
+
 async function launchCanvasLauncher(button, root, { fetchImpl, abortController, onOpenSession, refresh, storage }) {
   const cardId = button.getAttribute("data-swarmlab-canvas-launcher") || "";
   const card = root.__swarmlabCanvasCardsById?.[cardId];
@@ -4444,6 +4513,19 @@ function bindCanvasActions(root, options) {
       event.preventDefault();
       event.stopPropagation();
       void launchCanvasLauncher(button, root, root.__swarmlabCanvasActionOptions || {});
+    });
+  }
+
+  if (!root.__swarmlabCanvasDismissLaunchBound) {
+    root.__swarmlabCanvasDismissLaunchBound = true;
+    root.addEventListener("click", (event) => {
+      const button = event.target instanceof Element
+        ? event.target.closest("[data-swarmlab-canvas-dismiss-launch]")
+        : null;
+      if (!(button instanceof HTMLButtonElement)) return;
+      event.preventDefault();
+      event.stopPropagation();
+      dismissLaunchLifecycle(button, root, root.__swarmlabCanvasActionOptions || {});
     });
   }
 
