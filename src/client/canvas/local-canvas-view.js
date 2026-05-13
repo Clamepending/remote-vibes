@@ -315,19 +315,43 @@ function injectCanvasStyles(documentRef = document) {
 .swarmlab-canvas-region-title {
   min-width: 0;
 }
-.swarmlab-canvas-region-title strong,
-.swarmlab-canvas-region-title span {
+.swarmlab-canvas-region-title-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+}
+.swarmlab-canvas-region-name,
+.swarmlab-canvas-region-summary {
   display: block;
   min-width: 0;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
 }
-.swarmlab-canvas-region-title strong {
+.swarmlab-canvas-region-name {
   font-size: 12px;
   font-weight: 760;
 }
-.swarmlab-canvas-region-title span {
+.swarmlab-canvas-region-badges {
+  display: inline-flex;
+  flex: 0 0 auto;
+  gap: 5px;
+}
+.swarmlab-canvas-region-badge {
+  border: 1px solid color-mix(in srgb, var(--region-accent) 28%, rgba(232, 222, 206, 0.2));
+  border-radius: 5px;
+  padding: 2px 5px;
+  background: rgba(17, 16, 14, 0.46);
+  color: color-mix(in srgb, var(--region-accent) 42%, var(--canvas-muted));
+  font-size: 9px;
+  font-weight: 680;
+  letter-spacing: 0;
+  line-height: 1;
+  text-transform: uppercase;
+  white-space: nowrap;
+}
+.swarmlab-canvas-region-summary {
   margin-top: 2px;
   color: var(--canvas-muted);
   font-size: 10px;
@@ -1824,6 +1848,21 @@ function regionSummary(region) {
   return [region.subtitle, region.status].filter(Boolean).join(" / ") || region.detail || "machine region";
 }
 
+function regionConnectionBadges(region) {
+  if (region.remoteNodeId) return ["account"];
+  if (region.remoteUrl) return ["view only"];
+  return ["local"];
+}
+
+function renderRegionBadges(region) {
+  const badges = regionConnectionBadges(region);
+  return `
+    <span class="swarmlab-canvas-region-badges">
+      ${badges.map((badge) => `<span class="swarmlab-canvas-region-badge">${escapeHtml(badge)}</span>`).join("")}
+    </span>
+  `;
+}
+
 function renderCanvasRegion(region) {
   return `
     <section
@@ -1836,8 +1875,11 @@ function renderCanvasRegion(region) {
       <div class="swarmlab-canvas-region-label">
         <span class="swarmlab-canvas-region-chip" aria-hidden="true"></span>
         <span class="swarmlab-canvas-region-title">
-          <strong>${escapeHtml(region.title || region.id)}</strong>
-          <span>${escapeHtml(regionSummary(region))}</span>
+          <span class="swarmlab-canvas-region-title-row">
+            <strong class="swarmlab-canvas-region-name">${escapeHtml(region.title || region.id)}</strong>
+            ${renderRegionBadges(region)}
+          </span>
+          <span class="swarmlab-canvas-region-summary">${escapeHtml(regionSummary(region))}</span>
         </span>
       </div>
     </section>
