@@ -47,6 +47,7 @@ const REMOTE_NODE_FETCH_TIMEOUT_MS = 4_500;
 const BOARD_WIDTH = 4_800;
 const BOARD_HEIGHT = 5_200;
 const DEFAULT_VIEWPORT = { x: 28, y: 42, zoom: 0.74 };
+const MAX_VISIBLE_DOCK_LAUNCHERS = 6;
 const CARD_TYPE_ICONS = {
   agent: Bot,
   approval: CheckSquare,
@@ -152,9 +153,9 @@ function injectCanvasStyles(documentRef = document) {
   display: flex;
   align-items: center;
   justify-content: space-between;
-  gap: 18px;
-  min-height: 64px;
-  padding: 10px 18px;
+  gap: 14px;
+  min-height: 56px;
+  padding: 8px 14px;
   border-bottom: 1px solid var(--canvas-line);
   background: rgba(26, 25, 23, 0.95);
   backdrop-filter: blur(14px);
@@ -162,22 +163,22 @@ function injectCanvasStyles(documentRef = document) {
 .swarmlab-canvas-title {
   display: flex;
   align-items: center;
-  gap: 12px;
+  gap: 10px;
   min-width: 0;
 }
 .swarmlab-canvas-title-icon {
   display: grid;
   place-items: center;
-  width: 36px;
-  height: 36px;
+  width: 32px;
+  height: 32px;
   border: 1px solid rgba(249, 115, 22, 0.42);
   background: rgba(249, 115, 22, 0.1);
 }
 .swarmlab-brand-mark {
   display: block;
-  width: 18px;
-  height: 18px;
-  border-radius: 5px;
+  width: 17px;
+  height: 17px;
+  border-radius: 6px;
   background: #f97316;
   box-shadow: 0 0 18px rgba(249, 115, 22, 0.42);
 }
@@ -195,7 +196,7 @@ function injectCanvasStyles(documentRef = document) {
 .swarmlab-canvas-actions {
   display: flex;
   align-items: center;
-  gap: 10px;
+  gap: 7px;
   flex-wrap: wrap;
   justify-content: flex-end;
 }
@@ -232,15 +233,15 @@ function injectCanvasStyles(documentRef = document) {
   display: inline-flex;
   align-items: center;
   justify-content: center;
-  gap: 7px;
-  min-height: 36px;
+  gap: 6px;
+  min-height: 32px;
   border: 1px solid var(--canvas-line-strong);
   border-radius: 8px;
   background: rgba(255, 255, 255, 0.06);
   color: var(--canvas-text);
-  padding: 0 12px;
+  padding: 0 10px;
   font: inherit;
-  font-size: 12px;
+  font-size: 11px;
   text-decoration: none;
   cursor: pointer;
 }
@@ -252,27 +253,32 @@ function injectCanvasStyles(documentRef = document) {
   border-color: rgba(224, 122, 63, 0.55);
   background: rgba(224, 122, 63, 0.16);
 }
+.swarmlab-canvas-icon-button {
+  width: 34px;
+  padding: 0;
+}
 .swarmlab-canvas-launch-dock {
   position: absolute;
-  left: 18px;
-  right: 300px;
-  bottom: 18px;
+  left: 50%;
+  right: auto;
+  bottom: 14px;
   z-index: 26;
   display: grid;
   grid-template-columns: auto minmax(0, 1fr);
-  gap: 10px;
-  min-height: 58px;
-  max-height: 82px;
-  padding: 9px;
+  gap: 8px;
+  width: max-content;
+  max-width: calc(100% - 36px);
+  min-height: 42px;
+  padding: 5px;
   border: 1px solid rgba(232, 222, 206, 0.14);
-  border-radius: 9px;
+  border-radius: 10px;
   background: rgba(31, 30, 27, 0.92);
-  box-shadow: 0 18px 48px rgba(0, 0, 0, 0.34);
+  box-shadow: 0 16px 44px rgba(0, 0, 0, 0.34);
   backdrop-filter: blur(14px);
   cursor: default;
-  overflow-x: auto;
-  overflow-y: hidden;
+  overflow: visible;
   pointer-events: auto;
+  transform: translateX(-50%);
   touch-action: pan-x;
 }
 .swarmlab-canvas-launch-dock.is-single-machine {
@@ -281,31 +287,35 @@ function injectCanvasStyles(documentRef = document) {
 .swarmlab-canvas-launch-machines {
   display: flex;
   align-items: stretch;
-  gap: 6px;
+  gap: 5px;
   min-width: 0;
-  max-width: 280px;
+  max-width: 330px;
   overflow-x: auto;
+  scrollbar-width: none;
+}
+.swarmlab-canvas-launch-machines::-webkit-scrollbar {
+  display: none;
 }
 .swarmlab-canvas-launch-title,
 .swarmlab-canvas-launch-machine {
   display: inline-flex;
   align-items: center;
-  min-height: 48px;
+  min-height: 40px;
   border: 1px solid rgba(232, 222, 206, 0.1);
   border-radius: 8px;
   background: rgba(255, 255, 255, 0.035);
 }
 .swarmlab-canvas-launch-title {
-  gap: 7px;
-  padding: 0 10px;
+  gap: 6px;
+  padding: 0 9px;
   color: var(--canvas-muted);
-  font-size: 11px;
+  font-size: 10px;
   font-weight: 760;
 }
 .swarmlab-canvas-launch-machine {
-  gap: 7px;
-  max-width: 172px;
-  padding: 0 10px;
+  gap: 6px;
+  max-width: 144px;
+  padding: 0 9px;
   color: var(--canvas-muted);
   font: inherit;
   text-align: left;
@@ -331,20 +341,22 @@ function injectCanvasStyles(documentRef = document) {
   white-space: nowrap;
 }
 .swarmlab-canvas-launch-machine-text strong {
-  font-size: 11px;
+  font-size: 10px;
   font-weight: 720;
   line-height: 1.15;
 }
 .swarmlab-canvas-launch-machine-text span {
   margin-top: 3px;
   color: var(--canvas-faint);
-  font-size: 10px;
+  font-size: 9px;
 }
 .swarmlab-canvas-launch-panel {
-  display: flex;
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  gap: 6px;
   align-items: center;
   min-width: 0;
-  overflow: hidden;
+  overflow: visible;
 }
 .swarmlab-canvas-launch-machine-label {
   display: flex;
@@ -373,25 +385,30 @@ function injectCanvasStyles(documentRef = document) {
 .swarmlab-canvas-launch-items {
   display: flex;
   align-items: center;
-  gap: 7px;
+  gap: 5px;
   min-width: 0;
-  overflow-x: auto;
+  overflow: visible;
+  scrollbar-width: none;
+}
+.swarmlab-canvas-launch-items::-webkit-scrollbar {
+  display: none;
 }
 .swarmlab-canvas-launch-item {
   display: grid;
-  flex: 0 0 132px;
-  grid-template-columns: 18px minmax(0, 1fr);
-  gap: 8px;
+  flex: 0 0 68px;
+  grid-template-rows: 18px 1fr;
+  gap: 4px;
+  place-items: center;
   align-items: center;
-  width: 132px;
-  min-height: 42px;
+  width: 68px;
+  min-height: 40px;
   border: 1px solid rgba(232, 222, 206, 0.13);
   border-radius: 8px;
   background: rgba(255, 255, 255, 0.055);
   color: var(--canvas-text);
-  padding: 7px 9px;
+  padding: 5px 6px;
   font: inherit;
-  text-align: left;
+  text-align: center;
   cursor: pointer;
 }
 .swarmlab-canvas-launch-item:hover {
@@ -410,12 +427,64 @@ function injectCanvasStyles(documentRef = document) {
   white-space: nowrap;
 }
 .swarmlab-canvas-launch-item strong {
-  font-size: 12px;
+  font-size: 10px;
   font-weight: 720;
+  line-height: 1.05;
 }
 .swarmlab-canvas-launch-item span {
   color: var(--canvas-faint);
+  font-size: 9px;
+}
+.swarmlab-canvas-launch-item > span > span {
+  display: none;
+}
+.swarmlab-canvas-launch-more {
+  position: relative;
+  flex: 0 0 auto;
+}
+.swarmlab-canvas-launch-more > summary {
+  list-style: none;
+}
+.swarmlab-canvas-launch-more > summary::-webkit-details-marker {
+  display: none;
+}
+.swarmlab-canvas-launch-more-button {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  width: 70px;
+  min-height: 40px;
+  border: 1px solid rgba(232, 222, 206, 0.13);
+  border-radius: 8px;
+  background: rgba(255, 255, 255, 0.045);
+  color: var(--canvas-muted);
+  font: inherit;
   font-size: 10px;
+  cursor: pointer;
+}
+.swarmlab-canvas-launch-more-panel {
+  position: absolute;
+  left: auto;
+  right: 0;
+  bottom: calc(100% + 9px);
+  z-index: 45;
+  display: grid;
+  grid-template-columns: repeat(3, 68px);
+  gap: 6px;
+  width: max-content;
+  max-width: calc(100vw - 52px);
+  max-height: 240px;
+  padding: 8px;
+  border: 1px solid rgba(232, 222, 206, 0.14);
+  border-radius: 9px;
+  background: rgba(29, 28, 25, 0.98);
+  box-shadow: 0 20px 58px rgba(0, 0, 0, 0.42);
+  overflow: auto;
+}
+.swarmlab-canvas-launch-more-panel .swarmlab-canvas-launch-item {
+  width: 68px;
+  flex-basis: 68px;
 }
 .swarmlab-canvas-stage {
   position: relative;
@@ -1070,12 +1139,12 @@ function injectCanvasStyles(documentRef = document) {
 .swarmlab-canvas-floating-controls {
   position: absolute;
   right: 18px;
-  bottom: 18px;
+  bottom: 72px;
   z-index: 25;
   display: flex;
   align-items: center;
-  gap: 8px;
-  padding: 8px;
+  gap: 6px;
+  padding: 6px;
   border: 1px solid var(--canvas-line);
   border-radius: 8px;
   background: rgba(37, 35, 32, 0.92);
@@ -1083,21 +1152,21 @@ function injectCanvasStyles(documentRef = document) {
   backdrop-filter: blur(14px);
 }
 .swarmlab-canvas-control-button {
-  width: 38px;
-  height: 36px;
-  min-height: 36px;
+  width: 34px;
+  height: 32px;
+  min-height: 32px;
   padding: 0;
 }
 .swarmlab-canvas-zoom-readout {
-  min-width: 48px;
+  min-width: 42px;
   color: var(--canvas-muted);
-  font-size: 12px;
+  font-size: 11px;
   text-align: center;
 }
 .swarmlab-canvas-hint {
   position: absolute;
   left: 18px;
-  bottom: 100px;
+  bottom: 72px;
   z-index: 24;
   color: var(--canvas-faint);
   font-size: 11px;
@@ -1129,6 +1198,12 @@ function injectCanvasStyles(documentRef = document) {
     align-items: stretch;
     flex-direction: column;
   }
+  .swarmlab-canvas-button span {
+    max-width: 112px;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
   .swarmlab-canvas-actions {
     justify-content: flex-start;
   }
@@ -1136,10 +1211,9 @@ function injectCanvasStyles(documentRef = document) {
     display: none;
   }
   .swarmlab-canvas-launch-dock {
-    right: 18px;
-    bottom: 72px;
     grid-template-columns: minmax(0, 1fr);
-    max-height: 116px;
+    bottom: 12px;
+    max-width: calc(100% - 24px);
   }
   .swarmlab-canvas-launch-dock.is-single-machine {
     grid-template-columns: auto minmax(0, 1fr);
@@ -1148,8 +1222,15 @@ function injectCanvasStyles(documentRef = document) {
     max-width: none;
   }
   .swarmlab-canvas-launch-item {
-    flex-basis: 116px;
-    width: 116px;
+    flex-basis: 62px;
+    width: 62px;
+  }
+  .swarmlab-canvas-launch-more-button {
+    width: 64px;
+  }
+  .swarmlab-canvas-floating-controls {
+    right: 12px;
+    bottom: 72px;
   }
 }
 `;
@@ -1214,9 +1295,8 @@ export function renderSwarmlabCanvasView() {
             <span>Refresh</span>
           </button>
           <details class="swarmlab-canvas-advanced">
-            <summary class="swarmlab-canvas-button" aria-label="Advanced machine options">
+            <summary class="swarmlab-canvas-button swarmlab-canvas-icon-button" aria-label="Advanced machine options" title="Advanced machine options">
               ${renderIcon(Plus)}
-              <span>Advanced</span>
             </summary>
             <div class="swarmlab-canvas-advanced-panel">
               <p>Machines normally appear after you log in to Vibe Research on each curl-installed node.</p>
@@ -2876,10 +2956,19 @@ function readLauncherDockMachineId(storage, key, groups, regions = [], localMach
   return machineIds[0];
 }
 
+function launcherDockLabel(card) {
+  const title = String(card.title || "Launcher").trim();
+  const normalized = title.toLowerCase();
+  if (normalized.includes("ollama")) return "Ollama";
+  if (normalized === "claude code" || normalized.startsWith("claude code ")) return "Claude";
+  if (normalized === "visual studio code") return "VS Code";
+  return compactText(title, 12);
+}
+
 function renderLauncherDockItem(card) {
   const isAgentProvider = String(card.ref?.launcherKind || "") === "agent-provider" || Boolean(card.ref?.providerId);
   const icon = isAgentProvider ? Bot : AppWindow;
-  const label = compactText(card.title || "Launcher", 28);
+  const label = launcherDockLabel(card);
   const meta = compactText([launcherKindLabel(card), card.status || ""].filter(Boolean).join(" / "), 34);
   return `
     <button
@@ -2894,6 +2983,27 @@ function renderLauncherDockItem(card) {
         <span>${escapeHtml(meta)}</span>
       </span>
     </button>
+  `;
+}
+
+function renderLauncherDockItems(cards) {
+  const visible = cards.slice(0, MAX_VISIBLE_DOCK_LAUNCHERS);
+  return visible.map(renderLauncherDockItem).join("");
+}
+
+function renderLauncherDockMore(cards) {
+  const overflow = cards.slice(MAX_VISIBLE_DOCK_LAUNCHERS);
+  if (!overflow.length) return "";
+  return `
+    <details class="swarmlab-canvas-launch-more">
+      <summary class="swarmlab-canvas-launch-more-button">
+        ${renderIcon(Plus, { width: 15, height: 15 })}
+        <span>${escapeHtml(`${overflow.length} more`)}</span>
+      </summary>
+      <div class="swarmlab-canvas-launch-more-panel">
+        ${overflow.map(renderLauncherDockItem).join("")}
+      </div>
+    </details>
   `;
 }
 
@@ -2942,8 +3052,9 @@ function renderLauncherDock(launcherCards, regions = [], localMachineId = "", se
         `}
       <section class="swarmlab-canvas-launch-panel" aria-label="${escapeHtml(`Launch apps on ${activeTitle}`)}">
         <div class="swarmlab-canvas-launch-items">
-          ${activeCards.map(renderLauncherDockItem).join("")}
+          ${renderLauncherDockItems(activeCards)}
         </div>
+        ${renderLauncherDockMore(activeCards)}
       </section>
     </nav>
   `;

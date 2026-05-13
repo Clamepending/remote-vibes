@@ -216,6 +216,12 @@ test("local canvas view renders node snapshot cards and persists drag layout", a
           launchers: [
             { id: "provider:codex", label: "Codex", kind: "agent-provider", providerId: "codex", defaultName: "Codex", available: true },
             { id: "app:cursor", label: "Cursor", kind: "desktop-app", appId: "cursor", available: true, platform: "darwin" },
+            { id: "provider:claude", label: "Claude Code", kind: "agent-provider", providerId: "claude", defaultName: "Claude", available: true },
+            { id: "app:vscode", label: "VS Code", kind: "desktop-app", category: "editor", appId: "vscode", available: true, platform: "darwin" },
+            { id: "app:terminal", label: "Terminal", kind: "desktop-app", category: "terminal", appId: "terminal", available: true, platform: "darwin" },
+            { id: "app:chrome", label: "Chrome", kind: "desktop-app", category: "browser", appId: "chrome", available: true, platform: "darwin" },
+            { id: "app:docker", label: "Docker", kind: "desktop-app", category: "runtime", appId: "docker", available: true, platform: "darwin" },
+            { id: "app:xcode", label: "Xcode", kind: "desktop-app", category: "developer", appId: "xcode", available: true, platform: "darwin" },
           ],
           handoffJobs: [
             {
@@ -645,7 +651,23 @@ test("local canvas view renders node snapshot cards and persists drag layout", a
     assert.equal(await page.locator(".swarmlab-canvas-card.is-launcher").count(), 0);
     assert.equal(await page.locator(".swarmlab-canvas-launch-dock").count(), 1);
     assert.equal(await page.locator("[data-swarmlab-canvas-launch-machine]").count(), 2);
-    assert.equal(await page.locator("[data-swarmlab-canvas-launcher]").count(), 2);
+    assert.equal(await page.locator("[data-swarmlab-canvas-launcher]").count(), 8);
+    assert.equal(await page.locator(".swarmlab-canvas-launch-items > [data-swarmlab-canvas-launcher]").count(), 6);
+    assert.match(await page.locator(".swarmlab-canvas-launch-more").innerText(), /2 more/);
+    const dockBox = await page.locator(".swarmlab-canvas-launch-dock").boundingBox();
+    const controlsBox = await page.locator(".swarmlab-canvas-floating-controls").boundingBox();
+    assert.ok(dockBox && dockBox.height <= 58, "app launcher dock should stay compact");
+    assert.ok(
+      dockBox && controlsBox && controlsBox.y + controlsBox.height < dockBox.y,
+      "zoom controls should sit above the app dock without overlap",
+    );
+    const directLauncherBox = await page.locator(".swarmlab-canvas-launch-items > [data-swarmlab-canvas-launcher]").first().boundingBox();
+    assert.ok(directLauncherBox && directLauncherBox.width <= 78, "dock launcher buttons should be icon-scale");
+    await page.locator(".swarmlab-canvas-launch-more-button").click();
+    await page.locator(".swarmlab-canvas-launch-more-panel").waitFor({ state: "visible" });
+    assert.equal(await page.locator(".swarmlab-canvas-launch-more-panel [data-swarmlab-canvas-launcher]").count(), 2);
+    await page.locator(".swarmlab-canvas-launch-more-button").click();
+    await page.locator(".swarmlab-canvas-launch-more-panel").waitFor({ state: "hidden" });
     const dockText = await page.locator(".swarmlab-canvas-launch-dock").innerText();
     assert.match(dockText, /Mac Main/);
     assert.match(dockText, /Account Workstation/);
