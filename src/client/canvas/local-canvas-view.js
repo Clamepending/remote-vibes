@@ -163,8 +163,8 @@ function injectCanvasStyles(documentRef = document) {
   align-items: center;
   justify-content: space-between;
   gap: 14px;
-  min-height: 56px;
-  padding: 8px 14px;
+  min-height: 48px;
+  padding: 7px 12px;
   border-bottom: 1px solid var(--canvas-line);
   background: rgba(26, 25, 23, 0.95);
   backdrop-filter: blur(14px);
@@ -178,15 +178,15 @@ function injectCanvasStyles(documentRef = document) {
 .swarmlab-canvas-title-icon {
   display: grid;
   place-items: center;
-  width: 32px;
-  height: 32px;
+  width: 28px;
+  height: 28px;
   border: 1px solid rgba(249, 115, 22, 0.42);
   background: rgba(249, 115, 22, 0.1);
 }
 .swarmlab-brand-mark {
   display: block;
-  width: 17px;
-  height: 17px;
+  width: 16px;
+  height: 16px;
   border-radius: 6px;
   background: #f97316;
   box-shadow: 0 0 18px rgba(249, 115, 22, 0.42);
@@ -262,13 +262,18 @@ function injectCanvasStyles(documentRef = document) {
   border-color: rgba(224, 122, 63, 0.55);
   background: rgba(224, 122, 63, 0.16);
 }
+.swarmlab-canvas-button.is-connected {
+  border-color: rgba(116, 199, 184, 0.34);
+  background: rgba(116, 199, 184, 0.08);
+  color: color-mix(in srgb, var(--canvas-accent-2) 58%, var(--canvas-text));
+}
 .swarmlab-canvas-icon-button {
   width: 34px;
   padding: 0;
 }
 .swarmlab-canvas-launch-dock {
   position: absolute;
-  left: 50%;
+  left: 14px;
   right: auto;
   bottom: 14px;
   z-index: 26;
@@ -276,9 +281,9 @@ function injectCanvasStyles(documentRef = document) {
   grid-template-columns: auto minmax(0, 1fr);
   gap: 8px;
   width: max-content;
-  max-width: calc(100% - 36px);
-  min-height: 42px;
-  padding: 5px;
+  max-width: min(860px, calc(100% - 276px));
+  min-height: 38px;
+  padding: 4px;
   border: 1px solid rgba(232, 222, 206, 0.14);
   border-radius: 10px;
   background: rgba(31, 30, 27, 0.92);
@@ -287,7 +292,6 @@ function injectCanvasStyles(documentRef = document) {
   cursor: default;
   overflow: visible;
   pointer-events: auto;
-  transform: translateX(-50%);
   touch-action: pan-x;
 }
 .swarmlab-canvas-launch-dock.is-single-machine {
@@ -298,7 +302,7 @@ function injectCanvasStyles(documentRef = document) {
   align-items: stretch;
   gap: 5px;
   min-width: 0;
-  max-width: 330px;
+  max-width: 286px;
   overflow-x: auto;
   scrollbar-width: none;
 }
@@ -309,22 +313,22 @@ function injectCanvasStyles(documentRef = document) {
 .swarmlab-canvas-launch-machine {
   display: inline-flex;
   align-items: center;
-  min-height: 40px;
+  min-height: 36px;
   border: 1px solid rgba(232, 222, 206, 0.1);
   border-radius: 8px;
   background: rgba(255, 255, 255, 0.035);
 }
 .swarmlab-canvas-launch-title {
   gap: 6px;
-  padding: 0 9px;
+  padding: 0 8px;
   color: var(--canvas-muted);
   font-size: 10px;
   font-weight: 760;
 }
 .swarmlab-canvas-launch-machine {
   gap: 6px;
-  max-width: 144px;
-  padding: 0 9px;
+  max-width: 128px;
+  padding: 0 8px;
   color: var(--canvas-muted);
   font: inherit;
   text-align: left;
@@ -404,18 +408,18 @@ function injectCanvasStyles(documentRef = document) {
 }
 .swarmlab-canvas-launch-item {
   display: grid;
-  flex: 0 0 68px;
-  grid-template-rows: 18px 1fr;
-  gap: 4px;
+  flex: 0 0 58px;
+  grid-template-rows: 17px 1fr;
+  gap: 3px;
   place-items: center;
   align-items: center;
-  width: 68px;
-  min-height: 40px;
+  width: 58px;
+  min-height: 36px;
   border: 1px solid rgba(232, 222, 206, 0.13);
   border-radius: 8px;
   background: rgba(255, 255, 255, 0.055);
   color: var(--canvas-text);
-  padding: 5px 6px;
+  padding: 4px 5px;
   font: inherit;
   text-align: center;
   cursor: pointer;
@@ -461,9 +465,9 @@ function injectCanvasStyles(documentRef = document) {
   display: inline-flex;
   align-items: center;
   justify-content: center;
-  gap: 6px;
-  width: 70px;
-  min-height: 40px;
+  gap: 5px;
+  width: 62px;
+  min-height: 36px;
   border: 1px solid rgba(232, 222, 206, 0.13);
   border-radius: 8px;
   background: rgba(255, 255, 255, 0.045);
@@ -479,7 +483,7 @@ function injectCanvasStyles(documentRef = document) {
   bottom: calc(100% + 9px);
   z-index: 45;
   display: grid;
-  grid-template-columns: repeat(3, 68px);
+  grid-template-columns: repeat(3, 58px);
   gap: 6px;
   width: max-content;
   max-width: calc(100vw - 52px);
@@ -492,13 +496,13 @@ function injectCanvasStyles(documentRef = document) {
   overflow: auto;
 }
 .swarmlab-canvas-launch-more-panel .swarmlab-canvas-launch-item {
-  width: 68px;
-  flex-basis: 68px;
+  width: 58px;
+  flex-basis: 58px;
 }
 .swarmlab-canvas-stage {
   position: relative;
-  height: calc(100vh - 132px);
-  min-height: 520px;
+  height: calc(100vh - 116px);
+  min-height: 540px;
   overflow: hidden;
   cursor: grab;
   touch-action: none;
@@ -1391,7 +1395,7 @@ export function renderSwarmlabCanvasView() {
         <div class="swarmlab-canvas-actions">
           <button class="swarmlab-canvas-button is-primary" type="button" data-swarmlab-canvas-account-login>
             ${renderIcon(HardDrive)}
-            <span>Vibe account</span>
+            <span data-swarmlab-canvas-account-label>Vibe account</span>
           </button>
           <button class="swarmlab-canvas-button" type="button" data-swarmlab-canvas-new-handoff>
             ${renderIcon(Send)}
@@ -1440,6 +1444,59 @@ async function fetchJson(url, { fetchImpl = fetch, signal, method = "GET", body 
     throw new Error(payload?.error || `Request failed with status ${response.status}`);
   }
   return payload;
+}
+
+function canvasAccountStatus(payload = {}) {
+  const status = payload?.account && typeof payload.account === "object" ? payload.account : payload;
+  return status && typeof status === "object" ? status : {};
+}
+
+function canvasAccountName(status = {}) {
+  const account = status.account && typeof status.account === "object" ? status.account : {};
+  const label = account.login && account.login !== "local"
+    ? `@${account.login}`
+    : account.name || account.email || "";
+  return compactText(label, 22);
+}
+
+function setCanvasAccountButtonState(button, { label = "", connected = false, busy = false, error = "" } = {}) {
+  if (!(button instanceof HTMLElement)) return;
+  const labelElement = button.querySelector("[data-swarmlab-canvas-account-label]");
+  if (labelElement) {
+    labelElement.textContent = label || (connected ? "Account linked" : "Vibe account");
+  }
+  button.classList.toggle("is-primary", !connected && !error);
+  button.classList.toggle("is-connected", connected && !error);
+  button.toggleAttribute("disabled", busy);
+  button.dataset.swarmlabCanvasAccountConnected = connected ? "true" : "false";
+  button.title = error
+    ? error
+    : connected
+      ? "This machine is linked to your Vibe Research account. Other logged-in machines appear automatically."
+      : "Log in to Vibe Research to link this machine and sync the fleet canvas.";
+}
+
+function applyCanvasAccountStatus(documentRef, payload = {}) {
+  const status = canvasAccountStatus(payload);
+  const connected = Boolean(status.connected || status.configured);
+  const name = canvasAccountName(status);
+  documentRef.querySelectorAll("[data-swarmlab-canvas-account-login]").forEach((button) => {
+    setCanvasAccountButtonState(button, {
+      connected,
+      label: connected ? (name || "Account linked") : "Vibe account",
+    });
+  });
+}
+
+async function refreshCanvasAccountStatus(documentRef, { fetchImpl = fetch, signal } = {}) {
+  try {
+    const payload = await fetchJson("/api/node/account/status", { fetchImpl, signal });
+    applyCanvasAccountStatus(documentRef, payload);
+  } catch {
+    documentRef.querySelectorAll("[data-swarmlab-canvas-account-login]").forEach((button) => {
+      setCanvasAccountButtonState(button, { connected: false, label: "Vibe account" });
+    });
+  }
 }
 
 function currentCanvasAccountBaseUrl() {
@@ -4539,12 +4596,20 @@ export function mountSwarmlabCanvasView({
     currentController.abort();
     currentController = new AbortController();
     activeController = currentController;
+    void refreshCanvasAccountStatus(documentRef, {
+      fetchImpl,
+      signal: currentController.signal,
+    });
     void loadCanvas(root, {
       ...options,
       abortController: currentController,
     });
   };
   options.refresh = refresh;
+  void refreshCanvasAccountStatus(documentRef, {
+    fetchImpl,
+    signal: currentController.signal,
+  });
 
   documentRef.querySelectorAll("[data-swarmlab-canvas-refresh]").forEach((button) => {
     button.addEventListener("click", (event) => {
@@ -4556,9 +4621,19 @@ export function mountSwarmlabCanvasView({
   documentRef.querySelectorAll("[data-swarmlab-canvas-account-login]").forEach((button) => {
     button.addEventListener("click", async (event) => {
       event.preventDefault();
-      const original = button.textContent || "Vibe account";
-      button.setAttribute("disabled", "disabled");
-      button.textContent = "Opening login...";
+      const wasConnected = button.dataset.swarmlabCanvasAccountConnected === "true";
+      setCanvasAccountButtonState(button, {
+        connected: wasConnected,
+        busy: true,
+        label: wasConnected ? "Refreshing..." : "Opening login...",
+      });
+      if (wasConnected) {
+        windowRef?.setTimeout?.(() => {
+          button.removeAttribute("disabled");
+          refresh();
+        }, 400);
+        return;
+      }
       try {
         const payload = await fetchJson("/api/node/account/pair/start", {
           fetchImpl,
@@ -4574,13 +4649,15 @@ export function mountSwarmlabCanvasView({
           throw new Error("Vibe account did not return a login URL.");
         }
         windowRef?.open?.(pairingUrl, "_blank", "noopener,noreferrer");
-        button.textContent = "Check browser";
+        setCanvasAccountButtonState(button, { busy: true, label: "Check browser" });
       } catch (error) {
-        button.textContent = error?.message || "Login failed";
+        setCanvasAccountButtonState(button, {
+          label: "Login failed",
+          error: error?.message || "Login failed",
+        });
       } finally {
         windowRef?.setTimeout?.(() => {
           button.removeAttribute("disabled");
-          button.textContent = original;
           refresh();
         }, 2_800);
       }

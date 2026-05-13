@@ -158,7 +158,7 @@ test("buildCanvasCards promotes W&B tabs to monitor cards linked to source agent
   assert.equal(cards.some((card) => card.id === "browser:wandb-browser"), false);
 });
 
-test("buildCanvasCards promotes previewable app ports and folds the noisy remainder", () => {
+test("buildCanvasCards promotes previewable app ports and leaves the noisy remainder off-canvas", () => {
   const cards = buildCanvasCards({
     node: { id: "node-1", name: "GPU box", status: "online" },
     ports: [
@@ -173,14 +173,12 @@ test("buildCanvasCards promotes previewable app ports and folds the noisy remain
   });
 
   const appCards = cards.filter((card) => card.type === "app");
-  assert.equal(appCards.length, 5);
+  assert.equal(appCards.length, 4);
   assert.equal(appCards.filter((card) => card.ref.embedUrl).length, 4);
   assert.equal(appCards.some((card) => card.id === "port:8765"), false);
   assert.equal(appCards.some((card) => card.id === "port:9091"), false);
-  assert.equal(appCards.at(-1).id, "app:local-ports");
-  assert.equal(appCards.at(-1).title, "More local apps");
-  assert.equal(appCards.at(-1).subtitle, "5 more ports");
-  assert.equal(appCards.at(-1).ref.ports.length, 9);
+  assert.equal(appCards.some((card) => card.title === "More local apps"), false);
+  assert.equal(appCards.some((card) => card.title === "Local apps"), false);
 });
 
 test("buildCanvasCards keeps active work visible and collapses quiet board noise", () => {

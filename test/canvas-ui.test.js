@@ -627,7 +627,7 @@ test("local canvas view renders node snapshot cards and persists drag layout", a
     assert.match(rendered, /Train model/);
     assert.match(rendered, /Swarmlab brain/);
     assert.match(rendered, /Pi deploy/);
-    assert.match(rendered, /More local apps/);
+    assert.doesNotMatch(rendered, /More local apps|Local apps/);
     assert.match(rendered, /Vite app/);
     assert.match(rendered, /Result chart/);
     assert.match(rendered, /Cursor/);
@@ -733,8 +733,8 @@ test("local canvas view renders node snapshot cards and persists drag layout", a
       await page.locator('[data-swarmlab-canvas-card-id="monitor:wandb-1"] a.swarmlab-canvas-open').getAttribute("href"),
       "https://wandb.ai/mark/semantic-autogaze/runs/run-7",
     );
-    assert.equal(await page.locator(".swarmlab-canvas-card.is-app").count(), 9);
-    assert.equal(await page.locator(".swarmlab-canvas-card.is-app:not(.is-remote)").count(), 5);
+    assert.equal(await page.locator(".swarmlab-canvas-card.is-app").count(), 8);
+    assert.equal(await page.locator(".swarmlab-canvas-card.is-app:not(.is-remote)").count(), 4);
     assert.equal(await page.locator(".swarmlab-canvas-card.is-handoff:not(.is-remote)").count(), 1);
     assert.equal(await page.locator(".swarmlab-canvas-card.is-brain:not(.is-remote)").count(), 1);
     assert.ok(await page.locator(".swarmlab-canvas-app-frame").count() >= 4);

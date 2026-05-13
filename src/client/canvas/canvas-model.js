@@ -17,8 +17,6 @@ const MONITOR_CARD_WIDTH = 430;
 const MONITOR_CARD_HEIGHT = 300;
 const APP_CARD_WIDTH = 410;
 const APP_CARD_HEIGHT = 270;
-const APP_SUMMARY_CARD_WIDTH = 320;
-const APP_SUMMARY_CARD_HEIGHT = 190;
 const LAUNCHER_CARD_WIDTH = 320;
 const LAUNCHER_CARD_HEIGHT = 170;
 const HANDOFF_CARD_WIDTH = 360;
@@ -1008,42 +1006,6 @@ function portCard(port, index, machineId) {
   });
 }
 
-function portsSummaryCard(ports, machineId, { visibleCount = 0 } = {}) {
-  const normalizedPorts = ports
-    .map((port, index) => {
-      const rawPort = getPortNumber(port);
-      const label = rawPort
-        ? String(rawPort)
-        : portDisplayName(port, `app-${index + 1}`);
-      const name = portDisplayName(port, label);
-      const access = normalizeText(pickFirst(port.preferredAccess, port.status, port.protocol));
-      return { label, name, access };
-    })
-    .filter((port) => port.label || port.name);
-  const hiddenCount = Math.max(0, ports.length - visibleCount);
-  const sample = normalizedPorts
-    .slice(0, 6)
-    .map((port) => [port.label, port.name === port.label ? "" : port.name].filter(Boolean).join(" "))
-    .join(" · ");
-  return makeCard({
-    id: "app:local-ports",
-    type: "app",
-    title: visibleCount ? "More local apps" : "Local apps",
-    subtitle: visibleCount ? `${hiddenCount} more ports` : `${ports.length} previewable ports`,
-    status: "compact",
-    detail: sample,
-    meta: "Hidden from the main board until named or opened.",
-    tags: normalizedPorts.slice(0, 8).map((port) => port.access || port.label),
-    href: "",
-    ref: {
-      machineId,
-      ports: normalizedPorts,
-    },
-    width: APP_SUMMARY_CARD_WIDTH,
-    height: APP_SUMMARY_CARD_HEIGHT,
-  });
-}
-
 function buildPortCards(ports, machineId) {
   const visiblePorts = ports
     .filter(isLikelyVisibleAppPort)
@@ -1053,11 +1015,7 @@ function buildPortCards(ports, machineId) {
     .sort((left, right) => left.index - right.index)
     .map((entry) => entry.port);
 
-  const cards = visiblePorts.map((port, index) => portCard(port, index, machineId));
-  if (ports.length > visiblePorts.length) {
-    cards.push(portsSummaryCard(ports, machineId, { visibleCount: visiblePorts.length }));
-  }
-  return cards;
+  return visiblePorts.map((port, index) => portCard(port, index, machineId));
 }
 
 function artifactCard(canvas, index, machineId) {
