@@ -520,6 +520,35 @@ function summarizeAppLauncher(launcher = {}) {
   };
 }
 
+function summarizeAppInstance(instance = {}, mode) {
+  const appId = compactText(instance.appId || instance.launcherId || instance.id, 80);
+  if (!appId) return null;
+  const base = {
+    id: compactText(instance.id || `app:${appId}`, 80),
+    appId,
+    launcherId: compactText(instance.launcherId || appId, 80),
+    label: compactText(instance.label || appId, 100),
+    kind: compactText(instance.kind || "desktop-app", 40),
+    category: compactText(instance.category || "app", 40),
+    status: compactText(instance.status || "launched", 40),
+    source: compactText(instance.source || "local", 40),
+    launchCount: Number.isFinite(Number(instance.launchCount)) ? Math.max(1, Math.round(Number(instance.launchCount))) : 1,
+    launchedAt: instance.launchedAt || null,
+    updatedAt: instance.updatedAt || null,
+  };
+
+  if (mode === "redacted") {
+    return base;
+  }
+
+  return {
+    ...base,
+    clientCommandId: compactText(instance.clientCommandId || "", 160),
+    url: sanitizeUrlForSnapshot(instance.url || instance.href),
+    origin: originOnly(instance.url || instance.href),
+  };
+}
+
 function buildLaunchers(providers = [], appLaunchers = []) {
   const seen = new Set();
   return [
@@ -542,6 +571,7 @@ export class NodeSnapshotService {
     metadataProvider,
     providersProvider,
     appLaunchersProvider,
+    appInstancesProvider,
     sessionsProvider,
     browserSessionsProvider,
     agentTownStateProvider,
@@ -557,6 +587,7 @@ export class NodeSnapshotService {
     this.metadataProvider = metadataProvider || (() => ({}));
     this.providersProvider = providersProvider || (() => []);
     this.appLaunchersProvider = appLaunchersProvider || (() => []);
+    this.appInstancesProvider = appInstancesProvider || (() => []);
     this.sessionsProvider = sessionsProvider || (() => []);
     this.browserSessionsProvider = browserSessionsProvider || (() => []);
     this.agentTownStateProvider = agentTownStateProvider || (() => ({}));
@@ -647,6 +678,7 @@ export class NodeSnapshotService {
       projectsResult,
       providersResult,
       appLaunchersResult,
+      appInstancesResult,
       handoffJobsResult,
       brainResult,
     ] = await Promise.all([
@@ -660,6 +692,7 @@ export class NodeSnapshotService {
       withTimeout("projects", this.projectsProvider, [], this.timeoutMs),
       withTimeout("providers", this.providersProvider, [], this.timeoutMs),
       withTimeout("appLaunchers", this.appLaunchersProvider, [], this.timeoutMs),
+      withTimeout("appInstances", this.appInstancesProvider, [], this.timeoutMs),
       withTimeout("handoffJobs", this.handoffJobsProvider, [], this.timeoutMs),
       withTimeout("brain", this.brainProvider, {}, this.timeoutMs),
     ]);
@@ -674,6 +707,7 @@ export class NodeSnapshotService {
     const projects = arrayOrEmpty(projectsResult.value);
     const providers = arrayOrEmpty(providersResult.value);
     const appLaunchers = arrayOrEmpty(appLaunchersResult.value);
+    const appInstances = arrayOrEmpty(appInstancesResult.value);
     const launchers = buildLaunchers(providers, appLaunchers);
     const handoffJobs = arrayOrEmpty(handoffJobsResult.value);
     const brain = brainResult.value || {};
@@ -687,6 +721,7 @@ export class NodeSnapshotService {
       projectsResult,
       providersResult,
       appLaunchersResult,
+      appInstancesResult,
       handoffJobsResult,
       brainResult,
     ]
@@ -716,6 +751,7 @@ export class NodeSnapshotService {
         cameraCount: arrayOrEmpty(systemResult.value?.cameras).length,
         hasTailscale: ports.some((port) => Boolean(port?.tailscaleUrl)),
         handoffCount: handoffJobs.length,
+        appInstanceCount: appInstances.length,
         brainNoteCount: Number(brain?.noteCount ?? brain?.notes?.length ?? 0) || 0,
         roles: [
           providers.some((provider) => provider?.available && provider?.id !== "shell") ? "agent-host" : "",
@@ -746,6 +782,7 @@ export class NodeSnapshotService {
         openActionItems: actionItems.filter((item) => item?.status === "open").length,
         canvases: canvases.length,
         ports: ports.length,
+        appInstances: appInstances.length,
         projects: projects.length,
         buildings: buildings.length,
         handoffJobs: handoffJobs.length,
@@ -753,6 +790,7 @@ export class NodeSnapshotService {
       },
       sessions: sessions.slice(0, 100).map((session) => summarizeSession(session, normalizedMode)),
       launchers,
+      appInstances: appInstances.slice(0, 80).map((instance) => summarizeAppInstance(instance, normalizedMode)).filter(Boolean),
       browserSessions: browserSessions.slice(0, 100).map((session) => summarizeBrowserSession(session, normalizedMode)),
       actionItems: actionItems.slice(0, 100).map((item) => summarizeActionItem(item, normalizedMode)),
       canvases: canvases.slice(0, 100).map((canvas) => summarizeCanvas(canvas, normalizedMode)),

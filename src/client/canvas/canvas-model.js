@@ -43,6 +43,7 @@ const MAX_CANVAS_BROWSER_CARDS = 2;
 const MAX_CANVAS_MONITOR_CARDS = 4;
 const MAX_CANVAS_ARTIFACT_CARDS = 1;
 const MAX_CANVAS_APP_CARDS = 4;
+const MAX_CANVAS_APP_INSTANCE_CARDS = 4;
 const MAX_CANVAS_LAUNCHER_CARDS = 8;
 const ACTIVE_STATUSES = new Set(["active", "busy", "connected", "launching", "open", "pending", "queued", "resuming", "running", "starting", "streaming", "working"]);
 const QUIET_STATUSES = new Set(["archived", "closed", "completed", "dismissed", "done", "exited", "idle", "resolved", "stopped", "succeeded"]);
@@ -293,6 +294,7 @@ export function normalizeNodeSnapshot(payload) {
   const browserSessions = asArray(snapshot.browserSessions || snapshot.browsers || input.browserSessions);
   const actionItems = asArray(snapshot.actionItems || snapshot.approvals || input.actionItems || input.approvals);
   const ports = asArray(snapshot.ports || snapshot.apps || input.ports);
+  const appInstances = asArray(snapshot.appInstances || snapshot.applicationInstances || input.appInstances);
   const rawLaunchers = asArray(snapshot.launchers || snapshot.appLaunchers || snapshot.applicationLaunchers || input.launchers);
   const canvases = asArray(snapshot.canvases || snapshot.artifacts || input.canvases || input.artifacts);
   const resources = asArray(snapshot.resources || snapshot.monitors || snapshot.researchResources || input.resources || input.monitors);
@@ -339,6 +341,7 @@ export function normalizeNodeSnapshot(payload) {
     canvases,
     resources,
     ports,
+    appInstances,
     launchers,
     projects,
     system,
@@ -350,6 +353,7 @@ export function normalizeNodeSnapshot(payload) {
       browserSessions: countFromSummary(snapshot, "browserSessions", browserSessions.length),
       approvals: countFromSummary(snapshot, "approvals", actionItems.length),
       ports: countFromSummary(snapshot, "ports", ports.length),
+      appInstances: countFromSummary(snapshot, "appInstances", appInstances.length),
       launchers: countFromSummary(snapshot, "launchers", launchers.length),
       artifacts: countFromSummary(snapshot, "artifacts", canvases.length),
       resources: countFromSummary(snapshot, "resources", resources.length),
@@ -1018,6 +1022,46 @@ function buildPortCards(ports, machineId) {
   return visiblePorts.map((port, index) => portCard(port, index, machineId));
 }
 
+function appInstanceCard(instance, index, machineId) {
+  const appId = normalizeText(pickFirst(instance.appId, instance.launcherId, instance.id), `app-${index + 1}`);
+  const id = normalizeText(instance.id, appId);
+  const href = normalizeUrl(pickFirst(instance.url, instance.href));
+  const status = normalizeText(pickFirst(instance.status, "launched"));
+  return makeCard({
+    id: `app-instance:${id}`,
+    type: "app",
+    title: pickFirst(instance.label, instance.title, appId),
+    subtitle: "app instance",
+    status,
+    detail: instance.launchCount && Number(instance.launchCount) > 1
+      ? `Launched ${Number(instance.launchCount)} times from Swarmlab.`
+      : "Launched from Swarmlab.",
+    meta: normalizeOptionalDate(pickFirst(instance.updatedAt, instance.launchedAt)),
+    tags: [appId, instance.category, "instance", status],
+    href,
+    ref: {
+      machineId,
+      appInstance: true,
+      appId,
+      launcherId: normalizeText(instance.launcherId || appId),
+      launchCommandId: normalizeText(instance.clientCommandId || instance.commandId),
+      embedUrl: href,
+      previewTrusted: Boolean(href),
+      actionLabel: href ? "Open app" : "",
+    },
+    width: APP_CARD_WIDTH,
+    height: APP_CARD_HEIGHT,
+  });
+}
+
+function buildAppInstanceCards(instances, machineId) {
+  return instances
+    .filter((instance) => normalizeText(pickFirst(instance?.appId, instance?.launcherId, instance?.id)))
+    .sort((left, right) => timestampMs(right?.updatedAt, right?.launchedAt) - timestampMs(left?.updatedAt, left?.launchedAt))
+    .slice(0, MAX_CANVAS_APP_INSTANCE_CARDS)
+    .map((instance, index) => appInstanceCard(instance, index, machineId));
+}
+
 function artifactCard(canvas, index, machineId) {
   const id = normalizeText(pickFirst(canvas.id, canvas.canvasId, canvas.imagePath, canvas.title), `artifact-${index + 1}`);
   return makeCard({
@@ -1233,13 +1277,14 @@ function machineCard(snapshot) {
   const roles = compactTags(snapshot.capabilities?.roles || []);
   const gpuCount = Number(snapshot.capabilities?.gpuCount || snapshot.system?.gpuCount || 0);
   const providerCount = Number(snapshot.capabilities?.providerCount || 0);
+  const appCount = Number(snapshot.counts.ports || 0) + Number(snapshot.counts.appInstances || 0);
   return makeCard({
     id: `machine:${node.id}`,
     type: "machine",
     title: node.name,
     subtitle: compactTags([node.os, node.version]).join(" / "),
     status: node.status,
-    detail: `${snapshot.counts.sessions} sessions, ${snapshot.counts.ports} apps, ${snapshot.counts.handoffJobs} handoffs`,
+    detail: `${snapshot.counts.sessions} sessions, ${appCount} apps, ${snapshot.counts.handoffJobs} handoffs`,
     meta: node.lastSeenAt || snapshot.generatedAt,
     tags: [
       Number.isFinite(Number(cpu)) ? `cpu ${Math.round(Number(cpu))}%` : "",
@@ -1264,6 +1309,7 @@ export function buildCanvasCards(payload) {
   const sessionCards = buildSessionCards(snapshot.sessions, machineId, { redacted: isRedacted, linkedSessionIds });
   const monitorCards = buildMonitorCards(snapshot, machineId);
   const browserCards = buildBrowserCards(snapshot.browserSessions, machineId, { redacted: isRedacted });
+  const appInstanceCards = buildAppInstanceCards(snapshot.appInstances, machineId);
   const artifactCards = buildArtifactCards(snapshot.canvases, machineId);
   const cards = [
     machineCard(snapshot),
@@ -1274,6 +1320,7 @@ export function buildCanvasCards(payload) {
     ...monitorCards,
     ...browserCards,
     ...portCards,
+    ...appInstanceCards,
     ...artifactCards,
   ];
   return cards.filter(Boolean);

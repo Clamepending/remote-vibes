@@ -216,7 +216,10 @@ export class NodeCommandRelayService {
     if (!launcherId) {
       throw new Error("Remote app launch command is missing appId.");
     }
-    return this.appLauncher(launcherId, this.appLaunchersProvider());
+    return this.appLauncher(launcherId, this.appLaunchersProvider(), {
+      clientCommandId: compactText(payload.clientCommandId || command.clientCommandId || command.id, 180),
+      source: "account",
+    });
   }
 
   async executeCommand(command) {

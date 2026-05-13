@@ -57,6 +57,13 @@ test("redacted node snapshot omits sensitive local detail", async () => {
         directUrl: "http://100.64.0.5:31337/",
         proxyPath: "/proxy/31337/",
       }],
+      appInstancesProvider: () => [{
+        id: "appinst_cursor",
+        appId: "cursor",
+        label: "Cursor",
+        status: "launched",
+        clientCommandId: "cmd_secret",
+      }],
       systemProvider: () => ({
         gpus: [{ index: 0, name: "RTX 4090" }],
         cameras: [{}],
@@ -70,7 +77,10 @@ test("redacted node snapshot omits sensitive local detail", async () => {
     assert.equal(snapshot.mode, "redacted");
     assert.equal(snapshot.counts.sessions, 1);
     assert.equal(snapshot.counts.ports, 1);
+    assert.equal(snapshot.counts.appInstances, 1);
     assert.deepEqual(snapshot.ports, []);
+    assert.equal(snapshot.appInstances[0].label, "Cursor");
+    assert.equal(snapshot.appInstances[0].clientCommandId, undefined);
     assert.equal(snapshot.portHints.count, 1);
     assert.doesNotMatch(serialized, /Secret customer order/);
     assert.doesNotMatch(serialized, /private\/project/);
@@ -79,6 +89,7 @@ test("redacted node snapshot omits sensitive local detail", async () => {
     assert.doesNotMatch(serialized, /31337/);
     assert.doesNotMatch(serialized, /chart\.png/);
     assert.doesNotMatch(serialized, /Secret Building/);
+    assert.doesNotMatch(serialized, /cmd_secret/);
   } finally {
     await rm(stateDir, { recursive: true, force: true });
   }
@@ -108,6 +119,14 @@ test("privileged node snapshot exposes sanitized monitor resources and browser U
         latestUrl: "https://wandb.ai/mark/semantic-autogaze/runs/run-7?token=secret#workspace",
         status: "running",
       }],
+      appInstancesProvider: () => [{
+        id: "appinst_cursor",
+        appId: "cursor",
+        label: "Cursor",
+        status: "launched",
+        clientCommandId: "cmd_1",
+        url: "https://example.test/open?token=secret#debug",
+      }],
     });
 
     const snapshot = await service.getSnapshot({ mode: "privileged" });
@@ -115,6 +134,8 @@ test("privileged node snapshot exposes sanitized monitor resources and browser U
     assert.equal(snapshot.sessions[0].resources[0].sourceSessionId, "sess_1");
     assert.equal(snapshot.browserSessions[0].latestUrl, "https://wandb.ai/mark/semantic-autogaze/runs/run-7");
     assert.equal(snapshot.browserSessions[0].callerSessionId, "sess_1");
+    assert.equal(snapshot.appInstances[0].clientCommandId, "cmd_1");
+    assert.equal(snapshot.appInstances[0].url, "https://example.test/open");
     assert.doesNotMatch(JSON.stringify(snapshot), /token=secret|#workspace/);
   } finally {
     await rm(stateDir, { recursive: true, force: true });

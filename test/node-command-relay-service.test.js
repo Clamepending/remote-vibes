@@ -296,8 +296,8 @@ test("NodeCommandRelayService executes signed app launch commands", async () => 
       nodeIdentityStore,
       sessionManager: { getSession() {} },
       appLaunchersProvider: () => [{ id: "cursor", label: "Cursor", available: true }],
-      appLauncher: async (launcherId, launchers) => {
-        launched.push({ launcherId, launchers });
+      appLauncher: async (launcherId, launchers, options) => {
+        launched.push({ launcherId, launchers, options });
         return { launched: true, launcher: { id: launcherId } };
       },
       settingsProvider: () => ({}),
@@ -307,6 +307,8 @@ test("NodeCommandRelayService executes signed app launch commands", async () => 
     assert.equal(result.commandCount, 1);
     assert.equal(launched.length, 1);
     assert.equal(launched[0].launcherId, "cursor");
+    assert.equal(launched[0].options.source, "account");
+    assert.equal(launched[0].options.clientCommandId, leased[0].id);
     const command = registry.getCommandForOwner({
       ownerAccountId: "acct_mark",
       nodeId: identity.nodeId,

@@ -7761,7 +7761,6 @@ test("shell session keeps running while the browser websocket disconnects", asyn
     const websocketUrl = `${baseUrl.replace("http", "ws")}/ws?sessionId=${session.id}`;
     const command =
       "for i in 1 2 3 4 5; do printf 'RV_WS_KEEPALIVE_%s\\n' \"$i\"; sleep 0.2; done\r";
-    await postSessionInput(baseUrl, session.id, command);
 
     firstSocket = new WebSocket(websocketUrl);
     await new Promise((resolve, reject) => {
@@ -7772,6 +7771,7 @@ test("shell session keeps running while the browser websocket disconnects", asyn
 
       firstSocket.on("open", () => {
         firstSocket.send(JSON.stringify({ type: "resize", cols: 100, rows: 30 }));
+        firstSocket.send(JSON.stringify({ type: "input", data: command }));
       });
 
       firstSocket.on("message", (chunk) => {

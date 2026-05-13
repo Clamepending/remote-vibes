@@ -182,6 +182,41 @@ test("/api/node manifest, status, and snapshot routes expose the local node foun
   }
 });
 
+test("/api/node/apps/launch records launched app instances into node snapshots", async () => {
+  const started = await startNodeRoutesApp({
+    appLaunchers: [{
+      id: "test-app",
+      label: "Test App",
+      kind: "desktop-app",
+      category: "test",
+      available: true,
+      launchMode: "command",
+      command: process.execPath,
+    }],
+  });
+  try {
+    const launchResponse = await fetch(`${started.baseUrl}/api/node/apps/launch`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ appId: "test-app", clientCommandId: "cmd-route" }),
+    });
+    assert.equal(launchResponse.status, 202);
+    const launchBody = await launchResponse.json();
+    assert.equal(launchBody.launched, true);
+    assert.equal(launchBody.instance.appId, "test-app");
+    assert.equal(launchBody.instance.clientCommandId, "cmd-route");
+
+    const snapshotResponse = await fetch(`${started.baseUrl}/api/node/snapshot?mode=privileged`);
+    assert.equal(snapshotResponse.status, 200);
+    const snapshotBody = await snapshotResponse.json();
+    assert.equal(snapshotBody.snapshot.counts.appInstances, 1);
+    assert.equal(snapshotBody.snapshot.appInstances[0].label, "Test App");
+    assert.equal(snapshotBody.snapshot.appInstances[0].clientCommandId, "cmd-route");
+  } finally {
+    await started.cleanup();
+  }
+});
+
 test("/api/node/remote-snapshot proxies redacted machine snapshots without leaking URL secrets", async () => {
   const remoteRequests = [];
   const started = await startNodeRoutesApp({

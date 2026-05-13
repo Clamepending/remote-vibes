@@ -34,6 +34,7 @@ test("normalizeNodeSnapshot accepts the privileged node snapshot shape", () => {
     browserSessions: [{ id: "b1", title: "Browser task", status: "running" }],
     actionItems: [{ id: "a1", title: "Approve deploy", priority: "high" }],
     ports: [{ port: 5173, name: "Vite", preferredUrl: "http://127.0.0.1:5173" }],
+    appInstances: [{ id: "appinst_cursor", appId: "cursor", label: "Cursor", status: "launched" }],
     handoffJobs: [{ id: "h1", title: "GPU to Pi", target: { label: "Pi" } }],
     brain: { noteCount: 1, notes: [{ relativePath: "index.md", title: "Brain index" }] },
     canvases: [{ id: "c1", title: "Result chart", imagePath: "results/chart.png" }],
@@ -46,6 +47,7 @@ test("normalizeNodeSnapshot accepts the privileged node snapshot shape", () => {
   assert.equal(snapshot.counts.browserSessions, 1);
   assert.equal(snapshot.counts.approvals, 1);
   assert.equal(snapshot.counts.ports, 1);
+  assert.equal(snapshot.counts.appInstances, 1);
   assert.equal(snapshot.counts.handoffJobs, 1);
   assert.equal(snapshot.counts.brainNotes, 1);
   assert.equal(snapshot.counts.artifacts, 1);
@@ -93,6 +95,31 @@ test("buildCanvasCards renders machine, brain, handoff, session, browser, approv
   assert.equal(renderCards.length, cards.length - 1);
   assert.equal(renderCards.some((card) => card.type === "machine"), false);
   assert.equal(getRenderableCanvasCardIds(cards).has(machine.id), false);
+});
+
+test("buildCanvasCards renders launched app instances from node snapshots", () => {
+  const cards = buildCanvasCards({
+    node: { id: "node-1", name: "Mac" },
+    appInstances: [{
+      id: "appinst_cursor",
+      appId: "cursor",
+      label: "Cursor",
+      status: "launched",
+      source: "account",
+      clientCommandId: "cmd_1",
+      launchedAt: "2026-05-13T10:00:00.000Z",
+      updatedAt: "2026-05-13T10:01:00.000Z",
+    }],
+  });
+
+  const app = cards.find((card) => card.id === "app-instance:appinst_cursor");
+  assert.equal(app?.type, "app");
+  assert.equal(app?.title, "Cursor");
+  assert.equal(app?.subtitle, "app instance");
+  assert.equal(app?.ref.appInstance, true);
+  assert.equal(app?.ref.appId, "cursor");
+  assert.equal(app?.ref.launchCommandId, "cmd_1");
+  assert.equal(cards.find((card) => card.type === "machine")?.detail, "0 sessions, 1 apps, 0 handoffs");
 });
 
 test("buildCanvasCards excludes launchers while buildCanvasLauncherCards returns dock actions", () => {

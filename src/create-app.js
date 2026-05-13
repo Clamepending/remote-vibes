@@ -83,6 +83,7 @@ import { runVideoMemoryGitPull, startPeriodicVideoMemoryGitPull } from "./videom
 import { WalletService } from "./wallet-service.js";
 import { WikiBackupService } from "./wiki-backup.js";
 import { FleetRegistryStore, normalizeFleetNodeUrl } from "./node/fleet-registry.js";
+import { AppInstanceStore } from "./node/app-instance-store.js";
 import { HandoffJobStore, buildHandoffLaunchPrompt } from "./node/handoff-job-store.js";
 import { NodeIdentityStore } from "./node/identity-store.js";
 import { buildRouteClass, createLocalOrNodeTokenMiddleware, isLocalRequest } from "./node/security.js";
@@ -1817,10 +1818,12 @@ export async function createVibeResearchApp({
   const portAliasStore = new PortAliasStore({ stateDir });
   const nodeIdentityStore = new NodeIdentityStore({ stateDir });
   const fleetRegistryStore = new FleetRegistryStore({ stateDir });
+  const appInstanceStore = new AppInstanceStore({ stateDir });
   const handoffJobStore = new HandoffJobStore({ stateDir });
   await settingsStore.initialize();
   await nodeIdentityStore.initialize();
   await fleetRegistryStore.initialize();
+  await appInstanceStore.initialize();
   await handoffJobStore.initialize();
   const accountTokenStore =
     typeof accountTokenStoreFactory === "function"
@@ -2338,6 +2341,7 @@ export async function createVibeResearchApp({
     metadataProvider: getAppMetadata,
     providersProvider: () => providers,
     appLaunchersProvider: () => appLaunchers,
+    appInstancesProvider: () => appInstanceStore.listInstances(),
     sessionsProvider: () => sessionManager.listSessions(),
     browserSessionsProvider: () => browserUseService.listSessions({ includeSnapshot: false }),
     agentTownStateProvider: () => agentTownStore.getState(),
@@ -2378,6 +2382,10 @@ export async function createVibeResearchApp({
           nodeIdentityStore,
           sessionManager,
           appLaunchersProvider: () => appLaunchers,
+          appLauncher: (launcherId, launchers, options = {}) => launchAndRecordAppLauncher(launcherId, launchers, {
+            ...options,
+            source: options.source || "account",
+          }),
           settingsStore,
         })
       : new NodeCommandRelayService({
@@ -2386,6 +2394,10 @@ export async function createVibeResearchApp({
           nodeIdentityStore,
           sessionManager,
           appLaunchersProvider: () => appLaunchers,
+          appLauncher: (launcherId, launchers, options = {}) => launchAndRecordAppLauncher(launcherId, launchers, {
+            ...options,
+            source: options.source || "account",
+          }),
           settingsProvider: () => settingsStore.settings,
         });
 
@@ -3283,6 +3295,27 @@ export async function createVibeResearchApp({
       ? appLauncherOverrides
       : await detectAppLaunchers();
     return { appLaunchers };
+  }
+
+  async function launchAndRecordAppLauncher(launcherId, launchers = appLaunchers, {
+    clientCommandId = "",
+    source = "local",
+  } = {}) {
+    const id = String(launcherId || "").trim();
+    if (!id) {
+      throw new Error("App launcher id is required.");
+    }
+    const launcherList = Array.isArray(launchers) && launchers.length ? launchers : appLaunchers;
+    const result = await launchAppLauncher(id, launcherList);
+    const launcher = launcherList.find((entry) => entry?.id === id) || result.launcher || { id };
+    const instance = await appInstanceStore.recordLaunch({
+      launcherId: id,
+      launcher,
+      result,
+      clientCommandId,
+      source,
+    });
+    return { ...result, instance };
   }
 
   function getProviderInstallOutput(error) {
@@ -4393,8 +4426,9 @@ export async function createVibeResearchApp({
   app.post("/api/node/apps/launch", requireLocalOrNodeToken, async (request, response) => {
     try {
       const launcherId = String(request.body?.appId || request.body?.launcherId || request.body?.id || "").trim();
+      const clientCommandId = String(request.body?.clientCommandId || request.body?.commandId || "").trim();
       await refreshAppLaunchers();
-      const result = await launchAppLauncher(launcherId, appLaunchers);
+      const result = await launchAndRecordAppLauncher(launcherId, appLaunchers, { clientCommandId, source: "local" });
       response.status(202).json(result);
     } catch (error) {
       response.status(error.statusCode || 400).json({ error: error.message || "Could not launch app on this node." });
