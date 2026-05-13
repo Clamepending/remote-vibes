@@ -675,12 +675,60 @@ function injectCanvasStyles(documentRef = document) {
   touch-action: none;
   transition: opacity 120ms ease, border-color 120ms ease, background 120ms ease, color 120ms ease;
 }
+.swarmlab-canvas-region-resize.is-corner {
+  right: -8px;
+  bottom: -8px;
+  width: 36px;
+  height: 36px;
+  min-height: 36px;
+  border-radius: 10px;
+  background:
+    linear-gradient(135deg, transparent 47%, color-mix(in srgb, var(--region-accent) 22%, transparent) 48% 52%, transparent 53%),
+    rgba(18, 17, 15, 0.78);
+  box-shadow: 0 10px 24px rgba(0, 0, 0, 0.28);
+  opacity: 0.78;
+}
+.swarmlab-canvas-region-resize.is-corner::after {
+  content: "";
+  position: absolute;
+  right: 8px;
+  bottom: 8px;
+  width: 11px;
+  height: 11px;
+  border-right: 2px solid currentColor;
+  border-bottom: 2px solid currentColor;
+  opacity: 0.72;
+}
 .swarmlab-canvas-region-resize:hover,
 .swarmlab-canvas-region.is-resizing .swarmlab-canvas-region-resize {
   border-color: color-mix(in srgb, var(--region-accent) 58%, rgba(232, 222, 206, 0.22));
   background: color-mix(in srgb, var(--region-accent) 12%, rgba(18, 17, 15, 0.72));
   color: var(--canvas-text);
   opacity: 1;
+}
+.swarmlab-canvas-region-size {
+  position: absolute;
+  right: 36px;
+  bottom: 10px;
+  display: inline-flex;
+  align-items: center;
+  min-height: 22px;
+  padding: 0 8px;
+  border: 1px solid color-mix(in srgb, var(--region-accent) 26%, rgba(232, 222, 206, 0.14));
+  border-radius: 6px;
+  background: rgba(18, 17, 15, 0.68);
+  color: var(--canvas-muted);
+  font-size: 10px;
+  font-weight: 680;
+  opacity: 0;
+  pointer-events: none;
+  transform: translateY(3px);
+  transition: opacity 120ms ease, transform 120ms ease;
+}
+.swarmlab-canvas-region:hover .swarmlab-canvas-region-size,
+.swarmlab-canvas-region.is-resizing .swarmlab-canvas-region-size {
+  opacity: 0.86;
+  transform: translateY(0);
 }
 .swarmlab-canvas-pipe-layer {
   position: absolute;
@@ -2401,7 +2449,7 @@ function renderRegionResizeButton(region, placement) {
     <button
       class="swarmlab-canvas-region-resize is-${escapeHtml(placement)}"
       type="button"
-      title="Resize machine region"
+      title="Drag to resize machine region"
       aria-label="Resize ${escapeHtml(region.title || region.id)} region"
       data-swarmlab-canvas-region-resize="${escapeHtml(region.id)}"
     >
@@ -2431,6 +2479,7 @@ function renderCanvasRegion(region, localMachineId = "") {
         </span>
       </div>
       <span class="swarmlab-canvas-region-drop-label">${escapeHtml(regionDropLabel(region, localMachineId))}</span>
+      <span class="swarmlab-canvas-region-size" data-swarmlab-canvas-region-size="${escapeHtml(region.id)}">${Math.round(Number(region.width) || 0)} x ${Math.round(Number(region.height) || 0)}</span>
       ${renderRegionResizeButton(region, "corner")}
     </section>
   `;
@@ -3863,6 +3912,12 @@ function persistRegionBoundsInLayout(root, regionId, bounds) {
   });
 }
 
+function updateRegionSizeLabel(regionElement, width, height) {
+  const label = regionElement?.querySelector?.("[data-swarmlab-canvas-region-size]");
+  if (!(label instanceof HTMLElement)) return;
+  label.textContent = `${Math.round(width)} x ${Math.round(height)}`;
+}
+
 function bindRegionResize(root, { storage }) {
   const active = {
     button: null,
@@ -3897,6 +3952,7 @@ function bindRegionResize(root, { storage }) {
       active.startHeight = Number(region.height) || REGION_RESIZE_MIN_HEIGHT;
       active.minWidth = minimum.width;
       active.minHeight = minimum.height;
+      updateRegionSizeLabel(regionElement, active.startWidth, active.startHeight);
       root.classList.add("is-region-resizing");
       regionElement.classList.add("is-resizing");
       button.setPointerCapture?.(event.pointerId);
@@ -3915,6 +3971,7 @@ function bindRegionResize(root, { storage }) {
       region.height = height;
       active.regionElement.style.setProperty("--region-width", `${width}px`);
       active.regionElement.style.setProperty("--region-height", `${height}px`);
+      updateRegionSizeLabel(active.regionElement, width, height);
       persistRegionBoundsInLayout(root, active.regionId, {
         x: Number(region.x) || 0,
         y: Number(region.y) || 0,

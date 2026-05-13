@@ -10612,7 +10612,11 @@ function getSystemToasts() {
   }
 
   const updateErrorMessage = state.lastUpdateError?.message || (state.update?.status === "error" ? state.update.reason : "");
-  if (updateErrorMessage) {
+  const shouldSurfaceUpdateError =
+    Boolean(state.updateApplying) ||
+    state.currentView === "settings" ||
+    state.currentView === "system";
+  if (updateErrorMessage && shouldSurfaceUpdateError) {
     toasts.push({
       action: "retry-update-check",
       key: `update:${state.lastUpdateError?.occurredAt || state.update?.checkedAt || ""}:${updateErrorMessage}`,

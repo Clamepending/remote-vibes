@@ -828,6 +828,11 @@ test("local canvas view renders node snapshot cards and persists drag layout", a
       resizedLayout["machine:mac-main"].regionHeight > resizeStart.height,
       "resizing a machine region should persist the taller region bounds",
     );
+    assert.match(
+      await page.locator('[data-swarmlab-canvas-region-id="mac-main"] [data-swarmlab-canvas-region-size]').innerText(),
+      new RegExp(`${resizedLayout["machine:mac-main"].regionWidth} x ${resizedLayout["machine:mac-main"].regionHeight}`),
+      "region resize readout should track the saved region bounds",
+    );
     await page.locator('[data-swarmlab-canvas-launch-machine="mac-main"]').evaluate((button) => button.click());
     await page.waitForSelector('[data-swarmlab-canvas-card-id="session:session-1"]', { timeout: 10_000 });
 
