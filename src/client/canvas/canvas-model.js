@@ -1,5 +1,11 @@
 export const CANVAS_LAYOUT_STORAGE_PREFIX = "swarmlab.canvas.layout.v7";
 export const CANVAS_VIEWPORT_STORAGE_PREFIX = "swarmlab.canvas.viewport.v4";
+export const CANVAS_REGION_RESIZE_LIMITS = Object.freeze({
+  minWidth: 420,
+  minHeight: 320,
+  maxWidth: 4_000,
+  maxHeight: 5_000,
+});
 
 const DEFAULT_CARD_WIDTH = 270;
 const DEFAULT_CARD_HEIGHT = 170;
@@ -367,6 +373,22 @@ export function getCanvasCardRegionId(card, layout = {}) {
   return normalizeId(layout?.regionId || fallback, fallback);
 }
 
+export function isCanvasRegionMetadataCard(card) {
+  return String(card?.type || "") === "machine";
+}
+
+export function isRenderableCanvasCard(card) {
+  return Boolean(card) && !isCanvasRegionMetadataCard(card);
+}
+
+export function getRenderableCanvasCards(cards = []) {
+  return Array.isArray(cards) ? cards.filter(isRenderableCanvasCard) : [];
+}
+
+export function getRenderableCanvasCardIds(cards = []) {
+  return new Set(getRenderableCanvasCards(cards).map((card) => card.id));
+}
+
 export function buildCanvasRegions(cards, layout = {}) {
   const regionMap = new Map();
 
@@ -407,7 +429,7 @@ export function buildCanvasRegions(cards, layout = {}) {
   cards.forEach((card) => {
     const machineId = getCanvasCardMachineId(card);
     const region = ensureRegion(machineId);
-    if (card.type === "machine") {
+    if (isCanvasRegionMetadataCard(card)) {
       region.title = card.title || region.title;
       region.subtitle = card.subtitle || region.subtitle;
       region.status = card.status || region.status;
@@ -1313,7 +1335,6 @@ export function createFallbackCanvasLayout(cards) {
 
   const layout = {};
   const lanePriority = (card) => {
-    if (card.type === "machine") return -1;
     if (card.type === "handoff") return 0;
     if (card.type === "approval") return 1;
     if (card.type === "brain") return 2;
@@ -1371,6 +1392,22 @@ export function createFallbackCanvasLayout(cards) {
       });
     return { height: Math.max(0, cursor - y - MACHINE_REGION_ROW_GAP), ids };
   };
+  const placeMetadata = (entries, x, y) => {
+    const ids = [];
+    entries.forEach(({ card, index }) => {
+      layout[card.id] = {
+        x,
+        y,
+        width: 1,
+        height: 1,
+        z: index + 1,
+        hidden: true,
+      };
+      ids.push(card.id);
+    });
+    return ids;
+  };
+  const isRightLane = (card) => ["agent", "monitor", "browser", "app"].includes(card.type);
 
   let column = 0;
   let rowY = MACHINE_REGION_MARGIN_Y;
@@ -1382,16 +1419,11 @@ export function createFallbackCanvasLayout(cards) {
     const left = [];
     const right = [];
     entries.forEach((entry) => {
-      if (entry.card.type === "machine") {
+      if (isCanvasRegionMetadataCard(entry.card)) {
         metadataOnly.push(entry);
         return;
       }
-      if (
-        entry.card.type === "agent" ||
-        entry.card.type === "monitor" ||
-        entry.card.type === "browser" ||
-        entry.card.type === "app"
-      ) {
+      if (isRightLane(entry.card)) {
         right.push(entry);
       } else {
         left.push(entry);
@@ -1407,18 +1439,7 @@ export function createFallbackCanvasLayout(cards) {
     const contentY = region.y + MACHINE_REGION_HEADER_HEIGHT;
     const leftX = region.x + MACHINE_REGION_PADDING_X;
     const rightX = leftX + MACHINE_REGION_LEFT_WIDTH + MACHINE_REGION_COLUMN_GAP;
-    const metadataIds = [];
-    metadataOnly.forEach(({ card, index }) => {
-      layout[card.id] = {
-        x: leftX,
-        y: region.y + 16,
-        width: 1,
-        height: 1,
-        z: index + 1,
-        hidden: true,
-      };
-      metadataIds.push(card.id);
-    });
+    const metadataIds = placeMetadata(metadataOnly, leftX, region.y + 16);
     const leftResult = placeStack(left, leftX, contentY, MACHINE_REGION_LEFT_WIDTH, region);
     const rightResult = placeColumn(right, rightX, contentY + (left.length && right.length ? 22 : 0), region);
     region.height = Math.max(
@@ -1468,8 +1489,12 @@ export function sanitizeCanvasLayout(value) {
         if (regionId) sanitized.regionId = regionId;
         if (Number.isFinite(regionX)) sanitized.regionX = Math.round(Math.max(-2_000, Math.min(20_000, regionX)));
         if (Number.isFinite(regionY)) sanitized.regionY = Math.round(Math.max(-2_000, Math.min(20_000, regionY)));
-        if (Number.isFinite(regionWidth)) sanitized.regionWidth = Math.round(Math.max(420, Math.min(4_000, regionWidth)));
-        if (Number.isFinite(regionHeight)) sanitized.regionHeight = Math.round(Math.max(320, Math.min(5_000, regionHeight)));
+        if (Number.isFinite(regionWidth)) {
+          sanitized.regionWidth = Math.round(Math.max(CANVAS_REGION_RESIZE_LIMITS.minWidth, Math.min(CANVAS_REGION_RESIZE_LIMITS.maxWidth, regionWidth)));
+        }
+        if (Number.isFinite(regionHeight)) {
+          sanitized.regionHeight = Math.round(Math.max(CANVAS_REGION_RESIZE_LIMITS.minHeight, Math.min(CANVAS_REGION_RESIZE_LIMITS.maxHeight, regionHeight)));
+        }
         return [id, sanitized];
       })
       .filter(Boolean),

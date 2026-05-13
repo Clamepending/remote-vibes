@@ -6,11 +6,15 @@ import {
   buildCanvasLauncherCards,
   buildCanvasRegions,
   createFallbackCanvasLayout,
+  getRenderableCanvasCardIds,
+  getRenderableCanvasCards,
   getCanvasCardMachineId,
   getCanvasCardRegionId,
   getCanvasBoardId,
   getCanvasLayoutStorageKey,
   getCanvasViewportStorageKey,
+  isCanvasRegionMetadataCard,
+  isRenderableCanvasCard,
   mergeCanvasLayout,
   normalizeNodeSnapshot,
   sanitizeCanvasLayout,
@@ -81,6 +85,14 @@ test("buildCanvasCards renders machine, brain, handoff, session, browser, approv
   assert.equal(cards.find((card) => card.type === "agent")?.ref.cwd, "/models");
   assert.equal(cards.find((card) => card.type === "app")?.href, "/proxy/6006/");
   assert.equal(cards.find((card) => card.type === "artifact")?.detail, "Best run so far");
+
+  const machine = cards.find((card) => card.type === "machine");
+  const renderCards = getRenderableCanvasCards(cards);
+  assert.equal(isCanvasRegionMetadataCard(machine), true);
+  assert.equal(isRenderableCanvasCard(machine), false);
+  assert.equal(renderCards.length, cards.length - 1);
+  assert.equal(renderCards.some((card) => card.type === "machine"), false);
+  assert.equal(getRenderableCanvasCardIds(cards).has(machine.id), false);
 });
 
 test("buildCanvasCards excludes launchers while buildCanvasLauncherCards returns dock actions", () => {
