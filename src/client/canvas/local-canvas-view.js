@@ -43,7 +43,7 @@ const REMOTE_NODES_STORAGE_KEY = "swarmlab.canvas.remoteNodes.v1";
 const REMOTE_NODE_FETCH_TIMEOUT_MS = 4_500;
 const BOARD_WIDTH = 4_800;
 const BOARD_HEIGHT = 5_200;
-const DEFAULT_VIEWPORT = { x: 64, y: 48, zoom: 0.92 };
+const DEFAULT_VIEWPORT = { x: 28, y: 42, zoom: 0.74 };
 const CARD_TYPE_ICONS = {
   agent: Bot,
   approval: CheckSquare,
@@ -377,6 +377,21 @@ function injectCanvasStyles(documentRef = document) {
 }
 .swarmlab-canvas-card.is-agent {
   background: rgba(31, 30, 27, 0.96);
+  border-color: rgba(232, 222, 206, 0.16);
+}
+.swarmlab-canvas-card.is-agent .swarmlab-canvas-card-head {
+  grid-template-columns: 26px minmax(0, 1fr) auto;
+  padding: 16px 18px 13px;
+}
+.swarmlab-canvas-card.is-agent .swarmlab-canvas-card-icon {
+  width: 26px;
+  height: 26px;
+}
+.swarmlab-canvas-card.is-agent .swarmlab-canvas-card-title strong {
+  font-size: 15px;
+}
+.swarmlab-canvas-card.is-agent .swarmlab-canvas-card-title span {
+  font-size: 12px;
 }
 .swarmlab-canvas-card.is-remote {
   border-color: rgba(116, 199, 184, 0.24);
@@ -439,6 +454,10 @@ function injectCanvasStyles(documentRef = document) {
   display: grid;
   grid-template-rows: minmax(0, 1fr) auto;
   min-height: 0;
+  height: 100%;
+  background:
+    radial-gradient(circle at 18px 18px, rgba(232, 222, 206, 0.055) 1px, transparent 1px) 0 0 / 28px 28px,
+    rgba(12, 12, 10, 0.64);
 }
 .swarmlab-agent-transfer-bar {
   display: none;
@@ -461,6 +480,7 @@ function injectCanvasStyles(documentRef = document) {
   grid-template-rows: auto minmax(0, 1fr);
   min-height: 0;
   overflow: hidden;
+  background: rgba(12, 12, 10, 0.28);
 }
 .swarmlab-agent-transfer-bar span {
   min-width: 0;
@@ -475,26 +495,51 @@ function injectCanvasStyles(documentRef = document) {
 .swarmlab-agent-chat-feed {
   display: flex;
   flex-direction: column;
-  gap: 10px;
+  gap: 12px;
   min-height: 0;
-  padding: 14px;
+  padding: 18px;
   overflow-y: auto;
   overscroll-behavior: contain;
 }
+.swarmlab-agent-history-meta {
+  display: flex;
+  position: sticky;
+  top: -1px;
+  z-index: 1;
+  justify-content: space-between;
+  gap: 12px;
+  margin: -2px -2px 2px;
+  padding: 7px 8px;
+  border: 1px solid rgba(232, 222, 206, 0.08);
+  border-radius: 7px;
+  background: rgba(14, 14, 12, 0.92);
+  color: var(--canvas-faint);
+  font-size: 11px;
+  line-height: 1.3;
+}
+.swarmlab-agent-history-meta span {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
 .swarmlab-agent-message {
-  max-width: 92%;
+  max-width: min(92%, 560px);
   border: 1px solid rgba(232, 222, 206, 0.09);
   border-radius: 8px;
-  padding: 10px 12px;
+  padding: 11px 13px;
   background: rgba(255, 255, 255, 0.06);
   color: #ddd5cb;
-  font-size: 12px;
-  line-height: 1.45;
+  font-size: 13px;
+  line-height: 1.48;
   overflow-wrap: anywhere;
+}
+.swarmlab-agent-message-text {
+  white-space: pre-wrap;
 }
 .swarmlab-agent-message span {
   display: block;
-  margin-bottom: 4px;
+  margin-bottom: 5px;
   color: var(--canvas-faint);
   font-size: 10px;
   text-transform: uppercase;
@@ -506,6 +551,8 @@ function injectCanvasStyles(documentRef = document) {
 }
 .swarmlab-agent-message.is-agent {
   align-self: flex-start;
+  max-width: min(100%, 610px);
+  background: rgba(116, 199, 184, 0.055);
 }
 .swarmlab-agent-message.is-system {
   align-self: flex-start;
@@ -528,13 +575,13 @@ function injectCanvasStyles(documentRef = document) {
   grid-template-columns: minmax(0, 1fr) auto;
   gap: 8px;
   align-items: center;
-  margin: 0 12px 12px;
-  padding: 9px 10px;
-  border: 1px solid rgba(232, 222, 206, 0.12);
+  margin: 0 16px 16px;
+  padding: 10px 11px;
+  border: 1px solid rgba(232, 222, 206, 0.16);
   border-radius: 8px;
-  background: rgba(18, 18, 16, 0.8);
+  background: rgba(9, 9, 8, 0.92);
   color: var(--canvas-muted);
-  font-size: 12px;
+  font-size: 13px;
 }
 .swarmlab-agent-composer textarea {
   width: 100%;
@@ -617,7 +664,9 @@ function injectCanvasStyles(documentRef = document) {
   overflow: hidden;
   border: 1px solid rgba(232, 222, 206, 0.14);
   border-radius: 8px;
-  background: rgba(255, 255, 255, 0.035);
+  background:
+    linear-gradient(135deg, rgba(116, 199, 184, 0.08), transparent 45%),
+    rgba(9, 10, 9, 0.88);
 }
 .swarmlab-canvas-app-frame {
   display: block;
@@ -625,6 +674,13 @@ function injectCanvasStyles(documentRef = document) {
   height: 100%;
   border: 0;
   background: #0b0d0c;
+}
+.swarmlab-canvas-app-preview-placeholder {
+  display: grid;
+  place-items: center;
+  height: 100%;
+  min-height: 132px;
+  color: var(--canvas-faint);
 }
 .swarmlab-port-list {
   display: flex;
@@ -1435,11 +1491,11 @@ function renderAgentCard(card, layout) {
         <div class="swarmlab-agent-chat-feed" data-swarmlab-agent-chat-feed data-swarmlab-agent-session-id="${escapeHtml(card.ref?.sessionId || "")}">
           <div class="swarmlab-agent-message is-user">
             <span>Workspace</span>
-            ${escapeHtml(cwd || "default project")}
+            <div class="swarmlab-agent-message-text">${escapeHtml(cwd || "default project")}</div>
           </div>
           <div class="swarmlab-agent-message is-agent">
             <span>${escapeHtml(status)}</span>
-            ${escapeHtml(card.meta ? `Last activity ${card.meta}` : "Ready on this machine.")}
+            <div class="swarmlab-agent-message-text">${escapeHtml(card.meta ? `Last activity ${card.meta}` : "Ready on this machine.")}</div>
           </div>
           ${renderTags(card, { limit: 3 })}
         </div>
@@ -1476,7 +1532,7 @@ function renderRemoteAgentCard(card, layout) {
         <div class="swarmlab-agent-chat-feed" data-swarmlab-agent-chat-feed data-swarmlab-agent-session-id="${escapeHtml(sessionId)}" data-swarmlab-agent-remote-node-id="${escapeHtml(remoteNodeId)}">
           <div class="swarmlab-agent-message is-agent">
             <span>${escapeHtml([card.subtitle, card.status].filter(Boolean).join(" / ") || "Remote agent")}</span>
-            ${escapeHtml(card.meta || card.ref?.remoteUrl || "Ready")}
+            <div class="swarmlab-agent-message-text">${escapeHtml(card.meta || card.ref?.remoteUrl || "Ready")}</div>
           </div>
           ${renderTags(card, { limit: 3 })}
         </div>
@@ -1488,7 +1544,7 @@ function renderRemoteAgentCard(card, layout) {
   return cardFrame(card, layout, body, footer);
 }
 
-function narrativeEntryText(entry) {
+function narrativeEntryText(entry, max = 1_800) {
   return compactText(
     [
       entry?.text,
@@ -1496,6 +1552,7 @@ function narrativeEntryText(entry) {
       entry?.outputPreview,
       entry?.statusText,
     ].filter(Boolean).join(" "),
+    max,
   );
 }
 
@@ -1519,21 +1576,28 @@ function renderNarrativeEntries(narrative) {
   const entries = Array.isArray(narrative?.entries) ? narrative.entries : [];
   const visible = entries
     .filter((entry) => narrativeEntryText(entry))
-    .slice(-6);
+    .slice(-18);
   if (!visible.length) {
     return `
       <div class="swarmlab-agent-message is-loading">
         <span>Native chat</span>
-        No messages yet.
+        <div class="swarmlab-agent-message-text">No messages yet.</div>
       </div>
     `;
   }
-  return visible.map((entry) => `
+  const source = [narrative?.sourceLabel, narrative?.updatedAt ? `updated ${narrative.updatedAt}` : ""].filter(Boolean).join(" / ");
+  const meta = `
+    <div class="swarmlab-agent-history-meta">
+      <span>${escapeHtml(source || "session history")}</span>
+      <span>${escapeHtml(`${visible.length}${entries.length > visible.length ? ` of ${entries.length}` : ""} messages`)}</span>
+    </div>
+  `;
+  return `${meta}${visible.map((entry) => `
     <div class="swarmlab-agent-message ${narrativeEntryClass(entry)}" data-swarmlab-agent-entry-id="${escapeHtml(entry?.id || "")}">
       <span>${escapeHtml(narrativeEntryLabel(entry))}</span>
-      ${escapeHtml(narrativeEntryText(entry))}
+      <div class="swarmlab-agent-message-text">${escapeHtml(narrativeEntryText(entry))}</div>
     </div>
-  `).join("");
+  `).join("")}`;
 }
 
 function updateAgentFeed(card, html) {
@@ -1560,7 +1624,7 @@ async function loadAgentNarrative(root, card, { fetchImpl, abortController }) {
     updateAgentFeed(card, `
       <div class="swarmlab-agent-message is-error">
         <span>Native chat unavailable</span>
-        ${escapeHtml(error?.message || "Could not load session narrative.")}
+        <div class="swarmlab-agent-message-text">${escapeHtml(error?.message || "Could not load session narrative.")}</div>
       </div>
     `);
   }
@@ -1602,6 +1666,7 @@ function renderBrowserCard(card, layout) {
 function renderAppCard(card, layout) {
   const ports = Array.isArray(card.ref?.ports) ? card.ref.ports : [];
   const embedUrl = String(card.ref?.embedUrl || "").trim();
+  const previewTrusted = card.ref?.previewTrusted !== false;
   const portList = ports.length
     ? `
       <div class="swarmlab-port-list">
@@ -1626,14 +1691,16 @@ function renderAppCard(card, layout) {
           <span class="swarmlab-canvas-browser-url">${escapeHtml(embedUrl)}</span>
         </div>
         <div class="swarmlab-canvas-app-frame-shell">
-          <iframe
-            class="swarmlab-canvas-app-frame"
-            title="${escapeHtml(`${card.title} preview`)}"
-            src="${escapeHtml(embedUrl)}"
-            loading="lazy"
-            referrerpolicy="no-referrer"
-            sandbox="allow-forms allow-popups allow-same-origin allow-scripts"
-          ></iframe>
+          ${previewTrusted
+            ? `<iframe
+                class="swarmlab-canvas-app-frame"
+                title="${escapeHtml(`${card.title} preview`)}"
+                src="${escapeHtml(embedUrl)}"
+                loading="lazy"
+                referrerpolicy="no-referrer"
+                sandbox="allow-forms allow-popups allow-same-origin allow-scripts"
+              ></iframe>`
+            : `<div class="swarmlab-canvas-app-preview-placeholder">${renderIcon(AppWindow, { width: 28, height: 28 })}</div>`}
         </div>
       </div>
     `;

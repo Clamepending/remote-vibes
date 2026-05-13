@@ -248,7 +248,7 @@ test("sanitizeCanvasLayout clamps invalid layout values before persistence", () 
   assert.equal(layout.card.x, 20_000);
   assert.equal(layout.card.y, -2_000);
   assert.equal(layout.card.width, 180);
-  assert.equal(layout.card.height, 540);
+  assert.equal(layout.card.height, 920);
   assert.equal(layout.card.z, 100_000);
   assert.equal(layout.card.regionId, "GPU-Box");
   assert.equal(layout.card.regionX, 20_000);
@@ -263,10 +263,10 @@ test("canvas board id and storage key are stable per node", () => {
   assert.equal(boardId, "machine:mac-main");
   assert.equal(
     getCanvasLayoutStorageKey(boardId),
-    "swarmlab.canvas.layout.v5:machine:mac-main",
+    "swarmlab.canvas.layout.v6:machine:mac-main",
   );
   assert.equal(
     getCanvasViewportStorageKey(boardId),
-    "swarmlab.canvas.viewport.v1:machine:mac-main",
+    "swarmlab.canvas.viewport.v2:machine:mac-main",
   );
 });

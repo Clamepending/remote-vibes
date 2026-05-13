@@ -384,6 +384,13 @@ test("local canvas view renders node snapshot cards and persists drag layout", a
                 text: "I found the canvas route and rendered the native session feed.",
                 timestamp: "2026-05-12T12:00:03.000Z",
               },
+              ...Array.from({ length: 10 }, (_, index) => ({
+                id: `h${index + 1}`,
+                kind: index % 2 ? "assistant" : "user",
+                label: index % 2 ? "Codex" : "You",
+                text: `Follow-up ${index + 1}: keep the machine-region canvas history visible while the agent keeps working.`,
+                timestamp: `2026-05-12T12:00:${String(index + 4).padStart(2, "0")}.000Z`,
+              })),
             ],
           },
         }),
@@ -451,7 +458,19 @@ test("local canvas view renders node snapshot cards and persists drag layout", a
     assert.match(rendered, /Handoff/);
     assert.match(rendered, /Please inspect the dashboard/);
     assert.match(rendered, /native session feed/);
+    assert.match(rendered, /Follow-up 10/);
     assert.equal(await page.locator(".swarmlab-agent-chat-window").count(), 5);
+    assert.equal(await page.locator('[data-swarmlab-canvas-card-id="session:session-1"] [data-swarmlab-agent-entry-id]').count(), 12);
+    assert.match(
+      await page.locator('[data-swarmlab-canvas-card-id="session:session-1"] .swarmlab-agent-history-meta').innerText(),
+      /12 messages/,
+    );
+    const localAgentSize = await page.locator('[data-swarmlab-canvas-card-id="session:session-1"]').evaluate((element) => ({
+      width: Number.parseFloat(element.style.width || "0"),
+      height: Number.parseFloat(element.style.height || "0"),
+    }));
+    assert.ok(localAgentSize.width >= 620, "local agent canvas card should be a large work surface");
+    assert.ok(localAgentSize.height >= 700, "local agent canvas card should preserve visible chat history");
     assert.equal(await page.locator(".swarmlab-canvas-card.is-summary:not(.is-remote)").count(), 2);
     assert.equal(await page.locator(".swarmlab-canvas-card.is-remote").count(), 13);
     const regionIds = await page.locator(".swarmlab-canvas-region").evaluateAll((regions) =>
@@ -506,7 +525,7 @@ test("local canvas view renders node snapshot cards and persists drag layout", a
     await page.mouse.up();
 
     const saved = await page.evaluate(() =>
-      JSON.parse(window.localStorage.getItem("swarmlab.canvas.layout.v5:fleet:mac-main") || "{}"),
+      JSON.parse(window.localStorage.getItem("swarmlab.canvas.layout.v6:fleet:mac-main") || "{}"),
     );
     assert.ok(saved["session:session-1"], "drag should persist session layout");
     assert.ok(saved["session:session-1"].x > 0);
@@ -514,9 +533,9 @@ test("local canvas view renders node snapshot cards and persists drag layout", a
 
     await page.click("[data-swarmlab-canvas-zoom-in]");
     const viewport = await page.evaluate(() =>
-      JSON.parse(window.localStorage.getItem("swarmlab.canvas.viewport.v1:fleet:mac-main") || "{}"),
+      JSON.parse(window.localStorage.getItem("swarmlab.canvas.viewport.v2:fleet:mac-main") || "{}"),
     );
-    assert.ok(viewport.zoom > 0.92, "zoom controls should persist a zoomed viewport");
+    assert.ok(viewport.zoom > 0.74, "zoom controls should persist a zoomed viewport");
 
     const localComposer = page.locator('[data-swarmlab-canvas-card-id="session:session-1"] [data-swarmlab-agent-composer] textarea[name="input"]');
     await localComposer.fill("continue from canvas");

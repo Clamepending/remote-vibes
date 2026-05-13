@@ -1,14 +1,14 @@
-export const CANVAS_LAYOUT_STORAGE_PREFIX = "swarmlab.canvas.layout.v5";
-export const CANVAS_VIEWPORT_STORAGE_PREFIX = "swarmlab.canvas.viewport.v1";
+export const CANVAS_LAYOUT_STORAGE_PREFIX = "swarmlab.canvas.layout.v6";
+export const CANVAS_VIEWPORT_STORAGE_PREFIX = "swarmlab.canvas.viewport.v2";
 
 const DEFAULT_CARD_WIDTH = 270;
 const DEFAULT_CARD_HEIGHT = 170;
-const AGENT_CARD_WIDTH = 380;
-const AGENT_CARD_HEIGHT = 430;
+const AGENT_CARD_WIDTH = 640;
+const AGENT_CARD_HEIGHT = 720;
 const BROWSER_CARD_WIDTH = 430;
 const BROWSER_CARD_HEIGHT = 300;
-const APP_CARD_WIDTH = 430;
-const APP_CARD_HEIGHT = 310;
+const APP_CARD_WIDTH = 410;
+const APP_CARD_HEIGHT = 270;
 const APP_SUMMARY_CARD_WIDTH = 320;
 const APP_SUMMARY_CARD_HEIGHT = 190;
 const HANDOFF_CARD_WIDTH = 360;
@@ -18,8 +18,8 @@ const BRAIN_CARD_HEIGHT = 260;
 const SUMMARY_CARD_WIDTH = 320;
 const SUMMARY_CARD_HEIGHT = 170;
 const MACHINE_REGION_COLUMNS = 2;
-const MACHINE_REGION_WIDTH = 980;
-const MACHINE_REGION_MIN_HEIGHT = 860;
+const MACHINE_REGION_WIDTH = 1_260;
+const MACHINE_REGION_MIN_HEIGHT = 940;
 const MACHINE_REGION_MARGIN_X = 96;
 const MACHINE_REGION_MARGIN_Y = 96;
 const MACHINE_REGION_GAP_X = 150;
@@ -27,9 +27,9 @@ const MACHINE_REGION_GAP_Y = 140;
 const MACHINE_REGION_PADDING_X = 32;
 const MACHINE_REGION_HEADER_HEIGHT = 78;
 const MACHINE_REGION_BOTTOM_PADDING = 38;
-const MACHINE_REGION_COLUMN_GAP = 34;
+const MACHINE_REGION_COLUMN_GAP = 42;
 const MACHINE_REGION_ROW_GAP = 30;
-const MACHINE_REGION_LEFT_WIDTH = 360;
+const MACHINE_REGION_LEFT_WIDTH = 370;
 const MAX_CANVAS_AGENT_CARDS = 4;
 const MAX_CANVAS_BROWSER_CARDS = 2;
 const MAX_CANVAS_ARTIFACT_CARDS = 1;
@@ -115,6 +115,17 @@ function portDisplayName(port, fallback) {
   return normalizeText(pickFirst(port?.name, port?.label, port?.customName, port?.processName, fallback), fallback);
 }
 
+function hasIntentionalPortName(port) {
+  const rawPort = getPortNumber(port);
+  const fallback = rawPort ? String(rawPort) : "app";
+  const name = portDisplayName(port, fallback);
+  const normalized = name.toLowerCase().trim();
+  if (!normalized || normalized === fallback || normalized === `localhost:${fallback}`) {
+    return false;
+  }
+  return !/^(node|python|python\d+(\.\d+)?|ruby|java|go|server|localhost)$/u.test(normalized);
+}
+
 function isLikelyVisibleAppPort(port) {
   const rawPort = getPortNumber(port);
   if (!rawPort || DEBUG_OR_INFRA_PORTS.has(rawPort) || !portHref(port)) {
@@ -127,10 +138,10 @@ function isLikelyVisibleAppPort(port) {
     port?.customName ||
       port?.canvasVisible === true ||
       port?.previewKind === "preview" ||
-      port?.preferredAccess ||
+      hasIntentionalPortName(port) ||
       port?.hasDirectUrl ||
       port?.hasTailscaleUrl ||
-      COMMON_UI_PORTS.has(rawPort),
+      (COMMON_UI_PORTS.has(rawPort) && rawPort !== 8765),
   );
 }
 
@@ -139,6 +150,7 @@ function scoreVisibleAppPort(port) {
   let score = 0;
   if (port?.customName) score += 80;
   if (port?.canvasVisible === true) score += 70;
+  if (hasIntentionalPortName(port)) score += 52;
   if (COMMON_UI_PORTS.has(rawPort)) score += 45;
   if (port?.preferredAccess === "direct") score += 12;
   if (port?.preferredAccess === "proxy") score += 8;
@@ -680,6 +692,15 @@ function portCard(port, index, machineId) {
   const portLabel = rawPort ? String(rawPort) : `port-${index + 1}`;
   const href = portHref(port);
   const name = portDisplayName(port, portLabel);
+  const previewTrusted = Boolean(
+    port?.customName ||
+      port?.canvasVisible === true ||
+      port?.previewKind === "preview" ||
+      hasIntentionalPortName(port) ||
+      port?.hasDirectUrl ||
+      port?.hasTailscaleUrl ||
+      (rawPort && COMMON_UI_PORTS.has(rawPort) && rawPort !== 8765),
+  );
   return makeCard({
     id: `port:${portLabel}`,
     type: "app",
@@ -694,6 +715,7 @@ function portCard(port, index, machineId) {
       machineId,
       port: Number.isInteger(rawPort) ? rawPort : undefined,
       embedUrl: href,
+      previewTrusted,
       actionLabel: "Open app",
     },
     width: APP_CARD_WIDTH,
@@ -1075,8 +1097,8 @@ export function sanitizeCanvasLayout(value) {
         const sanitized = {
           x: Math.round(Math.max(-2_000, Math.min(20_000, x))),
           y: Math.round(Math.max(-2_000, Math.min(20_000, y))),
-          width: Math.round(Math.max(180, Math.min(720, width))),
-          height: Math.round(Math.max(120, Math.min(540, height))),
+          width: Math.round(Math.max(180, Math.min(960, width))),
+          height: Math.round(Math.max(120, Math.min(920, height))),
           z: Math.round(Math.max(0, Math.min(100_000, z))),
         };
         if (regionId) sanitized.regionId = regionId;
