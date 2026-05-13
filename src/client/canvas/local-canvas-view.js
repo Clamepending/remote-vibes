@@ -2177,7 +2177,7 @@ function launchLifecycleDetail(lifecycle) {
     return `Started session ${sessionId} on ${target}.`;
   }
   if (status === "completed" && lifecycle.operation === "app.launch") {
-    return `Launch completed on ${target}.`;
+    return `${lifecycle.title || "App"} launched on ${target}.`;
   }
   if (status === "running") {
     return `Claimed by ${target}; waiting for completion.`;
@@ -2190,6 +2190,7 @@ function launchLifecycleDetail(lifecycle) {
 
 function launchLifecycleCard(lifecycle) {
   const isAgent = lifecycle.operation === "session.create";
+  const isCompletedApp = lifecycle.operation === "app.launch" && normalizeLaunchLifecycleStatus(lifecycle.status) === "completed";
   const sessionId = sessionIdFromLifecycle(lifecycle);
   const title = lifecycle.title || (isAgent ? "Starting agent" : "Starting app");
   const href = isAgent && sessionId && lifecycle.remoteUrl
@@ -2199,21 +2200,23 @@ function launchLifecycleCard(lifecycle) {
     id: `lifecycle:${lifecycle.lifecycleId}`,
     type: isAgent ? "agent" : "app",
     title,
-    subtitle: lifecycle.subtitle || (isAgent ? "remote agent launch" : "remote app launch"),
+    subtitle: lifecycle.subtitle || (isAgent ? "remote agent launch" : isCompletedApp ? "desktop app / launched" : "remote app launch"),
     status: normalizeLaunchLifecycleStatus(lifecycle.status).replace(/_/g, " "),
     detail: launchLifecycleDetail(lifecycle),
     meta: lifecycle.updatedAt || lifecycle.createdAt,
-    tags: ["remote", lifecycle.status, lifecycle.providerId || lifecycle.appId].filter(Boolean),
+    tags: [lifecycle.remoteUrl ? "remote" : "", isCompletedApp ? "launched" : lifecycle.status, lifecycle.providerId || lifecycle.appId].filter(Boolean),
     href,
     ref: {
       machineId: lifecycle.machineId,
       remoteNodeId: lifecycle.remoteNodeId,
       remoteUrl: lifecycle.remoteUrl,
       sourceCardId: lifecycle.sourceCardId,
-      lifecycle: true,
+      lifecycle: !isCompletedApp,
+      launchedApp: isCompletedApp,
       commandId: lifecycle.commandId,
       clientCommandId: lifecycle.clientCommandId,
       sessionId,
+      appId: lifecycle.appId || lifecycleResultAppInfo(lifecycle).appId || "",
       actionLabel: href ? "Open agent" : "",
     },
     width: isAgent ? 420 : 360,
@@ -4284,13 +4287,35 @@ async function launchCanvasLauncher(button, root, { fetchImpl, abortController, 
       }));
       return;
     }
-    await fetchJson("/api/node/apps/launch", {
+    const clientCommandId = `local-app-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 8)}`;
+    const result = await fetchJson("/api/node/apps/launch", {
       fetchImpl,
       signal: abortController.signal,
       method: "POST",
-      body: { appId },
+      body: { appId, clientCommandId },
     });
     button.textContent = "Launched";
+    const launcher = result?.launcher && typeof result.launcher === "object" ? result.launcher : {};
+    const now = new Date().toISOString();
+    queueLaunchLifecycle(root, { storage, refresh }, {
+      lifecycleId: clientCommandId,
+      clientCommandId,
+      operation: "app.launch",
+      machineId: getCanvasCardMachineId(card),
+      sourceCardId: card.id,
+      title: launcher.label || card.title || appId,
+      subtitle: "desktop app / launched",
+      targetTitle: lifecycleTargetTitle(root, getCanvasCardMachineId(card)),
+      appId: launcher.id || appId,
+      status: "completed",
+      createdAt: now,
+      updatedAt: now,
+      completedAt: now,
+      result: {
+        ...((result && typeof result === "object") ? result : {}),
+        appId: launcher.id || appId,
+      },
+    });
   } catch (error) {
     button.removeAttribute("disabled");
     button.textContent = compactText(error?.message || previousText || "Launch failed", 32);

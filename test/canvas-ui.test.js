@@ -823,6 +823,14 @@ test("local canvas view renders node snapshot cards and persists drag layout", a
     }
     assert.equal(postedAppLaunches.length, 1);
     assert.equal(postedAppLaunches[0].appId, "cursor");
+    await page.waitForFunction(() =>
+      [...document.querySelectorAll(".swarmlab-canvas-card.is-app:not(.is-lifecycle)")]
+        .some((card) => /Cursor/.test(card.textContent || "") && /launched/i.test(card.textContent || "")),
+    );
+    assert.equal(
+      await page.locator('.swarmlab-canvas-card.is-app:not(.is-lifecycle)').filter({ hasText: "Cursor" }).count(),
+      1,
+    );
 
     const sessionCard = page.locator('[data-swarmlab-canvas-card-id="session:session-1"]');
     const before = await sessionCard.locator("[data-swarmlab-card-drag-handle]").evaluate((handle) => {
