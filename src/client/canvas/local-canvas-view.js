@@ -3235,8 +3235,7 @@ function getViewportSafeInsets(root) {
   return insets;
 }
 
-function fitViewportToCards(root, options = {}) {
-  const bounds = getCardsBounds(root, options);
+function fitViewportToBounds(root, bounds) {
   const rect = root.getBoundingClientRect();
   if (!bounds || rect.width <= 0 || rect.height <= 0) {
     return { ...DEFAULT_VIEWPORT };
@@ -3249,6 +3248,29 @@ function fitViewportToCards(root, options = {}) {
     x: insets.left + (usableWidth - bounds.width * zoom) / 2 - bounds.minX * zoom,
     y: insets.top + (usableHeight - bounds.height * zoom) / 2 - bounds.minY * zoom,
     zoom,
+  });
+}
+
+function fitViewportToCards(root, options = {}) {
+  return fitViewportToBounds(root, getCardsBounds(root, options));
+}
+
+function fitViewportToMachine(root, machineId) {
+  const cardBounds = getCardsBounds(root, { machineId, initialFocus: true });
+  if (cardBounds) {
+    return fitViewportToBounds(root, cardBounds);
+  }
+  const region = root.__swarmlabCanvasRegionsById?.[machineId] || null;
+  if (!region) {
+    return fitViewportToCards(root);
+  }
+  return fitViewportToBounds(root, {
+    minX: Number(region.x) || 0,
+    minY: Number(region.y) || 0,
+    maxX: (Number(region.x) || 0) + (Number(region.width) || 0),
+    maxY: (Number(region.y) || 0) + Math.min(720, Number(region.height) || 0),
+    width: Number(region.width) || 0,
+    height: Math.min(720, Number(region.height) || 0),
   });
 }
 
@@ -4118,6 +4140,9 @@ function bindCanvasActions(root, options) {
         } catch {
           // Dock machine selection is convenience UI state.
         }
+      }
+      if (machineId) {
+        setViewport(root, storage, fitViewportToMachine(root, machineId));
       }
       if (typeof refresh === "function") {
         refresh();

@@ -865,9 +865,28 @@ test("local canvas view renders node snapshot cards and persists drag layout", a
     assert.match(lifecycleText, /Copy: Worker B/);
     assert.match(lifecycleText, /source agent keeps running/i);
 
+    await page.click('[data-swarmlab-canvas-launch-machine="mac-main"]');
+    await page.waitForSelector('[data-swarmlab-canvas-launcher="launcher:app:cursor"]', { timeout: 10_000 });
+    const localMachineViewport = await page.evaluate(() => document.querySelector("[data-swarmlab-canvas-root]")?.__swarmlabCanvasViewport || null);
     await page.click('[data-swarmlab-canvas-launch-machine="account-box"]');
     await page.waitForSelector('[data-swarmlab-canvas-launcher="remote:account-box:launcher:provider:codex"]', { timeout: 10_000 });
     assert.equal(await page.locator('[data-swarmlab-canvas-launch-machine="account-box"]').getAttribute("aria-selected"), "true");
+    const accountMachineViewport = await page.evaluate(() => document.querySelector("[data-swarmlab-canvas-root]")?.__swarmlabCanvasViewport || null);
+    assert.notDeepEqual(accountMachineViewport, localMachineViewport, "selecting a launcher machine should also focus that machine region");
+    const accountMachineBox = await page.locator('[data-swarmlab-canvas-card-id="remote:account-box:session:account-box-agent-1"]').boundingBox();
+    const stageAfterMachineFocus = await page.locator(".swarmlab-canvas-stage").boundingBox();
+    const machineVisibleWidth = accountMachineBox && stageAfterMachineFocus
+      ? Math.min(accountMachineBox.x + accountMachineBox.width, stageAfterMachineFocus.x + stageAfterMachineFocus.width)
+        - Math.max(accountMachineBox.x, stageAfterMachineFocus.x)
+      : 0;
+    const machineVisibleHeight = accountMachineBox && stageAfterMachineFocus
+      ? Math.min(accountMachineBox.y + accountMachineBox.height, stageAfterMachineFocus.y + stageAfterMachineFocus.height)
+        - Math.max(accountMachineBox.y, stageAfterMachineFocus.y)
+      : 0;
+    assert.ok(
+      machineVisibleWidth > 80 && machineVisibleHeight > 80,
+      "selected machine region should be visible after dock machine selection",
+    );
     await page.locator('[data-swarmlab-canvas-launcher="remote:account-box:launcher:provider:codex"]').evaluate((button) => button.click());
     for (let attempt = 0; attempt < 20 && postedRemoteCommands.length < 3; attempt += 1) {
       await page.waitForTimeout(50);
