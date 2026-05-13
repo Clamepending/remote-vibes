@@ -1739,12 +1739,19 @@ function writeLayout(storage, key, layout) {
   }
 }
 
-function readViewport(storage, key) {
+function readViewportState(storage, key) {
   try {
-    const raw = JSON.parse(storage.getItem(key) || "null");
-    return raw ? sanitizeViewport(raw) : { ...DEFAULT_VIEWPORT };
+    const raw = storage.getItem(key);
+    if (!raw) {
+      return { hasSavedViewport: false, viewport: { ...DEFAULT_VIEWPORT } };
+    }
+    const parsed = JSON.parse(raw);
+    return {
+      hasSavedViewport: Boolean(parsed),
+      viewport: parsed ? sanitizeViewport(parsed) : { ...DEFAULT_VIEWPORT },
+    };
   } catch {
-    return { ...DEFAULT_VIEWPORT };
+    return { hasSavedViewport: false, viewport: { ...DEFAULT_VIEWPORT } };
   }
 }
 
@@ -3089,9 +3096,29 @@ function applyViewport(root, viewport) {
   }
 }
 
-function getCardsBounds(root) {
+function isInitialViewportFocusCard(card) {
+  return ["machine", "agent"].includes(String(card?.type || ""));
+}
+
+function getCardsBounds(root, { machineId = "", initialFocus = false } = {}) {
   const layout = root.__swarmlabCanvasLayout || {};
-  const entries = Object.values(layout);
+  const cardsById = root.__swarmlabCanvasCardsById || {};
+  let entries = Object.entries(layout);
+  if (machineId) {
+    const filtered = entries.filter(([id, item]) => {
+      const card = cardsById[id];
+      return card && getCanvasCardMachineId(card) === machineId && !item.hidden;
+    });
+    if (filtered.length) {
+      entries = filtered;
+    }
+  }
+  if (initialFocus) {
+    const focused = entries.filter(([id]) => isInitialViewportFocusCard(cardsById[id]));
+    if (focused.length) {
+      entries = focused;
+    }
+  }
   if (!entries.length) {
     return null;
   }
@@ -3099,7 +3126,7 @@ function getCardsBounds(root) {
   let minY = Infinity;
   let maxX = -Infinity;
   let maxY = -Infinity;
-  for (const item of entries) {
+  for (const [, item] of entries) {
     const x = Number(item.x) || 0;
     const y = Number(item.y) || 0;
     const width = Number(item.width) || 260;
@@ -3112,16 +3139,37 @@ function getCardsBounds(root) {
   return { minX, minY, maxX, maxY, width: maxX - minX, height: maxY - minY };
 }
 
-function fitViewportToCards(root) {
-  const bounds = getCardsBounds(root);
+function getViewportSafeInsets(root) {
+  const rect = root.getBoundingClientRect();
+  const insets = { top: 24, right: 24, bottom: 24, left: 24 };
+  if (rect.width <= 0 || rect.height <= 0) return insets;
+  root.querySelectorAll("[data-swarmlab-canvas-launch-dock], [data-swarmlab-canvas-controls]").forEach((element) => {
+    const box = element.getBoundingClientRect();
+    if (box.width <= 0 || box.height <= 0) return;
+    if (box.top >= rect.top && box.top <= rect.bottom) {
+      insets.bottom = Math.max(insets.bottom, Math.round(rect.bottom - box.top + 18));
+    }
+    if (box.left >= rect.left && box.left <= rect.right && box.width > rect.width * 0.4) {
+      insets.left = Math.max(insets.left, 28);
+      insets.right = Math.max(insets.right, 28);
+    }
+  });
+  return insets;
+}
+
+function fitViewportToCards(root, options = {}) {
+  const bounds = getCardsBounds(root, options);
   const rect = root.getBoundingClientRect();
   if (!bounds || rect.width <= 0 || rect.height <= 0) {
     return { ...DEFAULT_VIEWPORT };
   }
-  const zoom = clamp(Math.min((rect.width - 180) / Math.max(1, bounds.width), (rect.height - 160) / Math.max(1, bounds.height)), 0.42, 1.12);
+  const insets = getViewportSafeInsets(root);
+  const usableWidth = Math.max(260, rect.width - insets.left - insets.right);
+  const usableHeight = Math.max(260, rect.height - insets.top - insets.bottom);
+  const zoom = clamp(Math.min(usableWidth / Math.max(1, bounds.width), usableHeight / Math.max(1, bounds.height)), 0.42, 1.12);
   return sanitizeViewport({
-    x: (rect.width - bounds.width * zoom) / 2 - bounds.minX * zoom,
-    y: (rect.height - bounds.height * zoom) / 2 - bounds.minY * zoom,
+    x: insets.left + (usableWidth - bounds.width * zoom) / 2 - bounds.minX * zoom,
+    y: insets.top + (usableHeight - bounds.height * zoom) / 2 - bounds.minY * zoom,
     zoom,
   });
 }
@@ -3138,7 +3186,8 @@ function renderSnapshot(root, payload, { storage, remoteRecords = [] } = {}) {
   const launchLifecycles = readLaunchLifecycles(storage, launchStorageKey);
   const cards = mergeLaunchLifecycleCards(baseCards, launchLifecycles);
   const savedLayout = readLayout(storage, storageKey);
-  const viewport = readViewport(storage, viewportKey);
+  const viewportState = readViewportState(storage, viewportKey);
+  const viewport = viewportState.viewport;
   const layout = mergeCanvasLayout(cards, savedLayout);
   const regions = buildCanvasRegions(cards, layout);
   const regionsById = Object.fromEntries(regions.map((region) => [region.id, region]));
@@ -3188,6 +3237,9 @@ function renderSnapshot(root, payload, { storage, remoteRecords = [] } = {}) {
     ${renderLauncherDock(launcherCards, regions, localMachineId, selectedLauncherMachineId)}
     ${renderFloatingControls(viewport)}
   `;
+  if (!viewportState.hasSavedViewport) {
+    setViewport(root, storage, fitViewportToCards(root, { machineId: localMachineId, initialFocus: true }));
+  }
   refreshRegionPresentation(root);
 }
 

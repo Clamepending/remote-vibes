@@ -1,5 +1,5 @@
 export const CANVAS_LAYOUT_STORAGE_PREFIX = "swarmlab.canvas.layout.v6";
-export const CANVAS_VIEWPORT_STORAGE_PREFIX = "swarmlab.canvas.viewport.v2";
+export const CANVAS_VIEWPORT_STORAGE_PREFIX = "swarmlab.canvas.viewport.v3";
 
 const DEFAULT_CARD_WIDTH = 270;
 const DEFAULT_CARD_HEIGHT = 170;

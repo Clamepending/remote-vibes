@@ -737,6 +737,10 @@ test("local canvas view renders node snapshot cards and persists drag layout", a
       await page.locator(".swarmlab-canvas-stage").evaluate((element) => getComputedStyle(element).overflow),
       "hidden",
     );
+    const initialViewport = await page.evaluate(() =>
+      JSON.parse(window.localStorage.getItem("swarmlab.canvas.viewport.v3:fleet:mac-main") || "{}"),
+    );
+    assert.ok(initialViewport.zoom >= 0.42, "initial safe fit should persist a usable zoom");
 
     await page.click('[data-swarmlab-canvas-launcher="launcher:app:cursor"]');
     for (let attempt = 0; attempt < 20 && postedAppLaunches.length === 0; attempt += 1) {
@@ -746,11 +750,23 @@ test("local canvas view renders node snapshot cards and persists drag layout", a
     assert.equal(postedAppLaunches[0].appId, "cursor");
 
     const sessionCard = page.locator('[data-swarmlab-canvas-card-id="session:session-1"]');
-    const before = await sessionCard.boundingBox();
+    const before = await sessionCard.locator("[data-swarmlab-card-drag-handle]").evaluate((handle) => {
+      const rect = handle.getBoundingClientRect();
+      const candidates = [
+        [rect.left + 20, rect.top + 20],
+        [rect.left + rect.width / 2, rect.top + 20],
+        [rect.right - 20, rect.top + 20],
+      ];
+      const point = candidates.find(([x, y]) => {
+        const target = document.elementFromPoint(x, y);
+        return target && handle.contains(target);
+      }) || [rect.left + rect.width / 2, rect.top + rect.height / 2];
+      return { x: point[0], y: point[1] };
+    });
     assert.ok(before, "session card should be visible before drag");
-    await page.mouse.move(before.x + 20, before.y + 20);
+    await page.mouse.move(before.x, before.y);
     await page.mouse.down();
-    await page.mouse.move(before.x + 110, before.y + 72);
+    await page.mouse.move(before.x + 110, before.y + 72, { steps: 8 });
     await page.mouse.up();
 
     const saved = await page.evaluate(() =>
@@ -762,9 +778,9 @@ test("local canvas view renders node snapshot cards and persists drag layout", a
 
     await page.click("[data-swarmlab-canvas-zoom-in]");
     const viewport = await page.evaluate(() =>
-      JSON.parse(window.localStorage.getItem("swarmlab.canvas.viewport.v2:fleet:mac-main") || "{}"),
+      JSON.parse(window.localStorage.getItem("swarmlab.canvas.viewport.v3:fleet:mac-main") || "{}"),
     );
-    assert.ok(viewport.zoom > 0.74, "zoom controls should persist a zoomed viewport");
+    assert.ok(viewport.zoom > initialViewport.zoom, "zoom controls should persist a zoomed viewport");
 
     const localComposer = page.locator('[data-swarmlab-canvas-card-id="session:session-1"] [data-swarmlab-agent-composer] textarea[name="input"]');
     await localComposer.fill("continue from canvas");
