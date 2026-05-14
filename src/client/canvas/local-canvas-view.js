@@ -47,6 +47,8 @@ const REMOTE_NODE_PAIR_URL = "/api/node/remote-pair";
 const NARRATIVE_POLL_MS = 4_000;
 const REMOTE_NODES_STORAGE_KEY = "swarmlab.canvas.remoteNodes.v1";
 const LAUNCH_LIFECYCLE_STORAGE_PREFIX = "swarmlab.canvas.launches.v1";
+const DISMISSED_APP_INSTANCE_STORAGE_PREFIX = "swarmlab.canvas.dismissedAppInstances.v1";
+const DISMISSED_APP_INSTANCE_TTL_MS = 24 * 60 * 60 * 1000;
 const REMOTE_NODE_FETCH_TIMEOUT_MS = 4_500;
 const OPTIMISTIC_SESSION_STORAGE_PREFIX = "swarmlab.canvas.optimisticSessions.v1";
 const OPTIMISTIC_SESSION_TTL_MS = 12_000;
@@ -2418,6 +2420,90 @@ function writeLaunchLifecycles(storage, key, lifecycles) {
   }
 }
 
+function getDismissedAppInstanceStorageKey(boardId) {
+  return `${DISMISSED_APP_INSTANCE_STORAGE_PREFIX}:${slugPart(boardId, "board")}`;
+}
+
+function normalizeDismissedAppInstanceRecord(item) {
+  if (!item || typeof item !== "object") return null;
+  const appInstanceId = String(item.appInstanceId || item.instanceId || item.id || "").trim();
+  const cardId = String(item.cardId || "").trim();
+  if (!appInstanceId && !cardId) return null;
+  const dismissedAt = String(item.dismissedAt || new Date().toISOString());
+  const dismissedAtMs = Date.parse(dismissedAt) || Date.now();
+  const expiresAt = String(item.expiresAt || new Date(dismissedAtMs + DISMISSED_APP_INSTANCE_TTL_MS).toISOString());
+  return {
+    cardId,
+    appInstanceId,
+    remoteNodeId: String(item.remoteNodeId || "").trim(),
+    dismissedAt,
+    expiresAt,
+  };
+}
+
+function readDismissedAppInstanceRecords(storage, key) {
+  try {
+    const raw = JSON.parse(storage.getItem(key) || "[]");
+    const records = (Array.isArray(raw) ? raw : []).map(normalizeDismissedAppInstanceRecord).filter(Boolean);
+    const now = Date.now();
+    const active = records.filter((record) => {
+      const expiresAt = Date.parse(record.expiresAt);
+      return !Number.isFinite(expiresAt) || expiresAt > now;
+    });
+    if (active.length !== records.length) {
+      writeDismissedAppInstanceRecords(storage, key, active);
+    }
+    return active;
+  } catch {
+    return [];
+  }
+}
+
+function writeDismissedAppInstanceRecords(storage, key, records) {
+  try {
+    storage.setItem(key, JSON.stringify((records || []).map(normalizeDismissedAppInstanceRecord).filter(Boolean).slice(0, 80)));
+  } catch {
+    // App-instance dismissal is recoverable convenience state; snapshots remain authoritative.
+  }
+}
+
+function dismissedAppInstanceRecordMatchesCard(record, card) {
+  if (!record || !card?.ref?.appInstance) return false;
+  if (record.cardId && record.cardId === card.id) return true;
+  const appInstanceId = String(card.ref?.appInstanceId || "").trim();
+  if (!appInstanceId || record.appInstanceId !== appInstanceId) return false;
+  return String(record.remoteNodeId || "") === String(card.ref?.remoteNodeId || "");
+}
+
+function suppressDismissedAppInstanceCards(cards, storage, key) {
+  const records = readDismissedAppInstanceRecords(storage, key);
+  if (!records.length) return cards;
+  return (cards || []).filter((card) =>
+    !card?.ref?.appInstance || !records.some((record) => dismissedAppInstanceRecordMatchesCard(record, card)),
+  );
+}
+
+function rememberDismissedAppInstanceCard(root, storage, card, appInstanceId) {
+  const key = root?.dataset?.swarmlabCanvasDismissedAppInstancesStorageKey || "";
+  const id = String(appInstanceId || card?.ref?.appInstanceId || "").trim();
+  if (!key || !id) return;
+  const now = Date.now();
+  const record = normalizeDismissedAppInstanceRecord({
+    cardId: card?.id || "",
+    appInstanceId: id,
+    remoteNodeId: card?.ref?.remoteNodeId || "",
+    dismissedAt: new Date(now).toISOString(),
+    expiresAt: new Date(now + DISMISSED_APP_INSTANCE_TTL_MS).toISOString(),
+  });
+  if (!record) return;
+  const current = readDismissedAppInstanceRecords(storage, key);
+  const next = [
+    record,
+    ...current.filter((item) => !dismissedAppInstanceRecordMatchesCard(item, card)),
+  ];
+  writeDismissedAppInstanceRecords(storage, key, next);
+}
+
 function upsertLaunchLifecycle(storage, key, lifecycle) {
   const normalized = normalizeLaunchLifecycle(lifecycle);
   if (!normalized) return null;
@@ -3007,6 +3093,7 @@ function renderCardAction(card) {
 function renderCardTools(card) {
   const launchLifecycleId = String(card.ref?.launchLifecycleId || "").trim();
   const appInstanceId = String(card.ref?.appInstanceId || "").trim();
+  const canDismissAppInstance = card.ref?.appInstance && appInstanceId && (!card.ref?.remoteUrl || card.ref?.remoteNodeId);
   const dismissLaunch = card.ref?.launchedApp && launchLifecycleId
     ? `
       <button
@@ -3020,7 +3107,7 @@ function renderCardTools(card) {
       </button>
     `
     : "";
-  const dismissAppInstance = card.ref?.appInstance && appInstanceId && !card.ref?.remoteUrl
+  const dismissAppInstance = canDismissAppInstance
     ? `
       <button
         class="swarmlab-canvas-card-control"
@@ -4143,9 +4230,14 @@ function renderSnapshot(root, payload, { storage, remoteRecords = [] } = {}) {
   const storageKey = getCanvasLayoutStorageKey(boardId);
   const viewportKey = getCanvasViewportStorageKey(boardId);
   const launchStorageKey = getLaunchLifecycleStorageKey(boardId);
+  const dismissedAppInstancesStorageKey = getDismissedAppInstanceStorageKey(boardId);
   const dockStorageKey = launcherDockStorageKey(boardId);
   const launchLifecycles = readLaunchLifecycles(storage, launchStorageKey);
-  const cards = mergeLaunchLifecycleCards(baseCards, launchLifecycles);
+  const cards = suppressDismissedAppInstanceCards(
+    mergeLaunchLifecycleCards(baseCards, launchLifecycles),
+    storage,
+    dismissedAppInstancesStorageKey,
+  );
   const renderCards = getRenderableCanvasCards(cards);
   const renderCardIds = getRenderableCanvasCardIds(cards);
   const savedLayout = readLayout(storage, storageKey);
@@ -4172,6 +4264,7 @@ function renderSnapshot(root, payload, { storage, remoteRecords = [] } = {}) {
   root.dataset.swarmlabCanvasStorageKey = storageKey;
   root.dataset.swarmlabCanvasViewportStorageKey = viewportKey;
   root.dataset.swarmlabCanvasLaunchStorageKey = launchStorageKey;
+  root.dataset.swarmlabCanvasDismissedAppInstancesStorageKey = dismissedAppInstancesStorageKey;
   root.dataset.swarmlabCanvasLaunchDockStorageKey = dockStorageKey;
   root.__swarmlabCanvasLayout = layout;
   root.__swarmlabCanvasViewport = viewport;
@@ -4948,20 +5041,42 @@ async function dismissAppInstanceCard(button, root, { fetchImpl, abortController
   const appInstanceId = String(button?.getAttribute("data-swarmlab-canvas-dismiss-app-instance") || "").trim();
   if (!appInstanceId) return;
   button.setAttribute("disabled", "true");
+  const cardId = button.closest("[data-swarmlab-canvas-card-id]")?.getAttribute("data-swarmlab-canvas-card-id") || "";
+  const card = root?.__swarmlabCanvasCardsById?.[cardId] || null;
+  const remoteNodeId = String(card?.ref?.remoteNodeId || "").trim();
   try {
-    await fetchJson(`/api/node/apps/instances/${encodeURIComponent(appInstanceId)}`, {
-      fetchImpl,
-      signal: abortController?.signal,
-      method: "DELETE",
-    });
+    if (remoteNodeId) {
+      const clientCommandId = `app-dismiss-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 8)}`;
+      await fetchJson(`/api/account/nodes/${encodeURIComponent(remoteNodeId)}/commands`, {
+        fetchImpl,
+        signal: abortController?.signal,
+        method: "POST",
+        body: {
+          operation: "app.instance.dismiss",
+          clientCommandId,
+          payload: {
+            instanceId: appInstanceId,
+            appId: String(card?.ref?.appId || "").trim(),
+          },
+        },
+      });
+    } else {
+      await fetchJson(`/api/node/apps/instances/${encodeURIComponent(appInstanceId)}`, {
+        fetchImpl,
+        signal: abortController?.signal,
+        method: "DELETE",
+      });
+    }
     const layoutKey = root?.dataset?.swarmlabCanvasStorageKey || "";
-    const cardId = button.closest("[data-swarmlab-canvas-card-id]")?.getAttribute("data-swarmlab-canvas-card-id") || "";
+    rememberDismissedAppInstanceCard(root, storage, card || { id: cardId, ref: { appInstance: true, appInstanceId, remoteNodeId } }, appInstanceId);
     if (layoutKey && cardId) {
       const layout = readLayout(storage, layoutKey);
       delete layout[cardId];
       writeLayout(storage, layoutKey, layout);
     }
-    showCanvasNotice(root, "App card cleared from the canvas. The app was not closed.");
+    showCanvasNotice(root, remoteNodeId
+      ? "Remote app card cleared from the canvas. The app was not closed."
+      : "App card cleared from the canvas. The app was not closed.");
     if (typeof refresh === "function") {
       refresh();
     }

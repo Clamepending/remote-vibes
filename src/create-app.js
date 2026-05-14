@@ -2392,6 +2392,7 @@ export async function createVibeResearchApp({
             ...options,
             source: options.source || "account",
           }),
+          appInstanceDismisser: (instanceId) => appInstanceStore.dismissInstance(instanceId),
           settingsStore,
         })
       : new NodeCommandRelayService({
@@ -2404,6 +2405,7 @@ export async function createVibeResearchApp({
             ...options,
             source: options.source || "account",
           }),
+          appInstanceDismisser: (instanceId) => appInstanceStore.dismissInstance(instanceId),
           settingsProvider: () => settingsStore.settings,
         });
 

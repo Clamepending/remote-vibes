@@ -91,6 +91,7 @@ test("local canvas view renders node snapshot cards and persists drag layout", a
     const directSnapshotHits = new Map();
     const extraRemoteSessions = new Map();
     const extraRemotePorts = new Map();
+    const extraRemoteAppInstances = new Map();
     const accountPairStarts = [];
     let accountConnected = false;
     const remoteSnapshots = new Map([
@@ -150,13 +151,22 @@ test("local canvas view renders node snapshot cards and persists drag layout", a
           { port: remote.port, name: `${remote.name} app`, preferredAccess: "proxy" },
           ...(extraRemotePorts.get(origin) || []),
         ],
+        appInstances: [
+          ...(extraRemoteAppInstances.get(origin) || []),
+        ],
         launchers: origin === "https://account-node.example.test"
           ? [
               { id: "provider:codex", label: "Codex", kind: "agent-provider", providerId: "codex", defaultName: "Codex", available: true },
               { id: "app:cursor", label: "Cursor", kind: "desktop-app", appId: "cursor", available: true, platform: "linux" },
             ]
           : [],
-        counts: { sessions: 1, ports: 1, approvals: 0, artifacts: 0 },
+        counts: {
+          sessions: 1 + (extraRemoteSessions.get(origin) || []).length,
+          ports: 1 + (extraRemotePorts.get(origin) || []).length,
+          appInstances: (extraRemoteAppInstances.get(origin) || []).length,
+          approvals: 0,
+          artifacts: 0,
+        },
         generatedAt: "2026-05-12T12:00:10.000Z",
       };
     };
@@ -1297,6 +1307,40 @@ test("local canvas view renders node snapshot cards and persists drag layout", a
     await page.waitForFunction(() => document.querySelectorAll(".swarmlab-canvas-card.is-lifecycle").length >= 3);
     lifecycleText = await page.locator(".swarmlab-canvas-card.is-lifecycle").evaluateAll((cards) => cards.map((card) => card.textContent || "").join("\n"));
     assert.match(lifecycleText, /Cursor/);
+    extraRemoteAppInstances.set("https://account-node.example.test", [
+      {
+        id: "appinst_remote_cursor",
+        appId: "cursor",
+        label: "Cursor",
+        status: "launched",
+        source: "account",
+        updatedAt: "2026-05-12T12:03:03.000Z",
+      },
+    ]);
+    await page.reload({ waitUntil: "domcontentloaded" });
+    await page.waitForSelector('[data-swarmlab-canvas-card-id="remote:account-box:app-instance:appinst_remote_cursor"]', { timeout: 10_000 });
+    const dismissRemoteAppInstance = page.locator(
+      '[data-swarmlab-canvas-card-id="remote:account-box:app-instance:appinst_remote_cursor"] [data-swarmlab-canvas-dismiss-app-instance="appinst_remote_cursor"]',
+    );
+    assert.equal(await dismissRemoteAppInstance.count(), 1);
+    await dismissRemoteAppInstance.click();
+    for (let attempt = 0; attempt < 20 && postedRemoteCommands.length < 5; attempt += 1) {
+      await page.waitForTimeout(50);
+    }
+    assert.equal(postedRemoteCommands.length, 5);
+    assert.equal(postedRemoteCommands[4].operation, "app.instance.dismiss");
+    assert.equal(postedRemoteCommands[4].payload.instanceId, "appinst_remote_cursor");
+    assert.equal(postedRemoteCommands[4].payload.appId, "cursor");
+    await page.waitForFunction(() => !document.querySelector('[data-swarmlab-canvas-card-id="remote:account-box:app-instance:appinst_remote_cursor"]'));
+    assert.deepEqual(dismissedAppInstanceIds, ["appinst_cursor_card"], "remote app dismissal should not call the local app instance route");
+    assert.equal(deletedSessions.length, 0, "clearing a remote app instance card must not delete agent sessions");
+    await page.reload({ waitUntil: "domcontentloaded" });
+    await page.waitForSelector(".swarmlab-canvas-card", { timeout: 10_000 });
+    assert.equal(
+      await page.locator('[data-swarmlab-canvas-card-id="remote:account-box:app-instance:appinst_remote_cursor"]').count(),
+      0,
+      "a remotely cleared app instance should stay hidden while the dismiss command propagates",
+    );
     assert.ok(
       await page.locator('[data-swarmlab-canvas-pipe-card-id^="lifecycle:"].is-resource').count() >= 1,
       "agent-copy lifecycle cards should stay connected to the source agent",

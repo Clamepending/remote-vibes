@@ -17,6 +17,7 @@ const ACCOUNT_NODE_COMMAND_OPERATIONS = new Set([
   "session.input.write",
   "session.create",
   "app.launch",
+  "app.instance.dismiss",
 ]);
 const ACCOUNT_NODE_COMMAND_STATUSES = new Set(["queued", "running", "completed", "failed", "expired", "canceled"]);
 
@@ -355,6 +356,19 @@ function normalizeCommandPayload(operation, value = {}) {
     }
     return { appId };
   }
+  if (operation === "app.instance.dismiss") {
+    const instanceId = compactText(
+      source.instanceId || source.instance_id || source.appInstanceId || source.app_instance_id || source.id,
+      180,
+    );
+    if (!instanceId) {
+      throw buildHttpError("app.instance.dismiss requires instanceId.", 400);
+    }
+    return {
+      instanceId,
+      appId: compactText(source.appId || source.app_id || source.launcherId || source.launcher_id || "", 80),
+    };
+  }
   return {};
 }
 
@@ -370,6 +384,12 @@ function commandTargetFromPayload(operation, payload) {
   }
   if (operation === "app.launch") {
     return { appId: payload.appId || "" };
+  }
+  if (operation === "app.instance.dismiss") {
+    return {
+      instanceId: payload.instanceId || "",
+      appId: payload.appId || "",
+    };
   }
   return {};
 }

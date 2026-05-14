@@ -9,6 +9,7 @@ const SUPPORTED_COMMAND_OPERATIONS = new Set([
   "session.input.write",
   "session.create",
   "app.launch",
+  "app.instance.dismiss",
 ]);
 
 function nowIso() {
@@ -82,6 +83,7 @@ export class NodeCommandRelayService {
     sessionManager,
     appLaunchersProvider = () => [],
     appLauncher = launchAppLauncher,
+    appInstanceDismisser = null,
     settingsProvider = () => ({}),
     intervalMs = null,
     log = console,
@@ -104,6 +106,7 @@ export class NodeCommandRelayService {
     this.sessionManager = sessionManager;
     this.appLaunchersProvider = appLaunchersProvider;
     this.appLauncher = appLauncher;
+    this.appInstanceDismisser = appInstanceDismisser;
     this.settingsProvider = settingsProvider;
     this.intervalOverrideMs = intervalMs;
     this.log = log || console;
@@ -222,6 +225,31 @@ export class NodeCommandRelayService {
     });
   }
 
+  async executeAppInstanceDismiss(command) {
+    const payload = command.payload || {};
+    const instanceId = compactText(
+      payload.instanceId || payload.instance_id || payload.appInstanceId || payload.app_instance_id || payload.id,
+      180,
+    );
+    if (!instanceId) {
+      throw new Error("Remote app instance dismiss command is missing instanceId.");
+    }
+    if (typeof this.appInstanceDismisser !== "function") {
+      throw new Error("Remote app instance dismissal is not available.");
+    }
+    const instance = await this.appInstanceDismisser(instanceId, {
+      clientCommandId: compactText(payload.clientCommandId || command.clientCommandId || command.id, 180),
+      source: "account",
+    });
+    if (!instance) {
+      throw new Error("App instance not found.");
+    }
+    return {
+      dismissed: true,
+      instance,
+    };
+  }
+
   async executeCommand(command) {
     if (command.operation === "session.input.write") {
       return this.executeSessionInput(command);
@@ -231,6 +259,9 @@ export class NodeCommandRelayService {
     }
     if (command.operation === "app.launch") {
       return this.executeAppLaunch(command);
+    }
+    if (command.operation === "app.instance.dismiss") {
+      return this.executeAppInstanceDismiss(command);
     }
     throw new Error(`Unsupported command operation: ${command.operation || "unknown"}.`);
   }
