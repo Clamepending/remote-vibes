@@ -42,6 +42,16 @@ function normalizeInstance(value = {}) {
   };
 }
 
+function appInstanceIdentityMatches(entry = {}, candidate = {}) {
+  if (!entry || !candidate) return false;
+  if (entry.appId !== candidate.appId) return false;
+  if ((entry.source || "local") !== (candidate.source || "local")) return false;
+  const entryUrl = String(entry.url || "").trim();
+  const candidateUrl = String(candidate.url || "").trim();
+  if (entryUrl || candidateUrl) return entryUrl === candidateUrl;
+  return true;
+}
+
 function normalizePayload(payload = {}) {
   const instances = Array.isArray(payload.instances)
     ? payload.instances
@@ -107,13 +117,7 @@ export class AppInstanceStore {
 
     const now = nowIso(this.now);
     const commandId = compactText(clientCommandId || result?.clientCommandId || "", 160);
-    const existingIndex = commandId
-      ? this.instances.findIndex((entry) => entry.clientCommandId === commandId)
-      : -1;
-    const existing = existingIndex >= 0 ? this.instances[existingIndex] : null;
-    const id = existing?.id || `appinst_${stableHash(commandId || `${appId}:${now}:${randomUUID()}`)}`;
-    const instance = normalizeInstance({
-      id,
+    const candidate = normalizeInstance({
       appId,
       launcherId: compactText(launcherSummary.id || launcherId || appId, 80),
       label: launcherSummary.label || appId,
@@ -123,6 +127,23 @@ export class AppInstanceStore {
       source,
       clientCommandId: commandId,
       url: result?.url || result?.href || launcherSummary.url || launcherSummary.href || "",
+      launchedAt: now,
+      updatedAt: now,
+    });
+    const existingIndexByCommand = commandId
+      ? this.instances.findIndex((entry) => entry.clientCommandId === commandId)
+      : -1;
+    const existingIndex = existingIndexByCommand >= 0
+      ? existingIndexByCommand
+      : this.instances.findIndex((entry) => appInstanceIdentityMatches(entry, candidate));
+    const existing = existingIndex >= 0 ? this.instances[existingIndex] : null;
+    const id = existing?.id || `appinst_${stableHash(commandId || `${appId}:${now}:${randomUUID()}`)}`;
+    const instance = normalizeInstance({
+      ...candidate,
+      id,
+      source,
+      clientCommandId: commandId,
+      url: candidate.url || existing?.url || "",
       launchCount: (existing?.launchCount || 0) + 1,
       launchedAt: existing?.launchedAt || now,
       updatedAt: now,

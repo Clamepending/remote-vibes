@@ -206,12 +206,23 @@ test("/api/node/apps/launch records launched app instances into node snapshots",
     assert.equal(launchBody.instance.appId, "test-app");
     assert.equal(launchBody.instance.clientCommandId, "cmd-route");
 
+    const secondLaunchResponse = await fetch(`${started.baseUrl}/api/node/apps/launch`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ appId: "test-app", clientCommandId: "cmd-route-2" }),
+    });
+    assert.equal(secondLaunchResponse.status, 202);
+    const secondLaunchBody = await secondLaunchResponse.json();
+    assert.equal(secondLaunchBody.instance.id, launchBody.instance.id);
+    assert.equal(secondLaunchBody.instance.launchCount, 2);
+
     const snapshotResponse = await fetch(`${started.baseUrl}/api/node/snapshot?mode=privileged`);
     assert.equal(snapshotResponse.status, 200);
     const snapshotBody = await snapshotResponse.json();
     assert.equal(snapshotBody.snapshot.counts.appInstances, 1);
     assert.equal(snapshotBody.snapshot.appInstances[0].label, "Test App");
-    assert.equal(snapshotBody.snapshot.appInstances[0].clientCommandId, "cmd-route");
+    assert.equal(snapshotBody.snapshot.appInstances[0].clientCommandId, "cmd-route-2");
+    assert.equal(snapshotBody.snapshot.appInstances[0].launchCount, 2);
   } finally {
     await started.cleanup();
   }
