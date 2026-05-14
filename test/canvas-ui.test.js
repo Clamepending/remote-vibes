@@ -624,6 +624,9 @@ test("local canvas view renders node snapshot cards and persists drag layout", a
     await page.route(`${baseUrl}/api/node/apps/launch`, async (route) => {
       postedAppLaunches.push(JSON.parse(route.request().postData() || "{}"));
       const appId = postedAppLaunches.at(-1).appId;
+      if (appId === "cursor" && postedAppLaunches.length === 1) {
+        await new Promise((resolve) => setTimeout(resolve, 120));
+      }
       await route.fulfill({
         status: 202,
         contentType: "application/json",
@@ -770,7 +773,7 @@ test("local canvas view renders node snapshot cards and persists drag layout", a
     assert.equal(await page.locator("[data-swarmlab-canvas-launch-machine]").count(), 0);
     assert.equal(await page.locator("[data-swarmlab-canvas-launcher]").count(), 15);
     assert.equal(await page.locator(".swarmlab-canvas-launch-items > [data-swarmlab-canvas-launcher]").count(), 6);
-    assert.match(await page.locator(".swarmlab-canvas-launch-more").innerText(), /9 more/);
+    assert.equal(await page.locator(".swarmlab-canvas-launch-more-button").getAttribute("title"), "9 more launchers");
     const dockBox = await page.locator(".swarmlab-canvas-launch-dock").boundingBox();
     const controlsBox = await page.locator(".swarmlab-canvas-floating-controls").boundingBox();
     assert.ok(dockBox && dockBox.height <= 64, "app launcher dock should stay compact");
@@ -789,7 +792,7 @@ test("local canvas view renders node snapshot cards and persists drag layout", a
     );
     await page.setViewportSize(originalViewport);
     const directLauncherBox = await page.locator(".swarmlab-canvas-launch-items > [data-swarmlab-canvas-launcher]").first().boundingBox();
-    assert.ok(directLauncherBox && directLauncherBox.width <= 78, "dock launcher buttons should be icon-scale");
+    assert.ok(directLauncherBox && directLauncherBox.width <= 62, "dock launcher buttons should be icon-scale");
     await page.locator(".swarmlab-canvas-launch-more-button").click();
     await page.locator(".swarmlab-canvas-launch-more-panel").waitFor({ state: "visible" });
     assert.equal(await page.locator(".swarmlab-canvas-launch-more-panel [data-swarmlab-canvas-launcher]").count(), 9);
@@ -815,21 +818,28 @@ test("local canvas view renders node snapshot cards and persists drag layout", a
     await page.locator(".swarmlab-canvas-launch-more-button").click();
     await page.locator(".swarmlab-canvas-launch-more-panel").waitFor({ state: "hidden" });
     const dockText = await page.locator(".swarmlab-canvas-launch-dock").innerText();
-    assert.match(dockText, /Launch/);
-    assert.match(dockText, /Start in canvas/);
-    assert.match(dockText, /Open desktop/);
+    assert.match(dockText, /canvas/);
+    assert.match(dockText, /desktop/);
     assert.match(dockText, /Mac Main/i);
     assert.match(dockText, /Codex/);
     assert.match(dockText, /Cursor/);
+    assert.equal(
+      await page.locator('[data-swarmlab-canvas-launcher="launcher:provider:codex"]').getAttribute("aria-label"),
+      "Start Codex as a canvas chat",
+    );
+    assert.equal(
+      await page.locator('[data-swarmlab-canvas-launcher="launcher:app:cursor"]').getAttribute("aria-label"),
+      "Open Cursor on this machine",
+    );
     assert.doesNotMatch(dockText, /Account Workstation/);
     assert.doesNotMatch(dockText, /GPU Cluster/);
     assert.doesNotMatch(dockText, /\b\d+\s+apps?\b/i, "machine app counts should stay in labels, not visible dock chrome");
     assert.equal(await page.locator(".swarmlab-canvas-machine-rail").count(), 1);
     assert.equal(await page.locator("[data-swarmlab-canvas-focus-region]").count(), 6);
     const machineRailText = await page.locator(".swarmlab-canvas-machine-rail").innerText();
-    assert.match(machineRailText, /Machines/);
     assert.match(machineRailText, /Mac Main/);
     assert.match(machineRailText, /GPU Cluster/);
+    assert.equal(await page.locator(".swarmlab-canvas-machine-rail").getAttribute("aria-label"), "Machine regions");
     assert.doesNotMatch(machineRailText, /\b\d+\s+apps?\b/i, "machine rail should navigate regions without duplicating app launcher state");
     const regionIds = await page.locator(".swarmlab-canvas-region").evaluateAll((regions) =>
       regions.map((region) => region.getAttribute("data-swarmlab-canvas-region-id")).filter(Boolean),
@@ -1050,6 +1060,10 @@ test("local canvas view renders node snapshot cards and persists drag layout", a
     await page.waitForSelector('[data-swarmlab-canvas-card-id="session:session-1"]', { timeout: 10_000 });
 
     await page.click('[data-swarmlab-canvas-launcher="launcher:app:cursor"]');
+    await page.waitForSelector('[data-swarmlab-canvas-launcher="launcher:app:cursor"][data-swarmlab-launch-state="Launching"]', { timeout: 10_000 });
+    const launchingCursorText = await page.locator('[data-swarmlab-canvas-launcher="launcher:app:cursor"]').innerText();
+    assert.match(launchingCursorText, /Cursor/);
+    assert.doesNotMatch(launchingCursorText, /^Launching\.?$/);
     for (let attempt = 0; attempt < 20 && postedAppLaunches.length === 0; attempt += 1) {
       await page.waitForTimeout(50);
     }
