@@ -609,10 +609,20 @@ test("local canvas view renders node snapshot cards and persists drag layout", a
     });
     await page.route(`${baseUrl}/api/node/apps/launch`, async (route) => {
       postedAppLaunches.push(JSON.parse(route.request().postData() || "{}"));
+      const appId = postedAppLaunches.at(-1).appId;
       await route.fulfill({
         status: 202,
         contentType: "application/json",
-        body: JSON.stringify({ launched: true, launcher: { id: postedAppLaunches.at(-1).appId } }),
+        body: JSON.stringify({
+          launched: true,
+          launcher: { id: appId },
+          instance: {
+            appId,
+            launcherId: appId,
+            label: appId === "cursor" ? "Cursor" : appId,
+            url: `https://canvas-app.example.test/${appId}/`,
+          },
+        }),
       });
     });
     await page.route(`${baseUrl}/api/sessions/session-1`, async (route) => {
@@ -1024,6 +1034,11 @@ test("local canvas view renders node snapshot cards and persists drag layout", a
       await page.locator(".swarmlab-canvas-card.is-app-instance.is-launched-app").count(),
       1,
       "repeat launches of the same desktop app should update the existing app instance instead of duplicating cards",
+    );
+    assert.equal(
+      await page.locator('.swarmlab-canvas-card.is-launched-app a.swarmlab-canvas-open[href="https://canvas-app.example.test/cursor/"]').count(),
+      1,
+      "launched app cards should use the concrete app instance URL when the node returns one",
     );
     assert.match(
       await page.locator(".swarmlab-canvas-card.is-app-instance.is-launched-app").innerText(),

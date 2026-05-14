@@ -2451,9 +2451,10 @@ function lifecycleResultAppInfo(lifecycle) {
   const result = lifecycle?.result && typeof lifecycle.result === "object" ? lifecycle.result : {};
   const app = result.app && typeof result.app === "object" ? result.app : {};
   const launcher = result.launcher && typeof result.launcher === "object" ? result.launcher : {};
-  const rawUrl = String(result.url || result.href || app.url || app.href || result.appUrl || "").trim();
+  const instance = result.instance && typeof result.instance === "object" ? result.instance : {};
+  const rawUrl = String(result.url || result.href || instance.url || instance.href || app.url || app.href || result.appUrl || "").trim();
   const url = normalizeRemoteNodeUrl(rawUrl);
-  let port = Number(result.port || app.port || result.localPort || app.localPort || 0);
+  let port = Number(result.port || instance.port || app.port || result.localPort || instance.localPort || app.localPort || 0);
   if (!Number.isInteger(port) && url) {
     try {
       port = Number(new URL(url).port || 0);
@@ -2465,6 +2466,8 @@ function lifecycleResultAppInfo(lifecycle) {
     lifecycle.appId ||
     result.appId ||
     result.applicationId ||
+    instance.appId ||
+    instance.launcherId ||
     app.appId ||
     app.id ||
     launcher.appId ||
@@ -2488,16 +2491,16 @@ function isCompletedAppLaunchLifecycle(lifecycle) {
 function compactLaunchLifecycleKey(lifecycle) {
   if (!isCompletedAppLaunchLifecycle(lifecycle)) return "";
   const info = lifecycleResultAppInfo(lifecycle);
-  if (info.port || info.url) return "";
-  const appId = slugPart(info.appId || lifecycle.appId || lifecycle.title, "");
+  const appId = slugPart(info.appId || lifecycle.appId || lifecycle.title || info.url || (info.port ? `port-${info.port}` : ""), "");
   if (!appId) return "";
+  const surfaceKey = info.url || (info.port ? `port:${info.port}` : "");
   const machineKey = [
     lifecycle.machineId,
     lifecycle.remoteNodeId,
     lifecycle.remoteUrl,
   ].map((part) => String(part || "").trim()).filter(Boolean).join("|");
   if (!machineKey) return "";
-  return `app.launch:${machineKey}:${appId}`;
+  return `app.launch:${machineKey}:${appId}:${surfaceKey}`;
 }
 
 function compactLaunchLifecycles(lifecycles) {
