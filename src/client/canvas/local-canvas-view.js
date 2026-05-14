@@ -3318,17 +3318,36 @@ function stripTerminalControlText(value, { stripSgrResidue = false } = {}) {
   return text;
 }
 
+function isTerminalPromptResidueText(value) {
+  const text = String(value || "").replace(/\s+/g, " ").trim();
+  if (!text || !/[➜❯›λ✗✔]|git:\(/u.test(text)) return false;
+  const promptToken = String.raw`(?:[A-Za-z0-9_.~@:/-]+|git:\([^)]{1,80}\))`;
+  const promptPiece = String.raw`(?:\([^)]{1,48}\)\s*)?(?:${promptToken}\s*)*(?:[➜❯›λ✗✔]\s*)+(?:${promptToken}\s*)*(?:\([^)]{1,48}\)\s*)?`;
+  return new RegExp(String.raw`^(?:${promptPiece})+$`, "u").test(text);
+}
+
 function narrativeEntryText(entry, max = 1_800, { stripSgrResidue = false } = {}) {
+  let text = stripTerminalControlText(
+    [
+      entry?.text,
+      entry?.summary,
+      entry?.outputPreview,
+      entry?.statusText,
+    ].filter(Boolean).join(" "),
+    { stripSgrResidue },
+  );
+  if (stripSgrResidue) {
+    text = text
+      .split("\n")
+      .map((line) => line.trim())
+      .filter((line) => line && !isTerminalPromptResidueText(line))
+      .join("\n");
+    if (isTerminalPromptResidueText(text)) {
+      return "";
+    }
+  }
   return compactText(
-    stripTerminalControlText(
-      [
-        entry?.text,
-        entry?.summary,
-        entry?.outputPreview,
-        entry?.statusText,
-      ].filter(Boolean).join(" "),
-      { stripSgrResidue },
-    ),
+    text,
     max,
   );
 }

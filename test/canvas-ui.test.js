@@ -1628,6 +1628,14 @@ test("canvas agent launcher renders the created native session on the board", as
               kind: "tool",
               label: "Snippet",
               outputPreview: "\u001b[32mready\u001b[0m\n(base) 32m1m➜ 36muserm 34m1mgit:(31mmain34m) 33m✗m m (base)",
+            }, {
+              kind: "tool",
+              label: "Snippet",
+              outputPreview: "(base) 32m1m➜ 36muserm 34m1mgit:(31mmain34m) 33m✗m m (base) 32m1m➜ 36muserm",
+            }, {
+              kind: "tool",
+              label: "Result",
+              outputPreview: "cost is $5\n# heading remains useful output",
             }] : [],
           },
         }),
@@ -1670,6 +1678,9 @@ test("canvas agent launcher renders the created native session on the board", as
     const terminalText = await terminalCard.innerText();
     assert.match(terminalText, /Terminal/);
     assert.match(terminalText, /ready/);
+    assert.match(terminalText, /cost is \$5/);
+    assert.match(terminalText, /# heading remains useful output/);
+    assert.doesNotMatch(terminalText, /SNIPPET[\s\S]*git:\(main\)/);
     assert.doesNotMatch(terminalText, /32m|36m|34m|31m|33m|1m|✗m|userm|m \(base\)/);
     assert.equal(await terminalCard.locator('textarea[name="input"]').getAttribute("placeholder"), "Type a terminal command");
     assert.equal((await terminalCard.getAttribute("class")).includes("is-terminal-session"), true);
