@@ -680,8 +680,14 @@ test("local canvas view renders node snapshot cards and persists drag layout", a
     assert.match(rendered, /Vite app/);
     assert.match(rendered, /Result chart/);
     assert.match(rendered, /Cursor/);
-    assert.match(rendered, /Handoff/);
-    assert.match(rendered, /Log in/);
+    assert.equal(
+      await page.locator("[data-swarmlab-canvas-new-handoff]").getAttribute("aria-label"),
+      "New handoff",
+    );
+    assert.equal(
+      await page.locator("[data-swarmlab-canvas-account-login]").getAttribute("aria-label"),
+      "Log in to Vibe Research",
+    );
     assert.doesNotMatch(rendered, /Add machine/);
     assert.match(rendered, /Please inspect the dashboard/);
     assert.match(rendered, /native session feed/);
@@ -862,6 +868,21 @@ test("local canvas view renders node snapshot cards and persists drag layout", a
       JSON.parse(window.localStorage.getItem("swarmlab.canvas.viewport.v4:fleet:mac-main") || "{}"),
     );
     assert.ok(initialViewport.zoom >= 0.42, "initial safe fit should persist a usable zoom");
+    const toolbarBox = await page.locator(".swarmlab-canvas-toolbar").boundingBox();
+    const refreshButtonBox = await page.locator("[data-swarmlab-canvas-refresh]").boundingBox();
+    assert.ok(
+      toolbarBox && refreshButtonBox && refreshButtonBox.x + refreshButtonBox.width <= toolbarBox.x + toolbarBox.width + 1,
+      "canvas toolbar actions should remain visible inside the view width",
+    );
+    const toolbarViewport = page.viewportSize() || { width: 1280, height: 720 };
+    await page.setViewportSize({ width: 1168, height: 720 });
+    const compactToolbarBox = await page.locator(".swarmlab-canvas-toolbar").boundingBox();
+    const compactRefreshButtonBox = await page.locator("[data-swarmlab-canvas-refresh]").boundingBox();
+    assert.ok(
+      compactToolbarBox && compactRefreshButtonBox && compactRefreshButtonBox.x + compactRefreshButtonBox.width <= compactToolbarBox.x + compactToolbarBox.width + 1,
+      "canvas toolbar should collapse action labels before controls clip in the in-app browser width",
+    );
+    await page.setViewportSize(toolbarViewport);
     await page.click('[data-swarmlab-canvas-focus-region="gpu-cluster"]');
     await page.waitForFunction(() =>
       document.querySelector('[data-swarmlab-canvas-focus-region="gpu-cluster"]')?.getAttribute("aria-current") === "true",
@@ -894,6 +915,28 @@ test("local canvas view renders node snapshot cards and persists drag layout", a
     assert.ok(
       recoveredVisibleWidth > 120 && recoveredVisibleHeight > 120,
       "viewport recovery should put the active local agent back on screen",
+    );
+    await page.evaluate(() => {
+      const root = document.querySelector("[data-swarmlab-canvas-root]");
+      const item = root?.__swarmlabCanvasLayout?.["session:session-1"];
+      if (!root || !item) return;
+      const rect = root.getBoundingClientRect();
+      const zoom = 0.4;
+      const viewport = {
+        x: Math.round(rect.width / 2 - (Number(item.x) + Number(item.width) / 2) * zoom),
+        y: Math.round(rect.height / 2 - (Number(item.y) + Number(item.height) / 2) * zoom),
+        zoom,
+      };
+      window.localStorage.setItem(root.dataset.swarmlabCanvasViewportStorageKey, JSON.stringify(viewport));
+    });
+    await page.reload({ waitUntil: "domcontentloaded" });
+    await page.waitForSelector('[data-swarmlab-canvas-card-id="session:session-1"]', { timeout: 10_000 });
+    const refitLegacyViewport = await page.evaluate(() =>
+      JSON.parse(window.localStorage.getItem("swarmlab.canvas.viewport.v4:fleet:mac-main") || "{}"),
+    );
+    assert.ok(
+      Number(refitLegacyViewport.zoom) >= 0.5,
+      "legacy miniature canvas viewports should reopen around active agent work instead of staying tiny",
     );
 
     assert.equal(
@@ -1348,7 +1391,9 @@ test("local canvas view renders node snapshot cards and persists drag layout", a
       await page.evaluate(() => window.__openedSwarmlabAccountUrls),
       [`${baseUrl}/account/pair?pairingId=pair_canvas_login`],
     );
-    await page.waitForSelector("text=Waiting...", { timeout: 10_000 });
+    await page.waitForFunction(() =>
+      document.querySelector("[data-swarmlab-canvas-account-label]")?.textContent?.includes("Waiting"),
+    null, { timeout: 10_000 });
     accountConnected = true;
     await page.evaluate(() => {
       window.postMessage({

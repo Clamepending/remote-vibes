@@ -53,6 +53,7 @@ const OPTIMISTIC_SESSION_TTL_MS = 12_000;
 const BOARD_WIDTH = 4_800;
 const BOARD_HEIGHT = 5_200;
 const DEFAULT_VIEWPORT = { x: 28, y: 42, zoom: 0.74 };
+const MIN_PRODUCTIVE_AGENT_ZOOM = 0.5;
 const MAX_VISIBLE_DOCK_LAUNCHERS = 6;
 const ACCOUNT_PAIRING_RESULT_MESSAGE_TYPE = "swarmlab-account-pairing-result";
 const LEGACY_ACCOUNT_PAIRING_RESULT_MESSAGE_TYPE = "buildinghub-github-oauth-result";
@@ -160,6 +161,7 @@ function injectCanvasStyles(documentRef = document) {
   --canvas-danger: #e98277;
   background: var(--canvas-bg);
   color: var(--canvas-text);
+  container-type: inline-size;
   overflow: hidden;
 }
 .swarmlab-canvas-toolbar {
@@ -180,6 +182,10 @@ function injectCanvasStyles(documentRef = document) {
   display: flex;
   align-items: center;
   gap: 10px;
+  min-width: 0;
+  flex: 1 1 auto;
+}
+.swarmlab-canvas-title > div {
   min-width: 0;
 }
 .swarmlab-canvas-title-icon {
@@ -205,6 +211,10 @@ function injectCanvasStyles(documentRef = document) {
 }
 .swarmlab-canvas-title span {
   display: block;
+  max-width: min(58vw, 720px);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
   color: var(--canvas-muted);
   font-size: 12px;
   line-height: 1.35;
@@ -212,9 +222,11 @@ function injectCanvasStyles(documentRef = document) {
 .swarmlab-canvas-actions {
   display: flex;
   align-items: center;
+  flex: 0 0 auto;
   gap: 7px;
   flex-wrap: wrap;
   justify-content: flex-end;
+  max-width: min(480px, 48%);
 }
 .swarmlab-canvas-advanced {
   position: relative;
@@ -1417,10 +1429,32 @@ function injectCanvasStyles(documentRef = document) {
 .swarmlab-canvas-loading svg {
   margin-bottom: 12px;
 }
+@container (max-width: 1200px) {
+  .swarmlab-canvas-actions {
+    flex-wrap: nowrap;
+    max-width: none;
+  }
+  .swarmlab-canvas-actions > .swarmlab-canvas-button,
+  .swarmlab-canvas-advanced > summary {
+    width: 34px;
+    min-width: 34px;
+    padding: 0;
+  }
+  .swarmlab-canvas-actions > .swarmlab-canvas-button > span,
+  .swarmlab-canvas-advanced > summary > span {
+    display: none;
+  }
+  .swarmlab-canvas-title span {
+    max-width: min(46cqw, 520px);
+  }
+}
 @media (max-width: 760px) {
   .swarmlab-canvas-toolbar {
     align-items: stretch;
     flex-direction: column;
+  }
+  .swarmlab-canvas-actions {
+    max-width: 100%;
   }
   .swarmlab-canvas-button span {
     max-width: 112px;
@@ -1459,18 +1493,7 @@ function injectCanvasStyles(documentRef = document) {
     gap: 8px;
   }
   .swarmlab-canvas-actions {
-    flex-wrap: nowrap;
     gap: 5px;
-  }
-  .swarmlab-canvas-actions > .swarmlab-canvas-button,
-  .swarmlab-canvas-advanced > summary {
-    width: 34px;
-    min-width: 34px;
-    padding: 0;
-  }
-  .swarmlab-canvas-actions > .swarmlab-canvas-button > span,
-  .swarmlab-canvas-advanced > summary > span {
-    display: none;
   }
   .swarmlab-canvas-title {
     gap: 8px;
@@ -2182,6 +2205,7 @@ function readViewportState(storage, key) {
     const parsed = JSON.parse(raw);
     return {
       hasSavedViewport: Boolean(parsed),
+      hasModernSavedViewport: Boolean(parsed && parsed.savedAt),
       viewport: parsed ? sanitizeViewport(parsed) : { ...DEFAULT_VIEWPORT },
     };
   } catch {
@@ -2191,7 +2215,10 @@ function readViewportState(storage, key) {
 
 function writeViewport(storage, key, viewport) {
   try {
-    storage.setItem(key, JSON.stringify(roundViewport(sanitizeViewport(viewport))));
+    storage.setItem(key, JSON.stringify({
+      ...roundViewport(sanitizeViewport(viewport)),
+      savedAt: new Date().toISOString(),
+    }));
   } catch {
     // Viewport persistence is best effort.
   }
@@ -4044,6 +4071,16 @@ function viewportShowsCanvasContent(root, viewport) {
   return contentBounds.some((bounds) => viewportIntersectsBounds(viewportBounds, bounds));
 }
 
+function shouldRefitLegacyMiniatureViewport(viewportState, renderCards) {
+  const viewport = sanitizeViewport(viewportState?.viewport || DEFAULT_VIEWPORT);
+  return Boolean(
+    viewportState?.hasSavedViewport &&
+    !viewportState?.hasModernSavedViewport &&
+    viewport.zoom < MIN_PRODUCTIVE_AGENT_ZOOM &&
+    (renderCards || []).some(isInitialViewportFocusCard),
+  );
+}
+
 function renderSnapshot(root, payload, { storage, remoteRecords = [] } = {}) {
   const localSnapshot = normalizeNodeSnapshot(payload);
   const boardId = remoteRecords.length
@@ -4117,7 +4154,11 @@ function renderSnapshot(root, payload, { storage, remoteRecords = [] } = {}) {
   `;
   refreshRegionPresentation(root);
   const appliedPendingFocus = applyPendingCanvasCardFocus(root, storage);
-  if (!appliedPendingFocus && (!viewportState.hasSavedViewport || !viewportShowsCanvasContent(root, viewport))) {
+  if (!appliedPendingFocus && (
+    !viewportState.hasSavedViewport ||
+    shouldRefitLegacyMiniatureViewport(viewportState, renderCards) ||
+    !viewportShowsCanvasContent(root, viewport)
+  )) {
     setViewport(root, storage, fitViewportToCards(root, { machineId: localMachineId, initialFocus: true }));
   }
   if (root.__swarmlabCanvasPendingNotice) {
