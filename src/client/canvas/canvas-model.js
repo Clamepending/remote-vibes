@@ -314,15 +314,25 @@ export function normalizeNodeSnapshot(payload) {
   const providerLaunchers = rawLaunchers.length
     ? []
     : asArray(capabilities.providers)
-      .filter((provider) => provider?.available && provider?.id && provider.id !== "shell")
-      .map((provider) => ({
-        id: `provider:${provider.id}`,
-        label: provider.label || provider.id,
-        kind: "agent-provider",
-        providerId: provider.id,
-        defaultName: provider.defaultName || provider.label || provider.id,
-        available: true,
-      }));
+      .filter((provider) => provider?.available && provider?.id)
+      .map((provider) => {
+        const providerId = normalizeText(provider.id);
+        const isShell = providerId === "shell";
+        const label = isShell ? "Terminal" : normalizeText(provider.label || provider.id, providerId);
+        return {
+          id: `provider:${providerId}`,
+          label,
+          kind: "agent-provider",
+          category: isShell ? "terminal" : "agent",
+          priority: isShell ? 96 : 100,
+          description: isShell
+            ? "Open a persistent terminal inside the canvas on this machine."
+            : `Start a new ${label} agent on this machine.`,
+          providerId,
+          defaultName: isShell ? "Terminal" : normalizeText(provider.defaultName || provider.label || provider.id, label),
+          available: true,
+        };
+      });
   const launchers = rawLaunchers.length ? rawLaunchers : providerLaunchers;
   const generatedAt = normalizeOptionalDate(snapshot.generatedAt || input.generatedAt) || new Date(0).toISOString();
 

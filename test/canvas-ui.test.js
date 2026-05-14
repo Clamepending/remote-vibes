@@ -1571,6 +1571,7 @@ test("canvas agent launcher renders the created native session on the board", as
           ports: [],
           launchers: [
             { id: "provider:codex", label: "Codex", kind: "agent-provider", providerId: "codex", defaultName: "Codex", available: true },
+            { id: "provider:shell", label: "Terminal", kind: "agent-provider", category: "terminal", providerId: "shell", defaultName: "Terminal", available: true },
           ],
           counts: { sessions: 0, ports: 0, approvals: 0, artifacts: 0 },
           generatedAt: "2026-05-13T12:00:00.000Z",
@@ -1582,31 +1583,42 @@ test("canvas agent launcher renders the created native session on the board", as
         await route.fallback();
         return;
       }
-      postedSessions.push(JSON.parse(route.request().postData() || "{}"));
+      const postedSession = JSON.parse(route.request().postData() || "{}");
+      postedSessions.push(postedSession);
+      const isShell = postedSession.providerId === "shell";
+      const providerLabel = isShell ? "Terminal" : "Codex";
+      const sessionId = isShell ? "canvas-terminal-session" : "canvas-codex-session";
       await route.fulfill({
         status: 201,
         contentType: "application/json",
         body: JSON.stringify({
           session: {
-            id: "canvas-codex-session",
-            providerId: "codex",
-            providerLabel: "Codex",
-            name: "Codex",
+            id: sessionId,
+            providerId: postedSession.providerId || "codex",
+            providerLabel,
+            name: postedSession.name || providerLabel,
             cwd: workspaceDir,
             status: "running",
           },
         }),
       });
     });
-    await page.route(`${baseUrl}/api/sessions/canvas-codex-session/narrative`, async (route) => {
+    await page.route(`${baseUrl}/api/sessions/**/narrative`, async (route) => {
+      const parts = new URL(route.request().url()).pathname.split("/");
+      const sessionId = parts[parts.length - 2] || "";
+      const isShell = sessionId.includes("terminal");
       await route.fulfill({
         status: 200,
         contentType: "application/json",
         body: JSON.stringify({
           narrative: {
-            providerId: "codex",
-            providerLabel: "Codex",
-            entries: [],
+            providerId: isShell ? "shell" : "codex",
+            providerLabel: isShell ? "Terminal" : "Codex",
+            entries: isShell ? [{
+              kind: "tool",
+              label: "Snippet",
+              outputPreview: "\u001b[32mready\u001b[0m\n(base) 32m1m➜ 36muserm 34m1mgit:(31mmain34m) 33m✗m m (base)",
+            }] : [],
           },
         }),
       });
@@ -1635,6 +1647,22 @@ test("canvas agent launcher renders the created native session on the board", as
       await page.locator('[data-swarmlab-canvas-card-id="session:canvas-codex-session"]').innerText(),
       /Codex/,
     );
+
+    await page.waitForSelector('[data-swarmlab-canvas-launcher="launcher:provider:shell"]', { timeout: 10_000 });
+    await page.click('[data-swarmlab-canvas-launcher="launcher:provider:shell"]');
+    await page.waitForSelector('[data-swarmlab-canvas-card-id="session:canvas-terminal-session"]', { timeout: 10_000 });
+    await page.waitForSelector('[data-swarmlab-canvas-card-id="session:canvas-terminal-session"][data-swarmlab-canvas-focused-card="true"]', { timeout: 10_000 });
+
+    assert.equal(postedSessions.length, 2);
+    assert.equal(postedSessions[1].providerId, "shell");
+    assert.equal(postedSessions[1].name, "Terminal");
+    const terminalCard = page.locator('[data-swarmlab-canvas-card-id="session:canvas-terminal-session"]');
+    const terminalText = await terminalCard.innerText();
+    assert.match(terminalText, /Terminal/);
+    assert.match(terminalText, /ready/);
+    assert.doesNotMatch(terminalText, /32m|36m|34m|31m|33m|1m|✗m|userm|m \(base\)/);
+    assert.equal(await terminalCard.locator('textarea[name="input"]').getAttribute("placeholder"), "Type a terminal command");
+    assert.equal((await terminalCard.getAttribute("class")).includes("is-terminal-session"), true);
   } finally {
     if (browser) await browser.close();
     await app.close();

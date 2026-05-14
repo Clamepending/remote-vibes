@@ -1023,6 +1023,11 @@ function injectCanvasStyles(documentRef = document) {
     radial-gradient(circle at 18px 18px, rgba(232, 222, 206, 0.055) 1px, transparent 1px) 0 0 / 28px 28px,
     rgba(12, 12, 10, 0.64);
 }
+.swarmlab-canvas-card.is-terminal-session .swarmlab-agent-chat-window {
+  background:
+    radial-gradient(circle at 18px 18px, rgba(232, 222, 206, 0.04) 1px, transparent 1px) 0 0 / 28px 28px,
+    rgba(5, 5, 5, 0.82);
+}
 .swarmlab-agent-transfer-bar {
   display: none;
   align-items: center;
@@ -1101,6 +1106,10 @@ function injectCanvasStyles(documentRef = document) {
 .swarmlab-agent-message-text {
   white-space: pre-wrap;
 }
+.swarmlab-canvas-card.is-terminal-session .swarmlab-agent-message-text,
+.swarmlab-canvas-card.is-terminal-session .swarmlab-agent-composer textarea {
+  font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", monospace;
+}
 .swarmlab-agent-message span {
   display: block;
   margin-bottom: 5px;
@@ -1117,6 +1126,9 @@ function injectCanvasStyles(documentRef = document) {
   align-self: flex-start;
   max-width: min(100%, 610px);
   background: rgba(116, 199, 184, 0.055);
+}
+.swarmlab-canvas-card.is-terminal-session .swarmlab-agent-message.is-agent {
+  background: rgba(249, 115, 22, 0.055);
 }
 .swarmlab-agent-message.is-system {
   align-self: flex-start;
@@ -3137,12 +3149,13 @@ function cardFrame(card, layout, body, footer = "") {
   const lifecycleClass = card.ref?.lifecycle ? " is-lifecycle" : "";
   const launchedAppClass = card.ref?.launchedApp ? " is-launched-app" : "";
   const appInstanceClass = card.ref?.appInstance ? " is-app-instance" : "";
+  const terminalClass = isShellSessionCard(card) ? " is-terminal-session" : "";
   const machineId = getCanvasCardMachineId(card);
   const regionId = getCanvasCardRegionId(card, layout);
   const crossRegionClass = machineId !== regionId ? " is-cross-region" : "";
   return `
     <article
-      class="swarmlab-canvas-card is-${escapeHtml(card.type)}${remoteClass}${crossRegionClass}${lifecycleClass}${launchedAppClass}${appInstanceClass}"
+      class="swarmlab-canvas-card is-${escapeHtml(card.type)}${remoteClass}${crossRegionClass}${lifecycleClass}${launchedAppClass}${appInstanceClass}${terminalClass}"
       data-swarmlab-canvas-card-id="${escapeHtml(card.id)}"
       data-swarmlab-canvas-card-type="${escapeHtml(card.type)}"
       data-swarmlab-canvas-machine-id="${escapeHtml(machineId)}"
@@ -3163,6 +3176,10 @@ function cardFrame(card, layout, body, footer = "") {
       ${footer}
     </article>
   `;
+}
+
+function isShellSessionCard(card) {
+  return String(card?.ref?.providerId || "").trim() === "shell";
 }
 
 function renderLifecycleCard(card, layout) {
@@ -3189,6 +3206,9 @@ function renderAgentCard(card, layout) {
   if (card.ref?.remoteUrl) {
     return renderRemoteAgentCard(card, layout);
   }
+  if (isShellSessionCard(card)) {
+    return renderTerminalSessionCard(card, layout);
+  }
   const cwd = shortPath(card.detail);
   const status = [card.subtitle, card.status].filter(Boolean).join(" / ") || "agent session";
   const body = `
@@ -3208,6 +3228,34 @@ function renderAgentCard(card, layout) {
         </div>
         <form class="swarmlab-agent-composer" data-swarmlab-agent-composer data-swarmlab-agent-session-id="${escapeHtml(card.ref?.sessionId || "")}">
           <textarea rows="1" name="input" placeholder="Message agent, @ for context, / for commands"></textarea>
+          <button class="swarmlab-canvas-button" type="submit" title="Send">${renderIcon(Send)}</button>
+        </form>
+      </div>
+    </div>
+  `;
+  return cardFrame(card, layout, body);
+}
+
+function renderTerminalSessionCard(card, layout) {
+  const cwd = shortPath(card.detail);
+  const status = [card.subtitle, card.status].filter(Boolean).join(" / ") || "terminal session";
+  const body = `
+    <div class="swarmlab-canvas-agent-body">
+      <div class="swarmlab-agent-transfer-bar" data-swarmlab-agent-transfer-bar></div>
+      <div class="swarmlab-agent-chat-window">
+        <div class="swarmlab-agent-chat-feed" data-swarmlab-agent-chat-feed data-swarmlab-agent-session-id="${escapeHtml(card.ref?.sessionId || "")}">
+          <div class="swarmlab-agent-message is-user">
+            <span>Workspace</span>
+            <div class="swarmlab-agent-message-text">${escapeHtml(cwd || "default project")}</div>
+          </div>
+          <div class="swarmlab-agent-message is-agent">
+            <span>Persistent terminal / ${escapeHtml(status)}</span>
+            <div class="swarmlab-agent-message-text">${escapeHtml(card.meta ? `Last activity ${card.meta}` : "Shell is running inside this canvas card.")}</div>
+          </div>
+          ${renderTags(card, { limit: 3 })}
+        </div>
+        <form class="swarmlab-agent-composer" data-swarmlab-agent-composer data-swarmlab-agent-session-id="${escapeHtml(card.ref?.sessionId || "")}">
+          <textarea rows="1" name="input" placeholder="Type a terminal command"></textarea>
           <button class="swarmlab-canvas-button" type="submit" title="Send">${renderIcon(Send)}</button>
         </form>
       </div>
@@ -3251,14 +3299,36 @@ function renderRemoteAgentCard(card, layout) {
   return cardFrame(card, layout, body, footer);
 }
 
-function narrativeEntryText(entry, max = 1_800) {
+function stripTerminalControlText(value, { stripSgrResidue = false } = {}) {
+  let text = String(value ?? "")
+    .replace(/\u001b\][^\u0007\u001b]*(?:\u0007|\u001b\\)/gu, "")
+    .replace(/\u001b\[[0-9;?]*[ -/]*[@-~]/gu, "")
+    .replace(/\u009b[0-9;?]*[ -/]*[@-~]/gu, "")
+    .replace(/\u001b[()][0-9A-Za-z]/gu, "")
+    .replace(/\u001b[@-_]/gu, "");
+
+  if (stripSgrResidue) {
+    text = text
+      .replace(/(^|[^\p{L}\p{N}])(?:\[?(?:0|1|2|3|4|5|7|22|23|24|25|27|29|3[0-9]|4[0-9]|9[0-7]|10[0-7])m)+(?=\S)/gu, "$1")
+      .replace(/([\p{L}\p{N}])(?:0|1|2|3|4|5|7|22|23|24|25|27|29|3[0-9]|4[0-9]|9[0-7]|10[0-7])m(?=[)\]\s]|$)/gu, "$1")
+      .replace(/\b([A-Za-z0-9._@~/-]{2,})m(?=\s+(?:git:|\(|$))/gu, "$1")
+      .replace(/(^|\s)m(?=\s+\()/gu, "$1")
+      .replace(/([➜✗✔])m(?=\s|$)/gu, "$1");
+  }
+  return text;
+}
+
+function narrativeEntryText(entry, max = 1_800, { stripSgrResidue = false } = {}) {
   return compactText(
-    [
-      entry?.text,
-      entry?.summary,
-      entry?.outputPreview,
-      entry?.statusText,
-    ].filter(Boolean).join(" "),
+    stripTerminalControlText(
+      [
+        entry?.text,
+        entry?.summary,
+        entry?.outputPreview,
+        entry?.statusText,
+      ].filter(Boolean).join(" "),
+      { stripSgrResidue },
+    ),
     max,
   );
 }
@@ -3281,8 +3351,9 @@ function narrativeEntryLabel(entry) {
 
 function renderNarrativeEntries(narrative) {
   const entries = Array.isArray(narrative?.entries) ? narrative.entries : [];
+  const stripSgrResidue = String(narrative?.providerId || "").trim() === "shell";
   const visible = entries
-    .filter((entry) => narrativeEntryText(entry))
+    .filter((entry) => narrativeEntryText(entry, 1_800, { stripSgrResidue }))
     .slice(-18);
   if (!visible.length) {
     return `
@@ -3302,7 +3373,7 @@ function renderNarrativeEntries(narrative) {
   return `${meta}${visible.map((entry) => `
     <div class="swarmlab-agent-message ${narrativeEntryClass(entry)}" data-swarmlab-agent-entry-id="${escapeHtml(entry?.id || "")}">
       <span>${escapeHtml(narrativeEntryLabel(entry))}</span>
-      <div class="swarmlab-agent-message-text">${escapeHtml(narrativeEntryText(entry))}</div>
+      <div class="swarmlab-agent-message-text">${escapeHtml(narrativeEntryText(entry, 1_800, { stripSgrResidue }))}</div>
     </div>
   `).join("")}`;
 }

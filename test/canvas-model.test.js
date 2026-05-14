@@ -160,6 +160,24 @@ test("buildCanvasCards excludes launchers while buildCanvasLauncherCards returns
   assert.equal(launchers[1].ref.category, "editor");
 });
 
+test("buildCanvasLauncherCards materializes shell provider fallback as Terminal", () => {
+  const launchers = buildCanvasLauncherCards({
+    node: { id: "node-1", name: "Mac", status: "online" },
+    capabilities: {
+      providers: [
+        { id: "shell", label: "Vanilla Shell", available: true },
+        { id: "codex", label: "Codex", defaultName: "Codex", available: true },
+      ],
+    },
+  });
+
+  assert.deepEqual(launchers.map((card) => card.title), ["Codex", "Terminal"]);
+  const terminal = launchers.find((card) => card.ref.providerId === "shell");
+  assert.equal(terminal.ref.category, "terminal");
+  assert.equal(terminal.ref.defaultName, "Terminal");
+  assert.equal(terminal.detail, "Open a persistent terminal inside the canvas on this machine.");
+});
+
 test("buildCanvasCards promotes W&B tabs to monitor cards linked to source agents", () => {
   const cards = buildCanvasCards({
     node: { id: "node-1", name: "GPU box", status: "online" },
