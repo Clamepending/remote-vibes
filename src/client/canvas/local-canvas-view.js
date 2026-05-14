@@ -2411,13 +2411,7 @@ function readLaunchLifecycles(storage, key) {
 
 function writeLaunchLifecycles(storage, key, lifecycles) {
   try {
-    const byId = new Map();
-    (lifecycles || []).map(normalizeLaunchLifecycle).filter(Boolean).forEach((item) => {
-      byId.set(item.lifecycleId, item);
-    });
-    const kept = [...byId.values()]
-      .sort((left, right) => String(right.updatedAt || "").localeCompare(String(left.updatedAt || "")))
-      .slice(0, 40);
+    const kept = compactLaunchLifecycles(lifecycles);
     storage.setItem(key, JSON.stringify(kept));
   } catch {
     // Launch lifecycle cards are convenience UI state; relay commands remain authoritative.
@@ -2484,6 +2478,46 @@ function lifecycleResultAppInfo(lifecycle) {
     rawUrl,
     commandId: String(result.commandId || result.clientCommandId || lifecycle.commandId || lifecycle.clientCommandId || "").trim(),
   };
+}
+
+function isCompletedAppLaunchLifecycle(lifecycle) {
+  return lifecycle?.operation === "app.launch" &&
+    normalizeLaunchLifecycleStatus(lifecycle?.status) === "completed";
+}
+
+function compactLaunchLifecycleKey(lifecycle) {
+  if (!isCompletedAppLaunchLifecycle(lifecycle)) return "";
+  const info = lifecycleResultAppInfo(lifecycle);
+  if (info.port || info.url) return "";
+  const appId = slugPart(info.appId || lifecycle.appId || lifecycle.title, "");
+  if (!appId) return "";
+  const machineKey = [
+    lifecycle.machineId,
+    lifecycle.remoteNodeId,
+    lifecycle.remoteUrl,
+  ].map((part) => String(part || "").trim()).filter(Boolean).join("|");
+  if (!machineKey) return "";
+  return `app.launch:${machineKey}:${appId}`;
+}
+
+function compactLaunchLifecycles(lifecycles) {
+  const byId = new Map();
+  (lifecycles || []).map(normalizeLaunchLifecycle).filter(Boolean).forEach((item) => {
+    byId.set(item.lifecycleId, item);
+  });
+  const newestFirst = [...byId.values()]
+    .sort((left, right) => String(right.updatedAt || "").localeCompare(String(left.updatedAt || "")));
+  const seenCompactKeys = new Set();
+  const kept = [];
+  newestFirst.forEach((item) => {
+    const compactKey = compactLaunchLifecycleKey(item);
+    if (compactKey) {
+      if (seenCompactKeys.has(compactKey)) return;
+      seenCompactKeys.add(compactKey);
+    }
+    kept.push(item);
+  });
+  return kept.slice(0, 40);
 }
 
 function launchLifecycleAppHref(lifecycle) {

@@ -1015,6 +1015,16 @@ test("local canvas view renders node snapshot cards and persists drag layout", a
       1,
       "launching a desktop app should create a tracked app instance card",
     );
+    await page.click('[data-swarmlab-canvas-launcher="launcher:app:cursor"]');
+    for (let attempt = 0; attempt < 20 && postedAppLaunches.length === 1; attempt += 1) {
+      await page.waitForTimeout(50);
+    }
+    assert.equal(postedAppLaunches.length, 2);
+    assert.equal(
+      await page.locator(".swarmlab-canvas-card.is-app-instance.is-launched-app").count(),
+      1,
+      "repeat launches of the same desktop app should update the existing app instance instead of duplicating cards",
+    );
     assert.match(
       await page.locator(".swarmlab-canvas-card.is-app-instance.is-launched-app").innerText(),
       /instance|launched/i,
@@ -1023,9 +1033,9 @@ test("local canvas view renders node snapshot cards and persists drag layout", a
     assert.equal(await dismissLaunchedApp.count(), 1);
     await dismissLaunchedApp.click();
     await page.waitForFunction(() => document.querySelectorAll(".swarmlab-canvas-card.is-launched-app").length === 0);
-    assert.equal(postedAppLaunches.length, 1, "dismissing a launched app window should not relaunch or kill the app");
+    assert.equal(postedAppLaunches.length, 2, "dismissing a launched app window should not relaunch or kill the app");
     assert.equal(deletedSessions.length, 0, "dismissing a launched app window must not delete agent sessions");
-    assert.match(postedAppLaunches[0].clientCommandId, /^local-app-/);
+    assert.match(postedAppLaunches.at(-1).clientCommandId, /^local-app-/);
     extraLocalPorts = [
       {
         port: 9456,
@@ -1033,7 +1043,7 @@ test("local canvas view renders node snapshot cards and persists drag layout", a
         customName: "Cursor workspace",
         preferredAccess: "proxy",
         appId: "cursor",
-        launchCommandId: postedAppLaunches[0].clientCommandId,
+        launchCommandId: postedAppLaunches.at(-1).clientCommandId,
         canvasVisible: true,
       },
     ];
