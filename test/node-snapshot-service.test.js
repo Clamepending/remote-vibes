@@ -142,6 +142,46 @@ test("privileged node snapshot exposes sanitized monitor resources and browser U
   }
 });
 
+test("node snapshot prefers canvas-native launchers over duplicate desktop agent apps", async () => {
+  const { stateDir, store } = await createIdentityStore();
+  try {
+    const service = new NodeSnapshotService({
+      nodeIdentityStore: store,
+      metadataProvider: () => ({ version: "1.2.3" }),
+      providersProvider: () => [
+        { id: "codex", label: "Codex", defaultName: "Codex", available: true },
+        { id: "claude-ollama", label: "Local Claude Code", defaultName: "Local Claude", available: true },
+        { id: "shell", label: "Vanilla Shell", defaultName: "Shell", available: true },
+      ],
+      appLaunchersProvider: () => [
+        { id: "codex", label: "Codex", kind: "desktop-app", category: "agent-app", priority: 95, available: true },
+        { id: "claude", label: "Claude", kind: "desktop-app", category: "agent-app", priority: 92, available: true },
+        { id: "terminal", label: "Terminal", kind: "desktop-app", category: "terminal", priority: 58, available: true },
+        { id: "iterm", label: "iTerm", kind: "desktop-app", category: "terminal", priority: 56, available: true },
+        { id: "cursor", label: "Cursor", kind: "desktop-app", category: "editor", priority: 90, available: true },
+      ],
+    });
+
+    const snapshot = await service.getSnapshot({ mode: "privileged" });
+    const launcherIds = snapshot.launchers.map((launcher) => launcher.id);
+    assert.deepEqual(launcherIds, [
+      "provider:codex",
+      "provider:claude-ollama",
+      "provider:shell",
+      "app:cursor",
+    ]);
+    assert.equal(snapshot.launchers.find((launcher) => launcher.id === "provider:shell")?.label, "Terminal");
+    assert.equal(snapshot.launchers.find((launcher) => launcher.id === "provider:shell")?.category, "terminal");
+    assert.equal(snapshot.launchers.find((launcher) => launcher.id === "provider:shell")?.description, "Open a persistent terminal inside the canvas on this machine.");
+    assert.equal(snapshot.launchers.some((launcher) => launcher.id === "app:codex"), false);
+    assert.equal(snapshot.launchers.some((launcher) => launcher.id === "app:claude"), false);
+    assert.equal(snapshot.launchers.some((launcher) => launcher.id === "app:terminal"), false);
+    assert.equal(snapshot.launchers.some((launcher) => launcher.id === "app:iterm"), false);
+  } finally {
+    await rm(stateDir, { recursive: true, force: true });
+  }
+});
+
 test("node snapshot reports degraded dependencies instead of hanging", async () => {
   const { stateDir, store } = await createIdentityStore();
   try {

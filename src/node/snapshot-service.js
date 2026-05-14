@@ -487,18 +487,22 @@ function summarizeSystem(system, mode) {
 }
 
 function summarizeProviderLauncher(provider = {}) {
-  if (!provider?.available || provider?.id === "shell") return null;
+  if (!provider?.available) return null;
   const id = compactText(provider.id, 80);
   if (!id) return null;
+  const isShell = id === "shell";
+  const label = isShell ? "Terminal" : compactText(provider.label || provider.defaultName || id, 80);
   return {
     id: `provider:${id}`,
-    label: compactText(provider.label || provider.defaultName || id, 80),
+    label,
     kind: "agent-provider",
-    category: "agent",
-    priority: 100,
-    description: `Start a new ${compactText(provider.label || provider.defaultName || id, 80)} agent on this machine.`,
+    category: isShell ? "terminal" : "agent",
+    priority: isShell ? 96 : 100,
+    description: isShell
+      ? "Open a persistent terminal inside the canvas on this machine."
+      : `Start a new ${label} agent on this machine.`,
     providerId: id,
-    defaultName: compactText(provider.defaultName || provider.label || id, 80),
+    defaultName: isShell ? "Terminal" : compactText(provider.defaultName || provider.label || id, 80),
     available: true,
   };
 }
@@ -518,6 +522,21 @@ function summarizeAppLauncher(launcher = {}) {
     available: true,
     platform: compactText(launcher.platform, 40),
   };
+}
+
+function suppressDesktopLauncherForCanvasProvider(launcher, providerIds = new Set()) {
+  if (!launcher || !providerIds?.size) return false;
+  const appId = compactText(launcher.appId || launcher.id || "", 80).toLowerCase();
+  const category = compactText(launcher.category || "", 40).toLowerCase();
+  if (!appId) return false;
+  if (category === "agent-app") {
+    if (providerIds.has(appId)) return true;
+    if (appId === "claude" && providerIds.has("claude-ollama")) return true;
+  }
+  if (providerIds.has("shell") && (category === "terminal" || appId === "terminal" || appId === "iterm")) {
+    return true;
+  }
+  return false;
 }
 
 function summarizeAppInstance(instance = {}, mode) {
@@ -551,9 +570,14 @@ function summarizeAppInstance(instance = {}, mode) {
 
 function buildLaunchers(providers = [], appLaunchers = []) {
   const seen = new Set();
+  const providerLaunchers = arrayOrEmpty(providers).map(summarizeProviderLauncher).filter(Boolean);
+  const canvasProviderIds = new Set(providerLaunchers.map((launcher) => launcher.providerId).filter(Boolean));
+  const desktopLaunchers = arrayOrEmpty(appLaunchers)
+    .map(summarizeAppLauncher)
+    .filter((launcher) => launcher && !suppressDesktopLauncherForCanvasProvider(launcher, canvasProviderIds));
   return [
-    ...arrayOrEmpty(providers).map(summarizeProviderLauncher),
-    ...arrayOrEmpty(appLaunchers).map(summarizeAppLauncher),
+    ...providerLaunchers,
+    ...desktopLaunchers,
   ]
     .filter((launcher) => {
       const key = launcher?.id || "";

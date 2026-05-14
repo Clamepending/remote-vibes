@@ -3788,12 +3788,21 @@ function isAgentLauncher(card) {
   return String(card?.ref?.launcherKind || "") === "agent-provider" || Boolean(card?.ref?.providerId);
 }
 
+function isTerminalLauncher(card) {
+  return String(card?.ref?.providerId || "").trim() === "shell"
+    || (isAgentLauncher(card) && String(card?.ref?.category || "").trim().toLowerCase() === "terminal");
+}
+
 function launcherDockActionText(card) {
+  if (isTerminalLauncher(card)) return "Open in canvas";
   return isAgentLauncher(card) ? "Start in canvas" : "Open desktop";
 }
 
 function launcherDockAriaLabel(card) {
   const title = String(card.title || "launcher").trim() || "launcher";
+  if (isTerminalLauncher(card)) {
+    return `Open ${title} in the canvas`;
+  }
   if (isAgentLauncher(card)) {
     return `Start ${title} as a canvas chat`;
   }
