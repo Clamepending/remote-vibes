@@ -25,6 +25,7 @@ function normalizeInstance(value = {}) {
   if (!appId) return null;
   const launchedAt = compactText(value.launchedAt || value.createdAt || "", 40);
   const updatedAt = compactText(value.updatedAt || launchedAt || "", 40);
+  const dismissedAt = compactText(value.dismissedAt || "", 40);
   return {
     id: compactText(value.id || `appinst_${stableHash(`${appId}:${launchedAt}:${value.clientCommandId || ""}`)}`, 80),
     appId,
@@ -39,6 +40,7 @@ function normalizeInstance(value = {}) {
     launchCount: Math.max(1, Math.round(Number(value.launchCount || 1))),
     launchedAt,
     updatedAt,
+    dismissedAt,
   };
 }
 
@@ -50,6 +52,10 @@ function appInstanceIdentityMatches(entry = {}, candidate = {}) {
   const candidateUrl = String(candidate.url || "").trim();
   if (entryUrl || candidateUrl) return entryUrl === candidateUrl;
   return true;
+}
+
+function isDismissedInstance(instance = {}) {
+  return compactText(instance.status || "", 40).toLowerCase() === "dismissed" || Boolean(instance.dismissedAt);
 }
 
 function normalizePayload(payload = {}) {
@@ -102,9 +108,12 @@ export class AppInstanceStore {
     }
   }
 
-  listInstances({ limit = MAX_INSTANCES } = {}) {
+  listInstances({ limit = MAX_INSTANCES, includeDismissed = false } = {}) {
     const safeLimit = Math.max(0, Math.min(MAX_INSTANCES, Math.round(Number(limit) || MAX_INSTANCES)));
-    return clone(this.instances.slice(0, safeLimit));
+    const instances = includeDismissed
+      ? this.instances
+      : this.instances.filter((instance) => !isDismissedInstance(instance));
+    return clone(instances.slice(0, safeLimit));
   }
 
   async recordLaunch({ launcherId = "", launcher = {}, result = {}, clientCommandId = "", source = "local" } = {}) {
@@ -152,6 +161,34 @@ export class AppInstanceStore {
     this.instances = [
       instance,
       ...this.instances.filter((entry, index) => index !== existingIndex && entry.id !== instance.id),
+    ].slice(0, MAX_INSTANCES);
+    await this.save();
+    return clone(instance);
+  }
+
+  async dismissInstance(instanceId = "") {
+    const rawId = compactText(instanceId, 160);
+    if (!rawId) return null;
+    const idCandidates = new Set([
+      rawId,
+      rawId.replace(/^app-instance:/u, ""),
+    ]);
+    const index = this.instances.findIndex((entry) =>
+      idCandidates.has(entry.id) ||
+      Boolean(entry.clientCommandId && idCandidates.has(entry.clientCommandId)),
+    );
+    if (index < 0) return null;
+
+    const now = nowIso(this.now);
+    const instance = normalizeInstance({
+      ...this.instances[index],
+      status: "dismissed",
+      dismissedAt: now,
+      updatedAt: now,
+    });
+    this.instances = [
+      instance,
+      ...this.instances.filter((entry, entryIndex) => entryIndex !== index && entry.id !== instance.id),
     ].slice(0, MAX_INSTANCES);
     await this.save();
     return clone(instance);

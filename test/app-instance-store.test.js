@@ -81,6 +81,33 @@ test("AppInstanceStore compacts repeat desktop app launches by app and source", 
   }
 });
 
+test("AppInstanceStore dismisses app instances without deleting their record", async () => {
+  let tick = 0;
+  const now = () => new Date(Date.UTC(2026, 4, 13, 10, 3, tick += 1));
+  const { stateDir, store } = await makeStore(now);
+  try {
+    const instance = await store.recordLaunch({
+      launcherId: "cursor",
+      launcher: { id: "cursor", label: "Cursor", kind: "desktop-app", category: "editor" },
+      result: { launched: true },
+      clientCommandId: "cmd_1",
+      source: "local",
+    });
+
+    const dismissed = await store.dismissInstance(instance.id);
+    assert.equal(dismissed.id, instance.id);
+    assert.equal(dismissed.status, "dismissed");
+    assert.ok(dismissed.dismissedAt);
+    assert.equal(store.listInstances().length, 0);
+
+    const [hidden] = store.listInstances({ includeDismissed: true });
+    assert.equal(hidden.id, instance.id);
+    assert.equal(hidden.status, "dismissed");
+  } finally {
+    await rm(stateDir, { recursive: true, force: true });
+  }
+});
+
 test("AppInstanceStore keeps distinct URL-backed app instances separate", async () => {
   let tick = 0;
   const now = () => new Date(Date.UTC(2026, 4, 13, 10, 4, tick += 1));

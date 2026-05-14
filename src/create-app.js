@@ -2323,6 +2323,12 @@ export async function createVibeResearchApp({
       description: "Pairs a reachable Swarmlab node into the local account command relay.",
     }),
     buildRouteClass({
+      method: "DELETE",
+      path: "/api/node/apps/instances/:instanceId",
+      classification: "local-auth",
+      description: "Hides a launched local app card from the canvas without closing the app process.",
+    }),
+    buildRouteClass({
       method: "POST",
       path: "/api/terminate",
       classification: "local-auth",
@@ -4432,6 +4438,23 @@ export async function createVibeResearchApp({
       response.status(202).json(result);
     } catch (error) {
       response.status(error.statusCode || 400).json({ error: error.message || "Could not launch app on this node." });
+    }
+  });
+
+  app.delete("/api/node/apps/instances/:instanceId", requireLocalOrNodeToken, async (request, response) => {
+    try {
+      const instanceId = String(request.params.instanceId || "").trim();
+      const instance = await appInstanceStore.dismissInstance(instanceId);
+      if (!instance) {
+        throw buildHttpError("App instance not found.", 404);
+      }
+      response.json({
+        ok: true,
+        instance,
+        message: "App card dismissed from the canvas. The app process was not closed.",
+      });
+    } catch (error) {
+      response.status(error.statusCode || 400).json({ error: error.message || "Could not dismiss app instance." });
     }
   });
 

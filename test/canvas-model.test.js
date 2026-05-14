@@ -117,8 +117,23 @@ test("buildCanvasCards renders launched app instances from node snapshots", () =
   assert.equal(app?.title, "Cursor");
   assert.equal(app?.subtitle, "app instance");
   assert.equal(app?.ref.appInstance, true);
+  assert.equal(app?.ref.appInstanceId, "appinst_cursor");
   assert.equal(app?.ref.appId, "cursor");
   assert.equal(app?.ref.launchCommandId, "cmd_1");
+  assert.equal(cards.find((card) => card.type === "machine")?.detail, "0 sessions, 1 apps, 0 handoffs");
+});
+
+test("buildCanvasCards hides dismissed app instances from node snapshots", () => {
+  const cards = buildCanvasCards({
+    node: { id: "node-1", name: "Mac" },
+    appInstances: [
+      { id: "appinst_visible", appId: "cursor", label: "Cursor", status: "launched" },
+      { id: "appinst_hidden", appId: "terminal", label: "Terminal", status: "dismissed", dismissedAt: "2026-05-13T10:01:00.000Z" },
+    ],
+  });
+
+  assert.ok(cards.find((card) => card.id === "app-instance:appinst_visible"));
+  assert.equal(cards.find((card) => card.id === "app-instance:appinst_hidden"), undefined);
   assert.equal(cards.find((card) => card.type === "machine")?.detail, "0 sessions, 1 apps, 0 handoffs");
 });
 

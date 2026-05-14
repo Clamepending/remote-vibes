@@ -3006,6 +3006,7 @@ function renderCardAction(card) {
 
 function renderCardTools(card) {
   const launchLifecycleId = String(card.ref?.launchLifecycleId || "").trim();
+  const appInstanceId = String(card.ref?.appInstanceId || "").trim();
   const dismissLaunch = card.ref?.launchedApp && launchLifecycleId
     ? `
       <button
@@ -3019,9 +3020,23 @@ function renderCardTools(card) {
       </button>
     `
     : "";
+  const dismissAppInstance = card.ref?.appInstance && appInstanceId && !card.ref?.remoteUrl
+    ? `
+      <button
+        class="swarmlab-canvas-card-control"
+        type="button"
+        title="Clear app card from canvas"
+        aria-label="Clear ${escapeHtml(card.title || "app")} card from canvas without closing it"
+        data-swarmlab-canvas-dismiss-app-instance="${escapeHtml(appInstanceId)}"
+      >
+        ${renderIcon(X, { width: 13, height: 13 })}
+      </button>
+    `
+    : "";
   return `
     <span class="swarmlab-canvas-card-tools">
       ${dismissLaunch}
+      ${dismissAppInstance}
       <span class="swarmlab-canvas-drag-grip" aria-hidden="true">${renderIcon(Grip, { width: 16, height: 16 })}</span>
     </span>
   `;
@@ -4929,6 +4944,35 @@ function dismissLaunchLifecycle(button, root, { storage, refresh } = {}) {
   }
 }
 
+async function dismissAppInstanceCard(button, root, { fetchImpl, abortController, storage, refresh } = {}) {
+  const appInstanceId = String(button?.getAttribute("data-swarmlab-canvas-dismiss-app-instance") || "").trim();
+  if (!appInstanceId) return;
+  button.setAttribute("disabled", "true");
+  try {
+    await fetchJson(`/api/node/apps/instances/${encodeURIComponent(appInstanceId)}`, {
+      fetchImpl,
+      signal: abortController?.signal,
+      method: "DELETE",
+    });
+    const layoutKey = root?.dataset?.swarmlabCanvasStorageKey || "";
+    const cardId = button.closest("[data-swarmlab-canvas-card-id]")?.getAttribute("data-swarmlab-canvas-card-id") || "";
+    if (layoutKey && cardId) {
+      const layout = readLayout(storage, layoutKey);
+      delete layout[cardId];
+      writeLayout(storage, layoutKey, layout);
+    }
+    showCanvasNotice(root, "App card cleared from the canvas. The app was not closed.");
+    if (typeof refresh === "function") {
+      refresh();
+    }
+  } catch (error) {
+    button.removeAttribute("disabled");
+    const message = error?.message || "Could not clear app card.";
+    button.setAttribute("title", message);
+    showCanvasNotice(root, message);
+  }
+}
+
 async function launchCanvasLauncher(button, root, { fetchImpl, abortController, onOpenSession, refresh, storage }) {
   const cardId = button.getAttribute("data-swarmlab-canvas-launcher") || "";
   const card = root.__swarmlabCanvasCardsById?.[cardId];
@@ -5214,6 +5258,19 @@ function bindCanvasActions(root, options) {
       event.preventDefault();
       event.stopPropagation();
       dismissLaunchLifecycle(button, root, root.__swarmlabCanvasActionOptions || {});
+    });
+  }
+
+  if (!root.__swarmlabCanvasDismissAppInstanceBound) {
+    root.__swarmlabCanvasDismissAppInstanceBound = true;
+    root.addEventListener("click", (event) => {
+      const button = event.target instanceof Element
+        ? event.target.closest("[data-swarmlab-canvas-dismiss-app-instance]")
+        : null;
+      if (!(button instanceof HTMLButtonElement)) return;
+      event.preventDefault();
+      event.stopPropagation();
+      void dismissAppInstanceCard(button, root, root.__swarmlabCanvasActionOptions || {});
     });
   }
 

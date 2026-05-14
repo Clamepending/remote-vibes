@@ -77,7 +77,9 @@ test("local canvas view renders node snapshot cards and persists drag layout", a
     const remoteCommandsById = new Map();
     const postedAppLaunches = [];
     let extraLocalPorts = [];
+    let extraLocalAppInstances = [];
     const postedRemotePairs = [];
+    const dismissedAppInstanceIds = [];
     const deletedSessions = [];
     const directPairStarts = [];
     const directPairCompletes = [];
@@ -224,6 +226,7 @@ test("local canvas view renders node snapshot cards and persists drag layout", a
             })),
             ...extraLocalPorts,
           ],
+          appInstances: extraLocalAppInstances,
           launchers: [
             { id: "provider:codex", label: "Codex", kind: "agent-provider", providerId: "codex", defaultName: "Codex", available: true },
             { id: "app:cursor", label: "Cursor", kind: "desktop-app", appId: "cursor", available: true, platform: "darwin" },
@@ -622,6 +625,26 @@ test("local canvas view renders node snapshot cards and persists drag layout", a
             label: appId === "cursor" ? "Cursor" : appId,
             url: `https://canvas-app.example.test/${appId}/`,
           },
+        }),
+      });
+    });
+    await page.route(`${baseUrl}/api/node/apps/instances/**`, async (route) => {
+      const instanceId = decodeURIComponent(new URL(route.request().url()).pathname.split("/").pop() || "");
+      dismissedAppInstanceIds.push(instanceId);
+      extraLocalAppInstances = extraLocalAppInstances.map((instance) => instance.id === instanceId
+        ? {
+            ...instance,
+            status: "dismissed",
+            dismissedAt: "2026-05-13T10:04:00.000Z",
+            updatedAt: "2026-05-13T10:04:00.000Z",
+          }
+        : instance);
+      await route.fulfill({
+        status: 200,
+        contentType: "application/json",
+        body: JSON.stringify({
+          ok: true,
+          instance: extraLocalAppInstances.find((instance) => instance.id === instanceId) || { id: instanceId, status: "dismissed" },
         }),
       });
     });
@@ -1073,6 +1096,27 @@ test("local canvas view renders node snapshot cards and persists drag layout", a
       "a dismissed launched app should stay dismissed when its matching port later appears",
     );
     assert.equal(await page.locator(".swarmlab-canvas-card.is-launched-app").count(), 0);
+    extraLocalAppInstances = [
+      {
+        id: "appinst_cursor_card",
+        appId: "cursor",
+        label: "Cursor",
+        status: "launched",
+        source: "local",
+        clientCommandId: "cmd-live-instance",
+        updatedAt: "2026-05-13T10:03:00.000Z",
+      },
+    ];
+    await page.reload({ waitUntil: "domcontentloaded" });
+    await page.waitForSelector('[data-swarmlab-canvas-card-id="app-instance:appinst_cursor_card"]', { timeout: 10_000 });
+    const dismissAppInstance = page.locator(
+      '[data-swarmlab-canvas-card-id="app-instance:appinst_cursor_card"] [data-swarmlab-canvas-dismiss-app-instance="appinst_cursor_card"]',
+    );
+    assert.equal(await dismissAppInstance.count(), 1);
+    await dismissAppInstance.click();
+    await page.waitForFunction(() => !document.querySelector('[data-swarmlab-canvas-card-id="app-instance:appinst_cursor_card"]'));
+    assert.deepEqual(dismissedAppInstanceIds, ["appinst_cursor_card"]);
+    assert.equal(deletedSessions.length, 0, "clearing an app instance card must not delete agent sessions");
     await page.locator('[data-swarmlab-canvas-focus-region="mac-main"]').evaluate((button) => button.click());
     await page.waitForFunction(() => {
       const handle = document.querySelector('[data-swarmlab-canvas-card-id="session:session-1"] [data-swarmlab-card-drag-handle]');

@@ -257,6 +257,12 @@ function hasAnyStatus(status, statuses) {
   return statuses.has(normalized) || [...statuses].some((candidate) => normalized.includes(candidate));
 }
 
+function isVisibleAppInstance(instance = {}) {
+  return normalizeText(pickFirst(instance?.appId, instance?.launcherId, instance?.id)) &&
+    !hasAnyStatus(pickFirst(instance?.status, instance?.state), QUIET_STATUSES) &&
+    !instance?.dismissedAt;
+}
+
 function timestampMs(...values) {
   for (const value of values) {
     const text = normalizeText(value);
@@ -294,7 +300,8 @@ export function normalizeNodeSnapshot(payload) {
   const browserSessions = asArray(snapshot.browserSessions || snapshot.browsers || input.browserSessions);
   const actionItems = asArray(snapshot.actionItems || snapshot.approvals || input.actionItems || input.approvals);
   const ports = asArray(snapshot.ports || snapshot.apps || input.ports);
-  const appInstances = asArray(snapshot.appInstances || snapshot.applicationInstances || input.appInstances);
+  const appInstances = asArray(snapshot.appInstances || snapshot.applicationInstances || input.appInstances)
+    .filter(isVisibleAppInstance);
   const rawLaunchers = asArray(snapshot.launchers || snapshot.appLaunchers || snapshot.applicationLaunchers || input.launchers);
   const canvases = asArray(snapshot.canvases || snapshot.artifacts || input.canvases || input.artifacts);
   const resources = asArray(snapshot.resources || snapshot.monitors || snapshot.researchResources || input.resources || input.monitors);
@@ -353,7 +360,7 @@ export function normalizeNodeSnapshot(payload) {
       browserSessions: countFromSummary(snapshot, "browserSessions", browserSessions.length),
       approvals: countFromSummary(snapshot, "approvals", actionItems.length),
       ports: countFromSummary(snapshot, "ports", ports.length),
-      appInstances: countFromSummary(snapshot, "appInstances", appInstances.length),
+      appInstances: appInstances.length,
       launchers: countFromSummary(snapshot, "launchers", launchers.length),
       artifacts: countFromSummary(snapshot, "artifacts", canvases.length),
       resources: countFromSummary(snapshot, "resources", resources.length),
@@ -1042,6 +1049,7 @@ function appInstanceCard(instance, index, machineId) {
     ref: {
       machineId,
       appInstance: true,
+      appInstanceId: id,
       appId,
       launcherId: normalizeText(instance.launcherId || appId),
       launchCommandId: normalizeText(instance.clientCommandId || instance.commandId),
@@ -1056,7 +1064,7 @@ function appInstanceCard(instance, index, machineId) {
 
 function buildAppInstanceCards(instances, machineId) {
   return instances
-    .filter((instance) => normalizeText(pickFirst(instance?.appId, instance?.launcherId, instance?.id)))
+    .filter(isVisibleAppInstance)
     .sort((left, right) => timestampMs(right?.updatedAt, right?.launchedAt) - timestampMs(left?.updatedAt, left?.launchedAt))
     .slice(0, MAX_CANVAS_APP_INSTANCE_CARDS)
     .map((instance, index) => appInstanceCard(instance, index, machineId));

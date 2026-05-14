@@ -228,6 +228,45 @@ test("/api/node/apps/launch records launched app instances into node snapshots",
   }
 });
 
+test("/api/node/apps/instances/:instanceId dismisses app cards without deleting sessions", async () => {
+  const started = await startNodeRoutesApp({
+    appLaunchers: [{
+      id: "test-app",
+      label: "Test App",
+      kind: "desktop-app",
+      category: "test",
+      available: true,
+      launchMode: "command",
+      command: process.execPath,
+    }],
+  });
+  try {
+    const launchResponse = await fetch(`${started.baseUrl}/api/node/apps/launch`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ appId: "test-app", clientCommandId: "cmd-dismiss" }),
+    });
+    assert.equal(launchResponse.status, 202);
+    const launchBody = await launchResponse.json();
+
+    const dismissResponse = await fetch(`${started.baseUrl}/api/node/apps/instances/${encodeURIComponent(launchBody.instance.id)}`, {
+      method: "DELETE",
+    });
+    assert.equal(dismissResponse.status, 200);
+    const dismissBody = await dismissResponse.json();
+    assert.equal(dismissBody.ok, true);
+    assert.equal(dismissBody.instance.status, "dismissed");
+
+    const snapshotResponse = await fetch(`${started.baseUrl}/api/node/snapshot?mode=privileged`);
+    assert.equal(snapshotResponse.status, 200);
+    const snapshotBody = await snapshotResponse.json();
+    assert.equal(snapshotBody.snapshot.counts.appInstances, 0);
+    assert.equal(snapshotBody.snapshot.sessions.length, 0);
+  } finally {
+    await started.cleanup();
+  }
+});
+
 test("/api/node/remote-snapshot proxies redacted machine snapshots without leaking URL secrets", async () => {
   const remoteRequests = [];
   const started = await startNodeRoutesApp({
