@@ -4210,6 +4210,23 @@ function applyPendingCanvasCardFocus(root, storage) {
   return true;
 }
 
+function focusCanvasSessionCard(root, storage, sessionId, { focusComposer = true } = {}) {
+  const id = String(sessionId || "").trim();
+  if (!id) return false;
+  const directCardId = `session:${id}`;
+  let card = root.querySelector(`[data-swarmlab-canvas-card-id="${CSS.escape(directCardId)}"]`);
+  if (!(card instanceof HTMLElement)) {
+    card = root.querySelector(`.swarmlab-canvas-card[data-swarmlab-canvas-session-id="${CSS.escape(id)}"]`);
+  }
+  if (!(card instanceof HTMLElement)) {
+    queueCanvasCardFocus(root, directCardId, { focusComposer });
+    return false;
+  }
+  const cardId = card.getAttribute("data-swarmlab-canvas-card-id") || directCardId;
+  queueCanvasCardFocus(root, cardId, { focusComposer });
+  return applyPendingCanvasCardFocus(root, storage);
+}
+
 function getVisibleBoardBounds(root, viewport) {
   const rect = root.getBoundingClientRect();
   const safeViewport = sanitizeViewport(viewport);
@@ -5501,6 +5518,10 @@ function bindCanvasActions(root, options) {
       event.preventDefault();
       event.stopPropagation();
       const sessionId = button.getAttribute("data-swarmlab-canvas-open-session") || "";
+      if (sessionId && focusCanvasSessionCard(root, storage, sessionId, { focusComposer: true })) {
+        showCanvasNotice(root, "Focused session on the canvas.");
+        return;
+      }
       if (sessionId && typeof onOpenSession === "function") {
         onOpenSession(sessionId);
       }

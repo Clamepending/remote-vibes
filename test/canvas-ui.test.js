@@ -258,7 +258,8 @@ test("local canvas view renders node snapshot cards and persists drag layout", a
             {
               id: "deploy-pi",
               title: "Train on GPU deploy to Pi",
-              status: "planned",
+              status: "launched",
+              launchedSessionId: "session-1",
               target: { label: "home pi", sshTarget: "pi@home-raspi" },
               objectivePreview: "Train on the GPU cluster, transfer the model to the Pi, and run a smoke test.",
               steps: [
@@ -744,6 +745,15 @@ test("local canvas view renders node snapshot cards and persists drag layout", a
       await page.locator('[data-swarmlab-canvas-card-id="session:session-1"] .swarmlab-agent-history-meta').innerText(),
       /12 messages/,
     );
+    await page.locator('[data-swarmlab-canvas-card-id="handoff:deploy-pi"] [data-swarmlab-canvas-open-session]').evaluate((button) => button.click());
+    await page.waitForSelector('[data-swarmlab-canvas-card-id="session:session-1"][data-swarmlab-canvas-focused-card="true"]', { timeout: 10_000 });
+    assert.equal(new URL(page.url()).searchParams.get("view"), "canvas");
+    await page.waitForFunction(() => {
+      const active = document.activeElement;
+      return active instanceof HTMLTextAreaElement
+        && active.closest('[data-swarmlab-canvas-card-id="session:session-1"]');
+    });
+    assert.match(await page.locator("[data-swarmlab-canvas-notice]").innerText(), /Focused session on the canvas/);
     const localAgentSize = await page.locator('[data-swarmlab-canvas-card-id="session:session-1"]').evaluate((element) => ({
       width: Number.parseFloat(element.style.width || "0"),
       height: Number.parseFloat(element.style.height || "0"),
