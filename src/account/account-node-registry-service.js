@@ -341,13 +341,16 @@ function normalizeCommandPayload(operation, value = {}) {
     };
   }
   if (operation === "session.create") {
-    return {
+    const payload = {
       providerId: compactText(source.providerId || source.provider_id, 80),
       name: compactText(source.name || source.title || "Remote agent", 120),
       cwd: compactText(source.cwd || source.workspace || source.workspacePath, 600),
       initialPrompt: String(source.initialPrompt || source.prompt || "").trim().slice(0, 24_000),
-      initialPromptDelayMs: Number.isFinite(Number(source.initialPromptDelayMs)) ? Math.max(0, Math.min(60_000, Math.round(Number(source.initialPromptDelayMs)))) : undefined,
     };
+    if (Number.isFinite(Number(source.initialPromptDelayMs))) {
+      payload.initialPromptDelayMs = Math.max(0, Math.min(60_000, Math.round(Number(source.initialPromptDelayMs))));
+    }
+    return payload;
   }
   if (operation === "app.launch") {
     const appId = compactText(source.appId || source.app_id || source.launcherId || source.launcher_id || source.id, 80);
