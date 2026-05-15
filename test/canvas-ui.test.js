@@ -1286,6 +1286,15 @@ test("local canvas view renders node snapshot cards and persists drag layout", a
       gpuVisibleWidth > 80 && gpuVisibleHeight > 80,
       "view-only machine regions should be focusable from the machine rail even without launchers",
     );
+    const viewOnlyLaunchState = page.locator("[data-swarmlab-canvas-launch-unavailable]");
+    await viewOnlyLaunchState.waitFor({ timeout: 10_000 });
+    assert.match(await viewOnlyLaunchState.innerText(), /View only/);
+    assert.match(await viewOnlyLaunchState.innerText(), /needs pairing before launches/);
+    assert.equal(
+      await page.locator('[data-swarmlab-canvas-launcher^="remote:gpu-cluster:"]').count(),
+      0,
+      "view-only machines should not expose fake runnable launchers",
+    );
 
     await page.click('[data-swarmlab-canvas-focus-region="mac-main"]');
     await page.waitForSelector('[data-swarmlab-canvas-launcher="launcher:app:cursor"]', { timeout: 10_000 });

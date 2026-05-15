@@ -10,6 +10,7 @@ import {
   Grip,
   HardDrive,
   Image as ImageIcon,
+  Lock,
   Maximize2,
   MessageSquare,
   Minus,
@@ -592,6 +593,35 @@ function injectCanvasStyles(documentRef = document) {
   color: var(--canvas-faint);
   font-size: 10px;
   white-space: nowrap;
+}
+.swarmlab-canvas-launch-unavailable {
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+  min-height: 36px;
+  min-width: min(280px, 48vw);
+  padding: 0 6px 0 9px;
+  border: 1px solid rgba(232, 222, 206, 0.1);
+  border-radius: 7px;
+  background: rgba(255, 255, 255, 0.035);
+  color: var(--canvas-muted);
+  font-size: 9.5px;
+  white-space: nowrap;
+}
+.swarmlab-canvas-launch-unavailable strong {
+  color: var(--canvas-text);
+  font-size: 10px;
+}
+.swarmlab-canvas-launch-unavailable span {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.swarmlab-canvas-launch-unavailable .swarmlab-canvas-button {
+  min-height: 28px;
+  margin-left: auto;
+  padding: 0 8px;
+  font-size: 10px;
 }
 .swarmlab-canvas-stage {
   position: relative;
@@ -3141,7 +3171,10 @@ function renderCardTools(card) {
   const launchLifecycleId = String(card.ref?.launchLifecycleId || "").trim();
   const appInstanceId = String(card.ref?.appInstanceId || "").trim();
   const canDismissAppInstance = card.ref?.appInstance && appInstanceId && (!card.ref?.remoteUrl || card.ref?.remoteNodeId);
-  const dismissLaunch = card.ref?.launchedApp && launchLifecycleId
+  const canDismissLaunchLifecycle = launchLifecycleId && (
+    card.ref?.launchedApp || (card.type === "app" && !appInstanceId)
+  );
+  const dismissLaunch = canDismissLaunchLifecycle
     ? `
       <button
         class="swarmlab-canvas-card-control"
@@ -4002,6 +4035,28 @@ function renderLauncherDockEmpty(activeTitle) {
   return `<div class="swarmlab-canvas-launch-empty">No launchers on ${escapeHtml(activeTitle)}</div>`;
 }
 
+function isViewOnlyRemoteRegion(region, localMachineId = "") {
+  return Boolean(region?.remoteUrl && !region?.remoteNodeId && region.id !== localMachineId);
+}
+
+function renderLauncherDockUnavailable(region, activeTitle) {
+  const pairAction = region?.remoteUrl
+    ? `
+      <button class="swarmlab-canvas-button" type="button" data-swarmlab-canvas-pair-region="${escapeHtml(region.id)}" title="Pair this machine to enable remote launches">
+        ${renderIcon(HardDrive, { width: 13, height: 13 })}
+        <span>Pair</span>
+      </button>
+    `
+    : "";
+  return `
+    <div class="swarmlab-canvas-launch-unavailable" data-swarmlab-canvas-launch-unavailable>
+      ${renderIcon(Lock, { width: 13, height: 13 })}
+      <span><strong>View only</strong> ${escapeHtml(activeTitle)} needs pairing before launches.</span>
+      ${pairAction}
+    </div>
+  `;
+}
+
 function renderLauncherDock(launcherCards, regions = [], localMachineId = "", selectedMachineId = "") {
   if (!launcherCards.length) return "";
   const regionsById = new Map(regions.map((region) => [region.id, region]));
@@ -4011,6 +4066,7 @@ function renderLauncherDock(launcherCards, regions = [], localMachineId = "", se
   const activeCards = groups.get(activeMachineId) || [];
   const activeRegion = regionsById.get(activeMachineId);
   const activeTitle = regionDisplayName(activeRegion, activeMachineId) || activeMachineId;
+  const viewOnly = isViewOnlyRemoteRegion(activeRegion, localMachineId);
   return `
     <nav class="swarmlab-canvas-launch-dock" data-swarmlab-canvas-launch-dock aria-label="Launch agents and apps on ${escapeHtml(activeTitle)}">
       <div class="swarmlab-canvas-launch-title" title="${escapeHtml(`Launch agents and apps on ${activeTitle}`)}">
@@ -4023,9 +4079,11 @@ function renderLauncherDock(launcherCards, regions = [], localMachineId = "", se
           <span>${escapeHtml(activeTitle)}</span>
         </div>
         <div class="swarmlab-canvas-launch-items">
-          ${activeCards.length ? renderLauncherDockItems(activeCards) : renderLauncherDockEmpty(activeTitle)}
+          ${viewOnly
+            ? renderLauncherDockUnavailable(activeRegion, activeTitle)
+            : activeCards.length ? renderLauncherDockItems(activeCards) : renderLauncherDockEmpty(activeTitle)}
         </div>
-        ${renderLauncherDockMore(activeCards)}
+        ${viewOnly ? "" : renderLauncherDockMore(activeCards)}
       </section>
     </nav>
   `;
