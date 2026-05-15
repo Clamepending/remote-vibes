@@ -10,6 +10,7 @@ const CONTROL_ROUTE_PATTERNS = [
   { method: "GET", pattern: /^\/api\/node\/account\/status\/?$/ },
   { method: "GET", pattern: /^\/api\/node\/account\/nodes\/?$/ },
   { method: "GET", pattern: /^\/api\/node\/remote-snapshot\/?$/ },
+  { method: "GET", pattern: /^\/api\/node\/remote-session-narrative\/?$/ },
   { method: "POST", pattern: /^\/api\/node\/remote-pair\/?$/ },
   { method: "POST", pattern: /^\/api\/node\/account\/(?:pair\/start|pair\/complete|heartbeat|disconnect|commands\/poll)\/?$/ },
   { method: "POST", pattern: /^\/api\/files\/(?:upload|folder|file)\/?$/ },

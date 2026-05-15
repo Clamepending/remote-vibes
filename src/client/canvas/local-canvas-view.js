@@ -3488,11 +3488,19 @@ function showCanvasNotice(root, message) {
 
 async function loadAgentNarrative(root, card, { fetchImpl, abortController }) {
   const sessionId = String(card?.dataset?.swarmlabCanvasSessionId || "").trim();
+  const remoteNodeId = String(card?.dataset?.swarmlabCanvasRemoteNodeId || "").trim();
+  const isRemote = card?.classList?.contains("is-remote");
   if (!sessionId || !(card instanceof HTMLElement)) {
     return;
   }
+  if (isRemote && !remoteNodeId) {
+    return;
+  }
   try {
-    const payload = await fetchJson(`/api/sessions/${encodeURIComponent(sessionId)}/narrative`, {
+    const narrativeUrl = remoteNodeId
+      ? `/api/node/remote-session-narrative?nodeId=${encodeURIComponent(remoteNodeId)}&sessionId=${encodeURIComponent(sessionId)}`
+      : `/api/sessions/${encodeURIComponent(sessionId)}/narrative`;
+    const payload = await fetchJson(narrativeUrl, {
       fetchImpl,
       signal: abortController.signal,
     });
@@ -3500,6 +3508,9 @@ async function loadAgentNarrative(root, card, { fetchImpl, abortController }) {
     updateAgentFeed(card, renderNarrativeEntries(payload.narrative));
   } catch (error) {
     if (abortController.signal.aborted) return;
+    if (remoteNodeId) {
+      return;
+    }
     updateAgentFeed(card, `
       <div class="swarmlab-agent-message is-error">
         <span>Native chat unavailable</span>
@@ -3518,7 +3529,7 @@ function clearAgentNarrativePoll(root) {
 }
 
 function refreshAgentNarratives(root, options) {
-  root.querySelectorAll(".swarmlab-canvas-card.is-agent:not(.is-remote)[data-swarmlab-canvas-session-id]").forEach((card) => {
+  root.querySelectorAll(".swarmlab-canvas-card.is-agent[data-swarmlab-canvas-session-id]").forEach((card) => {
     void loadAgentNarrative(root, card, options);
   });
 }

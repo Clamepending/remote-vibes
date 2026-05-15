@@ -436,6 +436,87 @@ async function fetchRemoteNodeSnapshotForCanvas({
   }
 }
 
+function sanitizeRemoteNarrativeEntry(entry = {}, index = 0) {
+  const source = entry && typeof entry === "object" && !Array.isArray(entry) ? entry : {};
+  const pickText = (value, max = 4_000) => String(value || "").slice(0, max);
+  return {
+    id: String(source.id || `remote-entry-${index + 1}`).trim().slice(0, 240),
+    seq: Number.isFinite(Number(source.seq)) ? Number(source.seq) : undefined,
+    kind: String(source.kind || source.role || "").trim().slice(0, 80),
+    role: String(source.role || source.kind || "").trim().slice(0, 80),
+    label: String(source.label || "").trim().slice(0, 120),
+    status: String(source.status || "").trim().slice(0, 80),
+    statusText: pickText(source.statusText, 1_000),
+    text: pickText(source.text),
+    summary: pickText(source.summary),
+    outputPreview: pickText(source.outputPreview),
+    meta: pickText(source.meta, 1_000),
+    timestamp: String(source.timestamp || source.createdAt || source.updatedAt || "").trim().slice(0, 120),
+    truncated: Boolean(source.truncated),
+  };
+}
+
+function sanitizeRemoteNarrative(value = {}) {
+  const source = value && typeof value === "object" && !Array.isArray(value) ? value : {};
+  const entries = Array.isArray(source.entries) ? source.entries : [];
+  return {
+    sourceLabel: String(source.sourceLabel || "Remote native chat").trim().slice(0, 160),
+    providerId: String(source.providerId || "").trim().slice(0, 80),
+    updatedAt: String(source.updatedAt || source.generatedAt || "").trim().slice(0, 120),
+    entries: entries.slice(-48).map((entry, index) => sanitizeRemoteNarrativeEntry(entry, index)),
+  };
+}
+
+async function fetchRemoteSessionNarrativeForCanvas({
+  baseUrl,
+  sessionId,
+  fetchImpl = globalThis.fetch,
+  timeoutMs = REMOTE_NODE_SNAPSHOT_FETCH_TIMEOUT_MS,
+} = {}) {
+  const normalizedBaseUrl = normalizeFleetNodeUrl(baseUrl);
+  const normalizedSessionId = String(sessionId || "").trim();
+  if (!normalizedBaseUrl) {
+    throw buildHttpError("Remote node URL is required.", 400);
+  }
+  if (!normalizedSessionId) {
+    throw buildHttpError("Remote session id is required.", 400);
+  }
+  if (typeof fetchImpl !== "function") {
+    throw buildHttpError("Remote node fetch is not available.", 500);
+  }
+
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), timeoutMs);
+  try {
+    const remotePath = `/api/sessions/${encodeURIComponent(normalizedSessionId)}/narrative`;
+    const upstream = await fetchImpl(new URL(remotePath, normalizedBaseUrl).toString(), {
+      headers: { Accept: "application/json" },
+      signal: controller.signal,
+    });
+    let payload = null;
+    try {
+      payload = await upstream.json();
+    } catch {
+      payload = null;
+    }
+    if (!upstream.ok) {
+      throw buildHttpError(payload?.error || `Remote native chat failed with status ${upstream.status}.`, 502);
+    }
+    const narrative = sanitizeRemoteNarrative(payload?.narrative || payload);
+    return { baseUrl: normalizedBaseUrl, sessionId: normalizedSessionId, narrative };
+  } catch (error) {
+    if (error?.statusCode) {
+      throw error;
+    }
+    const message = error?.name === "AbortError"
+      ? "Remote native chat timed out."
+      : "Could not fetch remote native chat.";
+    throw buildHttpError(message, 502);
+  } finally {
+    clearTimeout(timer);
+  }
+}
+
 async function postRemoteNodeJson({
   baseUrl,
   path: remotePath,
@@ -2315,6 +2396,12 @@ export async function createVibeResearchApp({
       path: "/api/node/remote-snapshot",
       classification: "local-auth",
       description: "Fetches a redacted snapshot from another Swarmlab node through this node.",
+    }),
+    buildRouteClass({
+      method: "GET",
+      path: "/api/node/remote-session-narrative",
+      classification: "local-auth",
+      description: "Fetches native chat history from a paired Swarmlab node through this node.",
     }),
     buildRouteClass({
       method: "POST",
@@ -4428,6 +4515,46 @@ export async function createVibeResearchApp({
         return;
       }
       response.status(error.statusCode || 500).json({ error: error.message || "Could not fetch remote node snapshot." });
+    }
+  });
+
+  app.get("/api/node/remote-session-narrative", requireLocalOrNodeToken, async (request, response) => {
+    try {
+      const owner = accountOwnerIdFromRequest(request);
+      const nodeId = String(request.query.nodeId || request.query.remoteNodeId || "").trim();
+      const sessionId = String(request.query.sessionId || "").trim();
+      if (!nodeId) {
+        throw buildHttpError("Remote node id is required.", 400);
+      }
+      if (!sessionId) {
+        throw buildHttpError("Remote session id is required.", 400);
+      }
+      const node = accountNodeRegistryService.listNodesForOwner(owner).find((candidate) =>
+        String(candidate.nodeId || "") === nodeId || String(candidate.id || "") === nodeId
+      );
+      if (!node) {
+        throw buildHttpError("Paired remote node not found.", 404);
+      }
+      if (!node.baseUrl) {
+        throw buildHttpError("Paired remote node has no reachable URL.", 400);
+      }
+      response.setHeader("Cache-Control", "no-store");
+      const result = await fetchRemoteSessionNarrativeForCanvas({
+        baseUrl: node.baseUrl,
+        sessionId,
+        fetchImpl: remoteNodeFetchImpl,
+      });
+      response.json({
+        ...result,
+        node: {
+          id: node.id,
+          nodeId: node.nodeId,
+          displayName: node.displayName || node.label || "",
+          status: node.status || "",
+        },
+      });
+    } catch (error) {
+      response.status(error.statusCode || 500).json({ error: error.message || "Could not fetch remote native chat." });
     }
   });
 

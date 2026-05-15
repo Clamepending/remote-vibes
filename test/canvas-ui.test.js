@@ -89,6 +89,7 @@ test("local canvas view renders node snapshot cards and persists drag layout", a
     const postedHandoffJobs = [];
     const remoteSnapshotHits = new Map();
     const directSnapshotHits = new Map();
+    const remoteNarrativeRequests = [];
     const extraRemoteSessions = new Map();
     const extraRemotePorts = new Map();
     const extraRemoteAppInstances = new Map();
@@ -385,6 +386,42 @@ test("local canvas view renders node snapshot cards and persists drag layout", a
         contentType: "application/json",
         body: JSON.stringify({
           command,
+        }),
+      });
+    });
+    await page.route(`${baseUrl}/api/node/remote-session-narrative**`, async (route) => {
+      const url = new URL(route.request().url());
+      const nodeId = url.searchParams.get("nodeId") || "";
+      const sessionId = url.searchParams.get("sessionId") || "";
+      remoteNarrativeRequests.push({ nodeId, sessionId });
+      if (nodeId !== "account-node" || sessionId !== "account-box-agent-1") {
+        await route.fulfill({
+          status: 404,
+          contentType: "application/json",
+          body: JSON.stringify({ error: "not paired for native chat" }),
+        });
+        return;
+      }
+      await route.fulfill({
+        status: 200,
+        contentType: "application/json",
+        body: JSON.stringify({
+          node: { nodeId: "account-node", displayName: "Account Workstation", status: "online" },
+          sessionId,
+          narrative: {
+            sourceLabel: "Remote native chat",
+            providerId: "codex",
+            updatedAt: "2026-05-12T12:03:00.000Z",
+            entries: [
+              {
+                id: "remote-entry-1",
+                kind: "assistant",
+                label: "Agent",
+                text: "Remote native history from account node.",
+                timestamp: "2026-05-12T12:03:00.000Z",
+              },
+            ],
+          },
         }),
       });
     });
@@ -1210,6 +1247,19 @@ test("local canvas view renders node snapshot cards and persists drag layout", a
     await page.waitForSelector('[data-swarmlab-canvas-card-id="remote:account-box:session:account-box-agent-1"] [data-swarmlab-agent-composer]', { timeout: 10_000 });
     const remoteComposerForm = page.locator('[data-swarmlab-canvas-card-id="remote:account-box:session:account-box-agent-1"] [data-swarmlab-agent-composer]');
     assert.equal(await remoteComposerForm.getAttribute("data-swarmlab-agent-remote-node-id"), "account-node");
+    await page.waitForFunction(() =>
+      document
+        .querySelector('[data-swarmlab-canvas-card-id="remote:account-box:session:account-box-agent-1"]')
+        ?.textContent
+        ?.includes("Remote native history from account node.")
+    );
+    assert.ok(remoteNarrativeRequests.some((request) =>
+      request.nodeId === "account-node" && request.sessionId === "account-box-agent-1"
+    ));
+    assert.ok(
+      remoteNarrativeRequests.every((request) => request.nodeId === "account-node"),
+      "view-only remote machines must not request native chat history",
+    );
     const remoteComposer = remoteComposerForm.locator('textarea[name="input"]');
     await remoteComposer.fill("continue remote from canvas");
     await remoteComposer.press("Enter");

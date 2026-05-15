@@ -695,6 +695,24 @@ test("/api/node/remote-pair pairs a reachable fleet URL into the command relay",
       const payload = await response.json();
       return new Response(JSON.stringify({ heartbeat: payload }), { status: response.status });
     }
+    if (requestUrl.pathname === "/api/sessions/remote-session-1/narrative") {
+      return new Response(JSON.stringify({
+        narrative: {
+          sourceLabel: "Remote native chat",
+          providerId: "codex",
+          updatedAt: "2026-05-12T21:02:00.000Z",
+          entries: [
+            {
+              id: "remote-entry-1",
+              kind: "assistant",
+              label: "Agent",
+              text: "Remote transcript synced through paired node.",
+              timestamp: "2026-05-12T21:02:00.000Z",
+            },
+          ],
+        },
+      }), { status: 200, headers: { "Content-Type": "application/json" } });
+    }
     return new Response(JSON.stringify({ error: "unexpected remote route" }), { status: 404 });
   };
 
@@ -722,6 +740,14 @@ test("/api/node/remote-pair pairs a reachable fleet URL into the command relay",
     assert.equal(remoteNode.baseUrl, "https://remote-gpu.tailnet.test");
     assert.equal(remoteNode.capabilities.gpuCount, 8);
     assert.doesNotMatch(JSON.stringify(nodesBody), /pair-secret|slnode_|grant_|\/private|\/complete|\/heartbeat/);
+
+    const narrativeResponse = await fetch(`${started.baseUrl}/api/node/remote-session-narrative?nodeId=${encodeURIComponent(remoteIdentity.nodeId)}&sessionId=remote-session-1`);
+    assert.equal(narrativeResponse.status, 200);
+    const narrativeBody = await narrativeResponse.json();
+    assert.equal(narrativeBody.node.nodeId, remoteIdentity.nodeId);
+    assert.equal(narrativeBody.baseUrl, "https://remote-gpu.tailnet.test");
+    assert.equal(narrativeBody.narrative.sourceLabel, "Remote native chat");
+    assert.equal(narrativeBody.narrative.entries[0].text, "Remote transcript synced through paired node.");
   } finally {
     await started.cleanup();
     await rm(remoteIdentityStore.stateDir, { recursive: true, force: true });
