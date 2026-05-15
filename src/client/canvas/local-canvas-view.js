@@ -1681,7 +1681,10 @@ async function fetchJson(url, { fetchImpl = fetch, signal, method = "GET", body 
   const isJson = response.headers.get("content-type")?.includes("application/json");
   const payload = isJson ? await response.json() : null;
   if (!response.ok) {
-    throw new Error(payload?.error || `Request failed with status ${response.status}`);
+    const error = new Error(payload?.error || `Request failed with status ${response.status}`);
+    error.status = response.status;
+    error.payload = payload || null;
+    throw error;
   }
   return payload;
 }
@@ -5487,6 +5490,7 @@ async function pairCanvasRegion(button, root, { fetchImpl, abortController, refr
   const previousHtml = button.innerHTML;
   button.textContent = "Pairing...";
   try {
+    let serverPairError = null;
     try {
       await fetchJson(REMOTE_NODE_PAIR_URL, {
         fetchImpl,
@@ -5498,6 +5502,7 @@ async function pairCanvasRegion(button, root, { fetchImpl, abortController, refr
         },
       });
     } catch (serverError) {
+      serverPairError = serverError;
       button.textContent = "Pairing from here...";
       try {
         await pairCanvasRegionFromBrowser(region, {
@@ -5505,7 +5510,12 @@ async function pairCanvasRegion(button, root, { fetchImpl, abortController, refr
           signal: abortController.signal,
         });
       } catch (browserError) {
-        const error = new Error(browserError?.message || serverError?.message || "Could not pair this machine.");
+        const pairingCommand = String(serverPairError?.payload?.pairingCommand || "").trim();
+        const message = pairingCommand
+          ? `${serverPairError?.message || "Remote node requires local approval."} Run on the remote machine: ${pairingCommand}`
+          : (browserError?.message || serverError?.message || "Could not pair this machine.");
+        const error = new Error(message);
+        error.payload = serverPairError?.payload || null;
         error.cause = browserError || serverError;
         throw error;
       }

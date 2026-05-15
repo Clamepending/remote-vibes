@@ -624,6 +624,17 @@ test("/api/node/remote-pair pairs a reachable fleet URL into the command relay",
     if (requestUrl.origin !== "https://remote-gpu.tailnet.test") {
       return new Response(JSON.stringify({ error: "unexpected remote host" }), { status: 404 });
     }
+    const requiresNodeToken = [
+      "/api/node/account/pair/start",
+      "/api/node/account/pair/complete",
+      "/api/node/account/heartbeat",
+    ].includes(requestUrl.pathname);
+    if (requiresNodeToken && init.headers?.["X-Swarmlab-Node-Token"] !== "remote-node-token") {
+      return new Response(JSON.stringify({
+        error: "This Swarmlab route requires local access or a valid node token.",
+        code: "SWARMLAB_LOCAL_OR_NODE_AUTH_REQUIRED",
+      }), { status: 403 });
+    }
     if (requestUrl.pathname === "/api/node/account/pair/start") {
       const accountBaseUrl = body.accountBaseUrl;
       const response = await fetch(new URL("/api/account/nodes/pairing", accountBaseUrl).toString(), {
@@ -724,6 +735,7 @@ test("/api/node/remote-pair pairs a reachable fleet URL into the command relay",
       body: JSON.stringify({
         baseUrl: "https://remote-gpu.tailnet.test/private?token=pair-secret",
         label: "Remote GPU",
+        nodeToken: "remote-node-token",
       }),
     });
     assert.equal(pairResponse.status, 200);
@@ -751,6 +763,42 @@ test("/api/node/remote-pair pairs a reachable fleet URL into the command relay",
   } finally {
     await started.cleanup();
     await rm(remoteIdentityStore.stateDir, { recursive: true, force: true });
+  }
+});
+
+test("/api/node/remote-pair returns a headless pairing command when the remote node requires local approval", async () => {
+  const remoteFetchImpl = async (url) => {
+    const requestUrl = new URL(url);
+    if (requestUrl.origin !== "https://remote-gpu.tailnet.test") {
+      return new Response(JSON.stringify({ error: "unexpected remote host" }), { status: 404 });
+    }
+    return new Response(JSON.stringify({
+      error: "This Swarmlab route requires local access or a valid node token.",
+      code: "SWARMLAB_LOCAL_OR_NODE_AUTH_REQUIRED",
+    }), { status: 403, headers: { "Content-Type": "application/json" } });
+  };
+
+  const started = await startNodeRoutesApp({ remoteNodeFetchImpl: remoteFetchImpl });
+  try {
+    const pairResponse = await fetch(`${started.baseUrl}/api/node/remote-pair`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        baseUrl: "https://remote-gpu.tailnet.test/private?token=pair-secret",
+        label: "Remote GPU",
+      }),
+    });
+    assert.equal(pairResponse.status, 409);
+    const pairBody = await pairResponse.json();
+    assert.equal(pairBody.code, "SWARMLAB_REMOTE_PAIR_REQUIRES_REMOTE_APPROVAL");
+    assert.equal(pairBody.baseUrl, "https://remote-gpu.tailnet.test");
+    assert.match(pairBody.pairingCommand, /swarmlab/);
+    assert.match(pairBody.pairingCommand, /pair/);
+    assert.match(pairBody.pairingCommand, /--account-url/);
+    assert.match(pairBody.pairingCommand, /--label/);
+    assert.doesNotMatch(JSON.stringify(pairBody), /pair-secret|slnode_|grant_/);
+  } finally {
+    await started.cleanup();
   }
 });
 

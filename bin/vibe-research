@@ -559,7 +559,9 @@ uninstall_vibe_research() {
 }
 
 pair_vibe_research() {
-  local app_dir url endpoint response
+  local app_dir url endpoint response account_url label payload
+  account_url="$1"
+  label="$2"
   app_dir="$(resolve_app_dir)"
   if [ ! -x "$app_dir/start.sh" ]; then
     fail "Could not find Swarmlab at $app_dir. Re-run the installer, or set SWARMLAB_HOME (or VIBE_RESEARCH_HOME) to the app checkout."
@@ -568,10 +570,20 @@ pair_vibe_research() {
   "$app_dir/start.sh" >/dev/null
   url="$(browser_url)"
   endpoint="${url%/}/api/node/account/pair/start"
+  payload="$(SWARMLAB_PAIR_LABEL="$label" SWARMLAB_PAIR_ACCOUNT_URL="$account_url" node -e '
+const label = String(process.env.SWARMLAB_PAIR_LABEL || "").trim();
+const accountBaseUrl = String(process.env.SWARMLAB_PAIR_ACCOUNT_URL || "").trim();
+const payload = { label: label || process.env.HOSTNAME || "Swarmlab node" };
+if (accountBaseUrl) {
+  payload.accountBaseUrl = accountBaseUrl;
+  payload.appBaseUrl = accountBaseUrl;
+}
+process.stdout.write(JSON.stringify(payload));
+')" || fail "Could not prepare pairing request."
   response="$(curl -fsS -X POST "$endpoint" \
     -H 'Content-Type: application/json' \
     -H 'X-Vibe-Research-API: 1' \
-    --data "{\"label\":\"$(hostname 2>/dev/null || printf 'Swarmlab node')\"}" 2>/dev/null)" || {
+    --data "$payload" 2>/dev/null)" || {
       fail "Could not start Vibe account pairing. Open $url and use Settings > account instead."
     }
 
@@ -667,6 +679,9 @@ Options:
 
 Pairing:
   pair          Start account pairing and print the Vibe account URL/code.
+  --account-url URL
+                Pair this machine with a specific Vibe Research account host.
+  --label NAME  Display name to show for this machine during pairing.
 
 Uninstall:
   uninstall      Stop Swarmlab and remove the terminal command and app checkout.
@@ -680,6 +695,8 @@ command_name="launch"
 open_after_start=1
 print_url_only=0
 uninstall_purge=0
+pair_account_url=""
+pair_label=""
 
 case "${1:-}" in
   uninstall)
@@ -721,6 +738,18 @@ while [ "$#" -gt 0 ]; do
         print_usage
         exit 0
         ;;
+      --account-url)
+        [ "$command_name" = "pair" ] || fail "Unknown option: $1"
+        [ "$#" -gt 1 ] || fail "--account-url requires a URL"
+        shift
+        pair_account_url="$1"
+        ;;
+      --label)
+        [ "$command_name" = "pair" ] || fail "Unknown option: $1"
+        [ "$#" -gt 1 ] || fail "--label requires a name"
+        shift
+        pair_label="$1"
+        ;;
       *)
         if [ "$command_name" = "pair" ]; then
           fail "Unknown pair option: $1"
@@ -739,7 +768,7 @@ if [ "$command_name" = "uninstall" ]; then
 fi
 
 if [ "$command_name" = "pair" ]; then
-  pair_vibe_research
+  pair_vibe_research "$pair_account_url" "$pair_label"
   exit 0
 fi
 

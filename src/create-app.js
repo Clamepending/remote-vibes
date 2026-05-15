@@ -521,6 +521,7 @@ async function postRemoteNodeJson({
   baseUrl,
   path: remotePath,
   body = {},
+  nodeToken = "",
   fetchImpl = globalThis.fetch,
   timeoutMs = 30_000,
 } = {}) {
@@ -534,12 +535,14 @@ async function postRemoteNodeJson({
 
   const controller = new AbortController();
   const timer = setTimeout(() => controller.abort(), timeoutMs);
+  const normalizedNodeToken = String(nodeToken || "").trim();
   try {
     const upstream = await fetchImpl(new URL(remotePath, normalizedBaseUrl).toString(), {
       method: "POST",
       headers: {
         Accept: "application/json",
         "Content-Type": "application/json",
+        ...(normalizedNodeToken ? { "X-Swarmlab-Node-Token": normalizedNodeToken } : {}),
         "User-Agent": "swarmlab",
       },
       body: JSON.stringify(body || {}),
@@ -552,7 +555,13 @@ async function postRemoteNodeJson({
       payload = null;
     }
     if (!upstream.ok) {
-      throw buildHttpError(payload?.error || `Remote node request failed with status ${upstream.status}.`, 502);
+      const error = buildHttpError(
+        payload?.error || `Remote node request failed with status ${upstream.status}.`,
+        payload?.code === "SWARMLAB_LOCAL_OR_NODE_AUTH_REQUIRED" ? 409 : 502,
+      );
+      error.upstreamStatusCode = upstream.status;
+      error.upstreamCode = payload?.code || "";
+      throw error;
     }
     return payload || {};
   } catch (error) {
@@ -566,6 +575,68 @@ async function postRemoteNodeJson({
   } finally {
     clearTimeout(timer);
   }
+}
+
+function extractRemoteNodeTokenFromUrl(value) {
+  const raw = String(value || "").trim();
+  if (!raw) return "";
+  try {
+    const parsed = new URL(/^[a-z][a-z0-9+.-]*:/iu.test(raw) ? raw : `https://${raw}`);
+    for (const key of [
+      "nodeToken",
+      "node_token",
+      "swarmlabNodeToken",
+      "swarmlab_node_token",
+      "vibeResearchNodeToken",
+      "vibe_research_node_token",
+      "localApiToken",
+      "local_api_token",
+    ]) {
+      const token = String(parsed.searchParams.get(key) || "").trim();
+      if (token) return token;
+    }
+  } catch {
+    return "";
+  }
+  return "";
+}
+
+function extractRemoteNodeToken(input = {}) {
+  const fields = [
+    input.nodeToken,
+    input.node_token,
+    input.remoteNodeToken,
+    input.remote_node_token,
+    input.swarmlabNodeToken,
+    input.swarmlab_node_token,
+    input.vibeResearchNodeToken,
+    input.vibe_research_node_token,
+    input.localApiToken,
+    input.local_api_token,
+  ];
+  for (const field of fields) {
+    const token = String(field || "").trim();
+    if (token) return token;
+  }
+  return extractRemoteNodeTokenFromUrl(input.baseUrl || input.url || input.href);
+}
+
+function buildRemotePairingCommand({ accountBaseUrl = "", label = "" } = {}) {
+  const args = ["swarmlab", "pair"];
+  const normalizedAccountUrl = normalizeFleetNodeUrl(accountBaseUrl);
+  if (normalizedAccountUrl) {
+    args.push("--account-url", normalizedAccountUrl);
+  }
+  const normalizedLabel = String(label || "").replace(/\s+/g, " ").trim().slice(0, 120);
+  if (normalizedLabel) {
+    args.push("--label", normalizedLabel);
+  }
+  return args.map(shellQuote).join(" ");
+}
+
+function isRemoteNodeLocalAuthError(error) {
+  return error?.upstreamCode === "SWARMLAB_LOCAL_OR_NODE_AUTH_REQUIRED" ||
+    /requires local access or a valid node token/iu.test(String(error?.message || ""));
 }
 
 function pushUniqueAbsolutePath(out, seen, value) {
@@ -4588,9 +4659,14 @@ export async function createVibeResearchApp({
   });
 
   app.post("/api/node/remote-pair", requireLocalOrNodeToken, async (request, response) => {
-    const baseUrl = normalizeFleetNodeUrl(request.body?.baseUrl || request.body?.url || request.body?.href);
+    const rawRemoteUrl = request.body?.baseUrl || request.body?.url || request.body?.href;
+    const baseUrl = normalizeFleetNodeUrl(rawRemoteUrl);
     const accountBaseUrl = controllerAccountBaseUrlForRequest(request);
     const label = String(request.body?.label || request.body?.name || "Swarmlab node").trim().slice(0, 120) || "Swarmlab node";
+    const remoteNodeToken = extractRemoteNodeToken({
+      ...request.body,
+      baseUrl: rawRemoteUrl,
+    });
     try {
       if (!baseUrl) {
         throw buildHttpError("Remote node URL is required.", 400);
@@ -4604,6 +4680,7 @@ export async function createVibeResearchApp({
         baseUrl,
         path: "/api/node/account/pair/start",
         fetchImpl: remoteNodeFetchImpl,
+        nodeToken: remoteNodeToken,
         body: {
           accountBaseUrl,
           appBaseUrl: accountBaseUrl,
@@ -4627,6 +4704,7 @@ export async function createVibeResearchApp({
         baseUrl,
         path: "/api/node/account/pair/complete",
         fetchImpl: remoteNodeFetchImpl,
+        nodeToken: remoteNodeToken,
         body: {
           accountBaseUrl,
           appBaseUrl: accountBaseUrl,
@@ -4643,6 +4721,7 @@ export async function createVibeResearchApp({
           baseUrl,
           path: "/api/node/account/heartbeat",
           fetchImpl: remoteNodeFetchImpl,
+          nodeToken: remoteNodeToken,
           body: {
             reason: "remote-pair",
             forceRegister: true,
@@ -4668,6 +4747,21 @@ export async function createVibeResearchApp({
         nodes: accountNodeRegistryService.listNodesForOwner(owner),
       });
     } catch (error) {
+      if (isRemoteNodeLocalAuthError(error)) {
+        const pairingCommand = buildRemotePairingCommand({ accountBaseUrl, label });
+        response.status(409).json({
+          error: remoteNodeToken
+            ? "Remote node rejected the supplied node token. Run pairing from that machine or provide its current node token."
+            : "Remote node requires local approval. Run the pairing command on that machine, then approve it in this account.",
+          code: remoteNodeToken
+            ? "SWARMLAB_REMOTE_PAIR_NODE_TOKEN_REJECTED"
+            : "SWARMLAB_REMOTE_PAIR_REQUIRES_REMOTE_APPROVAL",
+          baseUrl,
+          accountBaseUrl,
+          pairingCommand,
+        });
+        return;
+      }
       response.status(error.statusCode || 400).json({ error: error.message || "Could not pair remote node." });
     }
   });
