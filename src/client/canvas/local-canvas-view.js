@@ -554,7 +554,7 @@ function injectCanvasStyles(documentRef = document) {
   align-items: center;
   justify-content: center;
   gap: 4px;
-  width: 48px;
+  width: 60px;
   min-height: 40px;
   border: 1px solid rgba(232, 222, 206, 0.13);
   border-radius: 7px;
@@ -622,6 +622,86 @@ function injectCanvasStyles(documentRef = document) {
   margin-left: auto;
   padding: 0 8px;
   font-size: 10px;
+}
+.swarmlab-canvas-shell-dock {
+  position: absolute;
+  left: 14px;
+  bottom: 76px;
+  z-index: 26;
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  max-width: min(520px, calc(100% - 260px));
+  min-height: 40px;
+  padding: 4px;
+  border: 1px solid rgba(232, 222, 206, 0.14);
+  border-radius: 8px;
+  background: rgba(20, 19, 17, 0.9);
+  box-shadow: 0 14px 36px rgba(0, 0, 0, 0.3);
+  backdrop-filter: blur(14px);
+  pointer-events: auto;
+}
+.swarmlab-canvas-shell-title,
+.swarmlab-canvas-shell-item {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-height: 32px;
+  border: 1px solid rgba(232, 222, 206, 0.1);
+  border-radius: 7px;
+  background: rgba(255, 255, 255, 0.04);
+}
+.swarmlab-canvas-shell-title {
+  width: 34px;
+  color: var(--canvas-muted);
+}
+.swarmlab-canvas-shell-title span {
+  display: none;
+}
+.swarmlab-canvas-shell-list {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  min-width: 0;
+  overflow-x: auto;
+  scrollbar-width: none;
+}
+.swarmlab-canvas-shell-list::-webkit-scrollbar {
+  display: none;
+}
+.swarmlab-canvas-shell-item {
+  gap: 6px;
+  max-width: 150px;
+  padding: 0 8px;
+  color: var(--canvas-muted);
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+  white-space: nowrap;
+}
+.swarmlab-canvas-shell-item:hover {
+  border-color: rgba(249, 115, 22, 0.34);
+  background: rgba(249, 115, 22, 0.08);
+  color: var(--canvas-text);
+}
+.swarmlab-canvas-shell-item strong,
+.swarmlab-canvas-shell-item span {
+  display: block;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.swarmlab-canvas-shell-item strong {
+  font-size: 10px;
+  font-weight: 730;
+}
+.swarmlab-canvas-shell-item span {
+  color: var(--canvas-faint);
+  font-size: 8px;
+}
+.swarmlab-canvas-shell-new {
+  border-color: rgba(116, 199, 184, 0.22);
+  color: var(--canvas-accent-2);
 }
 .swarmlab-canvas-stage {
   position: relative;
@@ -1561,6 +1641,14 @@ function injectCanvasStyles(documentRef = document) {
   }
   .swarmlab-canvas-launch-more-button {
     width: 46px;
+  }
+  .swarmlab-canvas-shell-dock {
+    left: 12px;
+    bottom: 76px;
+    max-width: calc(100% - 238px);
+  }
+  .swarmlab-canvas-shell-item {
+    max-width: 112px;
   }
   .swarmlab-canvas-floating-controls {
     right: 12px;
@@ -4034,9 +4122,13 @@ function renderLauncherDockMore(cards) {
   if (!overflow.length) return "";
   return `
     <details class="swarmlab-canvas-launch-more">
-      <summary class="swarmlab-canvas-launch-more-button" title="${escapeHtml(`${overflow.length} more launchers`)}">
+      <summary
+        class="swarmlab-canvas-launch-more-button"
+        aria-label="${escapeHtml(`Show ${overflow.length} more launchers`)}"
+        title="${escapeHtml(`Show ${overflow.length} more launchers`)}"
+      >
         ${renderIcon(Plus, { width: 15, height: 15 })}
-        <span>${escapeHtml(String(overflow.length))}</span>
+        <span>${escapeHtml(`${overflow.length} more`)}</span>
       </summary>
       <div class="swarmlab-canvas-launch-more-panel">
         ${overflow.map(renderLauncherDockItem).join("")}
@@ -4099,6 +4191,83 @@ function renderLauncherDock(launcherCards, regions = [], localMachineId = "", se
         </div>
         ${viewOnly ? "" : renderLauncherDockMore(activeCards)}
       </section>
+    </nav>
+  `;
+}
+
+function isAgentShellActivityCard(card) {
+  return card?.type === "agent" && !isShellSessionCard(card) && Number(card?.ref?.shellActivityCount || 0) > 0;
+}
+
+function renderShellDockItem(card) {
+  const sessionId = String(card?.ref?.sessionId || "").trim();
+  if (!sessionId) return "";
+  const isShell = isShellSessionCard(card);
+  const label = isShell ? compactText(card.title || "Terminal", 18) : compactText(card.title || "Agent", 18);
+  const meta = isShell
+    ? compactText(card.status || "shell", 18)
+    : `${Math.max(1, Math.round(Number(card.ref?.shellActivityCount || 1)))} shell calls`;
+  return `
+    <button
+      class="swarmlab-canvas-shell-item"
+      type="button"
+      data-swarmlab-canvas-open-session="${escapeHtml(sessionId)}"
+      title="${escapeHtml(isShell ? `Focus ${label}` : `Focus ${label}'s shell activity`)}"
+    >
+      ${renderIcon(isShell ? Box : Bot, { width: 14, height: 14 })}
+      <span>
+        <strong>${escapeHtml(label)}</strong>
+        <span>${escapeHtml(meta)}</span>
+      </span>
+    </button>
+  `;
+}
+
+function renderShellDockNewButton(shellLauncher, viewOnly) {
+  if (!shellLauncher || viewOnly) return "";
+  return `
+    <button
+      class="swarmlab-canvas-shell-item swarmlab-canvas-shell-new"
+      type="button"
+      data-swarmlab-canvas-launcher="${escapeHtml(shellLauncher.id)}"
+      title="${escapeHtml(launcherDockAriaLabel(shellLauncher))}"
+    >
+      ${renderIcon(Plus, { width: 14, height: 14 })}
+      <span>
+        <strong>New shell</strong>
+        <span>canvas</span>
+      </span>
+    </button>
+  `;
+}
+
+function renderShellDock(renderCards = [], launcherCards = [], regions = [], localMachineId = "", selectedMachineId = "") {
+  const regionsById = new Map(regions.map((region) => [region.id, region]));
+  const groups = groupLauncherCards(launcherCards, regions);
+  const machineIds = sortedLauncherMachineIds(groups, regions, localMachineId);
+  const activeMachineId = groups.has(selectedMachineId) ? selectedMachineId : machineIds[0];
+  if (!activeMachineId) return "";
+  const activeRegion = regionsById.get(activeMachineId);
+  const viewOnly = isViewOnlyRemoteRegion(activeRegion, localMachineId);
+  const activeLaunchers = groups.get(activeMachineId) || [];
+  const shellLauncher = activeLaunchers.find(isTerminalLauncher);
+  const shellCards = renderCards
+    .filter((card) => getCanvasCardMachineId(card) === activeMachineId && (isShellSessionCard(card) || isAgentShellActivityCard(card)))
+    .slice(0, 5);
+  if (!shellCards.length && (!shellLauncher || viewOnly)) {
+    return "";
+  }
+  const activeTitle = regionDisplayName(activeRegion, activeMachineId) || activeMachineId;
+  return `
+    <nav class="swarmlab-canvas-shell-dock" data-swarmlab-canvas-shell-dock aria-label="Shells on ${escapeHtml(activeTitle)}">
+      <div class="swarmlab-canvas-shell-title" title="${escapeHtml(`Shells on ${activeTitle}`)}">
+        ${renderIcon(Box, { width: 15, height: 15 })}
+        <span>Shells</span>
+      </div>
+      <div class="swarmlab-canvas-shell-list">
+        ${shellCards.map(renderShellDockItem).join("")}
+        ${renderShellDockNewButton(shellLauncher, viewOnly)}
+      </div>
     </nav>
   `;
 }
@@ -4223,7 +4392,7 @@ function getViewportSafeInsets(root) {
   const rect = root.getBoundingClientRect();
   const insets = { top: 24, right: 24, bottom: 24, left: 24 };
   if (rect.width <= 0 || rect.height <= 0) return insets;
-  root.querySelectorAll("[data-swarmlab-canvas-machine-rail], [data-swarmlab-canvas-launch-dock], [data-swarmlab-canvas-controls]").forEach((element) => {
+  root.querySelectorAll("[data-swarmlab-canvas-machine-rail], [data-swarmlab-canvas-shell-dock], [data-swarmlab-canvas-launch-dock], [data-swarmlab-canvas-controls]").forEach((element) => {
     const box = element.getBoundingClientRect();
     if (box.width <= 0 || box.height <= 0) return;
     const isMachineRail = element.hasAttribute("data-swarmlab-canvas-machine-rail");
@@ -4515,6 +4684,7 @@ function renderSnapshot(root, payload, { storage, remoteRecords = [] } = {}) {
       ${renderCards.map((card) => renderCanvasCard(card, layout[card.id])).join("")}
     </div>
     ${renderMachineNavigator(regions, localMachineId, selectedLauncherMachineId)}
+    ${renderShellDock(renderCards, launcherCards, regions, localMachineId, selectedLauncherMachineId)}
     ${renderLauncherDock(launcherCards, regions, localMachineId, selectedLauncherMachineId)}
     ${renderFloatingControls(viewport)}
     ${renderCanvasNotice()}
@@ -4924,7 +5094,7 @@ function bindViewportPanAndZoom(root, { storage }) {
     if (!(event.target instanceof Element)) {
       return;
     }
-    if (event.target.closest("[data-swarmlab-canvas-card-id], [data-swarmlab-canvas-controls], [data-swarmlab-canvas-machine-rail], [data-swarmlab-canvas-launch-dock], a, button, input, textarea, select")) {
+    if (event.target.closest("[data-swarmlab-canvas-card-id], [data-swarmlab-canvas-controls], [data-swarmlab-canvas-machine-rail], [data-swarmlab-canvas-shell-dock], [data-swarmlab-canvas-launch-dock], a, button, input, textarea, select")) {
       return;
     }
     const viewport = sanitizeViewport(root.__swarmlabCanvasViewport || DEFAULT_VIEWPORT);

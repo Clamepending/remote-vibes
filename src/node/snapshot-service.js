@@ -135,6 +135,24 @@ function summarizeSessionResources(session) {
     .slice(0, 8);
 }
 
+function summarizeSessionShellActivity(session, mode) {
+  const activity = session?.shellActivity && typeof session.shellActivity === "object" ? session.shellActivity : null;
+  const count = Number(activity?.count || 0);
+  if (!activity || !Number.isFinite(count) || count <= 0) {
+    return null;
+  }
+  const base = { count };
+  if (mode === "redacted") {
+    return base;
+  }
+  return {
+    ...base,
+    lastLabel: compactText(activity.lastLabel || "Shell", 80),
+    lastStatus: compactText(activity.lastStatus || "", 40),
+    updatedAt: activity.updatedAt || null,
+  };
+}
+
 function countByStatus(entries = []) {
   return entries.reduce((counts, entry) => {
     const status = String(entry?.status || "unknown").trim() || "unknown";
@@ -186,6 +204,7 @@ function summarizeSession(session, mode) {
       name: REDACTED_NAME,
       cwd: null,
       hasSubagents: Array.isArray(session?.subagents) && session.subagents.length > 0,
+      shellActivity: summarizeSessionShellActivity(session, mode),
     };
   }
 
@@ -197,6 +216,7 @@ function summarizeSession(session, mode) {
     projectPath: session?.projectPath || "",
     lastPromptAt: session?.lastPromptAt || null,
     lastOutputAt: session?.lastOutputAt || null,
+    shellActivity: summarizeSessionShellActivity(session, mode),
     resources: summarizeSessionResources(session),
     subagents: arrayOrEmpty(session?.subagents).slice(0, 12).map((subagent) => ({
       id: String(subagent?.id || ""),

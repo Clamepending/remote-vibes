@@ -196,6 +196,38 @@ function resourceTextFromSession(session) {
   ].filter(Boolean).join("\n");
 }
 
+function isShellNarrativeToolEntry(entry) {
+  if (!entry || String(entry.kind || "").trim().toLowerCase() !== "tool") {
+    return false;
+  }
+  const label = String(entry.label || "").trim().toLowerCase();
+  const meta = String(entry.meta || "").trim().toLowerCase();
+  return /\b(bash|shell|terminal|exec_command|command|run|pty)\b/u.test(label) ||
+    label.includes("functions.exec_command") ||
+    label.includes("mcp__") && label.includes("__exec") ||
+    meta.includes("shell") ||
+    meta.includes("terminal");
+}
+
+function summarizeShellActivityForSession(session) {
+  if (!session || session.providerId === "shell") {
+    return null;
+  }
+  const entries = Array.isArray(session.nativeNarrativeEntries)
+    ? session.nativeNarrativeEntries.filter(isShellNarrativeToolEntry)
+    : [];
+  if (!entries.length) {
+    return null;
+  }
+  const last = entries[entries.length - 1] || {};
+  return {
+    count: entries.length,
+    lastLabel: normalizeNarrativeEventText(last.label || "Shell", 80),
+    lastStatus: normalizeNarrativeEventText(last.status || last.meta || "", 40),
+    updatedAt: last.timestamp || session.lastOutputAt || session.updatedAt || null,
+  };
+}
+
 function extractSessionCanvasResources(session) {
   const resources = new Map();
   const addUrl = (value, source = "session") => {
@@ -4958,6 +4990,7 @@ export class SessionManager {
       activityStartedAt: session.activityStartedAt,
       activityCompletedAt: session.activityCompletedAt,
       backgroundActivity,
+      shellActivity: summarizeShellActivityForSession(session),
       subagents,
       streamMode: Boolean(session.streamMode),
       streamWorking: Boolean(session.streamWorking),

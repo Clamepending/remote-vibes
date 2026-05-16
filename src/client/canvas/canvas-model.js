@@ -11,6 +11,8 @@ const DEFAULT_CARD_WIDTH = 270;
 const DEFAULT_CARD_HEIGHT = 170;
 const AGENT_CARD_WIDTH = 640;
 const AGENT_CARD_HEIGHT = 720;
+const TERMINAL_CARD_WIDTH = 620;
+const TERMINAL_CARD_HEIGHT = 520;
 const BROWSER_CARD_WIDTH = 430;
 const BROWSER_CARD_HEIGHT = 300;
 const MONITOR_CARD_WIDTH = 430;
@@ -580,28 +582,36 @@ function summaryCard({
 function sessionCard(session, index, machineId) {
   const id = normalizeText(pickFirst(session.id, session.sessionId, session.name), `session-${index + 1}`);
   const provider = normalizeText(pickFirst(session.providerLabel, session.providerId, session.kind));
+  const providerId = normalizeText(session.providerId);
+  const isShell = providerId === "shell";
+  const shellActivity = asObject(session.shellActivity);
+  const shellActivityCount = Math.max(0, Math.round(Number(shellActivity.count || 0) || 0));
   const activity = normalizeText(pickFirst(session.activityStatus, session.status));
   const cwd = normalizeText(session.cwd || session.projectPath || session.workspace);
   return makeCard({
     id: `session:${id}`,
     type: session.kind === "browser" ? "browser" : "agent",
-    title: pickFirst(session.name, session.title, id),
-    subtitle: provider || "agent session",
+    title: isShell ? pickFirst(session.name, session.title, "Terminal") : pickFirst(session.name, session.title, id),
+    subtitle: isShell ? "Terminal" : (provider || "agent session"),
     status: activity,
     detail: cwd,
     meta: normalizeOptionalDate(pickFirst(session.updatedAt, session.lastActivityAt, session.createdAt)),
-    tags: [session.model, session.branch, session.providerId],
+    tags: [session.model, session.branch, providerId, isShell ? "shell" : "", shellActivityCount ? `${shellActivityCount} shell` : ""],
     ref: {
       machineId,
       sessionId: id,
-      providerId: normalizeText(session.providerId),
+      providerId,
       providerLabel: normalizeText(session.providerLabel),
       cwd,
-      name: normalizeText(pickFirst(session.name, session.title, id), id),
+      name: normalizeText(pickFirst(session.name, session.title, isShell ? "Terminal" : id), isShell ? "Terminal" : id),
       status: activity,
+      shellSession: isShell,
+      shellActivityCount,
+      shellActivityLabel: normalizeText(shellActivity.lastLabel),
+      shellActivityStatus: normalizeText(shellActivity.lastStatus),
     },
-    width: AGENT_CARD_WIDTH,
-    height: AGENT_CARD_HEIGHT,
+    width: isShell ? TERMINAL_CARD_WIDTH : AGENT_CARD_WIDTH,
+    height: isShell ? TERMINAL_CARD_HEIGHT : AGENT_CARD_HEIGHT,
   });
 }
 
@@ -622,6 +632,10 @@ function sessionHasMonitorResource(session) {
   return asArray(session?.resources).some((resource) => isMonitorUrl(resource?.url || resource?.href || resource));
 }
 
+function sessionShellActivityCount(session) {
+  return Math.max(0, Math.round(Number(asObject(session?.shellActivity).count || 0) || 0));
+}
+
 function sessionSignalScore(session, index, { total = 0, redacted = false, linkedSessionIds = new Set() } = {}) {
   if (session?.canvasHidden === true || session?.hidden === true) {
     return -Infinity;
@@ -629,16 +643,21 @@ function sessionSignalScore(session, index, { total = 0, redacted = false, linke
   const id = sessionId(session, index);
   const status = sessionStatus(session);
   const title = sessionTitle(session, index).toLowerCase();
+  const providerId = normalizeText(session?.providerId);
+  const isShell = providerId === "shell";
+  const shellActivityCount = sessionShellActivityCount(session);
   let score = 0;
+  if (isShell) score += 125;
   if (hasAnyStatus(status, ACTIVE_STATUSES)) score += 120;
   if (hasAnyStatus(status, PROBLEM_STATUSES)) score += 105;
   if (linkedSessionIds.has(id)) score += 85;
   if (sessionHasMonitorResource(session)) score += 80;
+  if (shellActivityCount) score += Math.min(95, 55 + shellActivityCount * 8);
   if (title.includes("handoff")) score += 90;
   if (session?.lastMessage || session?.messageCount || session?.narrativeCount) score += 35;
   if (!normalizeStatus(status) && total <= 2 && !redacted) score += 55;
   if (!score && total <= 1 && !redacted) score += 45;
-  if (hasAnyStatus(status, QUIET_STATUSES)) score -= redacted ? 70 : 35;
+  if (hasAnyStatus(status, QUIET_STATUSES)) score -= isShell ? 10 : (redacted ? 70 : 35);
   score += Math.min(20, Math.max(0, timestampMs(session?.updatedAt, session?.lastActivityAt, session?.createdAt) / 1_000_000_000_000));
   return score;
 }

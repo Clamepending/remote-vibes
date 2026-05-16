@@ -28,6 +28,12 @@ test("redacted node snapshot omits sensitive local detail", async () => {
         providerLabel: "Claude",
         cwd: "/Users/mark/private/project",
         lastPromptAt: "2026-05-12T00:00:00.000Z",
+        shellActivity: {
+          count: 2,
+          lastLabel: "shell with token=secret",
+          lastStatus: "completed",
+          updatedAt: "2026-05-12T00:01:00.000Z",
+        },
       }],
       browserSessionsProvider: () => [{
         id: "browser_1",
@@ -76,6 +82,7 @@ test("redacted node snapshot omits sensitive local detail", async () => {
     const serialized = JSON.stringify(snapshot);
     assert.equal(snapshot.mode, "redacted");
     assert.equal(snapshot.counts.sessions, 1);
+    assert.deepEqual(snapshot.sessions[0].shellActivity, { count: 2 });
     assert.equal(snapshot.counts.ports, 1);
     assert.equal(snapshot.counts.appInstances, 1);
     assert.deepEqual(snapshot.ports, []);
@@ -90,6 +97,7 @@ test("redacted node snapshot omits sensitive local detail", async () => {
     assert.doesNotMatch(serialized, /chart\.png/);
     assert.doesNotMatch(serialized, /Secret Building/);
     assert.doesNotMatch(serialized, /cmd_secret/);
+    assert.doesNotMatch(serialized, /shell with token=secret/);
   } finally {
     await rm(stateDir, { recursive: true, force: true });
   }
@@ -106,6 +114,12 @@ test("privileged node snapshot exposes sanitized monitor resources and browser U
         name: "Train semantic autogaze",
         status: "running",
         providerId: "codex",
+        shellActivity: {
+          count: 4,
+          lastLabel: "functions.exec_command",
+          lastStatus: "completed",
+          updatedAt: "2026-05-12T00:01:00.000Z",
+        },
         resources: [{
           kind: "wandb",
           url: "https://wandb.ai/mark/semantic-autogaze/runs/run-7?token=secret#workspace",
@@ -130,6 +144,12 @@ test("privileged node snapshot exposes sanitized monitor resources and browser U
     });
 
     const snapshot = await service.getSnapshot({ mode: "privileged" });
+    assert.deepEqual(snapshot.sessions[0].shellActivity, {
+      count: 4,
+      lastLabel: "functions.exec_command",
+      lastStatus: "completed",
+      updatedAt: "2026-05-12T00:01:00.000Z",
+    });
     assert.equal(snapshot.sessions[0].resources[0].url, "https://wandb.ai/mark/semantic-autogaze/runs/run-7");
     assert.equal(snapshot.sessions[0].resources[0].sourceSessionId, "sess_1");
     assert.equal(snapshot.browserSessions[0].latestUrl, "https://wandb.ai/mark/semantic-autogaze/runs/run-7");

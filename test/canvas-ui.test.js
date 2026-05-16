@@ -191,6 +191,7 @@ test("local canvas view renders node snapshot cards and persists drag layout", a
               providerId: "codex",
               status: "running",
               cwd: workspaceDir,
+              shellActivity: { count: 3, lastLabel: "functions.exec_command", lastStatus: "completed" },
             },
             {
               id: "session-2",
@@ -775,6 +776,9 @@ test("local canvas view renders node snapshot cards and persists drag layout", a
     assert.doesNotMatch(rendered, /Add machine/);
     assert.match(rendered, /Please inspect the dashboard/);
     assert.match(rendered, /native session feed/);
+    assert.equal(await page.locator("[data-swarmlab-canvas-shell-dock]").getAttribute("aria-label"), "Shells on Mac Main");
+    assert.match(await page.locator("[data-swarmlab-canvas-shell-dock]").innerText(), /Worker B/);
+    assert.match(await page.locator("[data-swarmlab-canvas-shell-dock]").innerText(), /3 shell calls/);
     assert.match(rendered, /Follow-up 10/);
     assert.match(rendered, /Weights & Biases/);
     assert.match(rendered, /semantic-autogaze \/ run run-7/);
@@ -810,7 +814,8 @@ test("local canvas view renders node snapshot cards and persists drag layout", a
     assert.equal(await page.locator("[data-swarmlab-canvas-launch-machine]").count(), 0);
     assert.equal(await page.locator("[data-swarmlab-canvas-launcher]").count(), 15);
     assert.equal(await page.locator(".swarmlab-canvas-launch-items > [data-swarmlab-canvas-launcher]").count(), 6);
-    assert.equal(await page.locator(".swarmlab-canvas-launch-more-button").getAttribute("title"), "9 more launchers");
+    assert.equal(await page.locator(".swarmlab-canvas-launch-more-button").getAttribute("title"), "Show 9 more launchers");
+    assert.equal(await page.locator(".swarmlab-canvas-launch-more-button").getAttribute("aria-label"), "Show 9 more launchers");
     const dockBox = await page.locator(".swarmlab-canvas-launch-dock").boundingBox();
     const controlsBox = await page.locator(".swarmlab-canvas-floating-controls").boundingBox();
     assert.ok(dockBox && dockBox.height <= 64, "app launcher dock should stay compact");
@@ -1739,8 +1744,8 @@ test("canvas agent launcher renders the created native session on the board", as
       /Codex/,
     );
 
-    await page.waitForSelector('[data-swarmlab-canvas-launcher="launcher:provider:shell"]', { timeout: 10_000 });
-    await page.click('[data-swarmlab-canvas-launcher="launcher:provider:shell"]');
+    await page.waitForSelector('[data-swarmlab-canvas-shell-dock] [data-swarmlab-canvas-launcher="launcher:provider:shell"]', { timeout: 10_000 });
+    await page.click('[data-swarmlab-canvas-shell-dock] [data-swarmlab-canvas-launcher="launcher:provider:shell"]');
     await page.waitForSelector('[data-swarmlab-canvas-card-id="session:canvas-terminal-session"]', { timeout: 10_000 });
     await page.waitForSelector('[data-swarmlab-canvas-card-id="session:canvas-terminal-session"][data-swarmlab-canvas-focused-card="true"]', { timeout: 10_000 });
 
@@ -1757,6 +1762,7 @@ test("canvas agent launcher renders the created native session on the board", as
     assert.doesNotMatch(terminalText, /32m|36m|34m|31m|33m|1m|✗m|userm|m \(base\)/);
     assert.equal(await terminalCard.locator('textarea[name="input"]').getAttribute("placeholder"), "Type a terminal command");
     assert.equal((await terminalCard.getAttribute("class")).includes("is-terminal-session"), true);
+    assert.match(await page.locator("[data-swarmlab-canvas-shell-dock]").innerText(), /Terminal/);
   } finally {
     if (browser) await browser.close();
     await app.close();
