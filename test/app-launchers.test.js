@@ -60,6 +60,42 @@ test("detectAppLaunchers discovers mac apps and sorts by priority", async () => 
   }
 });
 
+test("canvas app launchers are available without opening a desktop process", async () => {
+  const launchers = await detectAppLaunchers([
+    {
+      id: "browser",
+      label: "Browser",
+      kind: "canvas-app",
+      category: "browser",
+      priority: 97,
+      description: "Open an embedded browser surface in the canvas.",
+      canvasSurface: "browser",
+      defaultUrl: "http://localhost:5173/",
+    },
+  ], {}, "linux");
+
+  assert.equal(launchers.length, 1);
+  assert.equal(launchers[0].available, true);
+  assert.equal(launchers[0].launchMode, "canvas-surface");
+  assert.equal(launchers[0].canvasSurface, "browser");
+
+  const result = await launchAppLauncher("browser", launchers, {
+    execFileImpl: async () => {
+      throw new Error("desktop open should not run");
+    },
+    spawnImpl: () => {
+      throw new Error("desktop spawn should not run");
+    },
+  });
+
+  assert.equal(result.launched, true);
+  assert.equal(result.embedded, true);
+  assert.equal(result.surface, "browser");
+  assert.equal(result.url, "http://localhost:5173/");
+  assert.equal(result.launcher.kind, "canvas-app");
+  assert.equal(result.launcher.canvasSurface, "browser");
+});
+
 test("launchAppLauncher opens mac app paths through an injectable executor", async () => {
   const calls = [];
   const result = await launchAppLauncher("cursor", [

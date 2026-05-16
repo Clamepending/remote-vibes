@@ -539,6 +539,8 @@ function summarizeAppLauncher(launcher = {}) {
     priority: Number.isFinite(Number(launcher.priority)) ? Math.round(Number(launcher.priority)) : 0,
     description: compactText(launcher.description || "", 160),
     appId: id,
+    canvasSurface: compactText(launcher.canvasSurface || launcher.surface || "", 80),
+    defaultUrl: sanitizeUrlForSnapshot(launcher.defaultUrl || launcher.url),
     available: true,
     platform: compactText(launcher.platform, 40),
   };
@@ -569,6 +571,7 @@ function summarizeAppInstance(instance = {}, mode) {
     label: compactText(instance.label || appId, 100),
     kind: compactText(instance.kind || "desktop-app", 40),
     category: compactText(instance.category || "app", 40),
+    surface: compactText(instance.surface || instance.canvasSurface || instance.appSurface || "", 80),
     status: compactText(instance.status || "launched", 40),
     source: compactText(instance.source || "local", 40),
     launchCount: Number.isFinite(Number(instance.launchCount)) ? Math.max(1, Math.round(Number(instance.launchCount))) : 1,

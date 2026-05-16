@@ -115,8 +115,8 @@ test("AppInstanceStore keeps distinct URL-backed app instances separate", async 
   try {
     await store.recordLaunch({
       launcherId: "browser",
-      launcher: { id: "browser", label: "Browser", kind: "desktop-app", category: "browser" },
-      result: { launched: true, url: "https://example.test/one" },
+      launcher: { id: "browser", label: "Browser", kind: "canvas-app", category: "browser", canvasSurface: "browser" },
+      result: { launched: true, surface: "browser", url: "https://example.test/one" },
       clientCommandId: "cmd_1",
       source: "local",
     });
@@ -131,6 +131,7 @@ test("AppInstanceStore keeps distinct URL-backed app instances separate", async 
     const saved = store.listInstances();
     assert.equal(saved.length, 2);
     assert.deepEqual(saved.map((entry) => entry.url).sort(), ["https://example.test/one", "https://example.test/two"]);
+    assert.equal(saved.find((entry) => entry.url === "https://example.test/one")?.surface, "browser");
   } finally {
     await rm(stateDir, { recursive: true, force: true });
   }

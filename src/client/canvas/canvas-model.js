@@ -15,6 +15,8 @@ const TERMINAL_CARD_WIDTH = 620;
 const TERMINAL_CARD_HEIGHT = 520;
 const BROWSER_CARD_WIDTH = 430;
 const BROWSER_CARD_HEIGHT = 300;
+const CANVAS_BROWSER_CARD_WIDTH = 660;
+const CANVAS_BROWSER_CARD_HEIGHT = 500;
 const MONITOR_CARD_WIDTH = 430;
 const MONITOR_CARD_HEIGHT = 300;
 const APP_CARD_WIDTH = 410;
@@ -1063,17 +1065,19 @@ function appInstanceCard(instance, index, machineId) {
   const id = normalizeText(instance.id, appId);
   const href = normalizeUrl(pickFirst(instance.url, instance.href));
   const status = normalizeText(pickFirst(instance.status, "launched"));
+  const appSurface = normalizeText(pickFirst(instance.surface, instance.canvasSurface, instance.appSurface));
+  const isCanvasBrowser = appSurface === "browser" || (instance.kind === "canvas-app" && instance.category === "browser");
   return makeCard({
     id: `app-instance:${id}`,
     type: "app",
     title: pickFirst(instance.label, instance.title, appId),
-    subtitle: "app instance",
+    subtitle: isCanvasBrowser ? "canvas browser" : "app instance",
     status,
     detail: instance.launchCount && Number(instance.launchCount) > 1
       ? `Launched ${Number(instance.launchCount)} times from Swarmlab.`
       : "Launched from Swarmlab.",
     meta: normalizeOptionalDate(pickFirst(instance.updatedAt, instance.launchedAt)),
-    tags: [appId, instance.category, "instance", status],
+    tags: [appId, instance.category, appSurface || "instance", status],
     href,
     ref: {
       machineId,
@@ -1081,13 +1085,15 @@ function appInstanceCard(instance, index, machineId) {
       appInstanceId: id,
       appId,
       launcherId: normalizeText(instance.launcherId || appId),
+      appSurface,
+      machineBound: true,
       launchCommandId: normalizeText(instance.clientCommandId || instance.commandId),
       embedUrl: href,
-      previewTrusted: Boolean(href),
+      previewTrusted: Boolean(href) || isCanvasBrowser,
       actionLabel: href ? "Open app" : "",
     },
-    width: APP_CARD_WIDTH,
-    height: APP_CARD_HEIGHT,
+    width: isCanvasBrowser ? CANVAS_BROWSER_CARD_WIDTH : APP_CARD_WIDTH,
+    height: isCanvasBrowser ? CANVAS_BROWSER_CARD_HEIGHT : APP_CARD_HEIGHT,
   });
 }
 
@@ -1234,20 +1240,23 @@ function launcherCard(launcher, index, machineId) {
   const rawId = normalizeText(pickFirst(launcher.id, launcher.providerId, launcher.appId, launcher.label), `launcher-${index + 1}`);
   const launcherKind = normalizeText(launcher.kind || (launcher.providerId ? "agent-provider" : "app"));
   const providerId = normalizeText(launcher.providerId);
-  const appId = normalizeText(launcher.appId || (launcherKind === "desktop-app" ? rawId.replace(/^app:/u, "") : ""));
+  const appId = normalizeText(launcher.appId || (launcherKind !== "agent-provider" ? rawId.replace(/^app:/u, "") : ""));
   const label = normalizeText(pickFirst(launcher.label, launcher.defaultName, providerId, appId, rawId), "Launcher");
   const isAgentProvider = launcherKind === "agent-provider" || Boolean(providerId);
+  const isCanvasApp = launcherKind === "canvas-app" || Boolean(launcher.canvasSurface);
   const category = normalizeText(launcher.category || (isAgentProvider ? "agent" : "app"));
   const description = normalizeText(launcher.description);
   return makeCard({
     id: `launcher:${rawId}`,
     type: "launcher",
     title: label,
-    subtitle: isAgentProvider ? "agent launcher" : "desktop app",
+    subtitle: isAgentProvider ? "agent launcher" : (isCanvasApp ? "canvas app" : "desktop app"),
     status: launcher.available === false ? "unavailable" : "available",
     detail: description || (isAgentProvider
       ? `Start a new ${label} agent on this machine.`
-      : `Open ${label} on this machine.`),
+      : isCanvasApp
+        ? `Open ${label} inside this machine region.`
+        : `Open ${label} on this machine.`),
     meta: launcher.platform || "",
     tags: [
       isAgentProvider ? "agent" : "app",
@@ -1261,6 +1270,8 @@ function launcherCard(launcher, index, machineId) {
       providerId,
       appId,
       category,
+      appSurface: normalizeText(launcher.canvasSurface || launcher.surface || ""),
+      machineBound: !isAgentProvider,
       defaultName: normalizeText(launcher.defaultName || label, label),
       actionLabel: "Launch",
     },

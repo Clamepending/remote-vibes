@@ -49,6 +49,7 @@ const NARRATIVE_POLL_MS = 4_000;
 const REMOTE_NODES_STORAGE_KEY = "swarmlab.canvas.remoteNodes.v1";
 const LAUNCH_LIFECYCLE_STORAGE_PREFIX = "swarmlab.canvas.launches.v1";
 const DISMISSED_APP_INSTANCE_STORAGE_PREFIX = "swarmlab.canvas.dismissedAppInstances.v1";
+const CANVAS_APP_URL_STORAGE_PREFIX = "swarmlab.canvas.appUrls.v1";
 const DISMISSED_APP_INSTANCE_TTL_MS = 24 * 60 * 60 * 1000;
 const REMOTE_NODE_FETCH_TIMEOUT_MS = 4_500;
 const OPTIMISTIC_SESSION_STORAGE_PREFIX = "swarmlab.canvas.optimisticSessions.v1";
@@ -1053,6 +1054,13 @@ function injectCanvasStyles(documentRef = document) {
 .swarmlab-canvas-card.is-cross-region {
   border-color: rgba(249, 115, 22, 0.55);
 }
+.swarmlab-canvas-card.is-machine-bound-app.is-cross-region {
+  border-color: rgba(232, 222, 206, 0.16);
+}
+.swarmlab-canvas-card.is-machine-bound-app .swarmlab-canvas-card-title span::after {
+  content: " / machine pinned";
+  color: var(--canvas-faint);
+}
 .swarmlab-canvas-card.is-lifecycle {
   border-color: rgba(249, 115, 22, 0.38);
   background:
@@ -1403,6 +1411,29 @@ function injectCanvasStyles(documentRef = document) {
   gap: 9px;
   min-height: 0;
   height: 100%;
+}
+.swarmlab-canvas-webview-form {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  gap: 7px;
+  align-items: center;
+}
+.swarmlab-canvas-webview-form input {
+  width: 100%;
+  min-width: 0;
+  height: 34px;
+  border: 1px solid rgba(232, 222, 206, 0.13);
+  border-radius: 7px;
+  background: rgba(10, 10, 9, 0.82);
+  color: var(--canvas-text);
+  padding: 0 10px;
+  font: inherit;
+  font-size: 11px;
+}
+.swarmlab-canvas-webview-form input:focus {
+  outline: none;
+  border-color: rgba(116, 199, 184, 0.42);
+  box-shadow: 0 0 0 1px rgba(116, 199, 184, 0.16);
 }
 .swarmlab-canvas-app-frame-shell {
   min-height: 0;
@@ -2592,6 +2623,27 @@ function getDismissedAppInstanceStorageKey(boardId) {
   return `${DISMISSED_APP_INSTANCE_STORAGE_PREFIX}:${slugPart(boardId, "board")}`;
 }
 
+function getCanvasAppUrlStorageKey(boardId) {
+  return `${CANVAS_APP_URL_STORAGE_PREFIX}:${slugPart(boardId, "board")}`;
+}
+
+function readCanvasAppUrls(storage, key) {
+  try {
+    const raw = JSON.parse(storage.getItem(key) || "{}");
+    return raw && typeof raw === "object" && !Array.isArray(raw) ? raw : {};
+  } catch {
+    return {};
+  }
+}
+
+function writeCanvasAppUrls(storage, key, urls) {
+  try {
+    storage.setItem(key, JSON.stringify(urls && typeof urls === "object" ? urls : {}));
+  } catch {
+    // App URL state is local UI convenience.
+  }
+}
+
 function normalizeDismissedAppInstanceRecord(item) {
   if (!item || typeof item !== "object") return null;
   const appInstanceId = String(item.appInstanceId || item.instanceId || item.id || "").trim();
@@ -2728,8 +2780,19 @@ function lifecycleResultAppInfo(lifecycle) {
     launcher.id ||
     "",
   ).trim().replace(/^app:/u, "");
+  const appSurface = String(
+    result.surface ||
+    result.canvasSurface ||
+    instance.surface ||
+    instance.canvasSurface ||
+    instance.appSurface ||
+    launcher.canvasSurface ||
+    launcher.surface ||
+    "",
+  ).trim().toLowerCase().replace(/[^a-z0-9._-]+/g, "-");
   return {
     appId: rawAppId,
+    appSurface,
     port: Number.isInteger(port) && port > 0 ? port : null,
     url,
     rawUrl,
@@ -2893,6 +2956,7 @@ function launchLifecycleCard(lifecycle) {
   const isCompletedApp = lifecycle.operation === "app.launch" && normalizeLaunchLifecycleStatus(lifecycle.status) === "completed";
   const sessionId = sessionIdFromLifecycle(lifecycle);
   const appInfo = lifecycleResultAppInfo(lifecycle);
+  const isCanvasBrowser = appInfo.appSurface === "browser" || (appInfo.appId === "browser" && isCompletedApp);
   const title = lifecycle.title || (isAgent ? "Starting agent" : "Starting app");
   const href = isAgent && sessionId && lifecycle.remoteUrl
     ? absoluteRemoteHref(`/?view=shell&sessionId=${encodeURIComponent(sessionId)}`, lifecycle.remoteUrl)
@@ -2903,7 +2967,7 @@ function launchLifecycleCard(lifecycle) {
     id: `lifecycle:${lifecycle.lifecycleId}`,
     type: isAgent ? "agent" : "app",
     title,
-    subtitle: lifecycle.subtitle || (isAgent ? "remote agent launch" : isCompletedApp ? "app instance / launched" : "remote app launch"),
+    subtitle: lifecycle.subtitle || (isAgent ? "remote agent launch" : isCompletedApp && isCanvasBrowser ? "canvas browser" : isCompletedApp ? "app instance / launched" : "remote app launch"),
     status: normalizeLaunchLifecycleStatus(lifecycle.status).replace(/_/g, " "),
     detail: launchLifecycleDetail(lifecycle),
     meta: lifecycle.updatedAt || lifecycle.createdAt,
@@ -2917,16 +2981,19 @@ function launchLifecycleCard(lifecycle) {
       lifecycle: !isCompletedApp,
       appInstance: isCompletedApp,
       launchedApp: isCompletedApp,
+      machineBound: !isAgent,
       launchLifecycleId: lifecycle.lifecycleId,
       commandId: lifecycle.commandId,
       clientCommandId: lifecycle.clientCommandId,
       sessionId,
       appId: lifecycle.appId || appInfo.appId || "",
+      appSurface: appInfo.appSurface,
       port: appInfo.port || 0,
+      previewTrusted: Boolean(href) || isCanvasBrowser,
       actionLabel: href ? (isAgent ? "Open agent" : "Open app") : "",
     },
-    width: isAgent ? 420 : 360,
-    height: isAgent ? 260 : 190,
+    width: isAgent ? 420 : isCanvasBrowser ? 660 : 360,
+    height: isAgent ? 260 : isCanvasBrowser ? 500 : 190,
   };
 }
 
@@ -3309,12 +3376,13 @@ function cardFrame(card, layout, body, footer = "") {
   const launchedAppClass = card.ref?.launchedApp ? " is-launched-app" : "";
   const appInstanceClass = card.ref?.appInstance ? " is-app-instance" : "";
   const terminalClass = isShellSessionCard(card) ? " is-terminal-session" : "";
+  const machineBoundClass = isMachineBoundCanvasApp(card) ? " is-machine-bound-app" : "";
   const machineId = getCanvasCardMachineId(card);
   const regionId = getCanvasCardRegionId(card, layout);
   const crossRegionClass = machineId !== regionId ? " is-cross-region" : "";
   return `
     <article
-      class="swarmlab-canvas-card is-${escapeHtml(card.type)}${remoteClass}${crossRegionClass}${lifecycleClass}${launchedAppClass}${appInstanceClass}${terminalClass}"
+      class="swarmlab-canvas-card is-${escapeHtml(card.type)}${remoteClass}${crossRegionClass}${lifecycleClass}${launchedAppClass}${appInstanceClass}${terminalClass}${machineBoundClass}"
       data-swarmlab-canvas-card-id="${escapeHtml(card.id)}"
       data-swarmlab-canvas-card-type="${escapeHtml(card.type)}"
       data-swarmlab-canvas-machine-id="${escapeHtml(machineId)}"
@@ -3563,6 +3631,59 @@ function updateAgentFeed(card, html) {
   feed.scrollTop = feed.scrollHeight;
 }
 
+function setCanvasWebviewUrl(root, cardId, url, { storage } = {}) {
+  const normalized = normalizeCanvasWebviewUrl(url, root);
+  if (!normalized) return false;
+  const key = root?.dataset?.swarmlabCanvasAppUrlStorageKey || "";
+  if (key) {
+    const urls = readCanvasAppUrls(storage, key);
+    urls[cardId] = normalized;
+    writeCanvasAppUrls(storage, key, urls);
+  }
+  const card = [...root.querySelectorAll("[data-swarmlab-canvas-card-id]")]
+    .find((element) => element.getAttribute("data-swarmlab-canvas-card-id") === cardId);
+  const form = card?.querySelector("[data-swarmlab-canvas-webview-form]");
+  const input = form?.querySelector('input[name="url"]');
+  const shell = card?.querySelector("[data-swarmlab-canvas-webview-shell]");
+  if (input instanceof HTMLInputElement) {
+    input.value = normalized;
+  }
+  if (shell instanceof HTMLElement) {
+    shell.innerHTML = `
+      <iframe
+        class="swarmlab-canvas-app-frame"
+        title="Canvas browser preview"
+        src="${escapeHtml(normalized)}"
+        loading="lazy"
+        referrerpolicy="no-referrer"
+        sandbox="allow-forms allow-popups allow-same-origin allow-scripts"
+      ></iframe>
+    `;
+  }
+  return true;
+}
+
+function hydrateCanvasWebviews(root, storage) {
+  const key = root?.dataset?.swarmlabCanvasAppUrlStorageKey || "";
+  if (!key) return;
+  const urls = readCanvasAppUrls(storage, key);
+  Object.entries(urls).forEach(([cardId, url]) => {
+    setCanvasWebviewUrl(root, cardId, url, { storage });
+  });
+}
+
+function submitCanvasWebviewForm(form, root, storage) {
+  if (!(form instanceof HTMLFormElement)) return;
+  const cardId = form.getAttribute("data-swarmlab-canvas-webview-card-id") || "";
+  const input = form.querySelector('input[name="url"]');
+  const value = input instanceof HTMLInputElement ? input.value : "";
+  if (cardId && setCanvasWebviewUrl(root, cardId, value, { storage })) {
+    showCanvasNotice(root, "Opened browser surface in this machine region.");
+  } else {
+    showCanvasNotice(root, "Enter a valid http or https URL.");
+  }
+}
+
 function showCanvasNotice(root, message) {
   const notice = root.querySelector("[data-swarmlab-canvas-notice]");
   if (!(notice instanceof HTMLElement)) return;
@@ -3682,7 +3803,63 @@ function renderBrowserCard(card, layout) {
   return cardFrame(card, layout, body, footer);
 }
 
+function isCanvasBrowserAppCard(card) {
+  return card?.type === "app" && String(card?.ref?.appSurface || "").trim().toLowerCase() === "browser";
+}
+
+function normalizeCanvasWebviewUrl(value, root) {
+  const raw = String(value || "").trim();
+  if (!raw) return "";
+  const locationRef = root?.ownerDocument?.defaultView?.location || globalThis.location;
+  try {
+    if (raw.startsWith("/")) {
+      return new URL(raw, locationRef?.origin || "http://localhost").href;
+    }
+    const localish = /^(localhost|127\.0\.0\.1|\[::1\]|0\.0\.0\.0)(:\d+)?(\/|$)/i.test(raw);
+    const hasWebScheme = /^https?:\/\//i.test(raw);
+    const hasOtherScheme = /^[a-z][a-z0-9+.-]*:/i.test(raw) && !hasWebScheme;
+    if (hasOtherScheme && !localish) return "";
+    const candidate = hasWebScheme ? raw : `${localish ? "http" : "https"}://${raw}`;
+    const url = new URL(candidate);
+    if (!/^https?:$/i.test(url.protocol)) return "";
+    return url.href;
+  } catch {
+    return "";
+  }
+}
+
+function renderCanvasBrowserAppCard(card, layout) {
+  const action = renderCardAction(card);
+  const embedUrl = String(card.ref?.embedUrl || "").trim();
+  const hasUrl = Boolean(embedUrl);
+  const body = `
+    <div class="swarmlab-canvas-card-body swarmlab-canvas-app-preview">
+      <form class="swarmlab-canvas-webview-form" data-swarmlab-canvas-webview-form data-swarmlab-canvas-webview-card-id="${escapeHtml(card.id)}">
+        <input name="url" type="text" placeholder="https://example.com or localhost:3000" value="${escapeHtml(embedUrl)}" autocomplete="off" spellcheck="false">
+        <button class="swarmlab-canvas-button" type="submit" title="Load URL">${renderIcon(Globe2, { width: 14, height: 14 })}</button>
+      </form>
+      <div class="swarmlab-canvas-app-frame-shell" data-swarmlab-canvas-webview-shell>
+        ${hasUrl
+          ? `<iframe
+              class="swarmlab-canvas-app-frame"
+              title="${escapeHtml(`${card.title} preview`)}"
+              src="${escapeHtml(embedUrl)}"
+              loading="lazy"
+              referrerpolicy="no-referrer"
+              sandbox="allow-forms allow-popups allow-same-origin allow-scripts"
+            ></iframe>`
+          : `<div class="swarmlab-canvas-app-preview-placeholder">${renderIcon(Globe2, { width: 28, height: 28 })}<span>Enter a URL to open it in this machine's canvas.</span></div>`}
+      </div>
+    </div>
+  `;
+  const footer = `<div class="swarmlab-canvas-card-footer"><span>Embedded pages stay on this machine.</span>${action}</div>`;
+  return cardFrame(card, layout, body, footer);
+}
+
 function renderAppCard(card, layout) {
+  if (isCanvasBrowserAppCard(card)) {
+    return renderCanvasBrowserAppCard(card, layout);
+  }
   const ports = Array.isArray(card.ref?.ports) ? card.ref.ports : [];
   const embedUrl = String(card.ref?.embedUrl || "").trim();
   const previewTrusted = card.ref?.previewTrusted !== false;
@@ -3985,7 +4162,7 @@ function combineCanvasCards(localPayload, remoteRecords) {
 }
 
 function launcherKindLabel(card) {
-  return isAgentLauncher(card) ? "agent" : "desktop";
+  return isAgentLauncher(card) ? "agent" : (isCanvasAppLauncher(card) ? "canvas" : "desktop");
 }
 
 function launcherDockStorageKey(boardId) {
@@ -4048,6 +4225,10 @@ function isAgentLauncher(card) {
   return String(card?.ref?.launcherKind || "") === "agent-provider" || Boolean(card?.ref?.providerId);
 }
 
+function isCanvasAppLauncher(card) {
+  return String(card?.ref?.launcherKind || "") === "canvas-app" || Boolean(card?.ref?.appSurface);
+}
+
 function isTerminalLauncher(card) {
   return String(card?.ref?.providerId || "").trim() === "shell"
     || (isAgentLauncher(card) && String(card?.ref?.category || "").trim().toLowerCase() === "terminal");
@@ -4055,7 +4236,7 @@ function isTerminalLauncher(card) {
 
 function launcherDockActionText(card) {
   if (isTerminalLauncher(card)) return "canvas";
-  return isAgentLauncher(card) ? "canvas" : "desktop";
+  return isAgentLauncher(card) || isCanvasAppLauncher(card) ? "canvas" : "desktop";
 }
 
 function launcherDockAriaLabel(card) {
@@ -4065,6 +4246,9 @@ function launcherDockAriaLabel(card) {
   }
   if (isAgentLauncher(card)) {
     return `Start ${title} as a canvas chat`;
+  }
+  if (isCanvasAppLauncher(card)) {
+    return `Open ${title} in the canvas`;
   }
   return `Open ${title} on this machine`;
 }
@@ -4099,7 +4283,7 @@ function renderLauncherDockItem(card) {
       class="swarmlab-canvas-launch-item"
       type="button"
       data-swarmlab-canvas-launcher="${escapeHtml(card.id)}"
-      data-swarmlab-launch-surface="${isAgentProvider ? "agent" : "desktop"}"
+      data-swarmlab-launch-surface="${isAgentProvider ? "agent" : isCanvasAppLauncher(card) ? "canvas" : "desktop"}"
       aria-label="${escapeHtml(launcherDockAriaLabel(card))}"
       title="${escapeHtml(launcherDockAriaLabel(card))}"
     >
@@ -4622,6 +4806,7 @@ function renderSnapshot(root, payload, { storage, remoteRecords = [] } = {}) {
   const viewportKey = getCanvasViewportStorageKey(boardId);
   const launchStorageKey = getLaunchLifecycleStorageKey(boardId);
   const dismissedAppInstancesStorageKey = getDismissedAppInstanceStorageKey(boardId);
+  const canvasAppUrlStorageKey = getCanvasAppUrlStorageKey(boardId);
   const dockStorageKey = launcherDockStorageKey(boardId);
   const launchLifecycles = readLaunchLifecycles(storage, launchStorageKey);
   const cards = suppressDismissedAppInstanceCards(
@@ -4656,6 +4841,7 @@ function renderSnapshot(root, payload, { storage, remoteRecords = [] } = {}) {
   root.dataset.swarmlabCanvasViewportStorageKey = viewportKey;
   root.dataset.swarmlabCanvasLaunchStorageKey = launchStorageKey;
   root.dataset.swarmlabCanvasDismissedAppInstancesStorageKey = dismissedAppInstancesStorageKey;
+  root.dataset.swarmlabCanvasAppUrlStorageKey = canvasAppUrlStorageKey;
   root.dataset.swarmlabCanvasLaunchDockStorageKey = dockStorageKey;
   root.__swarmlabCanvasLayout = layout;
   root.__swarmlabCanvasViewport = viewport;
@@ -4689,6 +4875,7 @@ function renderSnapshot(root, payload, { storage, remoteRecords = [] } = {}) {
     ${renderFloatingControls(viewport)}
     ${renderCanvasNotice()}
   `;
+  hydrateCanvasWebviews(root, storage);
   refreshRegionPresentation(root);
   const appliedPendingFocus = applyPendingCanvasCardFocus(root, storage);
   if (!appliedPendingFocus && (
@@ -4758,11 +4945,33 @@ function refreshRegionPresentation(root) {
   refreshCanvasPipes(root);
 }
 
+function isMachineBoundCanvasApp(card) {
+  const type = String(card?.type || "").trim();
+  return Boolean(card?.ref?.machineBound) || type === "app" || type === "browser" || type === "monitor";
+}
+
+function clampCardLayoutToRegion(layout, region) {
+  if (!layout || !region) return;
+  const width = Math.max(1, Number(layout.width) || 260);
+  const height = Math.max(1, Number(layout.height) || 180);
+  const minX = Number(region.x || 0) + 28;
+  const minY = Number(region.y || 0) + 82;
+  const maxX = Number(region.x || 0) + Math.max(28, Number(region.width || 0) - width - 28);
+  const maxY = Number(region.y || 0) + Math.max(82, Number(region.height || 0) - height - 34);
+  layout.x = Math.round(clamp(Number(layout.x) || minX, minX, Math.max(minX, maxX)));
+  layout.y = Math.round(clamp(Number(layout.y) || minY, minY, Math.max(minY, maxY)));
+}
+
 function updateRegionDropTarget(root, cardId) {
   const layout = root.__swarmlabCanvasLayout?.[cardId];
   if (!layout) return null;
   const center = cardCenter(layout);
-  const region = findRegionAtPoint(root, center.x, center.y);
+  const model = root.__swarmlabCanvasCardsById?.[cardId];
+  const machineId = getCanvasCardMachineId(model);
+  const hoveredRegion = findRegionAtPoint(root, center.x, center.y);
+  const region = hoveredRegion && isMachineBoundCanvasApp(model) && hoveredRegion.id !== machineId
+    ? root.__swarmlabCanvasRegionsById?.[machineId] || null
+    : hoveredRegion;
   root.querySelectorAll("[data-swarmlab-canvas-region-id]").forEach((regionElement) => {
     regionElement.classList.toggle(
       "is-drop-target",
@@ -4783,8 +4992,23 @@ function assignCardRegionFromPosition(root, cardId, cardElement) {
   if (!layout) return;
   const model = root.__swarmlabCanvasCardsById?.[cardId];
   const previousRegionId = getCanvasCardRegionId(model, layout);
+  const machineId = getCanvasCardMachineId(model);
   const center = cardCenter(layout);
   const region = findRegionAtPoint(root, center.x, center.y);
+  if (isMachineBoundCanvasApp(model) && (!region || region.id !== machineId)) {
+    const sourceRegion = root.__swarmlabCanvasRegionsById?.[machineId] || null;
+    layout.regionId = machineId;
+    clampCardLayoutToRegion(layout, sourceRegion);
+    cardElement.style.setProperty("--card-x", `${layout.x}px`);
+    cardElement.style.setProperty("--card-y", `${layout.y}px`);
+    refreshCardRegionState(root, cardElement);
+    refreshCanvasPipes(root);
+    const appName = model?.title || "App";
+    const sourceName = regionDisplayName(sourceRegion, machineId);
+    const suffix = region ? " Launch it on the other machine instead." : "";
+    showCanvasNotice(root, `${appName} stays on ${sourceName}.${suffix}`);
+    return;
+  }
   if (region) {
     layout.regionId = region.id;
   }
@@ -5630,7 +5854,9 @@ async function launchCanvasLauncher(button, root, { fetchImpl, abortController, 
       machineId: getCanvasCardMachineId(card),
       sourceCardId: card.id,
       title: launcher.label || card.title || appId,
-      subtitle: "desktop app / launched",
+      subtitle: launcher.canvasSurface === "browser" || result?.surface === "browser"
+        ? "canvas browser"
+        : "desktop app / launched",
       targetTitle: lifecycleTargetTitle(root, getCanvasCardMachineId(card)),
       appId: launcher.id || appId,
       status: "completed",
@@ -5819,6 +6045,30 @@ function bindCanvasActions(root, options) {
       event.preventDefault();
       event.stopPropagation();
       void dismissAppInstanceCard(button, root, root.__swarmlabCanvasActionOptions || {});
+    });
+  }
+
+  if (!root.__swarmlabCanvasWebviewBound) {
+    root.__swarmlabCanvasWebviewBound = true;
+    root.addEventListener("click", (event) => {
+      const button = event.target instanceof Element
+        ? event.target.closest("[data-swarmlab-canvas-webview-form] button")
+        : null;
+      if (!(button instanceof HTMLButtonElement)) return;
+      const form = button.closest("[data-swarmlab-canvas-webview-form]");
+      if (!(form instanceof HTMLFormElement)) return;
+      event.preventDefault();
+      event.stopPropagation();
+      submitCanvasWebviewForm(form, root, storage);
+    });
+    root.addEventListener("submit", (event) => {
+      const form = event.target instanceof Element
+        ? event.target.closest("[data-swarmlab-canvas-webview-form]")
+        : null;
+      if (!(form instanceof HTMLFormElement)) return;
+      event.preventDefault();
+      event.stopPropagation();
+      submitCanvasWebviewForm(form, root, storage);
     });
   }
 

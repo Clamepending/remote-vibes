@@ -123,6 +123,32 @@ test("buildCanvasCards renders launched app instances from node snapshots", () =
   assert.equal(cards.find((card) => card.type === "machine")?.detail, "0 sessions, 1 apps, 0 handoffs");
 });
 
+test("buildCanvasCards renders canvas browser instances as machine-pinned surfaces", () => {
+  const cards = buildCanvasCards({
+    node: { id: "node-1", name: "Mac" },
+    appInstances: [{
+      id: "appinst_browser",
+      appId: "browser",
+      label: "Browser",
+      kind: "canvas-app",
+      category: "browser",
+      surface: "browser",
+      status: "launched",
+      updatedAt: "2026-05-13T10:01:00.000Z",
+    }],
+  });
+
+  const app = cards.find((card) => card.id === "app-instance:appinst_browser");
+  assert.equal(app?.type, "app");
+  assert.equal(app?.title, "Browser");
+  assert.equal(app?.subtitle, "canvas browser");
+  assert.equal(app?.ref.appSurface, "browser");
+  assert.equal(app?.ref.machineBound, true);
+  assert.equal(app?.ref.previewTrusted, true);
+  assert.equal(app?.width, 660);
+  assert.equal(app?.height, 500);
+});
+
 test("buildCanvasCards hides dismissed app instances from node snapshots", () => {
   const cards = buildCanvasCards({
     node: { id: "node-1", name: "Mac" },
@@ -142,6 +168,7 @@ test("buildCanvasCards excludes launchers while buildCanvasLauncherCards returns
     node: { id: "node-1", name: "Mac", status: "online" },
     launchers: [
       { id: "app:cursor", label: "Cursor", kind: "desktop-app", category: "editor", priority: 90, description: "Open Cursor from the canvas.", appId: "cursor", available: true, platform: "darwin" },
+      { id: "app:browser", label: "Browser", kind: "canvas-app", category: "browser", priority: 97, description: "Open Browser inside this machine region.", canvasSurface: "browser", available: true },
       { id: "provider:codex", label: "Codex", kind: "agent-provider", priority: 100, providerId: "codex", defaultName: "Codex", available: true },
       { id: "app:missing", label: "Missing", kind: "desktop-app", appId: "missing", available: false },
     ],
@@ -151,13 +178,18 @@ test("buildCanvasCards excludes launchers while buildCanvasLauncherCards returns
   assert.equal(cards.some((card) => card.type === "launcher"), false);
 
   const launchers = buildCanvasLauncherCards(payload);
-  assert.deepEqual(launchers.map((card) => card.title), ["Codex", "Cursor"]);
+  assert.deepEqual(launchers.map((card) => card.title), ["Codex", "Browser", "Cursor"]);
   assert.equal(launchers[0].ref.providerId, "codex");
   assert.equal(launchers[0].ref.actionLabel, "Launch");
-  assert.equal(launchers[1].ref.appId, "cursor");
-  assert.equal(launchers[1].subtitle, "desktop app");
-  assert.equal(launchers[1].detail, "Open Cursor from the canvas.");
-  assert.equal(launchers[1].ref.category, "editor");
+  assert.equal(launchers[1].ref.appId, "browser");
+  assert.equal(launchers[1].subtitle, "canvas app");
+  assert.equal(launchers[1].detail, "Open Browser inside this machine region.");
+  assert.equal(launchers[1].ref.appSurface, "browser");
+  assert.equal(launchers[1].ref.machineBound, true);
+  assert.equal(launchers[2].ref.appId, "cursor");
+  assert.equal(launchers[2].subtitle, "desktop app");
+  assert.equal(launchers[2].detail, "Open Cursor from the canvas.");
+  assert.equal(launchers[2].ref.category, "editor");
 });
 
 test("buildCanvasLauncherCards materializes shell provider fallback as Terminal", () => {

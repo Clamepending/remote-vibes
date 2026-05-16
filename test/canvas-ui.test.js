@@ -241,6 +241,7 @@ test("local canvas view renders node snapshot cards and persists drag layout", a
           appInstances: extraLocalAppInstances,
           launchers: [
             { id: "provider:codex", label: "Codex", kind: "agent-provider", providerId: "codex", defaultName: "Codex", available: true },
+            { id: "app:browser", label: "Browser", kind: "canvas-app", category: "browser", appId: "browser", canvasSurface: "browser", available: true },
             { id: "app:cursor", label: "Cursor", kind: "desktop-app", appId: "cursor", available: true, platform: "darwin" },
             { id: "provider:claude", label: "Claude Code", kind: "agent-provider", providerId: "claude", defaultName: "Claude", available: true },
             { id: "app:vscode", label: "VS Code", kind: "desktop-app", category: "editor", appId: "vscode", available: true, platform: "darwin" },
@@ -662,20 +663,28 @@ test("local canvas view renders node snapshot cards and persists drag layout", a
     await page.route(`${baseUrl}/api/node/apps/launch`, async (route) => {
       postedAppLaunches.push(JSON.parse(route.request().postData() || "{}"));
       const appId = postedAppLaunches.at(-1).appId;
-      if (appId === "cursor" && postedAppLaunches.length === 1) {
+      if (appId === "cursor" && postedAppLaunches.filter((entry) => entry.appId === "cursor").length === 1) {
         await new Promise((resolve) => setTimeout(resolve, 120));
       }
+      const isBrowser = appId === "browser";
       await route.fulfill({
         status: 202,
         contentType: "application/json",
         body: JSON.stringify({
           launched: true,
-          launcher: { id: appId },
+          embedded: isBrowser,
+          surface: isBrowser ? "browser" : "",
+          launcher: isBrowser
+            ? { id: appId, label: "Browser", kind: "canvas-app", category: "browser", canvasSurface: "browser" }
+            : { id: appId },
           instance: {
             appId,
             launcherId: appId,
-            label: appId === "cursor" ? "Cursor" : appId,
-            url: `https://canvas-app.example.test/${appId}/`,
+            label: appId === "cursor" ? "Cursor" : isBrowser ? "Browser" : appId,
+            kind: isBrowser ? "canvas-app" : "desktop-app",
+            category: isBrowser ? "browser" : "",
+            surface: isBrowser ? "browser" : "",
+            url: isBrowser ? "" : `https://canvas-app.example.test/${appId}/`,
           },
         }),
       });
@@ -812,10 +821,10 @@ test("local canvas view renders node snapshot cards and persists drag layout", a
     assert.equal(await page.locator(".swarmlab-canvas-card.is-launcher").count(), 0);
     assert.equal(await page.locator(".swarmlab-canvas-launch-dock").count(), 1);
     assert.equal(await page.locator("[data-swarmlab-canvas-launch-machine]").count(), 0);
-    assert.equal(await page.locator("[data-swarmlab-canvas-launcher]").count(), 15);
+    assert.equal(await page.locator("[data-swarmlab-canvas-launcher]").count(), 16);
     assert.equal(await page.locator(".swarmlab-canvas-launch-items > [data-swarmlab-canvas-launcher]").count(), 6);
-    assert.equal(await page.locator(".swarmlab-canvas-launch-more-button").getAttribute("title"), "Show 9 more launchers");
-    assert.equal(await page.locator(".swarmlab-canvas-launch-more-button").getAttribute("aria-label"), "Show 9 more launchers");
+    assert.equal(await page.locator(".swarmlab-canvas-launch-more-button").getAttribute("title"), "Show 10 more launchers");
+    assert.equal(await page.locator(".swarmlab-canvas-launch-more-button").getAttribute("aria-label"), "Show 10 more launchers");
     const dockBox = await page.locator(".swarmlab-canvas-launch-dock").boundingBox();
     const controlsBox = await page.locator(".swarmlab-canvas-floating-controls").boundingBox();
     assert.ok(dockBox && dockBox.height <= 64, "app launcher dock should stay compact");
@@ -837,7 +846,7 @@ test("local canvas view renders node snapshot cards and persists drag layout", a
     assert.ok(directLauncherBox && directLauncherBox.width <= 62, "dock launcher buttons should be icon-scale");
     await page.locator(".swarmlab-canvas-launch-more-button").click();
     await page.locator(".swarmlab-canvas-launch-more-panel").waitFor({ state: "visible" });
-    assert.equal(await page.locator(".swarmlab-canvas-launch-more-panel [data-swarmlab-canvas-launcher]").count(), 9);
+    assert.equal(await page.locator(".swarmlab-canvas-launch-more-panel [data-swarmlab-canvas-launcher]").count(), 10);
     const morePanelBox = await page.locator(".swarmlab-canvas-launch-more-panel").boundingBox();
     const openControlsBox = await page.locator(".swarmlab-canvas-floating-controls").boundingBox();
     assert.ok(
@@ -868,6 +877,14 @@ test("local canvas view renders node snapshot cards and persists drag layout", a
     assert.equal(
       await page.locator('[data-swarmlab-canvas-launcher="launcher:provider:codex"]').getAttribute("aria-label"),
       "Start Codex as a canvas chat",
+    );
+    assert.equal(
+      await page.locator('[data-swarmlab-canvas-launcher="launcher:app:browser"]').getAttribute("aria-label"),
+      "Open Browser in the canvas",
+    );
+    assert.equal(
+      await page.locator('[data-swarmlab-canvas-launcher="launcher:app:browser"]').getAttribute("data-swarmlab-launch-surface"),
+      "canvas",
     );
     assert.equal(
       await page.locator('[data-swarmlab-canvas-launcher="launcher:app:cursor"]').getAttribute("aria-label"),
@@ -1101,16 +1118,37 @@ test("local canvas view renders node snapshot cards and persists drag layout", a
     await page.locator('[data-swarmlab-canvas-focus-region="mac-main"]').evaluate((button) => button.click());
     await page.waitForSelector('[data-swarmlab-canvas-card-id="session:session-1"]', { timeout: 10_000 });
 
+    await page.click('[data-swarmlab-canvas-launcher="launcher:app:browser"]');
+    for (let attempt = 0; attempt < 20 && postedAppLaunches.length === 0; attempt += 1) {
+      await page.waitForTimeout(50);
+    }
+    assert.equal(postedAppLaunches.length, 1);
+    assert.equal(postedAppLaunches[0].appId, "browser");
+    const browserCard = page.locator(".swarmlab-canvas-card.is-app.is-launched-app").filter({ hasText: "Browser" });
+    await browserCard.waitFor({ timeout: 10_000 });
+    assert.equal(await browserCard.locator("[data-swarmlab-canvas-webview-form]").count(), 1);
+    await browserCard.locator("[data-swarmlab-canvas-webview-form] input").fill("localhost:4173");
+    await browserCard.locator("[data-swarmlab-canvas-webview-form] button").click();
+    const browserFrame = browserCard.locator("iframe");
+    await browserFrame.waitFor({ state: "attached", timeout: 10_000 });
+    assert.equal(await browserFrame.getAttribute("src"), "http://localhost:4173/");
+    assert.match(await browserCard.innerText(), /Embedded pages stay on this machine/);
+    await browserCard.locator("[data-swarmlab-canvas-dismiss-launch]").click();
+    await page.waitForFunction(() =>
+      ![...document.querySelectorAll(".swarmlab-canvas-card.is-app.is-launched-app")]
+        .some((card) => /Browser/.test(card.textContent || "")),
+    );
+
     await page.click('[data-swarmlab-canvas-launcher="launcher:app:cursor"]');
     await page.waitForSelector('[data-swarmlab-canvas-launcher="launcher:app:cursor"][data-swarmlab-launch-state="Launching"]', { timeout: 10_000 });
     const launchingCursorText = await page.locator('[data-swarmlab-canvas-launcher="launcher:app:cursor"]').innerText();
     assert.match(launchingCursorText, /Cursor/);
     assert.doesNotMatch(launchingCursorText, /^Launching\.?$/);
-    for (let attempt = 0; attempt < 20 && postedAppLaunches.length === 0; attempt += 1) {
+    for (let attempt = 0; attempt < 20 && postedAppLaunches.length === 1; attempt += 1) {
       await page.waitForTimeout(50);
     }
-    assert.equal(postedAppLaunches.length, 1);
-    assert.equal(postedAppLaunches[0].appId, "cursor");
+    assert.equal(postedAppLaunches.length, 2);
+    assert.equal(postedAppLaunches[1].appId, "cursor");
     await page.waitForFunction(() =>
       [...document.querySelectorAll(".swarmlab-canvas-card.is-app:not(.is-lifecycle)")]
         .some((card) => /Cursor/.test(card.textContent || "") && /launched/i.test(card.textContent || "")),
@@ -1125,10 +1163,10 @@ test("local canvas view renders node snapshot cards and persists drag layout", a
       "launching a desktop app should create a tracked app instance card",
     );
     await page.click('[data-swarmlab-canvas-launcher="launcher:app:cursor"]');
-    for (let attempt = 0; attempt < 20 && postedAppLaunches.length === 1; attempt += 1) {
+    for (let attempt = 0; attempt < 20 && postedAppLaunches.length === 2; attempt += 1) {
       await page.waitForTimeout(50);
     }
-    assert.equal(postedAppLaunches.length, 2);
+    assert.equal(postedAppLaunches.length, 3);
     assert.equal(
       await page.locator(".swarmlab-canvas-card.is-app-instance.is-launched-app").count(),
       1,
@@ -1143,11 +1181,16 @@ test("local canvas view renders node snapshot cards and persists drag layout", a
       await page.locator(".swarmlab-canvas-card.is-app-instance.is-launched-app").innerText(),
       /instance|launched/i,
     );
-    const dismissLaunchedApp = page.locator('.swarmlab-canvas-card.is-launched-app [data-swarmlab-canvas-dismiss-launch]');
+    const dismissLaunchedApp = page.locator(
+      [
+        '.swarmlab-canvas-card.is-launched-app [data-swarmlab-canvas-dismiss-launch]',
+        '.swarmlab-canvas-card.is-launched-app [data-swarmlab-canvas-dismiss-app-instance]',
+      ].join(", "),
+    );
     assert.equal(await dismissLaunchedApp.count(), 1);
     await dismissLaunchedApp.click();
     await page.waitForFunction(() => document.querySelectorAll(".swarmlab-canvas-card.is-launched-app").length === 0);
-    assert.equal(postedAppLaunches.length, 2, "dismissing a launched app window should not relaunch or kill the app");
+    assert.equal(postedAppLaunches.length, 3, "dismissing a launched app window should not relaunch or kill the app");
     assert.equal(deletedSessions.length, 0, "dismissing a launched app window must not delete agent sessions");
     assert.match(postedAppLaunches.at(-1).clientCommandId, /^local-app-/);
     extraLocalPorts = [

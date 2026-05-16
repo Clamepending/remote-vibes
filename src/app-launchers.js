@@ -9,6 +9,15 @@ const execFileAsync = promisify(execFile);
 
 export const appLauncherDefinitions = [
   {
+    id: "browser",
+    label: "Browser",
+    kind: "canvas-app",
+    category: "browser",
+    priority: 97,
+    description: "Open an embedded browser surface in the canvas on this machine.",
+    canvasSurface: "browser",
+  },
+  {
     id: "codex",
     label: "Codex",
     kind: "desktop-app",
@@ -77,6 +86,66 @@ export const appLauncherDefinitions = [
     commands: ["windsurf"],
   },
   {
+    id: "zed",
+    label: "Zed",
+    kind: "desktop-app",
+    category: "editor",
+    priority: 74,
+    description: "Open Zed on this machine.",
+    macAppName: "Zed",
+    macPaths: [
+      "/Applications/Zed.app",
+      "~/Applications/Zed.app",
+    ],
+    commands: ["zed"],
+  },
+  {
+    id: "pycharm",
+    label: "PyCharm",
+    kind: "desktop-app",
+    category: "editor",
+    priority: 70,
+    description: "Open PyCharm on this machine.",
+    macAppName: "PyCharm",
+    macPaths: [
+      "/Applications/PyCharm.app",
+      "/Applications/PyCharm CE.app",
+      "~/Applications/PyCharm.app",
+      "~/Applications/PyCharm CE.app",
+    ],
+    commands: ["pycharm"],
+  },
+  {
+    id: "intellij",
+    label: "IntelliJ",
+    kind: "desktop-app",
+    category: "editor",
+    priority: 68,
+    description: "Open IntelliJ IDEA on this machine.",
+    macAppName: "IntelliJ IDEA",
+    macPaths: [
+      "/Applications/IntelliJ IDEA.app",
+      "/Applications/IntelliJ IDEA CE.app",
+      "~/Applications/IntelliJ IDEA.app",
+      "~/Applications/IntelliJ IDEA CE.app",
+    ],
+    commands: ["idea", "intellij-idea"],
+  },
+  {
+    id: "dataspell",
+    label: "DataSpell",
+    kind: "desktop-app",
+    category: "editor",
+    priority: 66,
+    description: "Open DataSpell on this machine.",
+    macAppName: "DataSpell",
+    macPaths: [
+      "/Applications/DataSpell.app",
+      "~/Applications/DataSpell.app",
+    ],
+    commands: ["dataspell"],
+  },
+  {
     id: "opencode",
     label: "OpenCode",
     kind: "desktop-app",
@@ -119,6 +188,62 @@ export const appLauncherDefinitions = [
     ],
   },
   {
+    id: "warp",
+    label: "Warp",
+    kind: "desktop-app",
+    category: "terminal",
+    priority: 54,
+    description: "Open Warp on this machine.",
+    macAppName: "Warp",
+    macPaths: [
+      "/Applications/Warp.app",
+      "~/Applications/Warp.app",
+    ],
+    commands: ["warp"],
+  },
+  {
+    id: "ghostty",
+    label: "Ghostty",
+    kind: "desktop-app",
+    category: "terminal",
+    priority: 53,
+    description: "Open Ghostty on this machine.",
+    macAppName: "Ghostty",
+    macPaths: [
+      "/Applications/Ghostty.app",
+      "~/Applications/Ghostty.app",
+    ],
+    commands: ["ghostty"],
+  },
+  {
+    id: "wezterm",
+    label: "WezTerm",
+    kind: "desktop-app",
+    category: "terminal",
+    priority: 52,
+    description: "Open WezTerm on this machine.",
+    macAppName: "WezTerm",
+    macPaths: [
+      "/Applications/WezTerm.app",
+      "~/Applications/WezTerm.app",
+    ],
+    commands: ["wezterm"],
+  },
+  {
+    id: "kitty",
+    label: "Kitty",
+    kind: "desktop-app",
+    category: "terminal",
+    priority: 51,
+    description: "Open Kitty on this machine.",
+    macAppName: "kitty",
+    macPaths: [
+      "/Applications/kitty.app",
+      "~/Applications/kitty.app",
+    ],
+    commands: ["kitty"],
+  },
+  {
     id: "chrome",
     label: "Chrome",
     kind: "desktop-app",
@@ -131,6 +256,20 @@ export const appLauncherDefinitions = [
       "~/Applications/Google Chrome.app",
     ],
     commands: ["google-chrome", "google-chrome-stable", "chromium", "chromium-browser"],
+  },
+  {
+    id: "brave",
+    label: "Brave",
+    kind: "desktop-app",
+    category: "browser",
+    priority: 47,
+    description: "Open Brave Browser on this machine.",
+    macAppName: "Brave Browser",
+    macPaths: [
+      "/Applications/Brave Browser.app",
+      "~/Applications/Brave Browser.app",
+    ],
+    commands: ["brave-browser", "brave"],
   },
   {
     id: "firefox",
@@ -147,6 +286,20 @@ export const appLauncherDefinitions = [
     commands: ["firefox"],
   },
   {
+    id: "edge",
+    label: "Edge",
+    kind: "desktop-app",
+    category: "browser",
+    priority: 44,
+    description: "Open Microsoft Edge on this machine.",
+    macAppName: "Microsoft Edge",
+    macPaths: [
+      "/Applications/Microsoft Edge.app",
+      "~/Applications/Microsoft Edge.app",
+    ],
+    commands: ["microsoft-edge", "microsoft-edge-stable"],
+  },
+  {
     id: "safari",
     label: "Safari",
     kind: "desktop-app",
@@ -158,6 +311,42 @@ export const appLauncherDefinitions = [
       "/Applications/Safari.app",
       "/System/Applications/Safari.app",
     ],
+  },
+  {
+    id: "arc",
+    label: "Arc",
+    kind: "desktop-app",
+    category: "browser",
+    priority: 40,
+    description: "Open Arc on this machine.",
+    macAppName: "Arc",
+    macPaths: [
+      "/Applications/Arc.app",
+      "~/Applications/Arc.app",
+    ],
+  },
+  {
+    id: "jupyterlab",
+    label: "JupyterLab",
+    kind: "desktop-app",
+    category: "research",
+    priority: 38,
+    description: "Open JupyterLab on this machine.",
+    commands: ["jupyter-lab", "jupyter"],
+  },
+  {
+    id: "rstudio",
+    label: "RStudio",
+    kind: "desktop-app",
+    category: "research",
+    priority: 37,
+    description: "Open RStudio on this machine.",
+    macAppName: "RStudio",
+    macPaths: [
+      "/Applications/RStudio.app",
+      "~/Applications/RStudio.app",
+    ],
+    commands: ["rstudio"],
   },
   {
     id: "docker",
@@ -183,6 +372,60 @@ export const appLauncherDefinitions = [
     macPaths: [
       "/Applications/Xcode.app",
       "~/Applications/Xcode.app",
+    ],
+  },
+  {
+    id: "obsidian",
+    label: "Obsidian",
+    kind: "desktop-app",
+    category: "knowledge",
+    priority: 28,
+    description: "Open Obsidian on this machine.",
+    macAppName: "Obsidian",
+    macPaths: [
+      "/Applications/Obsidian.app",
+      "~/Applications/Obsidian.app",
+    ],
+    commands: ["obsidian"],
+  },
+  {
+    id: "notion",
+    label: "Notion",
+    kind: "desktop-app",
+    category: "knowledge",
+    priority: 26,
+    description: "Open Notion on this machine.",
+    macAppName: "Notion",
+    macPaths: [
+      "/Applications/Notion.app",
+      "~/Applications/Notion.app",
+    ],
+  },
+  {
+    id: "slack",
+    label: "Slack",
+    kind: "desktop-app",
+    category: "communication",
+    priority: 24,
+    description: "Open Slack on this machine.",
+    macAppName: "Slack",
+    macPaths: [
+      "/Applications/Slack.app",
+      "~/Applications/Slack.app",
+    ],
+    commands: ["slack"],
+  },
+  {
+    id: "zoom",
+    label: "Zoom",
+    kind: "desktop-app",
+    category: "communication",
+    priority: 22,
+    description: "Open Zoom on this machine.",
+    macAppName: "zoom.us",
+    macPaths: [
+      "/Applications/zoom.us.app",
+      "~/Applications/zoom.us.app",
     ],
   },
 ];
@@ -252,6 +495,8 @@ function normalizeLauncherDefinition(definition = {}) {
     category: compactText(definition.category || "app", 40).toLowerCase().replace(/[^a-z0-9._-]+/g, "-"),
     priority: normalizePriority(definition.priority),
     description: compactText(definition.description || "", 160),
+    canvasSurface: compactText(definition.canvasSurface || definition.surface || "", 80).toLowerCase().replace(/[^a-z0-9._-]+/g, "-"),
+    defaultUrl: compactText(definition.defaultUrl || definition.url || "", 2048),
     macAppName: compactText(definition.macAppName || definition.appName || label, 80),
     macPaths: normalizeStringList(definition.macPaths || definition.paths),
     commands: normalizeStringList(definition.commands || definition.command),
@@ -304,6 +549,17 @@ async function detectAppLauncher(definition, env = process.env, platform = os.pl
     platform,
   };
 
+  if (normalized.kind === "canvas-app" || normalized.canvasSurface) {
+    return {
+      ...base,
+      kind: "canvas-app",
+      available: true,
+      launchMode: "canvas-surface",
+      canvasSurface: normalized.canvasSurface || id,
+      defaultUrl: normalized.defaultUrl,
+    };
+  }
+
   if (platform === "darwin") {
     for (const candidate of normalized.macPaths) {
       const appPath = expandPath(candidate, env);
@@ -354,6 +610,8 @@ export function summarizeAppLauncher(launcher = {}) {
     description: compactText(launcher.description || "", 160),
     available: Boolean(launcher.available),
     platform: compactText(launcher.platform, 40),
+    canvasSurface: compactText(launcher.canvasSurface || launcher.surface || "", 80),
+    defaultUrl: compactText(launcher.defaultUrl || launcher.url || "", 2048),
   };
 }
 
@@ -387,6 +645,15 @@ export async function launchAppLauncher(launcherId, launchers = [], {
     });
     child.unref?.();
     return { launched: true, launcher: summarizeAppLauncher(launcher) };
+  }
+  if (launcher.launchMode === "canvas-surface") {
+    return {
+      launched: true,
+      embedded: true,
+      surface: compactText(launcher.canvasSurface || launcher.surface || launcher.id, 80),
+      url: compactText(launcher.defaultUrl || launcher.url || "", 2048),
+      launcher: summarizeAppLauncher(launcher),
+    };
   }
 
   throw new Error(`${launcher.label || id} does not have a launch command for this platform.`);
