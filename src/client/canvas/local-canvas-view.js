@@ -373,16 +373,14 @@ function injectCanvasStyles(documentRef = document) {
 }
 .swarmlab-canvas-launch-dock {
   position: absolute;
-  left: 50%;
+  left: 14px;
   right: auto;
-  bottom: 12px;
-  z-index: 26;
-  display: grid;
-  grid-template-columns: auto minmax(0, 1fr);
-  gap: 5px;
+  bottom: 14px;
+  z-index: 32;
+  display: block;
   width: max-content;
-  max-width: min(560px, calc(100% - 32px));
-  min-height: 40px;
+  max-width: calc(100% - 28px);
+  min-height: 0;
   padding: 4px;
   border: 1px solid rgba(232, 222, 206, 0.14);
   border-radius: 8px;
@@ -393,7 +391,7 @@ function injectCanvasStyles(documentRef = document) {
   overflow: visible;
   pointer-events: auto;
   touch-action: pan-x;
-  transform: translateX(-50%);
+  transform: none;
 }
 .swarmlab-canvas-launch-title {
   display: inline-flex;
@@ -408,19 +406,46 @@ function injectCanvasStyles(documentRef = document) {
 .swarmlab-canvas-launch-title {
   padding: 0;
   color: var(--canvas-muted);
+  font: inherit;
   font-size: 10px;
   font-weight: 760;
   white-space: nowrap;
+  cursor: pointer;
+}
+.swarmlab-canvas-launch-dock.is-open .swarmlab-canvas-launch-title,
+.swarmlab-canvas-launch-title:hover,
+.swarmlab-canvas-launch-title:focus-visible {
+  border-color: rgba(116, 199, 184, 0.38);
+  background: rgba(116, 199, 184, 0.08);
+  color: var(--canvas-text);
+}
+.swarmlab-canvas-launch-title:focus-visible {
+  outline: none;
+  box-shadow: 0 0 0 1px rgba(116, 199, 184, 0.22);
 }
 .swarmlab-canvas-launch-title span {
   display: none;
 }
 .swarmlab-canvas-launch-panel {
-  display: flex;
+  position: absolute;
+  left: 0;
+  bottom: calc(100% + 8px);
+  z-index: 44;
+  display: none;
   gap: 5px;
   align-items: center;
+  width: min(620px, calc(100vw - 32px));
   min-width: 0;
+  max-width: calc(100vw - 32px);
+  padding: 6px;
+  border: 1px solid rgba(232, 222, 206, 0.14);
+  border-radius: 8px;
+  background: rgba(29, 28, 25, 0.97);
+  box-shadow: 0 20px 58px rgba(0, 0, 0, 0.42);
   overflow: visible;
+}
+.swarmlab-canvas-launch-dock.is-open .swarmlab-canvas-launch-panel {
+  display: flex;
 }
 .swarmlab-canvas-launch-machine-label {
   display: flex;
@@ -569,7 +594,7 @@ function injectCanvasStyles(documentRef = document) {
   position: absolute;
   left: auto;
   right: 0;
-  bottom: calc(100% + 62px);
+  bottom: calc(100% + 8px);
   z-index: 45;
   display: grid;
   grid-template-columns: repeat(3, 54px);
@@ -1659,9 +1684,12 @@ function injectCanvasStyles(documentRef = document) {
     justify-content: flex-start;
   }
   .swarmlab-canvas-launch-dock {
-    grid-template-columns: auto minmax(0, 1fr);
+    left: 12px;
     bottom: 12px;
     max-width: calc(100% - 24px);
+  }
+  .swarmlab-canvas-launch-panel {
+    width: min(560px, calc(100vw - 24px));
   }
   .swarmlab-canvas-launch-machine-label {
     flex-basis: 96px;
@@ -2642,6 +2670,14 @@ function writeCanvasAppUrls(storage, key, urls) {
   } catch {
     // App URL state is local UI convenience.
   }
+}
+
+function removeCanvasAppUrl(storage, key, cardId) {
+  if (!key || !cardId) return;
+  const urls = readCanvasAppUrls(storage, key);
+  if (!Object.prototype.hasOwnProperty.call(urls, cardId)) return;
+  delete urls[cardId];
+  writeCanvasAppUrls(storage, key, urls);
 }
 
 function normalizeDismissedAppInstanceRecord(item) {
@@ -3631,36 +3667,73 @@ function updateAgentFeed(card, html) {
   feed.scrollTop = feed.scrollHeight;
 }
 
+function renderCanvasWebviewPlaceholder(message) {
+  return `
+    <div class="swarmlab-canvas-app-preview-placeholder">
+      ${renderIcon(Globe2, { width: 28, height: 28 })}
+      <span>${escapeHtml(message || "Enter a URL to open it in this machine's canvas.")}</span>
+    </div>
+  `;
+}
+
+function renderCanvasWebviewFrame(url, title = "Canvas browser preview") {
+  return `
+    <iframe
+      class="swarmlab-canvas-app-frame"
+      title="${escapeHtml(title)}"
+      src="${escapeHtml(url)}"
+      loading="lazy"
+      referrerpolicy="no-referrer"
+      sandbox="allow-forms allow-popups allow-same-origin allow-scripts"
+    ></iframe>
+  `;
+}
+
+function isRecursiveSwarmlabUrl(normalizedUrl, root) {
+  const locationRef = root?.ownerDocument?.defaultView?.location || globalThis.location;
+  if (!locationRef?.origin) return false;
+  try {
+    const url = new URL(normalizedUrl);
+    if (url.origin !== locationRef.origin) return false;
+    const pathname = url.pathname.replace(/\/+$/u, "") || "/";
+    if (pathname !== "/") return false;
+    return !url.search || url.searchParams.has("view") || url.searchParams.has("verify");
+  } catch {
+    return false;
+  }
+}
+
 function setCanvasWebviewUrl(root, cardId, url, { storage } = {}) {
   const normalized = normalizeCanvasWebviewUrl(url, root);
-  if (!normalized) return false;
   const key = root?.dataset?.swarmlabCanvasAppUrlStorageKey || "";
-  if (key) {
-    const urls = readCanvasAppUrls(storage, key);
-    urls[cardId] = normalized;
-    writeCanvasAppUrls(storage, key, urls);
-  }
   const card = [...root.querySelectorAll("[data-swarmlab-canvas-card-id]")]
     .find((element) => element.getAttribute("data-swarmlab-canvas-card-id") === cardId);
   const form = card?.querySelector("[data-swarmlab-canvas-webview-form]");
   const input = form?.querySelector('input[name="url"]');
   const shell = card?.querySelector("[data-swarmlab-canvas-webview-shell]");
+  if (!normalized) return { ok: false, reason: "invalid" };
+  if (isRecursiveSwarmlabUrl(normalized, root)) {
+    removeCanvasAppUrl(storage, key, cardId);
+    if (input instanceof HTMLInputElement) {
+      input.value = "";
+    }
+    if (shell instanceof HTMLElement) {
+      shell.innerHTML = renderCanvasWebviewPlaceholder("Use the main tabs for Swarmlab itself. Browser cards are for external sites and local app URLs.");
+    }
+    return { ok: false, reason: "recursive" };
+  }
+  if (key) {
+    const urls = readCanvasAppUrls(storage, key);
+    urls[cardId] = normalized;
+    writeCanvasAppUrls(storage, key, urls);
+  }
   if (input instanceof HTMLInputElement) {
     input.value = normalized;
   }
   if (shell instanceof HTMLElement) {
-    shell.innerHTML = `
-      <iframe
-        class="swarmlab-canvas-app-frame"
-        title="Canvas browser preview"
-        src="${escapeHtml(normalized)}"
-        loading="lazy"
-        referrerpolicy="no-referrer"
-        sandbox="allow-forms allow-popups allow-same-origin allow-scripts"
-      ></iframe>
-    `;
+    shell.innerHTML = renderCanvasWebviewFrame(normalized);
   }
-  return true;
+  return { ok: true, url: normalized };
 }
 
 function hydrateCanvasWebviews(root, storage) {
@@ -3677,8 +3750,11 @@ function submitCanvasWebviewForm(form, root, storage) {
   const cardId = form.getAttribute("data-swarmlab-canvas-webview-card-id") || "";
   const input = form.querySelector('input[name="url"]');
   const value = input instanceof HTMLInputElement ? input.value : "";
-  if (cardId && setCanvasWebviewUrl(root, cardId, value, { storage })) {
+  const result = cardId ? setCanvasWebviewUrl(root, cardId, value, { storage }) : { ok: false, reason: "invalid" };
+  if (result.ok) {
     showCanvasNotice(root, "Opened browser surface in this machine region.");
+  } else if (result.reason === "recursive") {
+    showCanvasNotice(root, "Swarmlab views open in the main app, not inside a canvas browser.");
   } else {
     showCanvasNotice(root, "Enter a valid http or https URL.");
   }
@@ -3840,15 +3916,8 @@ function renderCanvasBrowserAppCard(card, layout) {
       </form>
       <div class="swarmlab-canvas-app-frame-shell" data-swarmlab-canvas-webview-shell>
         ${hasUrl
-          ? `<iframe
-              class="swarmlab-canvas-app-frame"
-              title="${escapeHtml(`${card.title} preview`)}"
-              src="${escapeHtml(embedUrl)}"
-              loading="lazy"
-              referrerpolicy="no-referrer"
-              sandbox="allow-forms allow-popups allow-same-origin allow-scripts"
-            ></iframe>`
-          : `<div class="swarmlab-canvas-app-preview-placeholder">${renderIcon(Globe2, { width: 28, height: 28 })}<span>Enter a URL to open it in this machine's canvas.</span></div>`}
+          ? renderCanvasWebviewFrame(embedUrl, `${card.title} preview`)
+          : renderCanvasWebviewPlaceholder("Enter a URL to open it in this machine's canvas.")}
       </div>
     </div>
   `;
@@ -4359,10 +4428,16 @@ function renderLauncherDock(launcherCards, regions = [], localMachineId = "", se
   const viewOnly = isViewOnlyRemoteRegion(activeRegion, localMachineId);
   return `
     <nav class="swarmlab-canvas-launch-dock" data-swarmlab-canvas-launch-dock aria-label="Launch agents and apps on ${escapeHtml(activeTitle)}">
-      <div class="swarmlab-canvas-launch-title" title="${escapeHtml(`Launch agents and apps on ${activeTitle}`)}">
+      <button
+        class="swarmlab-canvas-launch-title"
+        type="button"
+        data-swarmlab-canvas-toggle-launch-dock
+        aria-expanded="false"
+        title="${escapeHtml(`Launch agents and apps on ${activeTitle}`)}"
+      >
         ${renderIcon(AppWindow, { width: 16, height: 16 })}
         <span>Launch</span>
-      </div>
+      </button>
       <section class="swarmlab-canvas-launch-panel" aria-label="${escapeHtml(`Launch agents and apps on ${activeTitle}`)}">
         <div class="swarmlab-canvas-launch-machine-label" title="${escapeHtml(activeTitle)}">
           <span class="swarmlab-canvas-launch-chip" aria-hidden="true" style="--machine-accent: ${escapeHtml(regionAccent(activeRegion))};"></span>
@@ -4507,6 +4582,12 @@ function renderCanvasNotice() {
 function closeLauncherDockOverflows(root) {
   root.querySelectorAll(".swarmlab-canvas-launch-more[open]").forEach((details) => {
     details.removeAttribute("open");
+  });
+  root.querySelectorAll(".swarmlab-canvas-launch-dock.is-open").forEach((dock) => {
+    dock.classList.remove("is-open");
+    dock.querySelectorAll("[data-swarmlab-canvas-toggle-launch-dock]").forEach((button) => {
+      button.setAttribute("aria-expanded", "false");
+    });
   });
 }
 
@@ -6007,10 +6088,28 @@ function bindCanvasActions(root, options) {
     });
   }
 
+  if (!root.__swarmlabCanvasToggleLaunchDockBound) {
+    root.__swarmlabCanvasToggleLaunchDockBound = true;
+    root.addEventListener("click", (event) => {
+      const button = event.target instanceof Element
+        ? event.target.closest("[data-swarmlab-canvas-toggle-launch-dock]")
+        : null;
+      if (!(button instanceof HTMLButtonElement)) return;
+      event.preventDefault();
+      event.stopPropagation();
+      const dock = button.closest("[data-swarmlab-canvas-launch-dock]");
+      if (!(dock instanceof HTMLElement)) return;
+      const willOpen = !dock.classList.contains("is-open");
+      closeLauncherDockOverflows(root);
+      dock.classList.toggle("is-open", willOpen);
+      button.setAttribute("aria-expanded", willOpen ? "true" : "false");
+    });
+  }
+
   if (!root.__swarmlabCanvasLaunchOverflowBound) {
     root.__swarmlabCanvasLaunchOverflowBound = true;
     root.addEventListener("click", (event) => {
-      if (event.target instanceof Element && event.target.closest(".swarmlab-canvas-launch-more")) {
+      if (event.target instanceof Element && event.target.closest("[data-swarmlab-canvas-launch-dock]")) {
         return;
       }
       closeLauncherDockOverflows(root);

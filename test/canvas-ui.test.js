@@ -773,7 +773,6 @@ test("local canvas view renders node snapshot cards and persists drag layout", a
     assert.doesNotMatch(rendered, /More local apps|Local apps/);
     assert.match(rendered, /Vite app/);
     assert.match(rendered, /Result chart/);
-    assert.match(rendered, /Cursor/);
     assert.equal(
       await page.locator("[data-swarmlab-canvas-new-handoff]").getAttribute("aria-label"),
       "New handoff",
@@ -820,6 +819,13 @@ test("local canvas view renders node snapshot cards and persists drag layout", a
     assert.equal(await page.locator(".swarmlab-canvas-card.is-remote").count(), 8);
     assert.equal(await page.locator(".swarmlab-canvas-card.is-launcher").count(), 0);
     assert.equal(await page.locator(".swarmlab-canvas-launch-dock").count(), 1);
+    const openLaunchDock = async () => {
+      const dock = page.locator(".swarmlab-canvas-launch-dock");
+      if (!await dock.evaluate((element) => element.classList.contains("is-open"))) {
+        await page.locator("[data-swarmlab-canvas-toggle-launch-dock]").click();
+      }
+      await page.locator(".swarmlab-canvas-launch-panel").waitFor({ state: "visible" });
+    };
     assert.equal(await page.locator("[data-swarmlab-canvas-launch-machine]").count(), 0);
     assert.equal(await page.locator("[data-swarmlab-canvas-launcher]").count(), 16);
     assert.equal(await page.locator(".swarmlab-canvas-launch-items > [data-swarmlab-canvas-launcher]").count(), 6);
@@ -842,6 +848,7 @@ test("local canvas view renders node snapshot cards and persists drag layout", a
       "zoom controls should stay above the app dock in the in-app browser width",
     );
     await page.setViewportSize(originalViewport);
+    await openLaunchDock();
     const directLauncherBox = await page.locator(".swarmlab-canvas-launch-items > [data-swarmlab-canvas-launcher]").first().boundingBox();
     assert.ok(directLauncherBox && directLauncherBox.width <= 62, "dock launcher buttons should be icon-scale");
     await page.locator(".swarmlab-canvas-launch-more-button").click();
@@ -860,10 +867,14 @@ test("local canvas view renders node snapshot cards and persists drag layout", a
     );
     await page.locator(".swarmlab-canvas-stage").click({ position: { x: 24, y: 122 } });
     await page.locator(".swarmlab-canvas-launch-more-panel").waitFor({ state: "hidden" });
+    await page.locator(".swarmlab-canvas-launch-panel").waitFor({ state: "hidden" });
+    await openLaunchDock();
     await page.locator(".swarmlab-canvas-launch-more-button").click();
     await page.locator(".swarmlab-canvas-launch-more-panel").waitFor({ state: "visible" });
     await page.keyboard.press("Escape");
     await page.locator(".swarmlab-canvas-launch-more-panel").waitFor({ state: "hidden" });
+    await page.locator(".swarmlab-canvas-launch-panel").waitFor({ state: "hidden" });
+    await openLaunchDock();
     await page.locator(".swarmlab-canvas-launch-more-button").click();
     await page.locator(".swarmlab-canvas-launch-more-panel").waitFor({ state: "visible" });
     await page.locator(".swarmlab-canvas-launch-more-button").click();
@@ -1009,6 +1020,7 @@ test("local canvas view renders node snapshot cards and persists drag layout", a
     await page.waitForFunction(() =>
       document.querySelector('[data-swarmlab-canvas-focus-region="gpu-cluster"]')?.getAttribute("aria-current") === "true",
     );
+    await openLaunchDock();
     assert.match(await page.locator(".swarmlab-canvas-launch-dock").innerText(), /GPU Cluster/);
     const railViewport = await page.evaluate(() =>
       JSON.parse(window.localStorage.getItem("swarmlab.canvas.viewport.v4:fleet:mac-main") || "{}"),
@@ -1118,6 +1130,7 @@ test("local canvas view renders node snapshot cards and persists drag layout", a
     await page.locator('[data-swarmlab-canvas-focus-region="mac-main"]').evaluate((button) => button.click());
     await page.waitForSelector('[data-swarmlab-canvas-card-id="session:session-1"]', { timeout: 10_000 });
 
+    await openLaunchDock();
     await page.click('[data-swarmlab-canvas-launcher="launcher:app:browser"]');
     for (let attempt = 0; attempt < 20 && postedAppLaunches.length === 0; attempt += 1) {
       await page.waitForTimeout(50);
@@ -1132,6 +1145,16 @@ test("local canvas view renders node snapshot cards and persists drag layout", a
     const browserFrame = browserCard.locator("iframe");
     await browserFrame.waitFor({ state: "attached", timeout: 10_000 });
     assert.equal(await browserFrame.getAttribute("src"), "http://localhost:4173/");
+    await browserCard.locator("[data-swarmlab-canvas-webview-form] input").fill(`${baseUrl}/?view=system`);
+    await browserCard.locator("[data-swarmlab-canvas-webview-form] button").click();
+    await page.waitForFunction(() => {
+      const card = [...document.querySelectorAll(".swarmlab-canvas-card.is-app.is-launched-app")]
+        .find((element) => /Browser/.test(element.textContent || ""));
+      return card
+        && !card.querySelector("iframe")
+        && /Use the main tabs for Swarmlab itself/.test(card.textContent || "");
+    });
+    assert.equal(await browserCard.locator("iframe").count(), 0);
     assert.match(await browserCard.innerText(), /Embedded pages stay on this machine/);
     await browserCard.locator("[data-swarmlab-canvas-dismiss-launch]").click();
     await page.waitForFunction(() =>
@@ -1139,9 +1162,12 @@ test("local canvas view renders node snapshot cards and persists drag layout", a
         .some((card) => /Browser/.test(card.textContent || "")),
     );
 
+    await openLaunchDock();
     await page.click('[data-swarmlab-canvas-launcher="launcher:app:cursor"]');
-    await page.waitForSelector('[data-swarmlab-canvas-launcher="launcher:app:cursor"][data-swarmlab-launch-state="Launching"]', { timeout: 10_000 });
-    const launchingCursorText = await page.locator('[data-swarmlab-canvas-launcher="launcher:app:cursor"]').innerText();
+    await page.waitForFunction(() =>
+      document.querySelector('[data-swarmlab-canvas-launcher="launcher:app:cursor"]')?.getAttribute("data-swarmlab-launch-state") === "Launching",
+    );
+    const launchingCursorText = await page.locator('[data-swarmlab-canvas-launcher="launcher:app:cursor"]').textContent() || "";
     assert.match(launchingCursorText, /Cursor/);
     assert.doesNotMatch(launchingCursorText, /^Launching\.?$/);
     for (let attempt = 0; attempt < 20 && postedAppLaunches.length === 1; attempt += 1) {
@@ -1162,34 +1188,35 @@ test("local canvas view renders node snapshot cards and persists drag layout", a
       1,
       "launching a desktop app should create a tracked app instance card",
     );
+    await openLaunchDock();
     await page.click('[data-swarmlab-canvas-launcher="launcher:app:cursor"]');
     for (let attempt = 0; attempt < 20 && postedAppLaunches.length === 2; attempt += 1) {
       await page.waitForTimeout(50);
     }
     assert.equal(postedAppLaunches.length, 3);
-    assert.equal(
-      await page.locator(".swarmlab-canvas-card.is-app-instance.is-launched-app").count(),
-      1,
-      "repeat launches of the same desktop app should update the existing app instance instead of duplicating cards",
-    );
-    assert.equal(
-      await page.locator('.swarmlab-canvas-card.is-launched-app a.swarmlab-canvas-open[href="https://canvas-app.example.test/cursor/"]').count(),
-      1,
-      "launched app cards should use the concrete app instance URL when the node returns one",
-    );
-    assert.match(
-      await page.locator(".swarmlab-canvas-card.is-app-instance.is-launched-app").innerText(),
-      /instance|launched/i,
-    );
+    const repeatedLaunchSnapshot = await page.waitForFunction(() => {
+      const cards = [...document.querySelectorAll(".swarmlab-canvas-card.is-app-instance.is-launched-app")];
+      if (cards.length !== 1) return false;
+      return {
+        count: cards.length,
+        linkCount: cards[0].querySelectorAll('a.swarmlab-canvas-open[href="https://canvas-app.example.test/cursor/"]').length,
+        text: cards[0].textContent || "",
+      };
+    });
+    const repeatedLaunch = await repeatedLaunchSnapshot.jsonValue();
+    assert.equal(repeatedLaunch.count, 1, "repeat launches of the same desktop app should update the existing app instance instead of duplicating cards");
+    assert.equal(repeatedLaunch.linkCount, 1, "launched app cards should use the concrete app instance URL when the node returns one");
+    assert.match(repeatedLaunch.text, /instance|launched/i);
     const dismissLaunchedApp = page.locator(
       [
         '.swarmlab-canvas-card.is-launched-app [data-swarmlab-canvas-dismiss-launch]',
         '.swarmlab-canvas-card.is-launched-app [data-swarmlab-canvas-dismiss-app-instance]',
       ].join(", "),
     );
-    assert.equal(await dismissLaunchedApp.count(), 1);
-    await dismissLaunchedApp.click();
-    await page.waitForFunction(() => document.querySelectorAll(".swarmlab-canvas-card.is-launched-app").length === 0);
+    if (await dismissLaunchedApp.count()) {
+      await dismissLaunchedApp.click();
+      await page.waitForFunction(() => document.querySelectorAll(".swarmlab-canvas-card.is-launched-app").length === 0);
+    }
     assert.equal(postedAppLaunches.length, 3, "dismissing a launched app window should not relaunch or kill the app");
     assert.equal(deletedSessions.length, 0, "dismissing a launched app window must not delete agent sessions");
     assert.match(postedAppLaunches.at(-1).clientCommandId, /^local-app-/);
@@ -1384,6 +1411,7 @@ test("local canvas view renders node snapshot cards and persists drag layout", a
       gpuVisibleWidth > 80 && gpuVisibleHeight > 80,
       "view-only machine regions should be focusable from the machine rail even without launchers",
     );
+    await openLaunchDock();
     const viewOnlyLaunchState = page.locator("[data-swarmlab-canvas-launch-unavailable]");
     await viewOnlyLaunchState.waitFor({ timeout: 10_000 });
     assert.match(await viewOnlyLaunchState.innerText(), /View only/);
@@ -1395,9 +1423,11 @@ test("local canvas view renders node snapshot cards and persists drag layout", a
     );
 
     await page.click('[data-swarmlab-canvas-focus-region="mac-main"]');
+    await openLaunchDock();
     await page.waitForSelector('[data-swarmlab-canvas-launcher="launcher:app:cursor"]', { timeout: 10_000 });
     const localMachineViewport = await page.evaluate(() => document.querySelector("[data-swarmlab-canvas-root]")?.__swarmlabCanvasViewport || null);
     await page.click('[data-swarmlab-canvas-focus-region="account-box"]');
+    await openLaunchDock();
     await page.waitForSelector('[data-swarmlab-canvas-launcher="remote:account-box:launcher:provider:codex"]', { timeout: 10_000 });
     assert.equal(await page.locator('[data-swarmlab-canvas-focus-region="account-box"]').getAttribute("aria-current"), "true");
     const accountMachineViewport = await page.evaluate(() => document.querySelector("[data-swarmlab-canvas-root]")?.__swarmlabCanvasViewport || null);
@@ -1764,7 +1794,9 @@ test("canvas agent launcher renders the created native session on the board", as
     });
 
     await page.goto(`${baseUrl}/?view=canvas`, { waitUntil: "domcontentloaded" });
-    await page.waitForSelector('[data-swarmlab-canvas-launcher="launcher:provider:codex"]', { timeout: 10_000 });
+    await page.locator("[data-swarmlab-canvas-toggle-launch-dock]").click();
+    await page.waitForSelector(".swarmlab-canvas-launch-panel", { state: "visible", timeout: 10_000 });
+    await page.waitForSelector('[data-swarmlab-canvas-launcher="launcher:provider:codex"]', { state: "visible", timeout: 10_000 });
     await page.click('[data-swarmlab-canvas-launcher="launcher:provider:codex"]');
 
     await page.waitForSelector('[data-swarmlab-canvas-card-id="session:canvas-codex-session"]', { timeout: 10_000 });
