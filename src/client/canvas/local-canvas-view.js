@@ -1865,6 +1865,12 @@ function setCanvasAccountButtonState(button, { label = "", connected = false, bu
   if (labelElement) {
     labelElement.textContent = label || (connected ? "Linked" : "Log in");
   }
+  const accessibleLabel = error
+    ? `Vibe account error: ${error}`
+    : connected
+      ? `Vibe account linked${label ? `: ${label}` : ""}`
+      : "Log in to Vibe Research";
+  button.setAttribute("aria-label", accessibleLabel);
   button.classList.toggle("is-primary", !connected && !error);
   button.classList.toggle("is-connected", connected && !error);
   button.toggleAttribute("disabled", busy);

@@ -1704,6 +1704,10 @@ test("local canvas view renders node snapshot cards and persists drag layout", a
       document.querySelector("[data-swarmlab-canvas-account-label]")?.textContent?.includes("Linked") ||
         document.querySelector("[data-swarmlab-canvas-account-label]")?.textContent?.includes("@mark"),
     null, { timeout: 10_000 });
+    assert.match(
+      await page.locator("[data-swarmlab-canvas-account-login]").getAttribute("aria-label") || "",
+      /Vibe account linked/,
+    );
     assert.match(await page.locator("[data-swarmlab-canvas-notice]").innerText(), /Vibe account connected|Machines will appear/i);
   } finally {
     await browser?.close().catch(() => {});
