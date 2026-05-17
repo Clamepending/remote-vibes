@@ -116,6 +116,32 @@ function normalizeNodeLaunchers(value = []) {
     .slice(0, 24);
 }
 
+function normalizeNodeSessions(value = []) {
+  const seen = new Set();
+  return (Array.isArray(value) ? value : [])
+    .map((session) => {
+      const id = String(session?.id || "").trim().slice(0, 180);
+      if (!id || seen.has(id)) return null;
+      seen.add(id);
+      return {
+        id,
+        name: String(session?.name || session?.title || session?.providerLabel || "Remote session")
+          .replace(/\s+/g, " ")
+          .trim()
+          .slice(0, 120),
+        providerId: String(session?.providerId || "").replace(/\s+/g, "-").trim().slice(0, 80),
+        providerLabel: String(session?.providerLabel || "").replace(/\s+/g, " ").trim().slice(0, 80),
+        status: String(session?.status || "unknown").replace(/\s+/g, "-").trim().slice(0, 40),
+        activityStatus: String(session?.activityStatus || "").replace(/\s+/g, " ").trim().slice(0, 80),
+        createdAt: String(session?.createdAt || "").trim().slice(0, 80),
+        updatedAt: String(session?.updatedAt || session?.lastOutputAt || session?.lastPromptAt || "").trim().slice(0, 80),
+        hasSubagents: Boolean(session?.hasSubagents || (Array.isArray(session?.subagents) && session.subagents.length)),
+      };
+    })
+    .filter(Boolean)
+    .slice(0, 24);
+}
+
 function isLocalConnectionHint(hint = {}) {
   try {
     const host = new URL(String(hint.url || "")).hostname.toLowerCase();
@@ -175,6 +201,10 @@ function normalizeAccountFleetNode(node = {}) {
     counts: normalizeNodeCounts(node.counts || summary.counts || {}),
     capabilities: normalizeNodeCapabilities(node.capabilities || summary.capabilities || {}),
     launchers: normalizeNodeLaunchers(node.launchers || summary.launchers || []),
+    summary: {
+      generatedAt: String(summary.generatedAt || "").trim(),
+      sessions: normalizeNodeSessions(summary.sessions || node.sessions || []),
+    },
   };
 }
 
@@ -288,6 +318,7 @@ export function buildNodeSummaryFromSnapshot(snapshot = {}) {
     },
     portHints: snapshot.portHints && typeof snapshot.portHints === "object" ? { ...snapshot.portHints } : null,
     launchers: normalizeNodeLaunchers(snapshot.launchers || []),
+    sessions: normalizeNodeSessions(snapshot.sessions || []),
     degraded: Array.isArray(snapshot.degraded) ? snapshot.degraded.slice(0, 10) : [],
   };
 }

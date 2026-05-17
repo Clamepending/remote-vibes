@@ -148,6 +148,29 @@ function normalizeLaunchers(value = []) {
     .slice(0, 24);
 }
 
+function normalizeSessions(value = []) {
+  const seen = new Set();
+  return (Array.isArray(value) ? value : [])
+    .map((session) => {
+      const id = compactText(session?.id, 180);
+      if (!id || seen.has(id)) return null;
+      seen.add(id);
+      return {
+        id,
+        name: compactText(session?.name || session?.title || session?.providerLabel || "Remote session", 120),
+        providerId: compactText(session?.providerId, 80),
+        providerLabel: compactText(session?.providerLabel, 80),
+        status: compactText(session?.status || "unknown", 40),
+        activityStatus: compactText(session?.activityStatus, 80),
+        createdAt: compactText(session?.createdAt, 80),
+        updatedAt: compactText(session?.updatedAt || session?.lastOutputAt || session?.lastPromptAt, 80),
+        hasSubagents: Boolean(session?.hasSubagents || (Array.isArray(session?.subagents) && session.subagents.length)),
+      };
+    })
+    .filter(Boolean)
+    .slice(0, 24);
+}
+
 function normalizeSystem(value = {}) {
   return {
     platform: compactText(value.platform, 40),
@@ -229,6 +252,7 @@ function normalizeNodeRecord(input = {}, existing = null, { ownerAccountId = "lo
   const capabilities = normalizeCapabilities(input.capabilities || summary.capabilities || existing?.capabilities || {});
   const system = normalizeSystem(input.system || summary.system || existing?.system || {});
   const launchers = normalizeLaunchers(input.launchers || summary.launchers || existing?.launchers || []);
+  const sessions = normalizeSessions(summary.sessions || input.sessions || existing?.summary?.sessions || []);
 
   return {
     id: existing?.id || nodeId,
@@ -269,6 +293,7 @@ function normalizeNodeRecord(input = {}, existing = null, { ownerAccountId = "lo
       counts,
       capabilities,
       launchers,
+      sessions,
       system,
       degraded: Array.isArray(summary.degraded) ? summary.degraded.slice(0, 10).map((entry) => compactText(entry, 120)) : [],
     },

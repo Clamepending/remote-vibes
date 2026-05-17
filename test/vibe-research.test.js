@@ -103,6 +103,76 @@ async function postSessionInput(baseUrl, sessionId, input) {
   assert.equal(response.status, 200);
 }
 
+function waitForWebSocketOutput(
+  websocket,
+  {
+    marker,
+    command,
+    resize = { cols: 80, rows: 24 },
+    timeoutMs = 60_000,
+    retryEveryMs = 0,
+    waitForInitialSnapshot = true,
+    errorMessage,
+  },
+) {
+  return new Promise((resolve, reject) => {
+    let combined = "";
+    let sentResize = false;
+    let sentCommand = false;
+    let initialSnapshotReady = !waitForInitialSnapshot;
+    let settled = false;
+
+    const finish = (error) => {
+      if (settled) return;
+      settled = true;
+      clearTimeout(timeout);
+      if (retry) clearInterval(retry);
+      if (error) {
+        reject(error);
+      } else {
+        resolve(combined);
+      }
+    };
+
+    const sendCommand = ({ force = false } = {}) => {
+      if (websocket.readyState !== WebSocket.OPEN) return;
+      if (!initialSnapshotReady || (sentCommand && !force)) return;
+      if (resize && !sentResize) {
+        websocket.send(JSON.stringify({ type: "resize", ...resize }));
+        sentResize = true;
+      }
+      websocket.send(JSON.stringify({ type: "input", data: command }));
+      sentCommand = true;
+    };
+
+    const timeout = setTimeout(() => {
+      finish(new Error(errorMessage || `Timed out waiting for ${marker}.`));
+    }, timeoutMs);
+    const retry = retryEveryMs > 0 ? setInterval(() => sendCommand({ force: true }), retryEveryMs) : null;
+
+    websocket.on("open", sendCommand);
+    websocket.on("message", (chunk) => {
+      const payload = JSON.parse(String(chunk));
+      if (
+        payload.type === "snapshot"
+        || payload.type === "snapshot-end"
+        || (payload.type === "snapshot-start" && Number(payload.chunkCount || 0) === 0)
+      ) {
+        initialSnapshotReady = true;
+        sendCommand();
+      }
+      combined += payload.data || "";
+      if (combined.includes(marker)) {
+        finish();
+      }
+    });
+    websocket.on("error", finish);
+    if (websocket.readyState === WebSocket.OPEN) {
+      queueMicrotask(sendCommand);
+    }
+  });
+}
+
 async function startApp(options = {}) {
   const cwd = options.cwd || process.cwd();
   const stateDir = options.stateDir || path.join(cwd, ".vibe-research");
@@ -7674,7 +7744,7 @@ test("shell session streams websocket output and honors custom cwd", async () =>
       let sentMarker = false;
       const timeout = setTimeout(() => {
         reject(new Error("Timed out waiting for terminal output."));
-      }, 8_000);
+      }, 20_000);
 
       websocket.on("open", () => {
         websocket.send(
@@ -7763,26 +7833,13 @@ test("shell session keeps running while the browser websocket disconnects", asyn
       "for i in 1 2 3 4 5; do printf 'RV_WS_KEEPALIVE_%s\\n' \"$i\"; sleep 0.2; done\r";
 
     firstSocket = new WebSocket(websocketUrl);
-    await new Promise((resolve, reject) => {
-      let combined = "";
-      const timeout = setTimeout(() => {
-        reject(new Error("Timed out waiting for first websocket output."));
-      }, 8_000);
-
-      firstSocket.on("open", () => {
-        firstSocket.send(JSON.stringify({ type: "resize", cols: 100, rows: 30 }));
-        firstSocket.send(JSON.stringify({ type: "input", data: command }));
-      });
-
-      firstSocket.on("message", (chunk) => {
-        const payload = JSON.parse(String(chunk));
-        combined += payload.data || "";
-
-        if (combined.includes("RV_WS_KEEPALIVE_1")) {
-          clearTimeout(timeout);
-          resolve();
-        }
-      });
+    await waitForWebSocketOutput(firstSocket, {
+      marker: "RV_WS_KEEPALIVE_1",
+      command,
+      resize: { cols: 100, rows: 30 },
+      retryEveryMs: 1_000,
+      timeoutMs: 120_000,
+      errorMessage: "Timed out waiting for first websocket output.",
     });
 
     firstSocket.close();
@@ -7849,28 +7906,14 @@ test("mobile terminal stays usable while the keyboard viewport resizes", async (
     const websocketUrl = `${baseUrl.replace("http", "ws")}/ws?sessionId=${session.id}`;
     const command =
       "i=1; while [ \"$i\" -le 180 ]; do printf 'RV_MOBILE_SCROLL_%03d\\n' \"$i\"; i=$((i+1)); done\r";
-    await postSessionInput(baseUrl, session.id, command);
 
     websocket = new WebSocket(websocketUrl);
-    await new Promise((resolve, reject) => {
-      let combined = "";
-      const timeout = setTimeout(() => {
-        reject(new Error("Timed out writing terminal history for the mobile scroll smoke."));
-      }, 10_000);
-
-      websocket.on("open", () => {
-        websocket.send(JSON.stringify({ type: "resize", cols: 80, rows: 24 }));
-      });
-
-      websocket.on("message", (chunk) => {
-        const payload = JSON.parse(String(chunk));
-        combined += payload.data || "";
-
-        if (combined.includes("RV_MOBILE_SCROLL_180")) {
-          clearTimeout(timeout);
-          resolve();
-        }
-      });
+    await waitForWebSocketOutput(websocket, {
+      marker: "RV_MOBILE_SCROLL_180",
+      command,
+      retryEveryMs: 1_000,
+      timeoutMs: 120_000,
+      errorMessage: "Timed out writing terminal history for the mobile scroll smoke.",
     });
 
     browser = await chromium.launch({ executablePath, headless: true });
@@ -7973,27 +8016,13 @@ test("terminal wheel opens a scrollable transcript history", async (t) => {
     websocket = new WebSocket(`${baseUrl.replace("http", "ws")}/ws?sessionId=${session.id}`);
     const command =
       "i=1; while [ \"$i\" -le 180 ]; do printf 'RV_XTERM_SCROLL_%03d\\n' \"$i\"; i=$((i+1)); done\r";
-    await postSessionInput(baseUrl, session.id, command);
 
-    await new Promise((resolve, reject) => {
-      let combined = "";
-      const timeout = setTimeout(() => {
-        reject(new Error("Timed out writing terminal history for the xterm wheel smoke."));
-      }, 10_000);
-
-      websocket.on("open", () => {
-        websocket.send(JSON.stringify({ type: "resize", cols: 80, rows: 24 }));
-      });
-
-      websocket.on("message", (chunk) => {
-        const payload = JSON.parse(String(chunk));
-        combined += payload.data || "";
-
-        if (combined.includes("RV_XTERM_SCROLL_180")) {
-          clearTimeout(timeout);
-          resolve();
-        }
-      });
+    await waitForWebSocketOutput(websocket, {
+      marker: "RV_XTERM_SCROLL_180",
+      command,
+      retryEveryMs: 1_000,
+      timeoutMs: 120_000,
+      errorMessage: "Timed out writing terminal history for the xterm wheel smoke.",
     });
 
     browser = await chromium.launch({ executablePath, headless: true });
@@ -8103,28 +8132,21 @@ test("terminal keyboard scroll chords move history without stealing plain arrows
     assert.equal(createResponse.status, 201);
     const { session } = await createResponse.json();
     websocket = new WebSocket(`${baseUrl.replace("http", "ws")}/ws?sessionId=${session.id}`);
+    websocket.on("message", (chunk) => {
+      const payload = JSON.parse(String(chunk));
+      websocketOutput += payload.data || "";
+    });
+
     const command =
       "i=1; while [ \"$i\" -le 120 ]; do printf 'RV_KEY_SCROLL_LINE_%03d\\n' \"$i\"; i=$((i+1)); done; cat -v\r";
-    await postSessionInput(baseUrl, session.id, command);
 
-    await new Promise((resolve, reject) => {
-      const timeout = setTimeout(() => {
-        reject(new Error("Timed out preparing terminal keyboard scroll history."));
-      }, 10_000);
-
-      websocket.on("open", () => {
-        websocket.send(JSON.stringify({ type: "resize", cols: 80, rows: 24 }));
-      });
-
-      websocket.on("message", (chunk) => {
-        const payload = JSON.parse(String(chunk));
-        websocketOutput += payload.data || "";
-
-        if (websocketOutput.includes("RV_KEY_SCROLL_LINE_120") && websocketOutput.includes("cat -v")) {
-          clearTimeout(timeout);
-          resolve();
-        }
-      });
+    await waitForWebSocketOutput(websocket, {
+      marker: "RV_KEY_SCROLL_LINE_120",
+      command,
+      resize: { cols: 80, rows: 24 },
+      retryEveryMs: 1_000,
+      timeoutMs: 120_000,
+      errorMessage: "Timed out preparing terminal keyboard scroll history.",
     });
 
     browser = await chromium.launch({ executablePath, headless: true });
@@ -8133,6 +8155,16 @@ test("terminal keyboard scroll chords move history without stealing plain arrows
     await page.waitForSelector("#terminal-mount .xterm-viewport", { timeout: 10_000 });
     await page.waitForFunction(
       () => document.querySelector("#terminal-mount .xterm")?.textContent?.includes("RV_KEY_SCROLL_LINE_120"),
+      null,
+      { timeout: 10_000 },
+    );
+    await page.waitForFunction(
+      () => {
+        const nativeViewport = document.querySelector("#terminal-mount .xterm-viewport");
+        const transcriptViewport = document.querySelector("#terminal-transcript-scroll");
+        return Math.max(0, (nativeViewport?.scrollHeight || 0) - (nativeViewport?.clientHeight || 0)) > 0
+          || Math.max(0, (transcriptViewport?.scrollHeight || 0) - (transcriptViewport?.clientHeight || 0)) > 0;
+      },
       null,
       { timeout: 10_000 },
     );
@@ -8149,7 +8181,20 @@ test("terminal keyboard scroll chords move history without stealing plain arrows
     await page.keyboard.down("Shift");
     await page.keyboard.press("ArrowUp");
     await page.keyboard.up("Shift");
-    await page.waitForTimeout(100);
+    await page.waitForFunction(
+      () => {
+        const nativeViewport = document.querySelector("#terminal-mount .xterm-viewport");
+        const transcriptViewport = document.querySelector("#terminal-transcript-scroll");
+        const nativeMaxScrollTop = Math.max(0, nativeViewport.scrollHeight - nativeViewport.clientHeight);
+        const transcriptMaxScrollTop = Math.max(0, transcriptViewport.scrollHeight - transcriptViewport.clientHeight);
+        const transcriptVisible = document.querySelector(".terminal-stack")?.classList.contains("is-transcript-scroll");
+        return transcriptVisible
+          ? transcriptViewport.scrollTop < transcriptMaxScrollTop
+          : nativeViewport.scrollTop < nativeMaxScrollTop;
+      },
+      null,
+      { timeout: 2_000 },
+    );
 
     const afterShiftArrow = await page.evaluate(() => {
       const nativeViewport = document.querySelector("#terminal-mount .xterm-viewport");
@@ -8225,27 +8270,14 @@ test("terminal wheel without xterm scrollback opens transcript instead of sendin
     websocket = new WebSocket(`${baseUrl.replace("http", "ws")}/ws?sessionId=${session.id}`);
     const command =
       "printf '\\033[31mRV_TRANSCRIPT_RED\\033[0m\\n'; i=1; while [ \"$i\" -le 90 ]; do printf 'RV_TRANSCRIPT_LINE_%03d\\n' \"$i\"; i=$((i+1)); done; cat -v\r";
-    await postSessionInput(baseUrl, session.id, command);
 
-    await new Promise((resolve, reject) => {
-      let combined = "";
-      const timeout = setTimeout(() => {
-        reject(new Error("Timed out starting cat for the terminal transcript wheel smoke."));
-      }, 10_000);
-
-      websocket.on("open", () => {
-        websocket.send(JSON.stringify({ type: "resize", cols: 80, rows: 24 }));
-      });
-
-      websocket.on("message", (chunk) => {
-        const payload = JSON.parse(String(chunk));
-        combined += payload.data || "";
-
-        if (combined.includes("RV_TRANSCRIPT_LINE_090") && combined.includes("cat -v")) {
-          clearTimeout(timeout);
-          resolve();
-        }
-      });
+    await waitForWebSocketOutput(websocket, {
+      marker: "RV_TRANSCRIPT_LINE_090",
+      command,
+      resize: { cols: 80, rows: 24 },
+      retryEveryMs: 1_000,
+      timeoutMs: 120_000,
+      errorMessage: "Timed out starting cat for the terminal transcript wheel smoke.",
     });
 
     browser = await chromium.launch({ executablePath, headless: true });

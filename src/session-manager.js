@@ -4531,7 +4531,12 @@ export class SessionManager {
 
     session.cols = Math.max(20, cols);
     session.rows = Math.max(5, rows);
-    session.pty.resize(session.cols, session.rows);
+    try {
+      session.pty.resize(session.cols, session.rows);
+    } catch (error) {
+      this.markSessionPtyWriteFailure(session, error);
+      return false;
+    }
     session.updatedAt = new Date().toISOString();
     this.schedulePersist();
     return true;
@@ -5377,17 +5382,21 @@ export class SessionManager {
 
     const stagedSubmit = splitProviderSubmitInput(session, input);
     if (stagedSubmit) {
-      session.pty.write(stagedSubmit.body);
+      if (!this.writePty(session, stagedSubmit.body)) {
+        return false;
+      }
       this.setTimeoutFn(() => {
         const currentSession = this.sessions.get(session.id);
         if (currentSession !== session || session.status === "exited" || !session.pty) {
           return;
         }
 
-        session.pty.write(stagedSubmit.submit);
+        this.writePty(session, stagedSubmit.submit);
       }, this.initialPromptSubmitDelayMs);
     } else {
-      session.pty.write(input);
+      if (!this.writePty(session, input)) {
+        return false;
+      }
     }
 
     this.trackSessionInputActivity(session, input);
@@ -5396,6 +5405,55 @@ export class SessionManager {
     session.updatedAt = new Date().toISOString();
     this.schedulePersist();
     return true;
+  }
+
+  writePty(session, input) {
+    if (!session || session.status === "exited" || !session.pty) {
+      return false;
+    }
+
+    try {
+      session.pty.write(input);
+      return true;
+    } catch (error) {
+      this.markSessionPtyWriteFailure(session, error);
+      return false;
+    }
+  }
+
+  markSessionPtyWriteFailure(session, error) {
+    if (!session || session.status === "exited") {
+      return;
+    }
+
+    const message = String(error?.message || error || "terminal stopped accepting input");
+    console.warn(`[vibe-research] terminal write failed for session ${session.id}: ${message}`);
+    session.pty = null;
+    this.clearPendingProviderInputRetry(session);
+    this.clearPendingProviderCaptureRetry(session);
+    this.clearSessionActivityTimer(session);
+    session.status = "exited";
+    session.exitCode = null;
+    session.exitSignal = null;
+    session.restoreOnStartup = false;
+    session.activityStatus = "idle";
+    session.pendingProviderInputs = [];
+    session.updatedAt = new Date().toISOString();
+    this.pushNativeNarrativeEntry(session, {
+      kind: "status",
+      label: "Disconnected",
+      text: `Terminal stopped accepting input: ${message}`,
+      timestamp: session.updatedAt,
+      status: "error",
+      meta: "terminal-write",
+    });
+    this.pushOutput(
+      session,
+      `\r\n\u001b[1;31m[vibe-research]\u001b[0m terminal stopped accepting input: ${message}\r\n`,
+    );
+    this.queueAgentRunTracking(this.agentRunTracker?.handleSessionExit(session));
+    this.scheduleSessionMetaBroadcast(session, { immediate: true });
+    this.schedulePersist({ immediate: true });
   }
 
   schedulePendingProviderInputRetry(session) {
@@ -6147,6 +6205,9 @@ export class SessionManager {
     });
 
     ptyProcess.onExit(({ exitCode, signal }) => {
+      if (session.pty !== ptyProcess) {
+        return;
+      }
       session.pty = null;
       this.clearPendingProviderInputRetry(session);
       this.clearPendingProviderCaptureRetry(session);

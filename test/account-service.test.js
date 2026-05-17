@@ -145,7 +145,7 @@ function sampleRedactedSnapshot(nodeId = "node_1") {
       memory: { total: 100, used: 40, free: 60 },
     },
     portHints: { count: 3 },
-    sessions: [{ name: "redacted", cwd: null, command: "npm run deploy --token=secret" }],
+    sessions: [{ id: "session_1", name: "redacted", providerId: "codex", cwd: null, command: "npm run deploy --token=secret" }],
     generatedAt: "2026-05-12T09:00:00.000Z",
   };
 }
@@ -158,6 +158,17 @@ test("buildNodeSummaryFromSnapshot keeps only redacted summary fields", () => {
   assert.equal(summary.status, "busy");
   assert.equal(summary.capabilities.hasTailscale, true);
   assert.deepEqual(summary.capabilities.roles, ["agent-host", "brain-host", "handoff-coordinator"]);
+  assert.deepEqual(summary.sessions[0], {
+    id: "session_1",
+    name: "redacted",
+    providerId: "codex",
+    providerLabel: "",
+    status: "unknown",
+    activityStatus: "",
+    createdAt: "",
+    updatedAt: "",
+    hasSubagents: false,
+  });
   assert.doesNotMatch(JSON.stringify(summary), /npm run deploy|token=secret|cwd/);
 });
 

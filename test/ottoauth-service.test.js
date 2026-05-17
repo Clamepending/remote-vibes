@@ -99,7 +99,7 @@ test("OttoAuth service creates hosted computeruse tasks and exposes live subagen
     assert.equal(service.listSubagentsForSession("session-1").length, 0);
     assert.equal(calls.length, 2);
   } finally {
-    await rm(workspaceDir, { recursive: true, force: true });
+    await rm(workspaceDir, { recursive: true, force: true, maxRetries: 5, retryDelay: 100 });
   }
 });
 
@@ -207,6 +207,6 @@ test("vr-ottoauth starts a hosted task under the caller session", async () => {
     assert.match(helperPayload.orderUrl, /https:\/\/ottoauth\.vercel\.app\/orders\/task-/);
   } finally {
     await app.close();
-    await rm(workspaceDir, { recursive: true, force: true });
+    await rm(workspaceDir, { recursive: true, force: true, maxRetries: 5, retryDelay: 100 });
   }
 });

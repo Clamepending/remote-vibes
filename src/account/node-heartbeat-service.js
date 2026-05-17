@@ -62,6 +62,7 @@ export function buildNodeHeartbeatPayload({
     system: summary.system,
     portHints: summary.portHints,
     degraded: summary.degraded,
+    summary,
     generatedAt: summary.generatedAt || nowIso(),
   };
 
