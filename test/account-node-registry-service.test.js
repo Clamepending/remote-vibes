@@ -55,8 +55,18 @@ function sampleSnapshot(nodeId, installId) {
       memory: { total: 1000, used: 300, free: 700 },
     },
     sessions: [{
+      id: "session_1",
+      name: "Training agent",
+      providerId: "codex",
       cwd: "/home/ogata/private",
       command: "OPENAI_API_KEY=sk-secret npm run train --token=secret",
+      recentNarrative: [{
+        id: "entry_1",
+        kind: "assistant",
+        label: "Saved /home/ogata/private/model.bin",
+        text: "Finished with OPENAI_API_KEY=sk-secret in /home/ogata/private/model.bin",
+        timestamp: "2026-05-12T20:00:05.000Z",
+      }],
     }],
     launchers: [
       { id: "provider:codex", label: "Codex", kind: "agent-provider", providerId: "codex", available: true },
@@ -144,7 +154,8 @@ test("AccountNodeRegistryService pairs, registers, heartbeats, lists, and discon
     assert.equal(nodes.length, 1);
     assert.equal(nodes[0].nodeId, identity.nodeId);
     assert.equal(nodes[0].launchers[1].label, "Cursor");
-    assert.doesNotMatch(JSON.stringify(nodes), /slnode_|grant_|sk-secret|OPENAI_API_KEY|token=secret|\/private|\/canvas|\/home\/ogata/);
+    assert.equal(nodes[0].summary.sessions[0].recentNarrative[0].text, "Finished with OPENAI_API_KEY=[redacted] in [path]");
+    assert.doesNotMatch(JSON.stringify(nodes), /slnode_|grant_|sk-secret|OPENAI_API_KEY=sk-secret|token=secret|\/private|\/canvas|\/home\/ogata/);
 
     await service.disconnectToken(`Bearer ${completed.accessToken}`);
     assert.equal(service.listNodesForOwner("local")[0].status, "offline");

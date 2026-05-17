@@ -34,6 +34,12 @@ test("redacted node snapshot omits sensitive local detail", async () => {
           lastStatus: "completed",
           updatedAt: "2026-05-12T00:01:00.000Z",
         },
+        recentNarrative: [{
+          id: "secret-narrative",
+          kind: "assistant",
+          label: "Read /Users/mark/private/project",
+          text: "OPENAI_API_KEY=sk-secret in /Users/mark/private/project",
+        }],
       }],
       browserSessionsProvider: () => [{
         id: "browser_1",
@@ -98,6 +104,7 @@ test("redacted node snapshot omits sensitive local detail", async () => {
     assert.doesNotMatch(serialized, /Secret Building/);
     assert.doesNotMatch(serialized, /cmd_secret/);
     assert.doesNotMatch(serialized, /shell with token=secret/);
+    assert.doesNotMatch(serialized, /secret-narrative|OPENAI_API_KEY|sk-secret/);
   } finally {
     await rm(stateDir, { recursive: true, force: true });
   }
@@ -125,6 +132,13 @@ test("privileged node snapshot exposes sanitized monitor resources and browser U
           url: "https://wandb.ai/mark/semantic-autogaze/runs/run-7?token=secret#workspace",
           source: "session-output",
         }],
+        recentNarrative: [{
+          id: "entry_1",
+          kind: "assistant",
+          label: "Saved /Users/mark/private/model.bin",
+          text: "Finished with OPENAI_API_KEY=sk-secret in /Users/mark/private/model.bin",
+          timestamp: "2026-05-12T00:02:00.000Z",
+        }],
       }],
       browserSessionsProvider: () => [{
         id: "browser_1",
@@ -150,13 +164,21 @@ test("privileged node snapshot exposes sanitized monitor resources and browser U
       lastStatus: "completed",
       updatedAt: "2026-05-12T00:01:00.000Z",
     });
+    assert.deepEqual(snapshot.sessions[0].recentNarrative, [{
+      id: "entry_1",
+      kind: "assistant",
+      label: "Saved [path]",
+      text: "Finished with OPENAI_API_KEY=[redacted] in [path]",
+      status: "",
+      timestamp: "2026-05-12T00:02:00.000Z",
+    }]);
     assert.equal(snapshot.sessions[0].resources[0].url, "https://wandb.ai/mark/semantic-autogaze/runs/run-7");
     assert.equal(snapshot.sessions[0].resources[0].sourceSessionId, "sess_1");
     assert.equal(snapshot.browserSessions[0].latestUrl, "https://wandb.ai/mark/semantic-autogaze/runs/run-7");
     assert.equal(snapshot.browserSessions[0].callerSessionId, "sess_1");
     assert.equal(snapshot.appInstances[0].clientCommandId, "cmd_1");
     assert.equal(snapshot.appInstances[0].url, "https://example.test/open");
-    assert.doesNotMatch(JSON.stringify(snapshot), /token=secret|#workspace/);
+    assert.doesNotMatch(JSON.stringify(snapshot), /token=secret|#workspace|sk-secret|OPENAI_API_KEY=sk-secret|\/Users\/mark/);
   } finally {
     await rm(stateDir, { recursive: true, force: true });
   }

@@ -47,6 +47,22 @@ function compactText(value, max = 240) {
   return String(value || "").replace(/\s+/g, " ").trim().slice(0, max);
 }
 
+function compactAccountText(value, max = 240) {
+  return String(value || "")
+    .replace(/\bsk-[A-Za-z0-9_-]{6,}\b/g, "[redacted]")
+    .replace(/\bgh[pousr]_[A-Za-z0-9_]{6,}\b/g, "[redacted]")
+    .replace(
+      /\b(?:api[_-]?key|token|secret|password|authorization|bearer|ANTHROPIC_API_KEY|OPENAI_API_KEY|HF_TOKEN)=?[A-Za-z0-9_./:=@+-]{4,}\b/gi,
+      "[redacted]",
+    )
+    .replace(/([?&](?:token|api_key|key|secret|password|auth|code)=)[^&#\s]+/gi, "$1[redacted]")
+    .replace(/(?:\/Users\/[A-Za-z0-9._-]+|\/home\/[A-Za-z0-9._-]+)(?:\/[^\s"'`)]*)?/g, "[path]")
+    .replace(/(?:\/private\/var|\/var\/folders|\/tmp)(?:\/[^\s"'`)]*)?/g, "[path]")
+    .replace(/\s+/g, " ")
+    .trim()
+    .slice(0, max);
+}
+
 function normalizeOwnerAccountId(value) {
   return compactText(value || "local", 120)
     .toLowerCase()
@@ -151,12 +167,12 @@ function normalizeLaunchers(value = []) {
 function normalizeSessionNarrative(value = []) {
   return (Array.isArray(value) ? value : [])
     .map((entry, index) => {
-      const text = compactText(entry?.text || entry?.outputPreview, 700);
+      const text = compactAccountText(entry?.text || entry?.outputPreview, 700);
       if (!text) return null;
       return {
         id: compactText(entry?.id || `entry-${index}`, 180),
         kind: compactText(entry?.kind || "status", 40),
-        label: compactText(entry?.label || entry?.title || entry?.kind || "Session", 80),
+        label: compactAccountText(entry?.label || entry?.title || entry?.kind || "Session", 80),
         text,
         status: compactText(entry?.status, 40),
         timestamp: compactText(entry?.timestamp || entry?.createdAt, 80),
@@ -808,6 +824,9 @@ export class AccountNodeRegistryService {
   async recordHeartbeat({ authorization = "", nodeId = "", body = {} } = {}) {
     const token = this.authenticateBearerToken(authorization);
     const heartbeat = body?.heartbeat && typeof body.heartbeat === "object" ? body.heartbeat : {};
+    const heartbeatSummary = heartbeat.summary && typeof heartbeat.summary === "object" && !Array.isArray(heartbeat.summary)
+      ? heartbeat.summary
+      : {};
     const requestedNodeId = compactText(nodeId || heartbeat.nodeId, 160);
     if (!requestedNodeId || requestedNodeId !== token.nodeId) {
       throw buildHttpError("Node token does not match heartbeat node.", 403);
@@ -858,6 +877,11 @@ export class AccountNodeRegistryService {
         counts: heartbeat.counts,
         capabilities: heartbeat.capabilities,
         launchers: heartbeat.launchers,
+        sessions: Array.isArray(heartbeatSummary.sessions)
+          ? heartbeatSummary.sessions
+          : Array.isArray(heartbeat.sessions)
+          ? heartbeat.sessions
+          : existing.summary?.sessions || [],
         system: heartbeat.system,
         degraded: heartbeat.degraded,
       },

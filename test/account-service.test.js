@@ -152,7 +152,13 @@ function sampleRedactedSnapshot(nodeId = "node_1") {
       cwd: null,
       command: "npm run deploy --token=secret",
       recentNarrative: [
-        { id: "entry_1", kind: "assistant", label: "Codex", text: "Safe account summary", timestamp: "2026-05-12T09:00:01.000Z" },
+        {
+          id: "entry_1",
+          kind: "assistant",
+          label: "Codex /Users/mark/private/project",
+          text: "Safe account summary with OPENAI_API_KEY=sk-secret in /Users/mark/private/project",
+          timestamp: "2026-05-12T09:00:01.000Z",
+        },
       ],
     }],
     generatedAt: "2026-05-12T09:00:00.000Z",
@@ -180,13 +186,13 @@ test("buildNodeSummaryFromSnapshot keeps only redacted summary fields", () => {
     recentNarrative: [{
       id: "entry_1",
       kind: "assistant",
-      label: "Codex",
-      text: "Safe account summary",
+      label: "Codex [path]",
+      text: "Safe account summary with OPENAI_API_KEY=[redacted] in [path]",
       status: "",
       timestamp: "2026-05-12T09:00:01.000Z",
     }],
   });
-  assert.doesNotMatch(JSON.stringify(summary), /npm run deploy|token=secret|cwd/);
+  assert.doesNotMatch(JSON.stringify(summary), /npm run deploy|token=secret|cwd|sk-secret|OPENAI_API_KEY=sk-secret|\/Users\/mark/);
 });
 
 test("buildNodeRegistrationPayload normalizes connection hints to origins", () => {
@@ -196,7 +202,7 @@ test("buildNodeRegistrationPayload normalizes connection hints to origins", () =
     connectionHints: [{ kind: "tailscale", url: "https://mac.tailnet.test/path?token=secret" }],
   });
   assert.equal(payload.connectionHints[0].url, "https://mac.tailnet.test");
-  assert.doesNotMatch(JSON.stringify(payload), /path|token=secret|npm run deploy/);
+  assert.doesNotMatch(JSON.stringify(payload), /\/Users\/mark|token=secret|npm run deploy/);
 });
 
 test("AccountService completes pairing, registers, heartbeats, and revokes with bearer auth", async () => {

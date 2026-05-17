@@ -43,6 +43,16 @@ function compactText(value, max = 160) {
   return `${text.slice(0, Math.max(1, max - 3)).trimEnd()}...`;
 }
 
+function compactNarrativeText(value, max = 700) {
+  const text = scrubSensitiveText(value)
+    .replace(/(?:\/Users\/[A-Za-z0-9._-]+|\/home\/[A-Za-z0-9._-]+)(?:\/[^\s"'`)]*)?/g, "[path]")
+    .replace(/(?:\/private\/var|\/var\/folders|\/tmp)(?:\/[^\s"'`)]*)?/g, "[path]")
+    .replace(/\s+/g, " ")
+    .trim();
+  if (text.length <= max) return text;
+  return `${text.slice(0, Math.max(1, max - 3)).trimEnd()}...`;
+}
+
 function scrubSensitiveText(value) {
   let text = String(value || "");
   for (const pattern of SECRET_TEXT_PATTERNS) {
@@ -153,6 +163,24 @@ function summarizeSessionShellActivity(session, mode) {
   };
 }
 
+function summarizeRecentNarrative(entries = []) {
+  return arrayOrEmpty(entries)
+    .map((entry, index) => {
+      const text = compactNarrativeText(entry?.text || entry?.outputPreview, 700);
+      if (!text) return null;
+      return {
+        id: compactText(entry?.id || `entry-${index}`, 180),
+        kind: compactText(entry?.kind || "status", 40),
+        label: compactNarrativeText(entry?.label || entry?.title || entry?.kind || "Session", 80),
+        text,
+        status: compactText(entry?.status, 40),
+        timestamp: compactText(entry?.timestamp || entry?.createdAt, 80),
+      };
+    })
+    .filter(Boolean)
+    .slice(-6);
+}
+
 function countByStatus(entries = []) {
   return entries.reduce((counts, entry) => {
     const status = String(entry?.status || "unknown").trim() || "unknown";
@@ -218,6 +246,7 @@ function summarizeSession(session, mode) {
     lastOutputAt: session?.lastOutputAt || null,
     shellActivity: summarizeSessionShellActivity(session, mode),
     resources: summarizeSessionResources(session),
+    recentNarrative: summarizeRecentNarrative(session?.recentNarrative || session?.recentNarrativeEntries),
     subagents: arrayOrEmpty(session?.subagents).slice(0, 12).map((subagent) => ({
       id: String(subagent?.id || ""),
       name: compactText(subagent?.name || "Subagent", 100),
