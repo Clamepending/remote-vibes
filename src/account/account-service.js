@@ -428,6 +428,14 @@ export class AccountService {
     };
   }
 
+  getAccountRequestContext(settings = {}) {
+    const record = this.tokenStore.getRecord();
+    return {
+      accessToken: String(record?.accessToken || "").trim(),
+      appBaseUrl: record?.appBaseUrl || this.getAppBaseUrl(settings),
+    };
+  }
+
   async startPairing({
     settings = {},
     appBaseUrl: requestedAppBaseUrl = "",
@@ -688,6 +696,104 @@ export class AccountService {
       throw buildHttpError(payload.error || payload.message || `Vibe account command ack failed (${response.status}).`, response.status || 400);
     }
     return payload;
+  }
+
+  async enqueueCommand({ settings = {}, nodeId = "", operation = "", payload = {}, clientCommandId = "" } = {}) {
+    const { accessToken, appBaseUrl } = this.getAccountRequestContext(settings);
+    const normalizedNodeId = encodeURIComponent(String(nodeId || "").trim());
+    if (!normalizedNodeId) {
+      throw buildHttpError("Vibe account node id is required.", 400);
+    }
+    if (!accessToken || !appBaseUrl) {
+      throw buildHttpError("Vibe account is not connected.", 409);
+    }
+    if (typeof this.fetch !== "function") {
+      throw buildHttpError("fetch is not available for Vibe account commands.", 500);
+    }
+
+    const body = {
+      operation: String(operation || "").trim(),
+      payload: payload && typeof payload === "object" && !Array.isArray(payload) ? payload : {},
+    };
+    const normalizedClientCommandId = String(clientCommandId || "").trim();
+    if (normalizedClientCommandId) {
+      body.clientCommandId = normalizedClientCommandId;
+    }
+    const response = await this.fetch(new URL(`/api/account/nodes/${normalizedNodeId}/commands`, appBaseUrl).toString(), {
+      method: "POST",
+      headers: {
+        Accept: "application/json",
+        Authorization: `Bearer ${accessToken}`,
+        "Content-Type": "application/json",
+        "User-Agent": "swarmlab",
+      },
+      body: JSON.stringify(body),
+    });
+    const responsePayload = await readJsonResponse(response);
+    if (!response.ok) {
+      throw buildHttpError(responsePayload.error || responsePayload.message || `Vibe account command enqueue failed (${response.status}).`, response.status || 400);
+    }
+    return responsePayload;
+  }
+
+  async getCommand({ settings = {}, nodeId = "", commandId = "" } = {}) {
+    const { accessToken, appBaseUrl } = this.getAccountRequestContext(settings);
+    const normalizedNodeId = encodeURIComponent(String(nodeId || "").trim());
+    const normalizedCommandId = encodeURIComponent(String(commandId || "").trim());
+    if (!normalizedNodeId) {
+      throw buildHttpError("Vibe account node id is required.", 400);
+    }
+    if (!normalizedCommandId) {
+      throw buildHttpError("Vibe account command id is required.", 400);
+    }
+    if (!accessToken || !appBaseUrl) {
+      throw buildHttpError("Vibe account is not connected.", 409);
+    }
+    if (typeof this.fetch !== "function") {
+      throw buildHttpError("fetch is not available for Vibe account commands.", 500);
+    }
+
+    const response = await this.fetch(new URL(`/api/account/nodes/${normalizedNodeId}/commands/${normalizedCommandId}`, appBaseUrl).toString(), {
+      method: "GET",
+      headers: {
+        Accept: "application/json",
+        Authorization: `Bearer ${accessToken}`,
+        "User-Agent": "swarmlab",
+      },
+    });
+    const responsePayload = await readJsonResponse(response);
+    if (!response.ok) {
+      throw buildHttpError(responsePayload.error || responsePayload.message || `Vibe account command fetch failed (${response.status}).`, response.status || 400);
+    }
+    return responsePayload;
+  }
+
+  async listNodeCommands({ settings = {}, nodeId = "" } = {}) {
+    const { accessToken, appBaseUrl } = this.getAccountRequestContext(settings);
+    const normalizedNodeId = encodeURIComponent(String(nodeId || "").trim());
+    if (!normalizedNodeId) {
+      throw buildHttpError("Vibe account node id is required.", 400);
+    }
+    if (!accessToken || !appBaseUrl) {
+      throw buildHttpError("Vibe account is not connected.", 409);
+    }
+    if (typeof this.fetch !== "function") {
+      throw buildHttpError("fetch is not available for Vibe account commands.", 500);
+    }
+
+    const response = await this.fetch(new URL(`/api/account/nodes/${normalizedNodeId}/commands`, appBaseUrl).toString(), {
+      method: "GET",
+      headers: {
+        Accept: "application/json",
+        Authorization: `Bearer ${accessToken}`,
+        "User-Agent": "swarmlab",
+      },
+    });
+    const responsePayload = await readJsonResponse(response);
+    if (!response.ok) {
+      throw buildHttpError(responsePayload.error || responsePayload.message || `Vibe account commands fetch failed (${response.status}).`, response.status || 400);
+    }
+    return responsePayload;
   }
 
   async listNodes({ settings = {} } = {}) {

@@ -4901,6 +4901,48 @@ export async function createVibeResearchApp({
     }
   });
 
+  app.post("/api/node/account/nodes/:nodeId/commands", requireLocalOrNodeToken, async (request, response) => {
+    try {
+      const payload = await accountService.enqueueCommand({
+        settings: settingsStore.settings,
+        nodeId: request.params.nodeId,
+        operation: request.body?.operation,
+        payload: request.body?.payload,
+        clientCommandId: request.body?.clientCommandId || request.body?.client_command_id,
+      });
+      response.status(201).json(payload);
+    } catch (error) {
+      response.status(error.statusCode || 400).json({ error: error.message || "Could not enqueue Vibe account command." });
+    }
+  });
+
+  app.get("/api/node/account/nodes/:nodeId/commands", requireLocalOrNodeToken, async (request, response) => {
+    try {
+      response.setHeader("Cache-Control", "no-store");
+      const payload = await accountService.listNodeCommands({
+        settings: settingsStore.settings,
+        nodeId: request.params.nodeId,
+      });
+      response.json(payload);
+    } catch (error) {
+      response.status(error.statusCode || 400).json({ error: error.message || "Could not list Vibe account commands." });
+    }
+  });
+
+  app.get("/api/node/account/nodes/:nodeId/commands/:commandId", requireLocalOrNodeToken, async (request, response) => {
+    try {
+      response.setHeader("Cache-Control", "no-store");
+      const payload = await accountService.getCommand({
+        settings: settingsStore.settings,
+        nodeId: request.params.nodeId,
+        commandId: request.params.commandId,
+      });
+      response.json(payload);
+    } catch (error) {
+      response.status(error.statusCode || 400).json({ error: error.message || "Could not fetch Vibe account command." });
+    }
+  });
+
   app.post("/api/node/account/pair/start", requireLocalOrNodeToken, async (request, response) => {
     try {
       const callbackPort = exposedPort || port;

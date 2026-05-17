@@ -428,6 +428,7 @@ export function buildCanvasRegions(cards, layout = {}) {
         tags: [],
         remoteNodeId: "",
         remoteUrl: "",
+        remoteCommandSource: "",
         x: Infinity,
         y: Infinity,
         maxX: -Infinity,
@@ -461,9 +462,11 @@ export function buildCanvasRegions(cards, layout = {}) {
       region.tags = card.tags || region.tags;
       region.remoteNodeId = card.ref?.remoteNodeId || region.remoteNodeId;
       region.remoteUrl = card.ref?.remoteUrl || region.remoteUrl;
+      region.remoteCommandSource = card.ref?.remoteCommandSource || region.remoteCommandSource;
     } else {
       region.remoteNodeId = region.remoteNodeId || card.ref?.remoteNodeId || "";
       region.remoteUrl = region.remoteUrl || card.ref?.remoteUrl || "";
+      region.remoteCommandSource = region.remoteCommandSource || card.ref?.remoteCommandSource || "";
     }
   });
 
@@ -508,6 +511,7 @@ export function buildCanvasRegions(cards, layout = {}) {
         tags: region.tags,
         remoteNodeId: region.remoteNodeId,
         remoteUrl: region.remoteUrl,
+        remoteCommandSource: region.remoteCommandSource,
         x,
         y,
         width: Math.round(Math.max(MACHINE_REGION_WIDTH, (Number.isFinite(region.maxX) ? region.maxX - x : MACHINE_REGION_WIDTH))),

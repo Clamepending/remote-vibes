@@ -333,6 +333,30 @@ test("local canvas view renders node snapshot cards and persists drag layout", a
         }),
       });
     });
+    await page.route(`${baseUrl}/api/node/account/nodes`, async (route) => {
+      await route.fulfill({
+        status: 200,
+        contentType: "application/json",
+        body: JSON.stringify({
+          nodes: [
+            {
+              id: "account-node",
+              nodeId: "account-node",
+              displayName: "Account Workstation",
+              status: "online",
+              connectionHints: [{ kind: "public", url: "https://account-node.example.test" }],
+            },
+            {
+              id: "self-account-node",
+              nodeId: "mac-main",
+              displayName: "This Mac over Tailscale",
+              status: "online",
+              connectionHints: [{ kind: "public", url: "https://self-node.example.test" }],
+            },
+          ],
+        }),
+      });
+    });
     await page.route(`${baseUrl}/api/account/nodes`, async (route) => {
       await route.fulfill({
         status: 200,
@@ -357,7 +381,7 @@ test("local canvas view renders node snapshot cards and persists drag layout", a
         }),
       });
     });
-    await page.route("**/api/account/nodes/account-node/commands**", async (route) => {
+    await page.route("**/api/node/account/nodes/account-node/commands**", async (route) => {
       const url = new URL(route.request().url());
       if (route.request().method() === "GET") {
         const commandId = decodeURIComponent(url.pathname.split("/").pop() || "");

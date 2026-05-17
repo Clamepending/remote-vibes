@@ -75,6 +75,22 @@ async function withAccountService(fn) {
           }],
         });
       }
+      if (/\/api\/account\/nodes\/[^/]+\/commands\/cmd_remote$/u.test(pathname) && (!init.method || init.method === "GET")) {
+        return response({ command: { id: "cmd_remote", status: "completed", result: { accepted: true } } });
+      }
+      if (/\/api\/account\/nodes\/[^/]+\/commands$/u.test(pathname) && init.method === "GET") {
+        return response({ commands: [{ id: "cmd_remote", status: "queued", operation: "session.input.write" }] });
+      }
+      if (/\/api\/account\/nodes\/[^/]+\/commands$/u.test(pathname) && init.method === "POST") {
+        return response({
+          command: {
+            id: "cmd_remote",
+            status: "queued",
+            operation: body.operation,
+            target: { sessionId: body.payload.sessionId },
+          },
+        }, 201);
+      }
       if (/\/api\/account\/nodes\/[^/]+\/commands\/[^/]+\/ack/u.test(pathname)) {
         return response({ command: { id: "cmd_1", status: "completed" } });
       }
@@ -250,6 +266,25 @@ test("AccountService completes pairing, registers, heartbeats, and revokes with 
       new URL(entry.url).pathname === "/api/account/nodes" && (!entry.init.method || entry.init.method === "GET"));
     assert.equal(listRequest.init.headers.Authorization, "Bearer secret-account-token");
     assert.doesNotMatch(JSON.stringify(listed), /token=secret|\/private|secret-account-token/);
+
+    const enqueued = await service.enqueueCommand({
+      nodeId: "node_gpu",
+      operation: "session.input.write",
+      payload: { sessionId: "remote-session-1", input: "continue from phone" },
+      clientCommandId: "client-1",
+    });
+    assert.equal(enqueued.command.id, "cmd_remote");
+    assert.equal(enqueued.command.target.sessionId, "remote-session-1");
+    const enqueueRequest = requests.find((entry) =>
+      /\/api\/account\/nodes\/node_gpu\/commands$/u.test(new URL(entry.url).pathname) && entry.init.method === "POST");
+    assert.equal(enqueueRequest.init.headers.Authorization, "Bearer secret-account-token");
+    assert.equal(enqueueRequest.body.clientCommandId, "client-1");
+    assert.equal(enqueueRequest.body.payload.input, "continue from phone");
+
+    const remoteCommands = await service.listNodeCommands({ nodeId: "node_gpu" });
+    assert.equal(remoteCommands.commands[0].id, "cmd_remote");
+    const fetchedRemoteCommand = await service.getCommand({ nodeId: "node_gpu", commandId: "cmd_remote" });
+    assert.equal(fetchedRemoteCommand.command.status, "completed");
 
     await tokenStore.updateNode({ nodeId: "node_local", displayName: "Mac", status: "online" });
     const commands = await service.listCommands();

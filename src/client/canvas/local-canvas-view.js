@@ -2310,6 +2310,23 @@ async function fetchRegistryNodes({ fetchImpl, signal }) {
   ];
 }
 
+function remoteCommandRouteBase(source = "") {
+  return String(source || "").trim().toLowerCase() === "node-account"
+    ? NODE_ACCOUNT_NODES_URL
+    : ACCOUNT_NODES_URL;
+}
+
+function remoteCommandUrl(nodeId, { source = "", commandId = "" } = {}) {
+  const base = remoteCommandRouteBase(source);
+  const encodedNodeId = encodeURIComponent(String(nodeId || "").trim());
+  const encodedCommandId = encodeURIComponent(String(commandId || "").trim());
+  return `${base}/${encodedNodeId}/commands${encodedCommandId ? `/${encodedCommandId}` : ""}`;
+}
+
+function remoteCommandSourceFromCard(card) {
+  return String(card?.ref?.remoteCommandSource || "").trim();
+}
+
 async function registerFleetNodeUrl(url, { fetchImpl, signal, source = "manual", snapshot = null, label = "", lastError = "" } = {}) {
   const normalizedUrl = normalizeRemoteNodeUrl(url);
   if (!normalizedUrl) return null;
@@ -2366,6 +2383,9 @@ async function fetchRemoteNodeRecords({ fetchImpl, signal, storage, currentOrigi
     const capabilities = Object.keys(normalized.capabilities || {}).length ? normalized.capabilities : (existing.capabilities || {});
     const launchers = normalized.launchers?.length ? normalized.launchers : (existing.launchers || []);
     const connectionHints = normalized.connectionHints?.length ? normalized.connectionHints : (existing.connectionHints || []);
+    const source = normalized.source === "node-account" || existing.source !== "node-account"
+      ? (normalized.source || existing.source || "")
+      : existing.source;
     nodesByUrl.set(normalized.baseUrl, {
       ...normalized,
       baseUrl: normalized.baseUrl,
@@ -2373,7 +2393,7 @@ async function fetchRemoteNodeRecords({ fetchImpl, signal, storage, currentOrigi
       id: normalized.id || existing.id || "",
       label: normalized.label || existing.label || "",
       displayName: normalized.displayName || existing.displayName || "",
-      source: normalized.source || existing.source || "",
+      source,
       commandable: Boolean(normalized.commandable || existing.commandable),
       status: normalized.status || existing.status || "",
       lastSeenAt: normalized.lastSeenAt || existing.lastSeenAt || "",
@@ -2609,6 +2629,7 @@ function normalizeLaunchLifecycle(item) {
     clientCommandId,
     operation,
     remoteNodeId,
+    remoteCommandSource: compactText(item.remoteCommandSource || item.commandSource || "", 80),
     machineId,
     remoteUrl: normalizeRemoteNodeUrl(item.remoteUrl || ""),
     sourceCardId: String(item.sourceCardId || "").trim(),
@@ -3013,6 +3034,7 @@ function launchLifecycleCard(lifecycle) {
       machineId: lifecycle.machineId,
       remoteNodeId: lifecycle.remoteNodeId,
       remoteUrl: lifecycle.remoteUrl,
+      remoteCommandSource: lifecycle.remoteCommandSource,
       sourceCardId: lifecycle.sourceCardId,
       lifecycle: !isCompletedApp,
       appInstance: isCompletedApp,
@@ -3407,6 +3429,7 @@ function cardFrame(card, layout, body, footer = "") {
   const icon = CARD_TYPE_ICONS[card.type] || Box;
   const sessionId = card.ref?.sessionId ? ` data-swarmlab-canvas-session-id="${escapeHtml(card.ref.sessionId)}"` : "";
   const remoteNodeId = card.ref?.remoteNodeId ? ` data-swarmlab-canvas-remote-node-id="${escapeHtml(card.ref.remoteNodeId)}"` : "";
+  const remoteCommandSource = card.ref?.remoteCommandSource ? ` data-swarmlab-canvas-remote-command-source="${escapeHtml(card.ref.remoteCommandSource)}"` : "";
   const remoteClass = card.ref?.remoteUrl ? " is-remote" : "";
   const lifecycleClass = card.ref?.lifecycle ? " is-lifecycle" : "";
   const launchedAppClass = card.ref?.launchedApp ? " is-launched-app" : "";
@@ -3425,6 +3448,7 @@ function cardFrame(card, layout, body, footer = "") {
       data-swarmlab-canvas-region-id="${escapeHtml(regionId)}"
       ${sessionId}
       ${remoteNodeId}
+      ${remoteCommandSource}
       style="--card-x: ${layout.x}px; --card-y: ${layout.y}px; width: ${layout.width}px; height: ${layout.height}px; z-index: ${layout.z};"
     >
       <div class="swarmlab-canvas-card-head" data-swarmlab-card-drag-handle>
@@ -3530,10 +3554,11 @@ function renderTerminalSessionCard(card, layout) {
 function renderRemoteAgentCard(card, layout) {
   const sessionId = card.ref?.sessionId || "";
   const remoteNodeId = card.ref?.remoteNodeId || "";
+  const remoteCommandSource = card.ref?.remoteCommandSource || "";
   const action = renderCardAction(card);
   const composer = remoteNodeId
     ? `
-        <form class="swarmlab-agent-composer" data-swarmlab-agent-composer data-swarmlab-agent-session-id="${escapeHtml(sessionId)}" data-swarmlab-agent-remote-node-id="${escapeHtml(remoteNodeId)}">
+        <form class="swarmlab-agent-composer" data-swarmlab-agent-composer data-swarmlab-agent-session-id="${escapeHtml(sessionId)}" data-swarmlab-agent-remote-node-id="${escapeHtml(remoteNodeId)}" data-swarmlab-agent-remote-command-source="${escapeHtml(remoteCommandSource)}">
           <textarea rows="1" name="input" placeholder="Message agent, @ for context, / for commands"></textarea>
           <button class="swarmlab-canvas-button" type="submit" title="Send">${renderIcon(Send)}</button>
         </form>
@@ -3547,7 +3572,7 @@ function renderRemoteAgentCard(card, layout) {
     <div class="swarmlab-canvas-agent-body">
       <div class="swarmlab-agent-transfer-bar" data-swarmlab-agent-transfer-bar></div>
       <div class="swarmlab-agent-chat-window">
-        <div class="swarmlab-agent-chat-feed" data-swarmlab-agent-chat-feed data-swarmlab-agent-session-id="${escapeHtml(sessionId)}" data-swarmlab-agent-remote-node-id="${escapeHtml(remoteNodeId)}">
+        <div class="swarmlab-agent-chat-feed" data-swarmlab-agent-chat-feed data-swarmlab-agent-session-id="${escapeHtml(sessionId)}" data-swarmlab-agent-remote-node-id="${escapeHtml(remoteNodeId)}" data-swarmlab-agent-remote-command-source="${escapeHtml(remoteCommandSource)}">
           <div class="swarmlab-agent-message is-agent">
             <span>${escapeHtml([card.subtitle, card.status].filter(Boolean).join(" / ") || "Remote agent")}</span>
             <div class="swarmlab-agent-message-text">${escapeHtml(card.meta || card.ref?.remoteUrl || "Ready")}</div>
@@ -3841,7 +3866,10 @@ async function refreshLaunchLifecycles(root, { fetchImpl, abortController, stora
       return item;
     }
     try {
-      const payload = await fetchJson(`/api/account/nodes/${encodeURIComponent(item.remoteNodeId)}/commands/${encodeURIComponent(item.commandId)}`, {
+      const payload = await fetchJson(remoteCommandUrl(item.remoteNodeId, {
+        source: item.remoteCommandSource,
+        commandId: item.commandId,
+      }), {
         fetchImpl,
         signal: abortController.signal,
       });
@@ -4143,6 +4171,7 @@ function makeRemoteOfflineCard(record) {
       machineId,
       remoteNodeId: registryNode.commandable ? (registryNode.nodeId || registryNode.id || "") : "",
       remoteUrl: record.baseUrl,
+      remoteCommandSource: registryNode.source || "",
       actionLabel: "Open canvas",
     },
     width: 320,
@@ -4183,6 +4212,7 @@ function withRemoteCardContext(card, record, remoteIndex) {
   const remoteNodeId = record.registryNode?.commandable
     ? (record.registryNode?.nodeId || record.snapshot.node.id || record.registryNode?.id || "")
     : "";
+  const remoteCommandSource = record.registryNode?.source || "";
   const sourceId = card.id;
   const isMachine = card.type === "machine";
   const href = remoteCardHref(card, record.baseUrl);
@@ -4202,6 +4232,7 @@ function withRemoteCardContext(card, record, remoteIndex) {
       ...(linkedSourceCardId ? { sourceCardId: linkedSourceCardId } : {}),
       remoteNodeId,
       remoteUrl: record.baseUrl,
+      remoteCommandSource,
       actionLabel: remoteCardActionLabel(card),
     },
   };
@@ -5476,6 +5507,7 @@ function autosizeComposerInput(textarea) {
 async function sendAgentComposerInput(form, { fetchImpl, abortController }) {
   const sessionId = String(form?.dataset?.swarmlabAgentSessionId || "").trim();
   const remoteNodeId = String(form?.dataset?.swarmlabAgentRemoteNodeId || "").trim();
+  const remoteCommandSource = String(form?.dataset?.swarmlabAgentRemoteCommandSource || "").trim();
   const textarea = form?.querySelector("textarea[name='input']");
   const input = textarea instanceof HTMLTextAreaElement ? textarea.value : "";
   const text = input.trim();
@@ -5489,7 +5521,7 @@ async function sendAgentComposerInput(form, { fetchImpl, abortController }) {
   try {
     const clientMessageId = `canvas-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 8)}`;
     if (remoteNodeId) {
-      await fetchJson(`/api/account/nodes/${encodeURIComponent(remoteNodeId)}/commands`, {
+      await fetchJson(remoteCommandUrl(remoteNodeId, { source: remoteCommandSource }), {
         fetchImpl,
         signal: abortController.signal,
         method: "POST",
@@ -5640,7 +5672,9 @@ async function launchAgentCapsule(button, root, { fetchImpl, abortController, on
       return;
     }
     const clientCommandId = `capsule-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 8)}`;
-    const commandPayload = await fetchJson(`/api/account/nodes/${encodeURIComponent(targetRegion.remoteNodeId)}/commands`, {
+    const commandPayload = await fetchJson(remoteCommandUrl(targetRegion.remoteNodeId, {
+      source: targetRegion.remoteCommandSource,
+    }), {
       fetchImpl,
       signal: abortController.signal,
       method: "POST",
@@ -5665,6 +5699,7 @@ async function launchAgentCapsule(button, root, { fetchImpl, abortController, on
       clientCommandId,
       operation: "session.create",
       remoteNodeId: targetRegion.remoteNodeId,
+      remoteCommandSource: targetRegion.remoteCommandSource || "",
       machineId: targetRegionId,
       remoteUrl: targetRegion.remoteUrl,
       sourceCardId: card.id,
@@ -5748,10 +5783,11 @@ async function dismissAppInstanceCard(button, root, { fetchImpl, abortController
   const cardId = button.closest("[data-swarmlab-canvas-card-id]")?.getAttribute("data-swarmlab-canvas-card-id") || "";
   const card = root?.__swarmlabCanvasCardsById?.[cardId] || null;
   const remoteNodeId = String(card?.ref?.remoteNodeId || "").trim();
+  const remoteCommandSource = remoteCommandSourceFromCard(card);
   try {
     if (remoteNodeId) {
       const clientCommandId = `app-dismiss-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 8)}`;
-      await fetchJson(`/api/account/nodes/${encodeURIComponent(remoteNodeId)}/commands`, {
+      await fetchJson(remoteCommandUrl(remoteNodeId, { source: remoteCommandSource }), {
         fetchImpl,
         signal: abortController?.signal,
         method: "POST",
@@ -5831,6 +5867,7 @@ async function launchCanvasLauncher(button, root, { fetchImpl, abortController, 
   const card = root.__swarmlabCanvasCardsById?.[cardId];
   if (!card) return;
   const remoteNodeId = String(card.ref?.remoteNodeId || "").trim();
+  const remoteCommandSource = remoteCommandSourceFromCard(card);
   const isRemote = Boolean(card.ref?.remoteUrl);
   const launcherKind = String(card.ref?.launcherKind || "").trim();
   const isAgentProvider = launcherKind === "agent-provider" || Boolean(card.ref?.providerId);
@@ -5846,7 +5883,7 @@ async function launchCanvasLauncher(button, root, { fetchImpl, abortController, 
       const payload = launcherSessionPayload(card);
       if (isRemote) {
         const clientCommandId = `launcher-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 8)}`;
-        const commandPayload = await fetchJson(`/api/account/nodes/${encodeURIComponent(remoteNodeId)}/commands`, {
+        const commandPayload = await fetchJson(remoteCommandUrl(remoteNodeId, { source: remoteCommandSource }), {
           fetchImpl,
           signal: abortController.signal,
           method: "POST",
@@ -5862,6 +5899,7 @@ async function launchCanvasLauncher(button, root, { fetchImpl, abortController, 
           clientCommandId,
           operation: "session.create",
           remoteNodeId,
+          remoteCommandSource,
           machineId: getCanvasCardMachineId(card),
           remoteUrl: card.ref?.remoteUrl || "",
           sourceCardId: card.id,
@@ -5898,7 +5936,7 @@ async function launchCanvasLauncher(button, root, { fetchImpl, abortController, 
     }
     if (isRemote) {
       const clientCommandId = `app-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 8)}`;
-      const commandPayload = await fetchJson(`/api/account/nodes/${encodeURIComponent(remoteNodeId)}/commands`, {
+      const commandPayload = await fetchJson(remoteCommandUrl(remoteNodeId, { source: remoteCommandSource }), {
         fetchImpl,
         signal: abortController.signal,
         method: "POST",
@@ -5914,6 +5952,7 @@ async function launchCanvasLauncher(button, root, { fetchImpl, abortController, 
         clientCommandId,
         operation: "app.launch",
         remoteNodeId,
+        remoteCommandSource,
         machineId: getCanvasCardMachineId(card),
         remoteUrl: card.ref?.remoteUrl || "",
         sourceCardId: card.id,

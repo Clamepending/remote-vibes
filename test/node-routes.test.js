@@ -352,6 +352,27 @@ test("/api/node/account routes pair, register, heartbeat, and never echo account
         }],
       }), { status: 200 });
     }
+    if (pathname === "/api/account/nodes/node_gpu/commands" && init.method === "POST") {
+      return new Response(JSON.stringify({
+        command: {
+          id: "cmd_remote",
+          nodeId: "node_gpu",
+          status: "queued",
+          operation: body.operation,
+          target: { sessionId: body.payload?.sessionId || "" },
+        },
+      }), { status: 201 });
+    }
+    if (pathname === "/api/account/nodes/node_gpu/commands/cmd_remote" && (!init.method || init.method === "GET")) {
+      return new Response(JSON.stringify({
+        command: {
+          id: "cmd_remote",
+          nodeId: "node_gpu",
+          status: "completed",
+          result: { accepted: true },
+        },
+      }), { status: 200 });
+    }
     if (pathname === "/api/account/nodes") {
       return new Response(JSON.stringify({
         node: {
@@ -423,6 +444,25 @@ test("/api/node/account routes pair, register, heartbeat, and never echo account
     assert.equal(nodesBody.nodes[0].baseUrl, "https://gpu.tailnet.test");
     assert.equal(nodesBody.nodes[0].capabilities.gpuCount, 6);
     assert.doesNotMatch(JSON.stringify(nodesBody), /secret-account-token|route-secret|\/private/);
+
+    const proxyCommandResponse = await fetch(`${started.baseUrl}/api/node/account/nodes/node_gpu/commands`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        operation: "session.input.write",
+        clientCommandId: "client-1",
+        payload: { sessionId: "remote-session-1", input: "continue from account canvas" },
+      }),
+    });
+    assert.equal(proxyCommandResponse.status, 201);
+    const proxyCommandBody = await proxyCommandResponse.json();
+    assert.equal(proxyCommandBody.command.status, "queued");
+    assert.equal(proxyCommandBody.command.target.sessionId, "remote-session-1");
+    assert.doesNotMatch(JSON.stringify(proxyCommandBody), /continue from account canvas|secret-account-token/);
+
+    const proxyFetchResponse = await fetch(`${started.baseUrl}/api/node/account/nodes/node_gpu/commands/cmd_remote`);
+    assert.equal(proxyFetchResponse.status, 200);
+    assert.equal((await proxyFetchResponse.json()).command.status, "completed");
 
     const sentText = JSON.stringify(accountRequests.map((request) => request.body));
     assert.match(sentText, /node\.registration|nodeId|heartbeat/);
