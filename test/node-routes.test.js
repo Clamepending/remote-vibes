@@ -909,6 +909,7 @@ test("/api/handoff/jobs persists machine handoffs and exposes brain summary in n
     assert.equal(snapshotBody.snapshot.counts.handoffJobs, 1);
     assert.equal(snapshotBody.snapshot.handoffJobs[0].target.sshTarget, "pi@home-raspi");
     assert.equal(snapshotBody.snapshot.capabilities.handoffCount, 1);
+    assert.ok(snapshotBody.snapshot.capabilities.commandOperations.includes("session.narrative.read"));
     assert.ok(snapshotBody.snapshot.brain.noteCount >= 2);
     assert.ok(snapshotBody.snapshot.brain.notes.some((note) => note.title === "Machine Brain"));
     assert.ok(snapshotBody.snapshot.capabilities.roles.includes("brain-host"));

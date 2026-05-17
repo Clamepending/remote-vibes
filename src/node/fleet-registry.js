@@ -133,6 +133,7 @@ function normalizeCounts(value = {}) {
 }
 
 function normalizeCapabilities(value = {}, system = {}) {
+  const commandOperations = compactStringArray(value.commandOperations || value.command_operations).slice(0, 20);
   return {
     providerCount: normalizeNumber(value.providerCount),
     buildingCount: normalizeNumber(value.buildingCount),
@@ -141,6 +142,7 @@ function normalizeCapabilities(value = {}, system = {}) {
     handoffCount: normalizeNumber(value.handoffCount),
     brainNoteCount: normalizeNumber(value.brainNoteCount),
     hasTailscale: Boolean(value.hasTailscale),
+    commandOperations,
     roles: compactStringArray(value.roles),
   };
 }

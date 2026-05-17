@@ -127,6 +127,12 @@ function normalizeCounts(value = {}) {
 }
 
 function normalizeCapabilities(value = {}) {
+  const commandOperations = Array.isArray(value.commandOperations || value.command_operations)
+    ? (value.commandOperations || value.command_operations)
+      .map((operation) => compactText(operation, 80).replace(/\s+/g, ""))
+      .filter(Boolean)
+      .slice(0, 20)
+    : [];
   return {
     providerCount: normalizeNumber(value.providerCount),
     launcherCount: normalizeNumber(value.launcherCount),
@@ -136,6 +142,7 @@ function normalizeCapabilities(value = {}) {
     handoffCount: normalizeNumber(value.handoffCount),
     brainNoteCount: normalizeNumber(value.brainNoteCount),
     hasTailscale: Boolean(value.hasTailscale),
+    commandOperations,
     roles: normalizeRoles(value.roles),
   };
 }

@@ -134,6 +134,7 @@ function sampleRedactedSnapshot(nodeId = "node_1") {
       handoffCount: 1,
       brainNoteCount: 12,
       hasTailscale: true,
+      commandOperations: ["session.input.write", "session.narrative.read"],
       roles: ["agent-host", "brain-host", "handoff-coordinator"],
     },
     system: {
@@ -172,6 +173,7 @@ test("buildNodeSummaryFromSnapshot keeps only redacted summary fields", () => {
   assert.equal(summary.counts.brainNotes, 12);
   assert.equal(summary.status, "busy");
   assert.equal(summary.capabilities.hasTailscale, true);
+  assert.deepEqual(summary.capabilities.commandOperations, ["session.input.write", "session.narrative.read"]);
   assert.deepEqual(summary.capabilities.roles, ["agent-host", "brain-host", "handoff-coordinator"]);
   assert.deepEqual(summary.sessions[0], {
     id: "session_1",

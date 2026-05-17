@@ -78,6 +78,12 @@ function normalizeNodeCapabilities(value = {}) {
       .filter(Boolean)
       .slice(0, 20)
     : [];
+  const commandOperations = Array.isArray(value.commandOperations || value.command_operations)
+    ? (value.commandOperations || value.command_operations)
+      .map((operation) => String(operation || "").replace(/\s+/g, "").trim())
+      .filter(Boolean)
+      .slice(0, 20)
+    : [];
   return {
     providerCount: normalizeNumber(value.providerCount),
     launcherCount: normalizeNumber(value.launcherCount),
@@ -87,6 +93,7 @@ function normalizeNodeCapabilities(value = {}) {
     handoffCount: normalizeNumber(value.handoffCount),
     brainNoteCount: normalizeNumber(value.brainNoteCount),
     hasTailscale: Boolean(value.hasTailscale),
+    commandOperations,
     roles,
   };
 }
@@ -298,6 +305,12 @@ export function buildNodeSummaryFromSnapshot(snapshot = {}) {
       .filter(Boolean)
       .slice(0, 20)
     : [];
+  const commandOperations = Array.isArray(capabilities.commandOperations || capabilities.command_operations)
+    ? (capabilities.commandOperations || capabilities.command_operations)
+      .map((operation) => String(operation || "").replace(/\s+/g, "").trim())
+      .filter(Boolean)
+      .slice(0, 20)
+    : [];
   return {
     schemaVersion: 1,
     generatedAt: snapshot.generatedAt || new Date().toISOString(),
@@ -334,6 +347,7 @@ export function buildNodeSummaryFromSnapshot(snapshot = {}) {
       handoffCount: Number(capabilities.handoffCount || counts.handoffJobs || 0),
       brainNoteCount: Number(capabilities.brainNoteCount || counts.brainNotes || 0),
       hasTailscale: Boolean(capabilities.hasTailscale),
+      commandOperations,
       roles,
     },
     system: {

@@ -44,6 +44,7 @@ function sampleSnapshot(nodeId, installId) {
       handoffCount: 1,
       brainNoteCount: 327,
       hasTailscale: true,
+      commandOperations: ["session.input.write", "session.narrative.read"],
       roles: ["agent-host", "gpu-worker", "brain-host"],
     },
     system: {
@@ -125,6 +126,7 @@ test("AccountNodeRegistryService pairs, registers, heartbeats, lists, and discon
     assert.equal(registered.displayName, "GPU Cluster");
     assert.equal(registered.capabilities.gpuCount, 6);
     assert.equal(registered.capabilities.launcherCount, 2);
+    assert.deepEqual(registered.capabilities.commandOperations, ["session.input.write", "session.narrative.read"]);
     assert.equal(registered.launchers[0].providerId, "codex");
     assert.equal(registered.launchers[1].appId, "cursor");
     assert.equal(registered.launchers[1].category, "editor");

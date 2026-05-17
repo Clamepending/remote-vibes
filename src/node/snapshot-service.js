@@ -4,6 +4,13 @@ import os from "node:os";
 const DEFAULT_DEPENDENCY_TIMEOUT_MS = 1_500;
 const REDACTED_NAME = "redacted";
 const SNAPSHOT_MODES = new Set(["redacted", "privileged"]);
+const NODE_COMMAND_OPERATIONS = [
+  "session.input.write",
+  "session.create",
+  "session.narrative.read",
+  "app.launch",
+  "app.instance.dismiss",
+];
 const URL_SENSITIVE_PARAMS = new Set([
   "access_token",
   "api_key",
@@ -815,6 +822,7 @@ export class NodeSnapshotService {
       capabilities: {
         providerCount: providers.length,
         launcherCount: launchers.length,
+        commandOperations: NODE_COMMAND_OPERATIONS,
         providers: normalizedMode === "privileged"
           ? providers.map((provider) => ({
               id: provider?.id || "",
