@@ -3,6 +3,7 @@ import { mkdtemp, readFile, rm } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import test from "node:test";
+import { setTimeout as delay } from "node:timers/promises";
 import {
   getBuildingAgentGuideIndexPath,
   getBuildingAgentGuidePath,
@@ -19,6 +20,23 @@ function createNoopSleepPreventionService() {
     start() {},
     stop() {},
   };
+}
+
+async function rmTreeWithRetry(targetPath, { attempts = 5 } = {}) {
+  let lastError = null;
+  for (let attempt = 0; attempt < attempts; attempt += 1) {
+    try {
+      await rm(targetPath, { recursive: true, force: true });
+      return;
+    } catch (error) {
+      lastError = error;
+      if (!["ENOTEMPTY", "EBUSY", "EPERM"].includes(error?.code)) {
+        throw error;
+      }
+      await delay(25 * (attempt + 1));
+    }
+  }
+  throw lastError;
 }
 
 test("app startup writes building guide files for spawned agents", async () => {
@@ -48,6 +66,6 @@ test("app startup writes building guide files for spawned agents", async () => {
     assert.match(tailscaleGuide, /Agent Rules/);
   } finally {
     await app.close();
-    await rm(cwd, { recursive: true, force: true });
+    await rmTreeWithRetry(cwd);
   }
 });

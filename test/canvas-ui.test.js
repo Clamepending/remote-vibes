@@ -1778,6 +1778,15 @@ test("canvas agent launcher renders the created native session on the board", as
             entries: isShell ? [{
               kind: "tool",
               label: "Snippet",
+              outputPreview: [
+                "1;36m[vibe-research]0m session restored after restart",
+                "1;36m[vibe-research]0m cwd: /Users/mark/vibe-projects/vibe-research/user",
+                "1;36m[vibe-research]0m persistent terminal: reattached vibe-research-terminal",
+                "1;36m[vibe-research]0m vanilla shell restored   \u001b=            m         >c>q",
+              ].join("\n"),
+            }, {
+              kind: "tool",
+              label: "Snippet",
               outputPreview: "\u001b[32mready\u001b[0m\n(base) 32m1m➜ 36muserm 34m1mgit:(31mmain34m) 33m✗m m (base)",
             }, {
               kind: "tool",
@@ -1833,6 +1842,7 @@ test("canvas agent launcher renders the created native session on the board", as
     assert.match(terminalText, /ready/);
     assert.match(terminalText, /cost is \$5/);
     assert.match(terminalText, /# heading remains useful output/);
+    assert.doesNotMatch(terminalText, /\[vibe-research\].*session restored/i);
     assert.doesNotMatch(terminalText, /SNIPPET[\s\S]*git:\(main\)/);
     assert.doesNotMatch(terminalText, /32m|36m|34m|31m|33m|1m|✗m|userm|m \(base\)/);
     assert.equal(await terminalCard.locator('textarea[name="input"]').getAttribute("placeholder"), "Type a terminal command");

@@ -89,6 +89,23 @@ async function waitForShutdown(url) {
   throw new Error(`Timed out waiting for ${url} to shut down.`);
 }
 
+async function waitForChildExit(child, timeoutMs, buildTimeoutError) {
+  let timeout;
+
+  try {
+    return await Promise.race([
+      once(child, "exit"),
+      new Promise((_, reject) => {
+        timeout = setTimeout(() => {
+          reject(buildTimeoutError());
+        }, timeoutMs);
+      }),
+    ]);
+  } finally {
+    clearTimeout(timeout);
+  }
+}
+
 function escapeRegExp(value) {
   return String(value).replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
 }
@@ -2469,14 +2486,11 @@ test("install.sh can launch vibe research in one command", async () => {
     child.stdout.on("data", capture);
     child.stderr.on("data", capture);
 
-    const [exitCode] = await Promise.race([
-      once(child, "exit"),
-      new Promise((_, reject) => {
-        setTimeout(() => {
-          reject(new Error(`Timed out waiting for launcher exit.\n${combinedOutput}`));
-        }, 120_000);
-      }),
-    ]);
+    const [exitCode] = await waitForChildExit(
+      child,
+      120_000,
+      () => new Error(`Timed out waiting for launcher exit.\n${combinedOutput}`),
+    );
     assert.equal(exitCode, 0);
     assert.match(combinedOutput, /Background server pid:/);
     assert.match(combinedOutput, /will keep running after this terminal closes/);
@@ -2525,12 +2539,7 @@ test("install.sh can launch vibe research in one command", async () => {
         // Process already exited.
       }
 
-      await Promise.race([
-        once(child, "exit"),
-        new Promise((_, reject) => {
-          setTimeout(() => reject(new Error("Timed out shutting down launcher.")), 10_000);
-        }),
-      ]);
+      await waitForChildExit(child, 10_000, () => new Error("Timed out shutting down launcher."));
     }
 
     await rm(tempRoot, { recursive: true, force: true });

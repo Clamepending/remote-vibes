@@ -3571,9 +3571,14 @@ function stripTerminalControlText(value, { stripSgrResidue = false } = {}) {
     .replace(/\u001b[@-_]/gu, "");
 
   if (stripSgrResidue) {
+    const sgrCode = String.raw`(?:0|1|2|3|4|5|7|22|23|24|25|27|29|3[0-9]|4[0-9]|9[0-7]|10[0-7])`;
+    const sgrFragment = String.raw`(?:${sgrCode})(?:;(?:${sgrCode}))*m`;
     text = text
+      .replace(new RegExp(String.raw`(^|[^\p{L}\p{N}])\[?${sgrFragment}(?=\S)`, "gu"), "$1")
+      .replace(new RegExp(String.raw`(\[[^\]\n]{1,96}\])\[?${sgrFragment}`, "gu"), "$1")
       .replace(/(^|[^\p{L}\p{N}])(?:\[?(?:0|1|2|3|4|5|7|22|23|24|25|27|29|3[0-9]|4[0-9]|9[0-7]|10[0-7])m)+(?=\S)/gu, "$1")
       .replace(/([\p{L}\p{N}])(?:0|1|2|3|4|5|7|22|23|24|25|27|29|3[0-9]|4[0-9]|9[0-7]|10[0-7])m(?=[)\]\s]|$)/gu, "$1")
+      .replace(/(?:^|\s)\[vibe-research\]\s+[^[]*(?=\s+\[vibe-research\]|\s*$)/giu, " ")
       .replace(/\b([A-Za-z0-9._@~/-]{2,})m(?=\s+(?:git:|\(|$))/gu, "$1")
       .replace(/(^|\s)m(?=\s+\()/gu, "$1")
       .replace(/([➜✗✔])m(?=\s|$)/gu, "$1");
@@ -3590,6 +3595,8 @@ function isTerminalPromptResidueText(value) {
 }
 
 function narrativeEntryText(entry, max = 1_800, { stripSgrResidue = false } = {}) {
+  const entryLabel = String(entry?.label || "").trim();
+  const scrubShellResidue = stripSgrResidue || /^(?:Snippet|Terminal|Vanilla Shell|Shell)$/iu.test(entryLabel);
   let text = stripTerminalControlText(
     [
       entry?.text,
@@ -3597,13 +3604,13 @@ function narrativeEntryText(entry, max = 1_800, { stripSgrResidue = false } = {}
       entry?.outputPreview,
       entry?.statusText,
     ].filter(Boolean).join(" "),
-    { stripSgrResidue },
+    { stripSgrResidue: scrubShellResidue },
   );
-  if (stripSgrResidue) {
+  if (scrubShellResidue) {
     text = text
       .split("\n")
       .map((line) => line.trim())
-      .filter((line) => line && !isTerminalPromptResidueText(line))
+      .filter((line) => line && !/^\[vibe-research\](?:\s|$)/iu.test(line) && !isTerminalPromptResidueText(line))
       .join("\n");
     if (isTerminalPromptResidueText(text)) {
       return "";
