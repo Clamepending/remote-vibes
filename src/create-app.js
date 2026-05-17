@@ -2506,7 +2506,7 @@ export async function createVibeResearchApp({
     providersProvider: () => providers,
     appLaunchersProvider: () => appLaunchers,
     appInstancesProvider: () => appInstanceStore.listInstances(),
-    sessionsProvider: () => sessionManager.listSessions(),
+    sessionsProvider: () => sessionManager.listSessions({ includeRecentNarrative: true }),
     browserSessionsProvider: () => browserUseService.listSessions({ includeSnapshot: false }),
     agentTownStateProvider: () => agentTownStore.getState(),
     portsProvider: listNamedPorts,

@@ -64,6 +64,8 @@ const SESSION_PERSIST_THROTTLE_MS = 180;
 // faster than perceptible UI lag (humans tolerate <250ms), slower than the
 // fastest typing or paste interactions (which produce dozens of chunks).
 const NARRATIVE_DIFF_THROTTLE_MS = 200;
+const ACCOUNT_SESSION_NARRATIVE_LIMIT = 6;
+const ACCOUNT_SESSION_NARRATIVE_TEXT_LIMIT = 700;
 const SESSION_NAME_MAX_LENGTH = 64;
 const SESSION_AUTO_NAME_MAX_WORDS = 6;
 const SESSION_AUTO_NAME_BUFFER_LIMIT = 240;
@@ -1316,6 +1318,22 @@ function getRecentNarrativeInputTexts(entries = [], maxEntries = 8) {
     .filter((entry) => entry?.kind === "user" && entry.text)
     .slice(-Math.max(1, Number(maxEntries) || 8))
     .map((entry) => entry.text);
+}
+
+function scrubAccountSessionText(value) {
+  return String(value || "")
+    .replace(/\bsk-[A-Za-z0-9_-]{6,}\b/g, "[redacted]")
+    .replace(/\bgh[pousr]_[A-Za-z0-9_]{6,}\b/g, "[redacted]")
+    .replace(
+      /\b(?:api[_-]?key|token|secret|password|authorization|bearer|ANTHROPIC_API_KEY|OPENAI_API_KEY|HF_TOKEN)=?[A-Za-z0-9_./:=@+-]{4,}\b/gi,
+      "[redacted]",
+    )
+    .replace(/([?&](?:token|api_key|key|secret|password|auth|code)=)[^&#\s]+/gi, "$1[redacted]")
+    .replace(/(?:\/Users\/[A-Za-z0-9._-]+|\/home\/[A-Za-z0-9._-]+)(?:\/[^\s"'`)]*)?/g, "[path]")
+    .replace(/(?:\/private\/var|\/var\/folders|\/tmp)(?:\/[^\s"'`)]*)?/g, "[path]")
+    .replace(/\s+/g, " ")
+    .trim()
+    .slice(0, ACCOUNT_SESSION_NARRATIVE_TEXT_LIMIT);
 }
 
 function isAgentActivitySession(session) {
@@ -3209,10 +3227,10 @@ export class SessionManager {
     await this.flushPersistedSessions();
   }
 
-  listSessions() {
+  listSessions({ includeRecentNarrative = false } = {}) {
     this.consumePendingRenameRequests();
     return Array.from(this.sessions.values())
-      .map((session) => this.serializeSession(session))
+      .map((session) => this.serializeSession(session, { includeRecentNarrative }))
       .sort((left, right) => right.createdAt.localeCompare(left.createdAt));
   }
 
@@ -4948,7 +4966,30 @@ export class SessionManager {
     session.lastBroadcastNarrative = nextById;
   }
 
-  serializeSession(session) {
+  summarizeAccountRecentNarrative(session) {
+    const entries = this.getNarrativeSnapshot(session, {
+      maxEntries: Math.max(ACCOUNT_SESSION_NARRATIVE_LIMIT * 2, ACCOUNT_SESSION_NARRATIVE_LIMIT),
+    });
+    return entries
+      .filter((entry) => {
+        const kind = String(entry?.kind || "").trim();
+        return ["assistant", "user", "tool", "status"].includes(kind) && String(entry?.text || entry?.outputPreview || "").trim();
+      })
+      .slice(-ACCOUNT_SESSION_NARRATIVE_LIMIT)
+      .map((entry, index) => ({
+        id: String(entry.id || `${session.id}-recent-${index}`).slice(0, 180),
+        kind: String(entry.kind || "status").slice(0, 40),
+        label: scrubAccountSessionText(entry.label || entry.title || entry.kind || "Session").slice(0, 80),
+        text: scrubAccountSessionText(entry.text || entry.outputPreview || ""),
+        status: String(entry.status || "").replace(/\s+/g, "-").trim().slice(0, 40),
+        timestamp: String(entry.timestamp || entry.createdAt || session.updatedAt || session.lastOutputAt || session.createdAt || "")
+          .trim()
+          .slice(0, 80),
+      }))
+      .filter((entry) => entry.text);
+  }
+
+  serializeSession(session, { includeRecentNarrative = false } = {}) {
     const claudeSubagents = listClaudeSubagentsForSession(session, this.userHomeDir);
     let extraSubagents = [];
     if (this.extraSubagentsProvider) {
@@ -4968,7 +5009,7 @@ export class SessionManager {
       ? "working"
       : session.activityStatus;
 
-    return {
+    const serialized = {
       id: session.id,
       providerId: session.providerId,
       providerLabel: session.providerLabel,
@@ -5013,6 +5054,12 @@ export class SessionManager {
       // banner; see setAutoReplyText below.
       autoReplyText: typeof session.autoReplyText === "string" ? session.autoReplyText : "",
     };
+
+    if (includeRecentNarrative) {
+      serialized.recentNarrative = this.summarizeAccountRecentNarrative(session);
+    }
+
+    return serialized;
   }
 
   buildSessionRecord({

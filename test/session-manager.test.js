@@ -2442,6 +2442,37 @@ test("Codex native narrative falls back to owned session events before transcrip
   }
 });
 
+test("account session summaries include a scrubbed recent native narrative", async () => {
+  const harness = await createManager({ initialPromptSubmitDelayMs: 5 });
+  const { manager, workspaceDir } = harness;
+
+  try {
+    const session = manager.buildSessionRecord({
+      providerId: "codex",
+      providerLabel: "Codex",
+      name: "Phone-visible Codex",
+      cwd: workspaceDir,
+      status: "running",
+    });
+    manager.sessions.set(session.id, session);
+    manager.pushNativeNarrativeEntry(session, {
+      kind: "assistant",
+      label: "Codex",
+      text: `Finished in ${workspaceDir} with OPENAI_API_KEY=sk-secret123 and token=abc123.`,
+      timestamp: "2026-05-17T12:00:00.000Z",
+    });
+
+    const [summary] = manager.listSessions({ includeRecentNarrative: true });
+
+    assert.equal(summary.recentNarrative.length, 1);
+    assert.equal(summary.recentNarrative[0].kind, "assistant");
+    assert.match(summary.recentNarrative[0].text, /Finished in \[path\]/);
+    assert.doesNotMatch(summary.recentNarrative[0].text, /sk-secret123|token=abc123|\/Users|\/tmp/);
+  } finally {
+    await cleanupManager(manager, workspaceDir, harness.userHomeDir);
+  }
+});
+
 test("Codex queues the first prompt until the provider is ready", async () => {
   const harness = await createManager({ initialPromptSubmitDelayMs: 5 });
   const { manager, workspaceDir } = harness;

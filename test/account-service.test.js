@@ -145,7 +145,16 @@ function sampleRedactedSnapshot(nodeId = "node_1") {
       memory: { total: 100, used: 40, free: 60 },
     },
     portHints: { count: 3 },
-    sessions: [{ id: "session_1", name: "redacted", providerId: "codex", cwd: null, command: "npm run deploy --token=secret" }],
+    sessions: [{
+      id: "session_1",
+      name: "redacted",
+      providerId: "codex",
+      cwd: null,
+      command: "npm run deploy --token=secret",
+      recentNarrative: [
+        { id: "entry_1", kind: "assistant", label: "Codex", text: "Safe account summary", timestamp: "2026-05-12T09:00:01.000Z" },
+      ],
+    }],
     generatedAt: "2026-05-12T09:00:00.000Z",
   };
 }
@@ -168,6 +177,14 @@ test("buildNodeSummaryFromSnapshot keeps only redacted summary fields", () => {
     createdAt: "",
     updatedAt: "",
     hasSubagents: false,
+    recentNarrative: [{
+      id: "entry_1",
+      kind: "assistant",
+      label: "Codex",
+      text: "Safe account summary",
+      status: "",
+      timestamp: "2026-05-12T09:00:01.000Z",
+    }],
   });
   assert.doesNotMatch(JSON.stringify(summary), /npm run deploy|token=secret|cwd/);
 });

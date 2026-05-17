@@ -148,6 +148,24 @@ function normalizeLaunchers(value = []) {
     .slice(0, 24);
 }
 
+function normalizeSessionNarrative(value = []) {
+  return (Array.isArray(value) ? value : [])
+    .map((entry, index) => {
+      const text = compactText(entry?.text || entry?.outputPreview, 700);
+      if (!text) return null;
+      return {
+        id: compactText(entry?.id || `entry-${index}`, 180),
+        kind: compactText(entry?.kind || "status", 40),
+        label: compactText(entry?.label || entry?.title || entry?.kind || "Session", 80),
+        text,
+        status: compactText(entry?.status, 40),
+        timestamp: compactText(entry?.timestamp || entry?.createdAt, 80),
+      };
+    })
+    .filter(Boolean)
+    .slice(-6);
+}
+
 function normalizeSessions(value = []) {
   const seen = new Set();
   return (Array.isArray(value) ? value : [])
@@ -165,6 +183,7 @@ function normalizeSessions(value = []) {
         createdAt: compactText(session?.createdAt, 80),
         updatedAt: compactText(session?.updatedAt || session?.lastOutputAt || session?.lastPromptAt, 80),
         hasSubagents: Boolean(session?.hasSubagents || (Array.isArray(session?.subagents) && session.subagents.length)),
+        recentNarrative: normalizeSessionNarrative(session?.recentNarrative || session?.recentNarrativeEntries || []),
       };
     })
     .filter(Boolean)

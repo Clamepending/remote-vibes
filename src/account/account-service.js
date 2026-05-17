@@ -116,6 +116,27 @@ function normalizeNodeLaunchers(value = []) {
     .slice(0, 24);
 }
 
+function normalizeSessionNarrative(value = []) {
+  return (Array.isArray(value) ? value : [])
+    .map((entry, index) => {
+      const text = String(entry?.text || entry?.outputPreview || "")
+        .replace(/\s+/g, " ")
+        .trim()
+        .slice(0, 700);
+      if (!text) return null;
+      return {
+        id: String(entry?.id || `entry-${index}`).trim().slice(0, 180),
+        kind: String(entry?.kind || "status").replace(/\s+/g, "-").trim().slice(0, 40),
+        label: String(entry?.label || entry?.title || entry?.kind || "Session").replace(/\s+/g, " ").trim().slice(0, 80),
+        text,
+        status: String(entry?.status || "").replace(/\s+/g, "-").trim().slice(0, 40),
+        timestamp: String(entry?.timestamp || entry?.createdAt || "").trim().slice(0, 80),
+      };
+    })
+    .filter(Boolean)
+    .slice(-6);
+}
+
 function normalizeNodeSessions(value = []) {
   const seen = new Set();
   return (Array.isArray(value) ? value : [])
@@ -136,6 +157,7 @@ function normalizeNodeSessions(value = []) {
         createdAt: String(session?.createdAt || "").trim().slice(0, 80),
         updatedAt: String(session?.updatedAt || session?.lastOutputAt || session?.lastPromptAt || "").trim().slice(0, 80),
         hasSubagents: Boolean(session?.hasSubagents || (Array.isArray(session?.subagents) && session.subagents.length)),
+        recentNarrative: normalizeSessionNarrative(session?.recentNarrative || session?.recentNarrativeEntries || []),
       };
     })
     .filter(Boolean)

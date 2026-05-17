@@ -138,13 +138,13 @@ export class NodeHeartbeatService {
     return normalizeConnectionHints(await this.connectionHintsProvider());
   }
 
-  async getRedactedSnapshot() {
-    return this.nodeSnapshotService.getSnapshot({ mode: "redacted" });
+  async getAccountSnapshot() {
+    return this.nodeSnapshotService.getSnapshot({ mode: "privileged" });
   }
 
   async buildRegistrationPayload() {
     const [snapshot, connectionHints] = await Promise.all([
-      this.getRedactedSnapshot(),
+      this.getAccountSnapshot(),
       this.getConnectionHints(),
     ]);
     return buildNodeRegistrationPayload({
@@ -156,7 +156,7 @@ export class NodeHeartbeatService {
 
   async buildHeartbeat({ reason = "" } = {}) {
     const [snapshot, connectionHints] = await Promise.all([
-      this.getRedactedSnapshot(),
+      this.getAccountSnapshot(),
       this.getConnectionHints(),
     ]);
     const unsigned = {
@@ -185,7 +185,7 @@ export class NodeHeartbeatService {
       return { skipped: true, reason: "already-registered" };
     }
 
-    const snapshot = await this.getRedactedSnapshot();
+    const snapshot = await this.getAccountSnapshot();
     return this.accountService.registerNode({
       settings: this.getSettings(),
       snapshot,

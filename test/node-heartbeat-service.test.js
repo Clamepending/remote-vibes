@@ -80,7 +80,7 @@ test("buildNodeHeartbeatPayload contains fleet summary, not privileged local dat
   assert.doesNotMatch(JSON.stringify(heartbeat), /sk-secret|OPENAI_API_KEY|\/Users\/mark|private|token=secret|localApiToken/);
 });
 
-test("NodeHeartbeatService tick registers once and sends signed redacted heartbeat", async () => {
+test("NodeHeartbeatService tick registers once and sends a signed account-safe heartbeat", async () => {
   const stateDir = await mkdtemp(path.join(os.tmpdir(), "swarmlab-heartbeat-"));
   try {
     const tokenStore = new AccountTokenStore({ stateDir });
@@ -109,8 +109,8 @@ test("NodeHeartbeatService tick registers once and sends signed redacted heartbe
     };
     const nodeSnapshotService = {
       async getSnapshot({ mode }) {
-        assert.equal(mode, "redacted");
-        return redactedSnapshot(nodeId);
+        assert.equal(mode, "privileged");
+        return { ...redactedSnapshot(nodeId), mode };
       },
     };
     const service = new NodeHeartbeatService({
@@ -128,8 +128,10 @@ test("NodeHeartbeatService tick registers once and sends signed redacted heartbe
     const result = await service.tick({ reason: "test", forceRegister: true });
     assert.equal(result.ok, true);
     assert.deepEqual(calls.map((call) => call.type), ["register", "heartbeat"]);
+    assert.equal(calls[0].snapshotMode, "privileged");
     const heartbeat = calls[1].heartbeat;
     assert.equal(heartbeat.nodeId, nodeId);
+    assert.equal(heartbeat.summary.mode, "redacted");
     assert.ok(heartbeat.signature);
     assert.equal(
       nodeIdentityStore.verifyPayloadSignature(
