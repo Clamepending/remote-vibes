@@ -8,9 +8,16 @@ const MAX_COMMAND_RELAY_INTERVAL_MS = 60_000;
 const SUPPORTED_COMMAND_OPERATIONS = new Set([
   "session.input.write",
   "session.create",
+  "session.narrative.read",
   "app.launch",
   "app.instance.dismiss",
 ]);
+const SECRET_TEXT_PATTERNS = [
+  /\bsk-[A-Za-z0-9_-]{6,}\b/g,
+  /\bgh[pousr]_[A-Za-z0-9_]{6,}\b/g,
+  /\b(?:api[_-]?key|token|secret|password|authorization|bearer|ANTHROPIC_API_KEY|OPENAI_API_KEY|HF_TOKEN)=?[A-Za-z0-9_./:=@+-]{4,}\b/gi,
+  /([?&](?:token|api_key|key|secret|password|auth|code)=)[^&#\s]+/gi,
+];
 
 function nowIso() {
   return new Date().toISOString();
@@ -33,6 +40,42 @@ function normalizeBoolean(value, fallback = true) {
 
 function compactText(value, max = 240) {
   return String(value || "").replace(/\s+/g, " ").trim().slice(0, max);
+}
+
+function compactAccountText(value, max = 700) {
+  let text = String(value || "");
+  for (const pattern of SECRET_TEXT_PATTERNS) {
+    text = text.replace(pattern, (match, prefix = "") => (
+      typeof prefix === "string" && prefix.startsWith("?")
+        ? `${prefix}[redacted]`
+        : "[redacted]"
+    ));
+  }
+  text = text
+    .replace(/(?:\/Users\/[A-Za-z0-9._-]+|\/home\/[A-Za-z0-9._-]+)(?:\/[^\s"'`)]*)?/g, "[path]")
+    .replace(/(?:\/private\/var|\/var\/folders|\/tmp)(?:\/[^\s"'`)]*)?/g, "[path]")
+    .replace(/\s+/g, " ")
+    .trim();
+  return text.slice(0, max);
+}
+
+function safeNarrativeEntries(entries = [], maxEntries = 12) {
+  const limit = Math.max(1, Math.min(24, Number(maxEntries) || 12));
+  return (Array.isArray(entries) ? entries : [])
+    .slice(-limit)
+    .map((entry, index) => {
+      const text = compactAccountText(entry?.text || entry?.outputPreview, 1_200);
+      if (!text) return null;
+      return {
+        id: compactText(entry?.id || `entry-${index}`, 180),
+        kind: compactText(entry?.kind || "status", 40),
+        label: compactAccountText(entry?.label || entry?.title || entry?.kind || "Session", 80),
+        text,
+        status: compactText(entry?.status, 40),
+        timestamp: compactText(entry?.timestamp || entry?.createdAt, 80),
+      };
+    })
+    .filter(Boolean);
 }
 
 function commandSigningEnvelope(command = {}) {
@@ -213,6 +256,36 @@ export class NodeCommandRelayService {
     };
   }
 
+  async executeSessionNarrativeRead(command) {
+    const payload = command.payload || {};
+    const sessionId = compactText(payload.sessionId || payload.session_id, 180);
+    if (!sessionId) {
+      throw new Error("Remote session narrative command is missing sessionId.");
+    }
+    const session = this.sessionManager.getSession(sessionId);
+    if (!session) {
+      throw new Error("Session not found.");
+    }
+    if (typeof this.sessionManager.getSessionNarrative !== "function") {
+      throw new Error("Session narrative readback is not available.");
+    }
+    const maxEntries = Math.max(1, Math.min(24, Number(payload.maxEntries || payload.max_entries) || 12));
+    const narrative = await this.sessionManager.getSessionNarrative(sessionId, { maxEntries: Math.max(maxEntries, 24) });
+    const entries = safeNarrativeEntries(narrative?.entries || [], maxEntries);
+    return {
+      sessionId,
+      session: {
+        ...safeSessionSummary(this.sessionManager.serializeSession?.(session) || session),
+        recentNarrative: entries.slice(-6),
+      },
+      narrative: {
+        sourceLabel: compactAccountText(narrative?.sourceLabel || "Session narrative", 120),
+        providerBacked: Boolean(narrative?.providerBacked),
+        entries,
+      },
+    };
+  }
+
   async executeAppLaunch(command) {
     const payload = command.payload || {};
     const launcherId = compactText(payload.appId || payload.launcherId || payload.id, 80);
@@ -256,6 +329,9 @@ export class NodeCommandRelayService {
     }
     if (command.operation === "session.create") {
       return this.executeSessionCreate(command);
+    }
+    if (command.operation === "session.narrative.read") {
+      return this.executeSessionNarrativeRead(command);
     }
     if (command.operation === "app.launch") {
       return this.executeAppLaunch(command);

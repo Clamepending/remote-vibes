@@ -310,6 +310,59 @@ test("AccountNodeRegistryService queues sanitized session create capsule command
   }
 });
 
+test("AccountNodeRegistryService queues scoped session narrative read commands", async () => {
+  const stateDir = await mkdtemp(path.join(os.tmpdir(), "swarmlab-account-narrative-command-"));
+  try {
+    const nodeIdentityStore = new NodeIdentityStore({ stateDir: path.join(stateDir, "node") });
+    await nodeIdentityStore.initialize();
+    const identity = nodeIdentityStore.getPublicIdentity({ includeHostname: false });
+    const service = new AccountNodeRegistryService({ stateDir: path.join(stateDir, "account") });
+    await service.initialize();
+    const pairing = await service.createPairing({ identity, label: "Remote worker" });
+    const approval = await service.approvePairing({ pairingId: pairing.id, ownerAccountId: "acct_mark" });
+    const completed = await service.completePairing({ grant: approval.grant, identity });
+    const registration = buildNodeRegistrationPayload({
+      identity,
+      snapshot: sampleSnapshot(identity.nodeId, identity.installId),
+    });
+    await service.registerNode({
+      authorization: `Bearer ${completed.accessToken}`,
+      body: {
+        type: "node.registration",
+        registration,
+        signature: nodeIdentityStore.signPayload({ type: "node.registration", registration }),
+      },
+    });
+
+    const queued = await service.enqueueCommandForOwner({
+      ownerAccountId: "acct_mark",
+      nodeId: identity.nodeId,
+      body: {
+        operation: "session.narrative.read",
+        payload: {
+          sessionId: "session-123",
+          maxEntries: 99,
+        },
+      },
+    });
+
+    assert.equal(queued.operation, "session.narrative.read");
+    assert.equal(queued.target.sessionId, "session-123");
+    assert.equal(queued.payload, undefined);
+
+    const leased = await service.leaseCommandsForNode({
+      authorization: `Bearer ${completed.accessToken}`,
+      nodeId: identity.nodeId,
+    });
+    assert.equal(leased.length, 1);
+    assert.equal(leased[0].payload.sessionId, "session-123");
+    assert.equal(leased[0].payload.maxEntries, 24);
+    assert.equal(verifyCommandSignature(leased[0], completed.commandPublicKey), true);
+  } finally {
+    await rm(stateDir, { recursive: true, force: true });
+  }
+});
+
 test("AccountNodeRegistryService queues sanitized app launch commands", async () => {
   const stateDir = await mkdtemp(path.join(os.tmpdir(), "swarmlab-account-app-command-"));
   try {

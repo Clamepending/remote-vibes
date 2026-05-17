@@ -16,6 +16,7 @@ const ACCOUNT_NODE_STATUSES = new Set(["online", "idle", "busy", "stale", "offli
 const ACCOUNT_NODE_COMMAND_OPERATIONS = new Set([
   "session.input.write",
   "session.create",
+  "session.narrative.read",
   "app.launch",
   "app.instance.dismiss",
 ]);
@@ -412,6 +413,16 @@ function normalizeCommandPayload(operation, value = {}) {
     }
     return payload;
   }
+  if (operation === "session.narrative.read") {
+    const sessionId = compactText(source.sessionId || source.session_id, 180);
+    if (!sessionId) {
+      throw buildHttpError("session.narrative.read requires sessionId.", 400);
+    }
+    return {
+      sessionId,
+      maxEntries: Math.max(1, Math.min(24, Number(source.maxEntries || source.max_entries) || 12)),
+    };
+  }
   if (operation === "app.launch") {
     const appId = compactText(source.appId || source.app_id || source.launcherId || source.launcher_id || source.id, 80);
     if (!appId) {
@@ -444,6 +455,9 @@ function commandTargetFromPayload(operation, payload) {
       providerId: payload.providerId || "",
       cwdHint: payload.cwd ? createHash("sha256").update(payload.cwd).digest("hex").slice(0, 16) : "",
     };
+  }
+  if (operation === "session.narrative.read") {
+    return { sessionId: payload.sessionId };
   }
   if (operation === "app.launch") {
     return { appId: payload.appId || "" };

@@ -230,6 +230,110 @@ test("NodeCommandRelayService executes signed session create commands", async ()
   }
 });
 
+test("NodeCommandRelayService executes signed session narrative read commands with account-safe snippets", async () => {
+  const stateDir = await mkdtemp(path.join(os.tmpdir(), "swarmlab-command-relay-narrative-"));
+  try {
+    const nodeIdentityStore = new NodeIdentityStore({ stateDir: path.join(stateDir, "node") });
+    await nodeIdentityStore.initialize();
+    const identity = nodeIdentityStore.getPublicIdentity({ includeHostname: false });
+    const registry = new AccountNodeRegistryService({ stateDir: path.join(stateDir, "account") });
+    await registry.initialize();
+    const pairing = await registry.createPairing({ identity, ownerAccountId: "acct_mark" });
+    const approval = await registry.approvePairing({ pairingId: pairing.id, ownerAccountId: "acct_mark" });
+    const completed = await registry.completePairing({ grant: approval.grant, identity });
+    const registration = buildNodeRegistrationPayload({
+      identity,
+      snapshot: snapshot(identity.nodeId, identity.installId),
+    });
+    await registry.registerNode({
+      authorization: `Bearer ${completed.accessToken}`,
+      body: {
+        type: "node.registration",
+        registration,
+        signature: nodeIdentityStore.signPayload({ type: "node.registration", registration }),
+      },
+    });
+    await registry.enqueueCommandForOwner({
+      ownerAccountId: "acct_mark",
+      nodeId: identity.nodeId,
+      body: {
+        operation: "session.narrative.read",
+        payload: { sessionId: "session-1", maxEntries: 2 },
+      },
+    });
+    const leased = await registry.leaseCommandsForNode({
+      authorization: `Bearer ${completed.accessToken}`,
+      nodeId: identity.nodeId,
+    });
+
+    const tokenStore = new AccountTokenStore({ stateDir: path.join(stateDir, "local") });
+    await tokenStore.load();
+    await tokenStore.setRecord({
+      accessToken: completed.accessToken,
+      appBaseUrl: "https://account.example.test",
+      accountPublicKey: completed.commandPublicKey,
+      account: completed.account,
+      node: completed.node,
+    });
+
+    const session = { id: "session-1", name: "Worker", providerId: "codex", status: "running" };
+    const accountService = {
+      async listCommands() {
+        return { commands: leased, accountPublicKey: completed.commandPublicKey };
+      },
+      async acknowledgeCommand({ commandId, ack }) {
+        return registry.acknowledgeCommandFromNode({
+          authorization: `Bearer ${completed.accessToken}`,
+          nodeId: identity.nodeId,
+          commandId,
+          body: ack,
+        });
+      },
+    };
+    const sessionManager = {
+      getSession(id) {
+        return id === session.id ? session : null;
+      },
+      serializeSession(value) {
+        return value;
+      },
+      async getSessionNarrative(id) {
+        assert.equal(id, "session-1");
+        return {
+          sourceLabel: "Codex session file",
+          providerBacked: true,
+          entries: [
+            { id: "old", kind: "assistant", label: "Assistant", text: "older text" },
+            { id: "secret", kind: "assistant", label: "Saved /Users/mark/private/model.bin", text: "Finished with OPENAI_API_KEY=sk-secret123 in /Users/mark/private/model.bin", timestamp: "2026-05-12T20:03:00.000Z" },
+          ],
+        };
+      },
+    };
+    const relay = new NodeCommandRelayService({
+      accountService,
+      tokenStore,
+      nodeIdentityStore,
+      sessionManager,
+      settingsProvider: () => ({}),
+    });
+
+    const result = await relay.tick({ reason: "test" });
+    assert.equal(result.commandCount, 1);
+    const command = registry.getCommandForOwner({
+      ownerAccountId: "acct_mark",
+      nodeId: identity.nodeId,
+      commandId: leased[0].id,
+    });
+    assert.equal(command.status, "completed");
+    assert.equal(command.result.session.id, "session-1");
+    assert.equal(command.result.narrative.entries.length, 2);
+    assert.equal(command.result.narrative.entries[1].text, "Finished with OPENAI_API_KEY=[redacted] in [path]");
+    assert.doesNotMatch(JSON.stringify(command), /sk-secret123|\/Users\/mark/);
+  } finally {
+    await rm(stateDir, { recursive: true, force: true });
+  }
+});
+
 test("NodeCommandRelayService executes signed app launch commands", async () => {
   const stateDir = await mkdtemp(path.join(os.tmpdir(), "swarmlab-command-relay-app-"));
   try {
