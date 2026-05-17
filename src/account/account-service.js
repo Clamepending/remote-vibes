@@ -1,6 +1,6 @@
 import { normalizeAccountHttpUrl } from "./account-token-store.js";
 
-const DEFAULT_ACCOUNT_BASE_URL = "https://vibe-research.net";
+const DEFAULT_ACCOUNT_BASE_URL = "https://api.accounts.vibe-research.net";
 
 function buildHttpError(message, statusCode = 400) {
   const error = new Error(message);

@@ -434,7 +434,7 @@ export class SettingsStore {
           this.env.VIBE_RESEARCH_NODE_HEARTBEAT_INTERVAL_MS ||
           DEFAULT_ACCOUNT_HEARTBEAT_INTERVAL_MS,
       ),
-      swarmlabAccountUrl: configuredSwarmlabAccountUrl,
+      swarmlabAccountUrl: configuredSwarmlabAccountUrl || "https://api.accounts.vibe-research.net",
       githubOAuthClientId: String(
         this.env.VIBE_RESEARCH_GITHUB_OAUTH_CLIENT_ID ||
           this.env.REMOTE_VIBES_GITHUB_OAUTH_CLIENT_ID ||

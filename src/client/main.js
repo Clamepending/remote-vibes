@@ -2478,7 +2478,7 @@ const state = {
     ottoAuthUsername: "",
     swarmlabAccountCommandRelayStatus: null,
     swarmlabAccountStatus: null,
-    swarmlabAccountUrl: "https://vibe-research.net",
+    swarmlabAccountUrl: "https://api.accounts.vibe-research.net",
     openSwarmApiBaseUrl: "http://127.0.0.1:8080",
     openSwarmApiMode: false,
     openSwarmComposioApiKeyConfigured: false,
@@ -35802,7 +35802,7 @@ function renderBrainSetupScreen() {
   document.title = "Log in · Vibe Research";
   const connected = isVibeAccountConnected();
   const accountLabel = getVibeAccountLabel();
-  const accountUrl = state.settings.swarmlabAccountUrl || "https://vibe-research.net";
+  const accountUrl = state.settings.swarmlabAccountUrl || "https://api.accounts.vibe-research.net";
   const loginDisabled = state.brainSetupCloning || connected;
   const loginLabel = connected
     ? "logged in"
@@ -45054,8 +45054,8 @@ function applySettingsState(payload) {
     swarmlabAccountStatus: swarmlabAccountStatus || null,
     swarmlabAccountUrl:
       settings.swarmlabAccountUrl === undefined
-        ? state.settings.swarmlabAccountUrl || "https://vibe-research.net"
-        : String(settings.swarmlabAccountUrl || "https://vibe-research.net"),
+        ? state.settings.swarmlabAccountUrl || "https://api.accounts.vibe-research.net"
+        : String(settings.swarmlabAccountUrl || "https://api.accounts.vibe-research.net"),
     openSwarmApiBaseUrl:
       settings.openSwarmApiBaseUrl === undefined
         ? state.settings.openSwarmApiBaseUrl || "http://127.0.0.1:8080"
